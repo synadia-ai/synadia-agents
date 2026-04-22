@@ -1,18 +1,24 @@
-name: Release
+name: Release — client-sdk/python
 
-# Publishes a new natsagent release to PyPI when a tag matching `v*` is
-# pushed. Runs the full test matrix first and fails shut if anything is
-# red — so `git push --tags` is a single-button release that still can't
-# ship broken code.
+# Publishes a new natsagent release to PyPI when a tag matching
+# `python-v*` is pushed. Tag prefix disambiguates releases in the
+# monorepo (alongside e.g. `ts-v*` for the TypeScript SDK). Runs the
+# full test matrix first and fails shut if anything is red — so
+# `git push --tags` is a single-button release that still can't ship
+# broken code.
 
 on:
   push:
     tags:
-      - "v*"
+      - "python-v*"
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-python-${{ github.ref }}
   cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: client-sdk/python
 
 jobs:
   verify:
@@ -36,6 +42,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
+          cache-dependency-glob: "client-sdk/python/uv.lock"
           python-version: ${{ matrix.python-version }}
 
       - run: uv sync
@@ -60,6 +67,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
+          cache-dependency-glob: "client-sdk/python/uv.lock"
           python-version: "3.11"
 
       - name: Build sdist + wheel
@@ -69,10 +77,11 @@ jobs:
 
       - name: Verify tag matches pyproject version
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          # Strip the `python-v` monorepo prefix before comparing.
+          TAG_VERSION="${GITHUB_REF_NAME#python-v}"
           PKG_VERSION="$(uv run python -c 'import tomllib,sys; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::tag v$TAG_VERSION does not match pyproject version $PKG_VERSION"
+            echo "::error::tag python-v$TAG_VERSION does not match pyproject version $PKG_VERSION"
             exit 1
           fi
           echo "Tag and pyproject.toml both at $PKG_VERSION."
@@ -85,8 +94,10 @@ jobs:
       - name: Attach artifacts to GitHub release
         if: ${{ !cancelled() }}
         uses: softprops/action-gh-release@v2
+        # `files:` globs resolve from $GITHUB_WORKSPACE (defaults.run.working-directory
+        # does not apply to action inputs), so paths are given from the repo root.
         with:
           files: |
-            dist/*.whl
-            dist/*.tar.gz
+            client-sdk/python/dist/*.whl
+            client-sdk/python/dist/*.tar.gz
           generate_release_notes: true
