@@ -1,0 +1,92 @@
+name: Release
+
+# Publishes a new natsagent release to PyPI when a tag matching `v*` is
+# pushed. Runs the full test matrix first and fails shut if anything is
+# red — so `git push --tags` is a single-button release that still can't
+# ship broken code.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      NATS_SERVER_VERSION: "2.12.7"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nats-server
+        run: |
+          curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${NATS_SERVER_VERSION}/nats-server-v${NATS_SERVER_VERSION}-linux-amd64.tar.gz" | tar xz
+          sudo mv "nats-server-v${NATS_SERVER_VERSION}-linux-amd64/nats-server" /usr/local/bin/
+          nats-server --version
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - run: uv sync
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src tests
+      - run: uv run pytest -v
+
+  publish:
+    name: Publish to PyPI
+    needs: verify
+    runs-on: ubuntu-latest
+    # Bind to the "pypi" environment so the PYPI_API_TOKEN secret is
+    # only available here — and only after `verify` goes green.
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write  # for trusted publishing if we switch later
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      - name: Build sdist + wheel
+        run: |
+          uv build
+          ls -lh dist/
+
+      - name: Verify tag matches pyproject version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(uv run python -c 'import tomllib,sys; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag v$TAG_VERSION does not match pyproject version $PKG_VERSION"
+            exit 1
+          fi
+          echo "Tag and pyproject.toml both at $PKG_VERSION."
+
+      - name: Publish to PyPI
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: uv publish dist/*
+
+      - name: Attach artifacts to GitHub release
+        if: ${{ !cancelled() }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true

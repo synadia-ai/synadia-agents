@@ -1,0 +1,10 @@
+{
+  "name": "nats-channel",
+  "version": "0.2.0",
+  "description": "NATS channel plugin for Claude Code — bridges NATS messaging to Claude Code sessions",
+  "author": {
+    "name": "Synadia"
+  },
+  "repository": "https://github.com/synadia-ai/nats-claude-code-channel",
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,34 @@
+{
+  "name": "@m64/nats-pi-channel",
+  "version": "0.4.0",
+  "description": "NATS Agent Protocol channel for PI Agent. Makes every PI session a discoverable, spec-compliant agent on NATS.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-agent",
+    "nats",
+    "agent",
+    "channel",
+    "nats-agent-protocol",
+    "synadia-agents"
+  ],
+  "files": [
+    "extensions"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/nats-channel.ts"
+    ]
+  },
+  "scripts": {
+    "test:smoke": "bun test/smoke.mjs"
+  },
+  "dependencies": {
+    "@nats-io/transport-node": "^3.3.0",
+    "@nats-io/services": "^3.3.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}

@@ -1,0 +1,47 @@
+import { reactive, computed } from "vue";
+import type { DiscoveredAgentDTO } from "../wire.ts";
+
+export const agentsState = reactive<{
+  list: DiscoveredAgentDTO[];
+  selectedInstanceId: string | null;
+  lastDiscoveredAt: number | null;
+  discovering: boolean;
+}>({
+  list: [],
+  selectedInstanceId: null,
+  lastDiscoveredAt: null,
+  discovering: false,
+});
+
+export const selectedAgent = computed<DiscoveredAgentDTO | null>(() => {
+  const id = agentsState.selectedInstanceId;
+  if (!id) return null;
+  return agentsState.list.find((a) => a.instanceId === id) ?? null;
+});
+
+export function selectAgent(instanceId: string | null): void {
+  agentsState.selectedInstanceId = instanceId;
+}
+
+export function setAgents(list: DiscoveredAgentDTO[]): void {
+  agentsState.list = list;
+  agentsState.lastDiscoveredAt = Date.now();
+  // If the previously selected agent vanished, clear selection.
+  if (
+    agentsState.selectedInstanceId &&
+    !list.some((a) => a.instanceId === agentsState.selectedInstanceId)
+  ) {
+    agentsState.selectedInstanceId = null;
+  }
+}
+
+/** Stable sort key: agent → owner → session/name. */
+export function sortAgents(list: DiscoveredAgentDTO[]): DiscoveredAgentDTO[] {
+  return [...list].sort((a, b) => {
+    const byAgent = a.agent.localeCompare(b.agent);
+    if (byAgent !== 0) return byAgent;
+    const byOwner = a.owner.localeCompare(b.owner);
+    if (byOwner !== 0) return byOwner;
+    return a.name.localeCompare(b.name);
+  });
+}

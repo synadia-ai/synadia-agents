@@ -1,0 +1,16 @@
+{
+  "name": "synadia-plugins",
+  "owner": {
+    "name": "Synadia"
+  },
+  "metadata": {
+    "description": "Synadia plugins for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "nats-channel",
+      "source": "./",
+      "description": "NATS channel plugin for Claude Code — bridges NATS messaging to Claude Code sessions"
+    }
+  ]
+}

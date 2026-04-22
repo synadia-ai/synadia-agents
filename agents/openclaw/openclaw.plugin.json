@@ -1,0 +1,30 @@
+{
+  "id": "nats",
+  "kind": "channel",
+  "channels": ["nats"],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "nats": {
+        "type": "object",
+        "properties": {
+          "accounts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "agentName": { "type": "string", "description": "Agent identity on the NATS network" },
+                "url": { "type": "string", "description": "NATS server URL" },
+                "description": { "type": "string", "description": "Shown during agent discovery" },
+                "credentials": { "type": "string", "description": "NATS auth credentials" },
+                "enabled": { "type": "boolean", "default": true },
+                "org": { "type": "string", "description": "Organization namespace for subject isolation" }
+              },
+              "required": ["agentName"]
+            }
+          }
+        }
+      }
+    }
+  }
+}

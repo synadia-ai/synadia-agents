@@ -1,0 +1,48 @@
+{
+  "name": "@m64/nats-channel",
+  "version": "0.4.0",
+  "description": "NATS Agent Protocol channel for OpenClaw. Makes every OpenClaw agent a discoverable, spec-compliant agent on NATS.",
+  "license": "MIT",
+  "keywords": [
+    "openclaw",
+    "nats",
+    "agent",
+    "channel",
+    "nats-agent-protocol",
+    "synadia-agents"
+  ],
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "setupEntry": "./setup-entry.ts",
+    "channel": {
+      "id": "nats",
+      "label": "NATS",
+      "selectionLabel": "NATS Agent Network",
+      "docsPath": "/channels/nats",
+      "blurb": "Connect agents via NATS messaging"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:smoke": "bun test/smoke.mjs"
+  },
+  "dependencies": {
+    "@nats-io/services": "^3.3.0",
+    "@nats-io/transport-node": "^3.3.0",
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "peerDependencies": {
+    "openclaw": ""
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0"
+  }
+}

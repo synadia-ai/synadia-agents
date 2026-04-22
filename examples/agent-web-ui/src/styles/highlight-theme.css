@@ -1,0 +1,66 @@
+.hljs {
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-addition { color: #818cf8; }
+
+.hljs-string,
+.hljs-doctag,
+.hljs-regexp { color: var(--success); }
+
+.hljs-number,
+.hljs-literal,
+.hljs-bullet { color: var(--warning); }
+
+.hljs-title,
+.hljs-section,
+.hljs-name { color: var(--accent-secondary); }
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attribute,
+.hljs-params { color: var(--info); }
+
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-built_in { color: var(--memory-fact); }
+
+.hljs-tag { color: var(--memory-note); }
+.hljs-attr { color: var(--memory-preference); }
+
+.hljs-symbol,
+.hljs-meta,
+.hljs-selector-id,
+.hljs-selector-class { color: var(--text-secondary); }
+
+.hljs-deletion {
+  color: var(--error);
+  background: var(--error-dim);
+}
+.hljs-addition { background: var(--success-dim); }
+
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
+
+.hljs-link {
+  color: var(--accent-primary);
+  text-decoration: underline;
+}
+
+.hljs-punctuation,
+.hljs-operator { color: var(--text-secondary); }
+
+.hljs-property { color: var(--info); }
+.hljs-constant { color: var(--warning); }
+
+.hljs-template-tag,
+.hljs-subst { color: var(--text-primary); }
