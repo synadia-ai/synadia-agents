@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@synadia/agents": "file:../nats-ai-tssdk"
+    "@synadia/agents": "file:../../client-sdk/typescript"
   },
   "devDependencies": {
     "@types/bun": "latest",
