@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "nats-channel",
-      "source": "./",
+      "source": "./agents/claude-code",
       "description": "NATS channel plugin for Claude Code — bridges NATS messaging to Claude Code sessions"
     }
   ]

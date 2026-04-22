@@ -23,7 +23,7 @@ message — the protocol's uniform end-of-stream signal.
 These are Claude Code commands — run `claude` to start a session first.
 
 ```
-/plugin marketplace add synadia-ai/nats-claude-code-channel
+/plugin marketplace add synadia-ai/synadia-agents
 ```
 
 **2. Install the plugin.**
