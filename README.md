@@ -1,4 +1,4 @@
-# NATS AGENTS
+# Synadia Agents
 
 One home for everything built on the **NATS Agent Protocol** — the SDKs that speak it, the agent implementations that host it, and the example apps that use it.
 
@@ -9,7 +9,7 @@ One home for everything built on the **NATS Agent Protocol** — the SDKs that s
 ## Repository layout
 
 ```
-nats-agents/
+synadia-agents/
 ├── README.md              ← you are here
 ├── client-sdk/            ← language SDKs (callers)
 │   ├── README.md
