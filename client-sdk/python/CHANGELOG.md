@@ -148,6 +148,6 @@ Initial scaffold. Released ahead of the finalised v0.1 spec; most wire
 shapes in this version no longer match the spec and are corrected in
 0.1.0.
 
-[Unreleased]: https://github.com/synadia-io/nats-ai-pysdk/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/synadia-io/nats-ai-pysdk/releases/tag/v0.1.0
-[0.0.1]: https://github.com/synadia-io/nats-ai-pysdk/releases/tag/v0.0.1
+[Unreleased]: https://github.com/synadia-ai/synadia-agents/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/synadia-ai/synadia-agents/releases/tag/v0.1.0
+[0.0.1]: https://github.com/synadia-ai/synadia-agents/releases/tag/v0.0.1

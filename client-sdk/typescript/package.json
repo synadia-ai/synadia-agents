@@ -65,11 +65,12 @@
   "author": "Synadia Communications",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/synadia-io/nats-ai-tssdk.git"
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "client-sdk/typescript"
   },
-  "homepage": "https://github.com/synadia-io/nats-ai-tssdk",
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/typescript",
   "bugs": {
-    "url": "https://github.com/synadia-io/nats-ai-tssdk/issues"
+    "url": "https://github.com/synadia-ai/synadia-agents/issues"
   },
   "publishConfig": {
     "access": "public"
