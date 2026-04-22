@@ -7,9 +7,9 @@ Protocol. This document tells you where things stand and what to do next.
 
 1. **`CLAUDE.md`** — project context, toolchain, canonical commands,
    engineering conventions, and the **no-bullshit testing** rule.
-2. **`docs/nats-agent-protocol.md`** — the wire protocol. Source of
-   truth (local copy of `https://github.com/synadia-ai/nats-agent-sdk-docs`). The
-   implementation checklist in §12 defines what "compliant" means.
+2. **<https://github.com/synadia-ai/nats-agent-sdk-docs>** — the wire
+   protocol spec and source of truth. The implementation checklist in
+   §12 defines what "compliant" means.
 3. **`docs/protocol-mapping.md`** — every SDK call mapped to its spec
    section. Good cross-check when you're not sure what the SDK is
    supposed to do for some wire-level detail.

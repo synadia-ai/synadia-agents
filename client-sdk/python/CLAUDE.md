@@ -18,10 +18,8 @@ identifier when constructing an `Agent` and MUST validate it against §2
 under a generic `pysdk` value — that would pollute the subject namespace
 and break `agent`-scoped discovery.
 
-**The protocol spec is the source of truth:** `docs/nats-agent-protocol.md`.
-It is a local copy of the canonical spec at `https://github.com/synadia-ai/nats-agent-sdk-docs`;
-when the canonical spec moves, sync this copy. The implementation
-checklist in §12 is what "compliant" means.
+**The protocol spec is the source of truth:** <https://github.com/synadia-ai/nats-agent-sdk-docs>.
+The implementation checklist in §12 is what "compliant" means.
 
 **Wire compatibility with the TypeScript SDK** at `../typescript/` is
 a hard requirement. Both SDKs are validated against each other via

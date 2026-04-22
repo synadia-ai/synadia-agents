@@ -18,7 +18,7 @@ paste the signature.
 ## Relationship to the protocol
 
 Does this require a change to the wire spec
-(`docs/nats-agent-protocol.md`), or can it be built entirely on top of
+(`https://github.com/synadia-ai/nats-agent-sdk-docs`), or can it be built entirely on top of
 what's already defined?
 
 - [ ] Purely SDK ergonomics — no spec change.

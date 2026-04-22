@@ -60,7 +60,7 @@ Message types can be mixed, but each message has a type
 
 ## Python SDK resolutions
 
-This section captures decisions made while designing the Python SDK. It is appended as decisions accumulate — the TypeScript and Go SDKs can adopt, diverge with reason, or reconcile later. Wire-level decisions live in `nats-agent-protocol.md`; the entries here are Python API shape only.
+This section captures decisions made while designing the Python SDK. It is appended as decisions accumulate — the TypeScript and Go SDKs can adopt, diverge with reason, or reconcile later. Wire-level decisions live in <https://github.com/synadia-ai/nats-agent-sdk-docs>; the entries here are Python API shape only.
 
 ### Wire format discrimination (Q1 — resolved)
 

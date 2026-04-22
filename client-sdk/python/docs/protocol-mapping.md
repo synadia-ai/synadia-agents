@@ -1,7 +1,7 @@
 # Protocol mapping
 
 Every SDK call mapped to its section in the NATS Agent Protocol spec
-(`nats-agent-protocol.md`, version `0.1.0-draft`). Intended for
+(<https://github.com/synadia-ai/nats-agent-sdk-docs>, version `0.1.0-draft`). Intended for
 implementers of other SDKs and for reviewers auditing this one.
 
 ## Discovery (§4)

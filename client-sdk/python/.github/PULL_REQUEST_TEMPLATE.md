@@ -8,7 +8,7 @@ what; this block should answer "why now"._
 ## Spec reference
 
 _For wire-level changes, quote the section(s) of
-`docs/nats-agent-protocol.md` this PR implements or corrects. For
+`https://github.com/synadia-ai/nats-agent-sdk-docs` this PR implements or corrects. For
 ergonomics-only PRs, delete this block._
 
 - §X.Y — …

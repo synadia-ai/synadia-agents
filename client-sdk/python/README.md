@@ -1,6 +1,6 @@
 # natsagent
 
-Python SDK for the [NATS Agent Protocol](docs/nats-agent-protocol.md)
+Python SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs)
 (v0.1). Register Python agents over NATS so they're discoverable via
 `$SRV.PING.SynadiaAgents`, and prompt them from callers with streamed
 typed responses.
@@ -116,8 +116,8 @@ async for msg in remote.prompt("do the thing", timeout=30.0):
 
 ## Documentation
 
-- [`docs/nats-agent-protocol.md`](docs/nats-agent-protocol.md) — the
-  protocol spec (source of truth).
+- <https://github.com/synadia-ai/nats-agent-sdk-docs> — the protocol spec
+  (source of truth).
 - [`docs/protocol-mapping.md`](docs/protocol-mapping.md) — every SDK call
   mapped to its spec section; for auditors and other-SDK implementers.
 - [`docs/nats-agent-sdk.md`](docs/nats-agent-sdk.md) — design notes and
