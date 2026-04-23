@@ -1,8 +1,10 @@
 # Agents
 
-Agent hosts that implement the **NATS Agent Protocol** (`0.2.0-draft`). Each subdirectory bridges an existing AI coding harness (PI, OpenClaw, Claude Code, …) onto NATS so any SDK in `../client-sdk/` can drive it.
+Plugins that wrap existing AI harnesses - PI, OpenClaw, Claude Code - as NATS micro services speaking the **NATS Agent Protocol**, so any SDK in `../client-sdk/` can drive them the same way.
 
-## Agents in this monorepo
+For an example of *building* a fresh agent from scratch using the TypeScript SDK, see [`../examples/dspy/`](../examples/dspy/).
+
+## Harness plugins
 
 | Path                | Type token | Underlying harness                          | Subject pattern                                        | `max_payload` | `attachments_ok` |
 | ------------------- | ---------- | ------------------------------------------- | ------------------------------------------------------ | ------------- | ---------------- |
@@ -10,27 +12,19 @@ Agent hosts that implement the **NATS Agent Protocol** (`0.2.0-draft`). Each sub
 | `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.oc.<owner>.<agentName>`                        | 1 MB          | true             |
 | `claude-code/`      | `ccc`      | [Claude Code](https://claude.com/claude-code) | `agents.ccc.<owner>.<session>`                      | 1 MB          | true             |
 
-Each agent also publishes `<subject>.heartbeat` every 30 s with the spec §8.3 payload.
+Every agent also publishes `<subject>.heartbeat` every 30 s.
 
-## What every agent must do
+## How it works
 
-All three implementations register the **same** NATS micro service (`agents`) and share the **same** wire protocol. Differences are confined to the underlying harness integration.
+Every agent registers a NATS micro service called `agents` with an endpoint named `prompt`. The protocol only fixes the endpoint name - the subject is the agent's to choose. For the agents in this repo we've picked `agents.<type-token>.<owner>.<session>`. The endpoint accepts either plain UTF-8 text or a JSON envelope (optionally with inline base64 attachments), then streams typed JSON chunks back on the reply subject - `status` for keep-alive, `response` for content deltas, optional `query` for mid-stream questions - and ends the stream with an empty body. Each agent also publishes a heartbeat on `<subject>.heartbeat` and advertises its `max_payload` and `attachments_ok` in the endpoint metadata. That's the entire contract; everything else below is per-agent variation.
 
-1. **Register** as a NATS micro service named `agents` with metadata `{agent, owner, session, protocol_version: "0.2"}`.
-2. **Add a `prompt` endpoint** at `agents.<type-token>.<owner>.<session>` advertising `max_payload` and `attachments_ok` in the endpoint metadata.
-3. **Publish heartbeats** on `<subject>.heartbeat` every 30 s (§8).
-4. **Accept** plain-text OR JSON envelopes. Decode inline attachments to a per-session staging dir and prepend their absolute paths to the prompt text.
-5. **Stream** typed chunks back on the reply subject:
-   - `{"type":"status","data":"ack"}` on accept and as periodic keep-alive
-   - `{"type":"response","data":"<text>"}` for each content delta
-   - `{"type":"query","data":{...}}` for mid-stream questions (§7) when supported
-6. **Terminate** with an empty body and no headers (§6.5).
-7. **Reject** malformed envelopes, oversized payloads, invalid base64, and unsafe filenames at the wire with `Nats-Service-Error-Code: 400`. Internal failures return `500`.
-8. **Queue group:** endpoints belong to the `"agents"` queue group (§3.3).
+## Per-agent notes
 
-## Attachment staging
+- **`pi/`** - each running PI CLI session becomes one agent instance. Attachments stage at `~/.pi/agent/attachments/<session>/<uuid>/` and are cleaned on session shutdown.
+- **`openclaw/`** - one OpenClaw agent per configured account. Attachments stage at `~/.openclaw/attachments/<agentName>/<uuid>/`, cleaned on gateway stop. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific).
+- **`claude-code/`** - ships as a Claude Code plugin (`/plugin install`). Two permission modes: `terminal` (prompt locally) or `query` (relay as a `query` chunk over NATS). Attachments stage at `~/.claude/channels/nats/attachments/<request_id>/`, cleaned on reply completion.
 
-All three agents decode inline attachments to local disk and reference the paths in the prompt text, using the spec-defined prefix:
+When an agent accepts attachments, it decodes them to disk and prepends the absolute paths to the prompt text like so:
 
 ```
 [Attachments available at the following absolute paths]
@@ -39,32 +33,29 @@ All three agents decode inline attachments to local disk and reference the paths
 <original prompt text>
 ```
 
-Staging locations differ per host:
+## Adding a new plugin
 
-| Agent        | Staging root                                       | Cleanup                             |
-| ------------ | -------------------------------------------------- | ----------------------------------- |
-| `pi/`        | `~/.pi/agent/attachments/<session>/<uuid>/`        | on session shutdown                 |
-| `openclaw/`  | `~/.openclaw/attachments/<agentName>/<uuid>/`      | on gateway stop                     |
-| `claude-code/` | `~/.claude/channels/nats/attachments/<request_id>/` | on reply completion              |
+1. Create `agents/<name>/` with a project layout suited to the target harness.
+2. Pick a short, lowercase **type token** and add a row to the table above.
+3. Implement the protocol contract - registration, streaming, heartbeats, envelope handling, error codes, queue group. See the conformance checklist below.
+4. Cross-verify against any SDK in `../client-sdk/` - the SDK's integration tests are the wire-level contract.
 
-Caller-side constraints (same across all three, rejected with `400`):
+<details>
+<summary>Conformance checklist</summary>
 
-- `content` must be strict RFC 4648 §4 base64.
-- `filename` must be a plain basename — no `/`, `\`, `..`, absolute paths, or NUL bytes.
-- Full encoded envelope must fit within the advertised `max_payload`.
+1. Register as a NATS micro service named `agents` with metadata `{agent, owner, session, protocol_version}`.
+2. Expose an endpoint named `prompt` that advertises `max_payload` and `attachments_ok`. The subject is your choice; the agents in this repo serve it at `agents.<type-token>.<owner>.<session>`.
+3. Publish heartbeats on `<subject>.heartbeat`.
+4. Accept plain-text OR JSON envelopes. Decode inline attachments to a per-session staging dir and prepend their absolute paths to the prompt.
+5. Stream typed chunks on the reply subject: `status` (ack / keep-alive), `response` (content deltas), `query` (mid-stream questions, when supported).
+6. Terminate with an empty body and no headers.
+7. Reject malformed envelopes, oversized payloads, invalid base64, and unsafe filenames with `Nats-Service-Error-Code: 400`. Internal failures return `500`.
+8. Endpoints belong to the `"agents"` queue group.
 
-## Differences worth knowing
+Caller-side constraints (rejected with `400`): `content` must be strict RFC 4648 base64; `filename` must be a plain basename (no `/`, `\`, `..`, absolute paths, or NUL bytes); the encoded envelope must fit within `max_payload`.
 
-- **`pi/`** — each running PI CLI session becomes one agent instance.
-- **`openclaw/`** — one OpenClaw agent per configured account. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific, not part of the spec).
-- **`claude-code/`** — ships as a Claude Code plugin (`/plugin install`). Supports two permission modes: `terminal` (prompt locally) and `query` (relay as §7 query chunk over NATS).
+</details>
 
-## Adding a new agent
+Per-agent configuration, install instructions, and troubleshooting live in each subdirectory README.
 
-1. Create `agents/<name>/` with the host-specific project layout.
-2. Pick a short **type token** (≤ 3 chars, lowercase). Document it in the table above.
-3. Implement the eight requirements under *What every agent must do*.
-4. Cross-verify against any SDK in `../client-sdk/` — the SDK's integration tests are the wire-level contract.
-5. Update this README with the agent's row.
-
-Per-agent configuration, install instructions, and troubleshooting live in the subdirectory READMEs.
+Full protocol spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>

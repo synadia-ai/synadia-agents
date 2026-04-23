@@ -54,7 +54,7 @@ That's the quickstart. Everything else below is depth on specific features.
 
 ## Attachments
 
-The boss's scenario — send a photo and ask about it:
+The boss's scenario - send a photo and ask about it:
 
 ```ts
 import { AttachmentsNotSupportedError, connect, PayloadTooLargeError } from "@synadia/agents";
@@ -105,7 +105,7 @@ All extend `NatsAgentError` for a single catch-all. Use `instanceof` for targete
 
 ## Streaming events
 
-`remote.prompt()` resolves to a `PromptStream` — an `AsyncIterable<StreamMessage>`:
+`remote.prompt()` resolves to a `PromptStream` - an `AsyncIterable<StreamMessage>`:
 
 ```ts
 for await (const msg of stream) {
@@ -135,12 +135,12 @@ for await (const msg of stream) {
 Key guarantees:
 
 - **Terminator → `status: done`.** The SDK always emits a synthetic `{ type: "status", status: "done" }` as the final event before the iterator returns cleanly. Wire-level terminator is "empty body, no headers" per §6.5.
-- **Unknown chunk types are silently dropped** per §6.6 — forward-compat: future `type` values don't break the iterator.
+- **Unknown chunk types are silently dropped** per §6.6 - forward-compat: future `type` values don't break the iterator.
 - **Per-stream inactivity timeout.** Default 60 s, resettable via `opts.inactivityTimeoutMs`. Resets on every delivered chunk, including `status: ack` keep-alives.
 - **Cancellation.** Three ways:
   - `break` out of `for await` (auto-cleanup via `Symbol.asyncIterator.return()`).
   - `stream.cancel()` explicit method.
-  - `opts.signal` — any `AbortSignal`. Iterator throws the signal's `reason`.
+  - `opts.signal` - any `AbortSignal`. Iterator throws the signal's `reason`.
 
 ## Liveness
 
@@ -166,7 +166,7 @@ The SDK enforces spec §8.5 automatically: the first call to `discover()` implic
 
 ## Using NATS contexts
 
-If you already manage connection settings with the `nats` CLI (`nats context add`, `nats context select`), the SDK can pick them up directly — no need to re-specify URL, credentials, or auth options:
+If you already manage connection settings with the `nats` CLI (`nats context add`, `nats context select`), the SDK can pick them up directly - no need to re-specify URL, credentials, or auth options:
 
 ```ts
 import { connect } from "@synadia/agents";
@@ -199,7 +199,7 @@ const client = await connect({
 
 **Supported context fields** in v0.1: `url`, `creds`, `token`, `user`/`password`, `user_jwt`, `inbox_prefix`, `description`. `nkey`, TLS `cert`/`key`/`ca`, and `nsc` integration are tracked in [`TODO.md`](../TODO.md).
 
-**Power-user form** — load without connecting:
+**Power-user form** - load without connecting:
 
 ```ts
 import { loadNatsContext } from "@synadia/agents";
@@ -210,9 +210,9 @@ console.log(ctx.description, ctx.servers);
 
 **Error classes** (all extend `NatsContextError`):
 
-- `NatsContextNotFoundError` — named context file doesn't exist.
-- `NatsContextNotSelectedError` — `current`/`true` asked for but nothing is selected.
-- `NatsContextInvalidError` — file is malformed, missing `url`, or a referenced creds file is absent.
+- `NatsContextNotFoundError` - named context file doesn't exist.
+- `NatsContextNotSelectedError` - `current`/`true` asked for but nothing is selected.
+- `NatsContextInvalidError` - file is malformed, missing `url`, or a referenced creds file is absent.
 
 ## Bun usage
 
@@ -227,6 +227,6 @@ The underlying transport (`@nats-io/transport-node`) is explicitly supported on 
 
 ## Next steps
 
-- [`docs/protocol-mapping.md`](./protocol-mapping.md) — every SDK call mapped to its spec section.
-- [`examples/`](../examples) — 5 runnable scripts covering each major feature.
-- [NATS Agent Protocol spec](https://github.com/synadia-ai/nats-agent-sdk-docs) — the authoritative wire contract.
+- [`docs/protocol-mapping.md`](./protocol-mapping.md) - every SDK call mapped to its spec section.
+- [`examples/`](../examples) - 5 runnable scripts covering each major feature.
+- [NATS Agent Protocol spec](https://github.com/synadia-ai/nats-agent-sdk-docs) - the authoritative wire contract.

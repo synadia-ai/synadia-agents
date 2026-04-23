@@ -1,10 +1,8 @@
 # Synadia Agents
 
-One home for everything built on the **NATS Agent Protocol** — the SDKs that speak it, the agent implementations that host it, and the example apps that use it.
+One home for everything built on the **NATS Agent Protocol** - the SDKs that speak it, the agent implementations that host it, and the example apps that use it.
 
-- **Protocol version tracked:** `0.2.0-draft`
-- **Core idea:** every AI agent (Claude Code, OpenClaw, PI, reference agents, …) registers as a NATS micro service named `agents`. Callers discover, prompt, and stream from it using any language's SDK. Same wire format everywhere.
-- **Why a monorepo:** when the protocol or SDK changes, agents and examples update in one place in the same commit.
+Every AI agent in this repo (Claude Code, OpenClaw, PI, DSPy-ReAct, …) registers as a NATS micro service named `agents`. Callers discover, prompt, and stream from it using any language's SDK - same wire format everywhere.
 
 ## Repository layout
 
@@ -15,34 +13,36 @@ synadia-agents/
 │   ├── README.md
 │   ├── typescript/        ← @synadia/agents (TypeScript/Node/Bun)
 │   └── python/            ← natsagent (Python ≥ 3.11)
-├── agents/                ← protocol-compliant agent hosts
+├── agents/                ← plugins that put existing AI harnesses on NATS
 │   ├── README.md
 │   ├── pi/                ← PI Agent channel
 │   ├── openclaw/          ← OpenClaw plugin
 │   └── claude-code/       ← Claude Code MCP plugin
-└── examples/              ← apps that use the SDK
+└── examples/              ← apps built with the SDK (callers and agents)
     ├── README.md
-    └── agent-web-ui/      ← Vue 3 + Bun browser client
+    ├── agent-web-ui/      ← Vue 3 + Bun browser client
+    └── dspy/              ← standalone agent built from scratch with the SDK (ax-llm ReAct)
 ```
 
-Each subtree keeps its own `README.md`, `package.json`, and tests. The index READMEs (`client-sdk/README.md`, `agents/README.md`, `examples/README.md`) describe what lives at each level.
+Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`, `agents/README.md`, `examples/README.md`) describe what lives at each level.
 
 ## Subject namespace
 
-All agents expose the same subject pattern:
+The protocol only requires an endpoint named `prompt` - the subject it's served on is up to each agent. For the agents in this repo we've chosen a single pattern:
 
 ```
 agents.<type-token>.<owner>.<session>             # prompt endpoint
-agents.<type-token>.<owner>.<session>.heartbeat   # liveness beacon (30 s)
+agents.<type-token>.<owner>.<session>.heartbeat   # liveness beacon
 ```
 
 Type tokens currently in this repo:
 
-| Token | Host                 | Path                  |
-| ----- | -------------------- | --------------------- |
-| `pi`  | PI Agent             | `agents/pi/`          |
-| `oc`  | OpenClaw             | `agents/openclaw/`    |
-| `ccc` | Claude Code          | `agents/claude-code/` |
+| Token  | Host                 | Path                  |
+| ------ | -------------------- | --------------------- |
+| `pi`   | PI Agent             | `agents/pi/`          |
+| `oc`   | OpenClaw             | `agents/openclaw/`    |
+| `ccc`  | Claude Code          | `agents/claude-code/` |
+| `dspy` | ax-llm ReAct (DSPy)  | `examples/dspy/`      |
 
 Discovery is standard NATS micro:
 
@@ -52,23 +52,23 @@ nats micro ls
 nats sub 'agents.*.*.*.heartbeat'
 ```
 
-## Wire protocol (one-paragraph summary)
+## Wire protocol
 
-A request is either plain UTF-8 text or a JSON envelope `{"prompt": "...", "attachments": [{"filename": "...", "content": "<RFC 4648 §4 base64>"}]}`. The agent streams typed JSON chunks on the reply subject — `{"type":"response","data":"..."}` for content, `{"type":"status","data":"ack"}` for keep-alive, `{"type":"query","data":{...}}` for mid-stream questions. An **empty body with no headers** ends the stream. Errors use the `Nats-Service-Error-Code` header (`400` for client errors, `500` for server).
+A request is either plain UTF-8 text or a JSON envelope `{"prompt": "...", "attachments": [{"filename": "...", "content": "<base64>"}]}`. The agent streams typed JSON chunks on the reply subject - `{"type":"response","data":"..."}` for content, `{"type":"status","data":"ack"}` for keep-alive, `{"type":"query","data":{...}}` for mid-stream questions. An **empty body with no headers** ends the stream. Errors use the `Nats-Service-Error-Code` header (`400` client, `500` server).
 
-Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs> (external).
+Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
 
 ## How the pieces fit
 
 ```
-  caller (SDK)  ──▶  NATS  ──▶  agent host (pi / oc / ccc)
-       ▲                                   │
-       └─── streamed response chunks ──────┘
+  caller (SDK)  ──▶  NATS  ──▶  agent host
+       ▲                           │
+       └─── streamed chunks ───────┘
 ```
 
-- **`client-sdk/*`** — produce envelopes, validate locally against agent metadata (`max_payload`, `attachments_ok`), parse streamed chunks.
-- **`agents/*`** — register the `agents` micro service, accept envelopes, drive the underlying AI harness, stream chunks back.
-- **`examples/*`** — demonstrate SDK usage end-to-end against real agents.
+- **`client-sdk/*`** - produce envelopes, validate locally against agent metadata (`max_payload`, `attachments_ok`), parse streamed chunks.
+- **`agents/*`** - register the `agents` micro service, drive the underlying AI harness, stream chunks back.
+- **`examples/*`** - demonstrate SDK usage end-to-end against real agents.
 
 ## Quickstart (TypeScript)
 
@@ -85,12 +85,8 @@ for await (const msg of await client.bind(agent!).prompt("hello")) {
 await client.close();
 ```
 
-See `client-sdk/typescript/README.md` for install, error handling, and full examples.
-
-## Status
-
-Pre-1.0. The protocol is `0.2.0-draft`; SDK and agent APIs may shift until `1.0`.
+See `client-sdk/typescript/README.md` for install, error handling, and full examples. For Python, see `client-sdk/python/README.md`.
 
 ## License
 
-Apache-2.0 for the SDK, MIT for the agent channels and examples — see each subtree's `LICENSE` file.
+Apache-2.0 for the SDK, MIT for the agent channels and examples - see each subtree's `LICENSE` file.

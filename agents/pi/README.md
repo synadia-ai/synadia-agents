@@ -4,7 +4,7 @@
 
 NATS channel for [PI Agent](https://github.com/badlogic/pi-mono), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0-draft**.
 
-Every PI session becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol — e.g. [`@synadia/agents`](../../client-sdk/typescript) — can enumerate running PI sessions, prompt them, and stream responses back.
+Every PI session becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia/agents`](../../client-sdk/typescript) - can enumerate running PI sessions, prompt them, and stream responses back.
 
 Sibling implementations (same wire protocol): [`claude-code`](../claude-code), [`openclaw`](../openclaw).
 
@@ -19,7 +19,7 @@ On session start the extension:
 5. On each inbound prompt: decodes any attached files to `~/.pi/agent/attachments/<session>/<uuid>/<filename>`, prepends their absolute paths to the prompt text, emits a `status: ack` chunk, injects the augmented prompt into PI via `pi.sendUserMessage()`, streams `text_delta` events back as typed `{type:"response",data}` chunks, and closes with the spec-mandated empty-body no-headers terminator.
 6. Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Staging failures (disk full, permission denied) return `500`.
 
-Multiple PI sessions on the same host register as distinct instances of the same service, each with a unique `prompt` endpoint subject — `nats micro info agents` aggregates across all of them.
+Multiple PI sessions on the same host register as distinct instances of the same service, each with a unique `prompt` endpoint subject - `nats micro info agents` aggregates across all of them.
 
 ## Install
 
@@ -56,16 +56,16 @@ Config lives at `~/.pi/agent/nats-channel.json`:
 | `sessionName` | no | sanitized basename of CWD | Overrides the 4th subject token |
 
 Environment variables take precedence over the file:
-- `NATS_CONTEXT` — select a NATS CLI context
-- `NATS_SESSION_NAME` — override the session name
+- `NATS_CONTEXT` - select a NATS CLI context
+- `NATS_SESSION_NAME` - override the session name
 
 ### In-PI commands
 
-- `/nats-status` — show current subject, service, instance id, protocol version, pending/queued counts
-- `/nats-configure` — print current config
-- `/nats-configure <context>` — switch NATS context
-- `/nats-configure session <name>` — override session name
-- `/nats-configure session clear` — revert to CWD basename
+- `/nats-status` - show current subject, service, instance id, protocol version, pending/queued counts
+- `/nats-configure` - print current config
+- `/nats-configure <context>` - switch NATS context
+- `/nats-configure session <name>` - override session name
+- `/nats-configure session clear` - revert to CWD basename
 
 Changes take effect after restarting PI.
 
@@ -86,7 +86,7 @@ agents.pi.<owner>.<session>.heartbeat   # liveness beacon (spec §8)
 
 ## Talking to a running PI session
 
-Any caller speaking the protocol — a spec-compliant SDK or the `nats` CLI — can:
+Any caller speaking the protocol - a spec-compliant SDK or the `nats` CLI - can:
 
 ```bash
 # Enumerate all compliant agents (includes Claude Code, OpenClaw, etc.)
@@ -119,8 +119,8 @@ Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>. Quick reference:
 
 - **Request**: plain UTF-8 text OR JSON `{"prompt":"…","attachments":[{"filename":"…","content":"<base64>"},…]}`. Attachment `content` must be RFC 4648 §4 base64 (standard alphabet, padded, no URL-safe variant, no whitespace).
 - **Response**: one or more typed chunks on the reply subject:
-  - `{"type":"response","data":"<text>"}` — content
-  - `{"type":"status","data":"ack"}` — accepted / keep-alive
+  - `{"type":"response","data":"<text>"}` - content
+  - `{"type":"status","data":"ack"}` - accepted / keep-alive
 - **Terminator**: empty body **and no headers** (spec §6.5).
 - **Errors**: `Nats-Service-Error-Code` header with `400`/`500`, followed by the terminator.
 
@@ -133,7 +133,7 @@ Any NATS Agent Protocol SDK will enumerate PI sessions automatically. Without an
 nats micro list           # shows all agents instances
 nats micro info agents
 
-# Heartbeats — track liveness without polling
+# Heartbeats - track liveness without polling
 nats sub 'agents.*.*.*.heartbeat'
 ```
 
@@ -161,7 +161,7 @@ The absolute paths are then prepended to the prompt as:
 PI's model sees the list in the user message and can open the files with its file tools. The entire `<session>` directory is removed on `session_shutdown`; within a session, attachments from earlier turns remain on disk so follow-up turns can still reference them.
 
 Caller-side constraints (rejected at the wire with `400` if violated):
-- `content` must be strict RFC 4648 §4 base64 — standard alphabet, padded, no URL-safe, no whitespace.
+- `content` must be strict RFC 4648 §4 base64 - standard alphabet, padded, no URL-safe, no whitespace.
 - `filename` must be a plain basename. Path separators (`/`, `\`), `..`, absolute paths, and NUL bytes are rejected rather than silently flattened.
 - Full encoded envelope must fit within `max_payload` (1 MB).
 
@@ -181,7 +181,7 @@ Deliberate deferrals:
 - **`NATS: reconnecting…`.** Connection dropped; restoring automatically.
 - **My session got a `-2` suffix.** Another PI session on the same `owner + session` was already registered. Use `/nats-configure session <name>` to pick a different name.
 - **`nats req` returns nothing or hangs.** Pass `--wait-for-empty`; the protocol signals end-of-stream with an empty-body message, not a single response.
-- **`400 attachment[N] has invalid base64 content`.** The SDK / client emitted URL-safe base64 or unpadded output. Switch to RFC 4648 §4 (standard alphabet, padded) — Node's `Buffer.from(bytes).toString("base64")` produces the correct form.
+- **`400 attachment[N] has invalid base64 content`.** The SDK / client emitted URL-safe base64 or unpadded output. Switch to RFC 4648 §4 (standard alphabet, padded) - Node's `Buffer.from(bytes).toString("base64")` produces the correct form.
 - **`400 attachment[N] has unsafe filename`.** Path separators, `..`, absolute paths, or NUL in `filename`. Send the basename only (e.g. `"report.pdf"`, not `"./reports/report.pdf"`).
 
 ## License

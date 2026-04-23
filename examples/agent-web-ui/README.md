@@ -5,7 +5,7 @@ Discover agents over NATS, send prompts (with optional attachments), and
 stream responses back in a slick browser UI.
 
 Primary use: manually poking at the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs)
-implementations — [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-code),
+implementations - [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-code),
 [`openclaw`](../../agents/openclaw), and the SDK's own reference agent.
 
 ## Shape
@@ -33,7 +33,7 @@ bun install
 
 ## Run
 
-**Dev** — Vite serves HMR on :5173 and proxies `/ws` to the Bun server on :3300:
+**Dev** - Vite serves HMR on :5173 and proxies `/ws` to the Bun server on :3300:
 
 ```bash
 # Terminal 1
@@ -45,7 +45,7 @@ bun run vite         # Vite dev server on http://localhost:5173
 
 Open <http://localhost:5173>.
 
-**Production-ish** — single command, Bun serves the built UI and the WS:
+**Production-ish** - single command, Bun serves the built UI and the WS:
 
 ```bash
 bun run build
@@ -62,12 +62,12 @@ bun run server/index.ts [--port 3300] [--context current] [--servers nats://...]
 |------|-----|---------|---------|
 | `--port <n>` | `PORT` | `3300` | HTTP + WS port |
 | `--context <name>` | `NATS_CONTEXT` | `current` | NATS CLI context in `~/.config/nats/context/` |
-| `--servers <url>` | `NATS_URL` | — | Raw NATS URL (overrides context if given) |
-| `--dev` | — | off | Skip static serving; requires `bun run vite` alongside |
+| `--servers <url>` | `NATS_URL` | - | Raw NATS URL (overrides context if given) |
+| `--dev` | - | off | Skip static serving; requires `bun run vite` alongside |
 
 ## Mid-stream queries
 
-Agents can pause a response to ask a question (protocol §7 query chunk) —
+Agents can pause a response to ask a question (protocol §7 query chunk) -
 a permission prompt, a clarification, anything. The UI renders these inline
 as a separate bubble with:
 

@@ -4,7 +4,7 @@
 
 NATS channel plugin for [OpenClaw](https://openclaw.ai), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0-draft**.
 
-Every configured OpenClaw agent becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol — e.g. [`@synadia/agents`](../../client-sdk/typescript) — can enumerate running OpenClaw agents, prompt them, and stream responses back.
+Every configured OpenClaw agent becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia/agents`](../../client-sdk/typescript) - can enumerate running OpenClaw agents, prompt them, and stream responses back.
 
 Sibling implementations sharing the same wire protocol: [`pi`](../pi) (PI), [`claude-code`](../claude-code) (Claude Code).
 
@@ -17,7 +17,7 @@ When OpenClaw starts the channel:
 3. Adds a `prompt` endpoint at `agents.oc.<owner>.<agentName>` advertising `max_payload: 1MB` and `attachments_ok: true`.
 4. Publishes heartbeats on `agents.oc.<owner>.<agentName>.heartbeat` every 30 s.
 5. On each inbound prompt: decodes any attached files to `~/.openclaw/attachments/<agentName>/<uuid>/<filename>`, prepends their absolute paths to the prompt text, emits a `status: ack` chunk, dispatches the augmented prompt into OpenClaw's direct-DM pipeline, and streams each delivered block back as a typed `{type:"response",data}` chunk, terminating with the spec-mandated empty-body no-headers terminator.
-6. Agent-initiated messages (the old `sendText` outbound path) still publish to `agents.oc.<owner>.<agentName>.outbound` — an OpenClaw-specific extension, not part of the spec.
+6. Agent-initiated messages (the old `sendText` outbound path) still publish to `agents.oc.<owner>.<agentName>.outbound` - an OpenClaw-specific extension, not part of the spec.
 
 Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Staging and dispatch failures return `500`.
 
@@ -82,10 +82,10 @@ openclaw gateway restart
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `url` | no | `nats://localhost:4222` | NATS server URL |
-| `agentName` | yes | — | 4th subject token (`agents.oc.<owner>.<agentName>`) |
+| `agentName` | yes | - | 4th subject token (`agents.oc.<owner>.<agentName>`) |
 | `description` | no | `OpenClaw agent <agentName>` | Shown via `$SRV.INFO` |
-| `credentials` | no | — | Path to `.creds` file for NATS authentication |
-| `owner` | no | `default` | 3rd subject token — operator/account namespace. Spec §2 requires a 4-token subject. |
+| `credentials` | no | - | Path to `.creds` file for NATS authentication |
+| `owner` | no | `default` | 3rd subject token - operator/account namespace. Spec §2 requires a 4-token subject. |
 
 > **Migrating from v0.2:** the old `org` field has been renamed `owner` (§3.2 terminology). The old name is still accepted as an alias with a deprecation warning in logs.
 
@@ -127,7 +127,7 @@ nats sub 'agents.*.*.*.heartbeat'
 
 ## Talking to a running OpenClaw agent
 
-Any caller speaking the protocol — a spec-compliant SDK or the `nats` CLI — can:
+Any caller speaking the protocol - a spec-compliant SDK or the `nats` CLI - can:
 
 ```bash
 # Plain text prompt
@@ -163,8 +163,8 @@ Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>. Quick reference:
 
 - **Request**: plain UTF-8 text OR JSON `{"prompt":"…","attachments":[{"filename":"…","content":"<base64>"},…]}`. Attachment `content` must be RFC 4648 §4 base64 (standard alphabet, padded, no URL-safe variant, no whitespace).
 - **Response**: one or more typed chunks on the reply subject:
-  - `{"type":"response","data":"<text>"}` — content
-  - `{"type":"status","data":"ack"}` — accepted / keep-alive
+  - `{"type":"response","data":"<text>"}` - content
+  - `{"type":"status","data":"ack"}` - accepted / keep-alive
 - **Terminator**: empty body **and no headers** (§6.5).
 - **Errors**: `Nats-Service-Error-Code` header with `400`/`500`, followed by the terminator.
 
@@ -189,7 +189,7 @@ OpenClaw's dispatch pipeline sees the list in the user message and the agent can
 
 Caller-side constraints (rejected with `400` if violated):
 
-- `content` must be strict RFC 4648 §4 base64 — standard alphabet, padded, no URL-safe, no whitespace.
+- `content` must be strict RFC 4648 §4 base64 - standard alphabet, padded, no URL-safe, no whitespace.
 - `filename` must be a plain basename. Path separators (`/`, `\`), `..`, absolute paths, and NUL bytes are rejected rather than silently flattened.
 - Full encoded envelope must fit within `max_payload` (1 MB).
 
@@ -211,14 +211,14 @@ The spec reserves the four-token subject structure; there is no additional names
 
 ## Discovery
 
-Spec-compliant SDKs discover via `$SRV.PING.agents` / `$SRV.INFO.agents`. No custom `.inspect` endpoint (the pre-0.3 channel had one; it's gone — $SRV.INFO replaces it).
+Spec-compliant SDKs discover via `$SRV.PING.agents` / `$SRV.INFO.agents`. No custom `.inspect` endpoint (the pre-0.3 channel had one; it's gone - $SRV.INFO replaces it).
 
 ## Troubleshooting
 
 - **`[nats] config field 'org' is deprecated`.** Rename `org` → `owner` in your `openclaw.json`. The old name still works but the warning will stay until you update.
 - **Gateway fails with `NATS: disconnected`.** Check the configured URL and, if using credentials, that the `.creds` file exists and is readable.
 - **`nats req` returns nothing or hangs.** Pass `--wait-for-empty`; the protocol signals end-of-stream with an empty-body message, not a single response.
-- **`400 attachment[N] has invalid base64 content`.** The caller emitted URL-safe base64 or unpadded output. Switch to RFC 4648 §4 (standard alphabet, padded) — Node's `Buffer.from(bytes).toString("base64")` produces the correct form.
+- **`400 attachment[N] has invalid base64 content`.** The caller emitted URL-safe base64 or unpadded output. Switch to RFC 4648 §4 (standard alphabet, padded) - Node's `Buffer.from(bytes).toString("base64")` produces the correct form.
 - **`400 attachment[N] has unsafe filename`.** Send the basename only (e.g. `"pic.png"`, not `"./images/pic.png"`).
 
 ## Development
