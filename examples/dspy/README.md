@@ -1,13 +1,9 @@
-# @synadia/nats-dspy-agent
+# examples/dspy — building an agent with the SDK
 
-A NATS Agent Protocol (0.2.0-draft) host powered by [ax-llm](https://github.com/ax-llm/ax)
-(DSPy-style signatures + ReAct) with four sandboxed tools:
-`list_files`, `read_file`, `write_file`, `bash`.
+An example of **building a new agent from scratch** using the `@synadia/agents` TypeScript SDK. It runs a [ax-llm](https://github.com/ax-llm/ax) (DSPy-style signatures + ReAct) loop with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Once started it appears as a normal NATS Agent Protocol service and can be driven by any caller — the CLI examples in `../../client-sdk/typescript/examples/`, the web UI in `../agent-web-ui/`, or your own code.
 
 - `list_files` / `read_file` / `write_file` refuse any path that escapes the sandbox root.
-- `bash` runs commands with `cwd` set to the sandbox root, a 30 s timeout, and
-  8000-char output truncation. **Note:** a shell is a soft boundary — the model
-  can `cd ..`, `curl`, etc. Don't point this at anything you care about.
+- `bash` runs commands with `cwd` set to the sandbox root, a 30 s timeout, and 8000-char output truncation. **Note:** a shell is a soft boundary — the model can `cd ..`, `curl`, etc. Don't point this at anything you care about.
 
 ## Subject
 
@@ -21,7 +17,7 @@ agents.dspy.<owner>.react.heartbeat   # 10 s heartbeat
 1. `{"type":"status","data":"ack"}` — request accepted.
 2. `{"type":"status","data":"→ list_files(\".\")"}` — one per tool call, showing the ReAct trace live.
 3. `{"type":"response","data":"…"}` — final-answer deltas from the model.
-4. Empty-body no-headers message — end of stream (spec terminator).
+4. Empty-body no-headers message — end of stream.
 
 ## Run
 
@@ -55,4 +51,4 @@ cd ../../client-sdk/typescript
 bun run examples/02-prompt-text.ts "list the files in the sandbox and tell me what you see"
 ```
 
-Or drive it from the web UI (`examples/agent-web-ui`).
+Or drive it from the web UI in `../agent-web-ui/`.

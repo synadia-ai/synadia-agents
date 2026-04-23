@@ -1,6 +1,8 @@
 # Agents
 
-Agent hosts that speak the **NATS Agent Protocol**. Each subdirectory wraps an existing AI harness — PI, OpenClaw, Claude Code, DSPy-style ReAct — as a NATS micro service, so any SDK in `../client-sdk/` can drive it the same way.
+Plugins that wrap existing AI harnesses — PI, OpenClaw, Claude Code — as NATS micro services speaking the **NATS Agent Protocol**, so any SDK in `../client-sdk/` can drive them the same way.
+
+For an example of *building* a fresh agent from scratch using the TypeScript SDK, see [`../examples/dspy/`](../examples/dspy/).
 
 ## Available agents
 
@@ -9,7 +11,8 @@ Agent hosts that speak the **NATS Agent Protocol**. Each subdirectory wraps an e
 | `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.pi.<owner>.<session>`                      | 1 MB          | true             |
 | `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.oc.<owner>.<agentName>`                        | 1 MB          | true             |
 | `claude-code/`      | `ccc`      | [Claude Code](https://claude.com/claude-code) | `agents.ccc.<owner>.<session>`                      | 1 MB          | true             |
-| `dspy/`             | `dspy`     | [ax-llm](https://github.com/ax-llm/ax) ReAct | `agents.dspy.<owner>.react`                           | 1 MB          | false            |
+
+Every agent also publishes `<subject>.heartbeat` every 30 s.
 
 ## How it works
 
@@ -20,7 +23,6 @@ Every agent registers a NATS micro service called `agents` with an endpoint name
 - **`pi/`** — each running PI CLI session becomes one agent instance. Attachments stage at `~/.pi/agent/attachments/<session>/<uuid>/` and are cleaned on session shutdown.
 - **`openclaw/`** — one OpenClaw agent per configured account. Attachments stage at `~/.openclaw/attachments/<agentName>/<uuid>/`, cleaned on gateway stop. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific).
 - **`claude-code/`** — ships as a Claude Code plugin (`/plugin install`). Two permission modes: `terminal` (prompt locally) or `query` (relay as a `query` chunk over NATS). Attachments stage at `~/.claude/channels/nats/attachments/<request_id>/`, cleaned on reply completion.
-- **`dspy/`** — an [ax-llm](https://github.com/ax-llm/ax) ReAct loop (DSPy-style signatures) with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Streams each tool call as a `status` chunk so callers see the ReAct trace live; the final answer arrives as `response` deltas. Does not accept attachments.
 
 When an agent accepts attachments, it decodes them to disk and prepends the absolute paths to the prompt text like so:
 

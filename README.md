@@ -13,15 +13,15 @@ synadia-agents/
 │   ├── README.md
 │   ├── typescript/        ← @synadia/agents (TypeScript/Node/Bun)
 │   └── python/            ← natsagent (Python ≥ 3.11)
-├── agents/                ← protocol-compliant agent hosts
+├── agents/                ← plugins that put existing AI harnesses on NATS
 │   ├── README.md
 │   ├── pi/                ← PI Agent channel
 │   ├── openclaw/          ← OpenClaw plugin
-│   ├── claude-code/       ← Claude Code MCP plugin
-│   └── dspy/              ← ax-llm (DSPy-style) ReAct agent
-└── examples/              ← apps that use the SDK
+│   └── claude-code/       ← Claude Code MCP plugin
+└── examples/              ← apps built with the SDK (callers and agents)
     ├── README.md
-    └── agent-web-ui/      ← Vue 3 + Bun browser client
+    ├── agent-web-ui/      ← Vue 3 + Bun browser client
+    └── dspy/              ← standalone agent built from scratch with the SDK (ax-llm ReAct)
 ```
 
 Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`, `agents/README.md`, `examples/README.md`) describe what lives at each level.
@@ -42,7 +42,7 @@ Type tokens currently in this repo:
 | `pi`   | PI Agent             | `agents/pi/`          |
 | `oc`   | OpenClaw             | `agents/openclaw/`    |
 | `ccc`  | Claude Code          | `agents/claude-code/` |
-| `dspy` | ax-llm ReAct (DSPy)  | `agents/dspy/`        |
+| `dspy` | ax-llm ReAct (DSPy)  | `examples/dspy/`      |
 
 Discovery is standard NATS micro:
 
