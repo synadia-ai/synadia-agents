@@ -28,7 +28,7 @@ Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`,
 
 ## Subject namespace
 
-The protocol only requires an endpoint named `prompt` — the subject it's served on is up to each agent. Across this repo we follow a single convention:
+The protocol only requires an endpoint named `prompt` — the subject it's served on is up to each agent. For the agents in this repo we've chosen a single pattern:
 
 ```
 agents.<type-token>.<owner>.<session>             # prompt endpoint
