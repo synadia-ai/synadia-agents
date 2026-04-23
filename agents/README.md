@@ -4,7 +4,7 @@ Plugins that wrap existing AI harnesses — PI, OpenClaw, Claude Code — as NAT
 
 For an example of *building* a fresh agent from scratch using the TypeScript SDK, see [`../examples/dspy/`](../examples/dspy/).
 
-## Available agents
+## Harness plugins
 
 | Path                | Type token | Underlying harness                          | Subject pattern                                        | `max_payload` | `attachments_ok` |
 | ------------------- | ---------- | ------------------------------------------- | ------------------------------------------------------ | ------------- | ---------------- |
@@ -33,9 +33,9 @@ When an agent accepts attachments, it decodes them to disk and prepends the abso
 <original prompt text>
 ```
 
-## Adding a new agent
+## Adding a new plugin
 
-1. Create `agents/<name>/` with a host-specific project layout.
+1. Create `agents/<name>/` with a project layout suited to the target harness.
 2. Pick a short, lowercase **type token** and add a row to the table above.
 3. Implement the protocol contract — registration, streaming, heartbeats, envelope handling, error codes, queue group. See the conformance checklist below.
 4. Cross-verify against any SDK in `../client-sdk/` — the SDK's integration tests are the wire-level contract.
