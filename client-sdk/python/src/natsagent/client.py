@@ -17,13 +17,14 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, TypeAlias
 
+from nats.errors import NoRespondersError
+
 from ._bytes import InvalidSizeError, parse_human_bytes
 from ._logging import get_logger
 from .envelope import Attachment, Envelope, encode
-from .errors import AgentNotFound, ProtocolError
+from .errors import ProtocolError
 from .heartbeat import AgentStatus, HeartbeatTracker
 from .messages import QueryChunk, ResponseChunk, StatusChunk, decode_chunk
-from .subjects import parse_agent_subject
 from .validation import (
     assert_attachments_allowed,
     assert_prompt_non_empty,
@@ -95,8 +96,8 @@ class DiscoveredAgent:
     ``inbox`` is the full NATS subject reported by ``$SRV.INFO`` for the
     ``prompt`` endpoint — use it to :meth:`Client.bind`. ``service_id`` is
     the NATS micro service instance id, useful for distinguishing multiple
-    running instances of the same identity tuple (§3.3) and for correlating
-    ``$SRV.INFO.SynadiaAgents.{instance_id}`` lookups (§4.2) and heartbeat
+    running instances of the same identity tuple (§3.4) and for correlating
+    ``$SRV.INFO.agents.{instance_id}`` lookups (§4.2) and heartbeat
     ``instance_id`` values (§8.3).
 
     ``agent`` matches ``metadata.agent`` from the $SRV.INFO response (§3.2)
@@ -113,6 +114,8 @@ class DiscoveredAgent:
     description: str
     prompt_endpoint: EndpointInfo
     session: str | None = None
+    protocol_version: str = ""
+    version: str = ""
 
 
 class Client:
@@ -135,7 +138,7 @@ class Client:
         self._started = False
 
     async def discover(self, *, timeout: float = 2.0) -> list[DiscoveredAgent]:
-        """Enumerate agents via ``$SRV.INFO.SynadiaAgents`` (§4).
+        """Enumerate agents via ``$SRV.INFO.agents`` (§4).
 
         §4.1 defines two stable discovery subjects; we use ``$SRV.INFO`` so
         each response carries its endpoints (§4.3 requires callers to read
@@ -148,7 +151,7 @@ class Client:
         sub = await self._nc.subscribe(inbox)
         responses: list[bytes] = []
         try:
-            await self._nc.publish(f"$SRV.INFO.{_DISCOVERY_NAME}", b"", reply=inbox)
+            await self._nc.publish(f"$SRV.INFO.{_SERVICE_NAME}", b"", reply=inbox)
             while True:
                 try:
                     msg = await sub.next_msg(timeout=timeout)
@@ -182,21 +185,24 @@ class Client:
             return RemoteAgent(self._nc, target.inbox, prompt_endpoint=target.prompt_endpoint)
         return RemoteAgent(self._nc, target, prompt_endpoint=None)
 
-    async def ping(self, inbox: str, *, timeout: float = 2.0) -> bool:
-        """On-demand reachability check via ``$SRV.PING.SynadiaAgents`` (§8.4).
+    async def ping(self, *, timeout: float = 2.0) -> bool:
+        """Returns ``True`` iff any protocol-compliant agent responds to
+        ``$SRV.PING.agents`` within ``timeout``. For per-instance
+        liveness use :meth:`Client.status` (heartbeat-tracked).
 
-        Returns ``True`` iff any Synadia agent responds within ``timeout``;
-        the spec directs callers to correlate responses with heartbeats via
-        ``instance_id`` for per-instance reachability (§8.4). This one-shot
-        variant is satisfied by any response since the ``discover``-free
-        caller is typically just asking "is the bus reachable and any
-        compliant agent present?".
+        Both paths where no compliant agent is present return ``False``:
+        a plain ``TimeoutError`` (no responders arrived in time) and a
+        ``NoRespondersError`` (broker with ``no_responders`` enabled saw
+        zero subscribers on the PING subject). The debug log distinguishes
+        the two; callers only see the boolean.
         """
-        if parse_agent_subject(inbox) is None:
-            raise AgentNotFound(f"not a valid agent inbox subject: {inbox}")
         try:
-            await self._nc.request(f"$SRV.PING.{_DISCOVERY_NAME}", b"", timeout=timeout)
+            await self._nc.request(f"$SRV.PING.{_SERVICE_NAME}", b"", timeout=timeout)
         except TimeoutError:
+            log.debug("ping: no compliant agent responded within %.1fs", timeout)
+            return False
+        except NoRespondersError:
+            log.debug("ping: broker reports no responders for $SRV.PING.%s", _SERVICE_NAME)
             return False
         return True
 
@@ -231,13 +237,19 @@ class RemoteAgent:
         text: str | Envelope,
         *,
         attachments: list[Attachment] | None = None,
+        session: str | None = None,
         timeout: float = 60.0,
     ) -> AsyncIterator[StreamMessage]:
         """Send a prompt and return an async iterator of streamed messages.
 
         ``text`` is either a bare string or a fully-constructed
         :class:`Envelope`. ``attachments``, when provided, are attached to
-        the envelope (per §5.1).
+        the envelope (per §5.1). ``session`` is an optional caller-supplied
+        conversation label carried on the request envelope as an SDK
+        convention tolerated per §5.6 — session-aware harnesses use it to
+        pin multi-turn conversations. When ``text`` is an :class:`Envelope`
+        with its own ``session``, an explicit ``session=`` kwarg wins
+        (caller's call takes precedence).
 
         §5.4 pre-publish validation runs synchronously before any wire I/O
         when the remote was bound from a :class:`DiscoveredAgent`. Failures
@@ -247,7 +259,8 @@ class RemoteAgent:
         - :class:`AttachmentsNotSupportedError` — attachments with
           ``attachments_ok=false`` (§5.4).
         - :class:`PayloadTooLargeError` — envelope exceeds ``max_payload``
-          (§5.4).
+          (§5.4). The ``session`` string counts toward the encoded payload
+          size the limit is checked against.
 
         The iterator yields :class:`ResponseChunk` / :class:`StatusChunk` as
         the agent emits them and :class:`Query` when the agent asks a
@@ -259,16 +272,27 @@ class RemoteAgent:
         seconds, the iterator raises.
         """
         if isinstance(text, Envelope):
+            merged_attachments: list[Attachment] | None
             if attachments:
-                existing = list(text.attachments or [])
-                existing.extend(attachments)
-                envelope = Envelope(prompt=text.prompt, attachments=existing)
+                merged_attachments = list(text.attachments or [])
+                merged_attachments.extend(attachments)
             else:
-                envelope = text
+                merged_attachments = list(text.attachments) if text.attachments else None
+            # Explicit session= kwarg wins over an envelope-embedded session
+            # (principle of least surprise — caller's kwarg is the fresher
+            # intent). `None` explicitly passed as kwarg still means "use the
+            # envelope's session" — only a truthy kwarg overrides.
+            effective_session = session if session is not None else text.session
+            envelope = Envelope(
+                prompt=text.prompt,
+                attachments=merged_attachments,
+                session=effective_session,
+            )
         else:
             envelope = Envelope(
                 prompt=text,
                 attachments=list(attachments) if attachments else None,
+                session=session,
             )
 
         # §5.4: local validation happens synchronously BEFORE any wire I/O.
@@ -295,6 +319,7 @@ class RemoteAgent:
                 try:
                     msg = await sub.next_msg(timeout=timeout)
                 except TimeoutError as exc:
+                    log.warning("stream stalled on %s: no chunk within %.1fs", reply, timeout)
                     raise ProtocolError(
                         f"stream stalled: no chunk received within {timeout}s on {reply}"
                     ) from exc
@@ -303,6 +328,7 @@ class RemoteAgent:
                 if "Nats-Service-Error-Code" in headers:
                     code = headers["Nats-Service-Error-Code"]
                     desc = headers.get("Nats-Service-Error", "")
+                    log.warning("service error on %s: code=%s desc=%s", reply, code, desc)
                     raise ProtocolError(f"service error {code}: {desc}")
 
                 if msg.data == b"" and not headers:
@@ -331,11 +357,12 @@ class RemoteAgent:
                 await sub.unsubscribe()
 
 
-_ACCEPTED_SERVICE_NAMES = frozenset({"Synadia Agents", "SynadiaAgents"})
-_DISCOVERY_NAME = "SynadiaAgents"
-"""Compact form used in ``$SRV.{PING,INFO}.<name>`` subjects. Spec §3.1 allows
-both ``Synadia Agents`` and ``SynadiaAgents``; subjects can't contain spaces,
-so we ship the compact form on the wire and accept either in responses."""
+_SERVICE_NAME = "agents"
+"""§3.1: every compliant agent registers under the shared service name
+``agents``. This single value is the discovery filter callers apply to
+separate protocol agents from other NATS micro services on the bus.
+v0.2 is wire-incompatible with v0.1 (spec §11.3), so only the v0.2 name
+is accepted — there is no back-compat alias list."""
 
 # Default `prompt` endpoint subject is `agents.{agent}.{owner}.{name}` — 4 dot
 # tokens (§2). Custom endpoint subjects break this pattern, in which case the
@@ -346,11 +373,11 @@ _DEFAULT_INBOX_TOKEN_COUNT = 4
 def _parse_srv_info_response(data: bytes) -> DiscoveredAgent | None:  # noqa: PLR0911
     """Parse one ``$SRV.INFO`` response; return None if not a compliant agent.
 
-    Spec §3.1: agents register under service name ``"Synadia Agents"`` (or
-    ``"SynadiaAgents"``). §3.2: metadata carries ``agent``, ``owner``,
-    ``protocol_version``, and optionally ``session``. §4.3: callers read the
-    prompt endpoint subject from the response — they MUST NOT reconstruct it
-    from identity alone.
+    Spec §3.1: agents register under service name ``"agents"``. §3.2:
+    metadata carries ``agent``, ``owner``, ``protocol_version``, and
+    optionally ``session``. §4.3: callers read the prompt endpoint
+    subject from the response — they MUST NOT reconstruct it from
+    identity alone.
 
     Multiple early returns reflect the validation pipeline (unknown service,
     missing metadata, missing endpoints); suppressing PLR0911 preserves the
@@ -363,19 +390,19 @@ def _parse_srv_info_response(data: bytes) -> DiscoveredAgent | None:  # noqa: PL
         return None
     if not isinstance(info, dict):
         return None
-    if info.get("name") not in _ACCEPTED_SERVICE_NAMES:
+    if info.get("name") != _SERVICE_NAME:
         return None
     metadata = info.get("metadata") or {}
     if not isinstance(metadata, dict):
         return None
     agent_id = metadata.get("agent")
     if not agent_id:
-        log.warning("Synadia Agents service lacks metadata.agent: %r", info)
+        log.warning("agents service lacks metadata.agent: %r", info)
         return None
 
     prompt_endpoint = _extract_prompt_endpoint(info.get("endpoints"))
     if prompt_endpoint is None:
-        log.warning("Synadia Agents service lacks a `prompt` endpoint: %r", info)
+        log.warning("agents service lacks a `prompt` endpoint: %r", info)
         return None
 
     # §4.3: derive the instance name from the 4th token of the prompt endpoint's
@@ -399,6 +426,8 @@ def _parse_srv_info_response(data: bytes) -> DiscoveredAgent | None:  # noqa: PL
         description=info.get("description", ""),
         prompt_endpoint=prompt_endpoint,
         session=session,
+        protocol_version=metadata.get("protocol_version", ""),
+        version=info.get("version", "") if isinstance(info.get("version"), str) else "",
     )
 
 

@@ -45,10 +45,10 @@ jobs:
           cache-dependency-glob: "client-sdk/python/uv.lock"
           python-version: ${{ matrix.python-version }}
 
-      - run: uv sync
+      - run: uv sync --all-extras
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run mypy src tests
+      - run: uv run mypy src tests examples
       - run: uv run pytest -v
 
   publish:

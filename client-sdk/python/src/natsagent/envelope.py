@@ -10,9 +10,11 @@ no URL-safe, no whitespace). Callers use `Attachment.from_bytes` /
 `Attachment.from_path` / `.to_bytes()` — the base64 boundary is at the
 constructor, not the wire.
 
-Unknown top-level fields are tolerated (§5.6): `extra="ignore"` drops them
-from parsed envelopes; production agents relaying requests forward the raw
-bytes rather than re-serializing through this model.
+Unknown top-level fields are tolerated (§5.6): `extra="allow"` preserves
+them on the parsed envelope and re-emits them on `encode()`, so a decode →
+encode round-trip is lossless for future extension fields. Production
+agents that forward raw bytes rather than re-serializing remain correct
+either way.
 """
 
 from __future__ import annotations
@@ -54,12 +56,23 @@ class Attachment(BaseModel):
 
 
 class Envelope(BaseModel):
-    """Request / query-reply envelope per spec §5.1."""
+    """Request / query-reply envelope per spec §5.1.
 
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    `session` is an SDK convention tolerated on the wire per §5.6 —
+    v0.2's §5.1 no longer defines `session` as a first-class envelope
+    field, but the same extension-field preservation rules that apply to
+    any unknown top-level key keep it round-trippable. Session-aware
+    harnesses (Hermes, pi, ...) thread it through their own storage.
+
+    `extra="allow"` preserves any other top-level field a future revision
+    or peer SDK adds, so decode → encode is lossless (§5.6).
+    """
+
+    model_config = ConfigDict(extra="allow", frozen=True)
 
     prompt: str
     attachments: list[Attachment] | None = None
+    session: str | None = None
 
 
 def encode(envelope: Envelope) -> bytes:

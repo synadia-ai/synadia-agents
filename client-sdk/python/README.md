@@ -1,40 +1,61 @@
 # natsagent
 
-Python SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs)
-(v0.1). Register Python agents over NATS so they're discoverable via
-`$SRV.PING.SynadiaAgents`, and prompt them from callers with streamed
+Python SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+(v0.2). Register Python agents over NATS so they're discoverable via
+`$SRV.PING.agents`, and prompt them from callers with streamed
 typed responses.
 
-**Wire-compatible with the [TypeScript SDK](../typescript)** - the
-two are validated against each other on every CI run via
-[`tests/test_interop_e2e.py`](tests/test_interop_e2e.py).
+**Cross-SDK parity with the [TypeScript SDK](https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/typescript)**
+is tracked in [`tests/test_interop_e2e.py`](tests/test_interop_e2e.py).
+The TS SDK is currently still on protocol v0.1 while this release is on
+v0.2, so the interop tests are marked `xfail` until the TS side bumps
+— see [`CHANGELOG.md`](CHANGELOG.md) under `[0.2.0] › Interop`.
+
+**Agent author?** → [Quickstart — host an agent](#quickstart--host-an-agent).
+**Client / UI author?** → [Quickstart — call an agent](#quickstart--call-an-agent).
 
 ## Installation
 
+From this checkout (no published wheel yet):
+
 ```bash
-pip install natsagent            # once published to PyPI
-# or, from this checkout:
 uv pip install -e .
 ```
 
-Prereq: a reachable `nats-server`. Local dev:
+Once released on PyPI:
 
 ```bash
-brew install nats-server         # macOS
+pip install natsagent
+```
+
+You also need a reachable `nats-server`. Pick whichever fits:
+
+```bash
+brew install nats-server                          # macOS
+# Linux / anywhere with Docker:
+docker run --rm -p 4222:4222 nats:2.12-alpine
+# Then:
 nats-server -a 127.0.0.1 -p 4222
 ```
 
-## Quickstart - host an agent
+See the [nats.io install docs](https://docs.nats.io/running-a-nats-service/introduction/installation)
+for more options. [Synadia Cloud](https://www.synadia.com/cloud/) or
+any hosted NATS works too — see
+[Connecting to NATS in production](#connecting-to-nats-in-production)
+below.
+
+## Quickstart — host an agent
 
 ```python
-import asyncio, nats
+import asyncio
+import natsagent
 from natsagent import Agent, Envelope, PromptStream
 
 async def echo(envelope: Envelope, stream: PromptStream) -> None:
     await stream.send(f"echo: {envelope.prompt}")
 
 async def main() -> None:
-    nc = await nats.connect("nats://127.0.0.1:4222")
+    nc = await natsagent.connect(servers="nats://127.0.0.1:4222")
     agent = Agent(
         agent="demo",            # your harness identifier
         owner="alice",           # your operator / account
@@ -56,19 +77,20 @@ asyncio.run(main())
 Probe it with the `nats` CLI:
 
 ```bash
-nats micro list                                     # see "SynadiaAgents"
+nats micro list                                     # see "agents"
 nats req agents.demo.alice.worker-1 "hello"         # prompt it
 nats sub  "agents.demo.alice.worker-1.heartbeat"    # watch heartbeats
 ```
 
-## Quickstart - call an agent
+## Quickstart — call an agent
 
 ```python
-import asyncio, nats
+import asyncio
+import natsagent
 from natsagent import Client
 
 async def main() -> None:
-    nc = await nats.connect("nats://127.0.0.1:4222")
+    nc = await natsagent.connect(servers="nats://127.0.0.1:4222")
     client = Client(nc=nc)
     await client.start()
 
@@ -104,7 +126,7 @@ async def confirm(envelope: Envelope, stream: PromptStream) -> None:
         await stream.send("aborted")
 ```
 
-The caller replies inline - the stream stays open across the round-trip:
+The caller replies inline — the stream stays open across the round-trip:
 
 ```python
 async for msg in remote.prompt("do the thing", timeout=30.0):
@@ -114,22 +136,55 @@ async for msg in remote.prompt("do the thing", timeout=30.0):
         print(msg)     # ResponseChunk / StatusChunk
 ```
 
+## Try the examples
+
+Six runnable demos live under [`examples/`](examples/README.md). The
+three-line ritual to see the SDK work end-to-end:
+
+```shell
+# terminal 1
+uv run python examples/_reference_agent.py --url nats://127.0.0.1:4222
+
+# terminal 2
+uv run python examples/01-discover.py --url nats://127.0.0.1:4222
+uv run python examples/02-prompt-text.py --url nats://127.0.0.1:4222 "hello"
+```
+
+See [`examples/README.md`](examples/README.md) for the full tour.
+
+## Connecting to NATS in production
+
+For [Synadia Cloud](https://www.synadia.com/cloud/) or any self-hosted
+NATS that needs credentials, JWTs, or a non-default URL, use a `nats`
+CLI context and pass its name to `natsagent.connect`:
+
+```python
+nc = await natsagent.connect(context="prod")
+```
+
+This loads `~/.config/nats/context/<name>.json` — URL, creds file,
+token, user/password, inbox prefix are all honoured. See
+[`CLAUDE.md`](CLAUDE.md#connecting-to-nats) for the full field-by-field
+table (including which NATS-context fields are not yet supported and
+fail fast rather than silently).
+
 ## Documentation
 
-- <https://github.com/synadia-ai/nats-agent-sdk-docs> - the protocol spec
-  (source of truth).
-- [`docs/protocol-mapping.md`](docs/protocol-mapping.md) - every SDK call
+- [NATS Agent Protocol spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+  — the wire contract (source of truth, lives in
+  [`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs)).
+- [`docs/protocol-mapping.md`](docs/protocol-mapping.md) — every SDK call
   mapped to its spec section; for auditors and other-SDK implementers.
-- [`docs/nats-agent-sdk.md`](docs/nats-agent-sdk.md) - design notes and
-  Python-specific resolutions.
-- [`CLAUDE.md`](CLAUDE.md) - project context and engineering conventions.
+- [`examples/README.md`](examples/README.md) — tour of the runnable
+  demos under `examples/`.
+- [`CHANGELOG.md`](CHANGELOG.md) — release notes and migration guidance.
+- [`CLAUDE.md`](CLAUDE.md) — project context and engineering conventions.
 
 ## Development
 
 ```bash
 uv sync                              # install
-uv run pytest                        # unit + e2e (needs nats-server on PATH)
-uv run ruff check . && uv run mypy src tests
+uv run ruff check . && uv run ruff format --check . && uv run mypy src tests examples && uv run pytest
 ```
 
 Integration tests spawn a real `nats-server` per session and record wire

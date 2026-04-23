@@ -26,3 +26,6 @@ tests/_evidence/
 .idea/
 .vscode/
 *.swp
+
+CLAUDE.md
+AGENTS.md

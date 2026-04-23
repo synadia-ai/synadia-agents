@@ -133,6 +133,46 @@ async def test_payload_too_large_raises_with_context(nc: NATSClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_payload_size_includes_session(nc: NATSClient) -> None:
+    """§5.1 + §5.4 — the optional ``session`` string rides the wire and
+    therefore counts toward ``max_payload``. The limit is picked so the
+    short prompt fits but the same prompt + a session label does not."""
+    agent = Agent(
+        agent=AGENT,
+        owner=OWNER,
+        name="session-size",
+        nc=nc,
+        heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
+        # {"prompt":"x"} is 14 bytes; {"prompt":"x","session":"LONG_SESSION"}
+        # is 35 bytes — split the two with a 20-byte ceiling.
+        max_payload="20B",
+    )
+    agent.on_prompt(_never_called)
+    await agent.start()
+
+    try:
+        client = Client(nc=nc)
+        await client.start()
+        found = await client.discover(timeout=1.0)
+        discovered = next(d for d in found if d.inbox == agent.subject.inbox)
+        assert discovered.prompt_endpoint.max_payload_bytes == 20
+        remote = client.bind(discovered)
+
+        # Session-less: short enough to pass — we're only verifying the
+        # session-adds-bytes claim, not running the full round-trip.
+        # (session="" never lands on the wire because ``encode()`` uses
+        # exclude_none=True.)
+        with pytest.raises(PayloadTooLargeError) as excinfo:
+            remote.prompt("x", session="LONG_SESSION_VALUE")
+        assert excinfo.value.limit == 20
+        assert excinfo.value.actual > 20
+
+        await client.stop()
+    finally:
+        await agent.stop()
+
+
+@pytest.mark.asyncio
 async def test_bind_by_inbox_string_skips_validation(nc: NATSClient) -> None:
     """Legacy path: ``bind(str)`` has no caps, so §5.4 checks are disabled.
 

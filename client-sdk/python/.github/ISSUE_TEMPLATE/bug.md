@@ -35,6 +35,6 @@ artifact for the team to look at. Attach or paste relevant lines.
 
 ## Which protocol section (if applicable)
 
-If this is a wire-shape disagreement, which section of
-`https://github.com/synadia-ai/nats-agent-sdk-docs` are you reading the SDK against? Paste the
-exact sentence.
+If this is a wire-shape disagreement, which section of the
+[canonical spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+are you reading the SDK against? Paste the exact sentence.
