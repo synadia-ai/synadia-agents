@@ -31,10 +31,27 @@ Unlike pi/openclaw/claude-code, **one Hermes gateway instance registers one iden
 
 The install has three parts: (1) clone the fork and bootstrap Hermes, (2) install the Python SDK editable from this monorepo (not yet on PyPI), (3) configure the gateway. Sibling agents ship as npm plugins; Hermes is a full application, so the first two steps look different.
 
+### Directory layout
+
+You're reading this README inside a clone of `synadia-agents`. The commands below clone `hermes-agent` as a **sibling** of that clone, so the `natsagent` SDK (which lives inside this monorepo) is reachable via the relative path `../synadia-agents/client-sdk/python` from the hermes-agent root:
+
+```
+parent/
+├── synadia-agents/                    ← you're reading this inside here
+│   ├── agents/hermes/README.md
+│   └── client-sdk/python/             ← the natsagent SDK
+└── hermes-agent/                      ← you'll clone the fork here
+    └── venv/                          ← created by ./setup-hermes.sh
+```
+
+If you prefer a different layout, substitute an absolute path (e.g. `/home/you/projects/synadia-agents/client-sdk/python`) for every occurrence of `../synadia-agents` in the commands below. Nothing else needs to change.
+
 ### 1. Clone and bootstrap Hermes
 
+Run this from the **root of your `synadia-agents` clone** (`cd` there first if you opened this file deeper in the tree — e.g. from `agents/hermes/` do `cd ../..`):
+
 ```bash
-# Clone next to this monorepo so the SDK install path below works.
+# Clone hermes-agent as a sibling of synadia-agents.
 cd ..
 git clone -b nats-gateway https://github.com/renerocksai/hermes-agent.git
 cd hermes-agent
@@ -46,15 +63,21 @@ cd hermes-agent
 
 After this you can run `hermes --help` from anywhere. User state lives in `~/.hermes/`.
 
+> You'll see a yellow warning during `setup-hermes.sh`:
+> `⚠ Lockfile install failed (may be outdated), falling back to pip install...`
+> That's **expected** until `natsagent` publishes to PyPI — the `[nats]` extra pins an unpublished package, which breaks the primary `uv sync --all-extras --locked` path, so the script falls back to `uv pip install -e ".[all]"` (which excludes `[nats]` by design). Step 2 below installs the SDK manually.
+
 ### 2. Install the `natsagent` Python SDK
 
-The SDK is in this monorepo at [`../../client-sdk/python`](../../client-sdk/python). It's **not yet on PyPI** (publishing will follow the upstream Hermes PR merge), so install it editable:
+The SDK is in this monorepo at [`../../client-sdk/python`](../../client-sdk/python). It's **not yet on PyPI** (publishing will follow the upstream Hermes PR merge), so install it editable from the sibling `synadia-agents` checkout — this is how you point hermes at the SDK:
 
 ```bash
-# From the hermes-agent clone, venv active:
+# From the hermes-agent clone (the sibling of synadia-agents), venv active:
 source venv/bin/activate
 uv pip install --python venv/bin/python -e ../synadia-agents/client-sdk/python
 ```
+
+(If you didn't clone synadia-agents as a sibling, replace `../synadia-agents/client-sdk/python` with the absolute path to this monorepo's `client-sdk/python` directory.)
 
 Verify: `venv/bin/python -c "import natsagent; print(natsagent.__file__)"` should print a path inside this monorepo.
 
@@ -182,7 +205,8 @@ Omit `--context hermes-local` if you're using the default/`demo.nats.io` path.
 With the Python SDK's shipped examples (from this monorepo):
 
 ```bash
-cd ../../client-sdk/python
+# From the synadia-agents repo root:
+cd client-sdk/python
 uv run python examples/02-prompt-text.py \
     --context hermes-local \
     "what is 2+2? answer in one short sentence."
@@ -203,7 +227,8 @@ nats --context hermes-local req agents.hermes.rene.local \
 Hermes routes images through its `vision_analyze` tool, so the model actually sees the picture. The Hermes repo ships a small banner (`website/static/img/hermes-agent-banner.png`, ~12 KB — well under the 1 MB payload limit):
 
 ```bash
-# from ../../client-sdk/python
+# from synadia-agents/client-sdk/python; the ../../../hermes-agent/... path
+# assumes the sibling layout from the Directory-layout section above.
 uv run python examples/03-prompt-attachment.py \
     --context hermes-local \
     --prompt "describe this image in one sentence" \
