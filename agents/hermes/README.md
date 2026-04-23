@@ -9,7 +9,7 @@
 
 NATS gateway for [Hermes Agent](https://github.com/NousResearch/hermes-agent), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2**.
 
-Hermes is a self-improving coding agent with a CLI, a TUI, and a messaging gateway sharing one agent core. With the NATS gateway enabled, each running Hermes instance becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol — e.g. [`natsagent`](../../client-sdk/python) (Python) or [`@synadia/agents`](../../client-sdk/typescript) (TypeScript) — can enumerate running Hermes instances, prompt them (with attachments), and stream responses back.
+Hermes is a self-improving coding agent with a CLI, a TUI, and a messaging gateway sharing one agent core. With the NATS gateway enabled, each running Hermes instance becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`natsagent`](../../client-sdk/python) (Python) or [`@synadia/agents`](../../client-sdk/typescript) (TypeScript) - can enumerate running Hermes instances, prompt them (with attachments), and stream responses back.
 
 Sibling implementations sharing the same wire protocol: [`pi`](../pi) (PI), [`openclaw`](../openclaw) (OpenClaw), [`claude-code`](../claude-code) (Claude Code).
 
@@ -48,7 +48,7 @@ If you prefer a different layout, substitute an absolute path (e.g. `/home/you/p
 
 ### 1. Clone and bootstrap Hermes
 
-Run this from the **root of your `synadia-agents` clone** (`cd` there first if you opened this file deeper in the tree — e.g. from `agents/hermes/` do `cd ../..`):
+Run this from the **root of your `synadia-agents` clone** (`cd` there first if you opened this file deeper in the tree - e.g. from `agents/hermes/` do `cd ../..`):
 
 ```bash
 # Clone hermes-agent as a sibling of synadia-agents.
@@ -65,11 +65,11 @@ After this you can run `hermes --help` from anywhere. User state lives in `~/.he
 
 > You'll see a yellow warning during `setup-hermes.sh`:
 > `⚠ Lockfile install failed (may be outdated), falling back to pip install...`
-> That's **expected** until `natsagent` publishes to PyPI — the `[nats]` extra pins an unpublished package, which breaks the primary `uv sync --all-extras --locked` path, so the script falls back to `uv pip install -e ".[all]"` (which excludes `[nats]` by design). Step 2 below installs the SDK manually.
+> That's **expected** until `natsagent` publishes to PyPI - the `[nats]` extra pins an unpublished package, which breaks the primary `uv sync --all-extras --locked` path, so the script falls back to `uv pip install -e ".[all]"` (which excludes `[nats]` by design). Step 2 below installs the SDK manually.
 
 ### 2. Install the `natsagent` Python SDK
 
-The SDK is in this monorepo at [`../../client-sdk/python`](../../client-sdk/python). It's **not yet on PyPI** (publishing will follow the upstream Hermes PR merge), so install it editable from the sibling `synadia-agents` checkout — this is how you point hermes at the SDK:
+The SDK is in this monorepo at [`../../client-sdk/python`](../../client-sdk/python). It's **not yet on PyPI** (publishing will follow the upstream Hermes PR merge), so install it editable from the sibling `synadia-agents` checkout - this is how you point hermes at the SDK:
 
 ```bash
 # From the hermes-agent clone (the sibling of synadia-agents), venv active:
@@ -85,9 +85,9 @@ Without this, Hermes logs `NATS: natsagent SDK not installed` at startup and ski
 
 ### 3. Configure the gateway
 
-Edit `~/.hermes/config.yaml` and add the `platforms.nats` block. The `owner` and `name` fields determine your subject — `agents.hermes.<owner>.<name>`.
+Edit `~/.hermes/config.yaml` and add the `platforms.nats` block. The `owner` and `name` fields determine your subject - `agents.hermes.<owner>.<name>`.
 
-Minimal `demo.nats.io` setup (no credentials, ephemeral public server — perfect for a first smoke test, not for anything sensitive):
+Minimal `demo.nats.io` setup (no credentials, ephemeral public server - perfect for a first smoke test, not for anything sensitive):
 
 ```yaml
 platforms:
@@ -152,7 +152,7 @@ platforms:
 
 With the example above, Hermes registers as `agents.hermes.rene.local` and publishes heartbeats on `agents.hermes.rene.local.heartbeat`.
 
-For Synadia Cloud or a secured self-hosted server, add the relevant fields when creating the context (`--creds`, `--nkey`, `--user`/`--password`, `--tls*`) — see `nats context add --help`.
+For Synadia Cloud or a secured self-hosted server, add the relevant fields when creating the context (`--creds`, `--nkey`, `--user`/`--password`, `--tls*`) - see `nats context add --help`.
 
 ### Config fields
 
@@ -160,10 +160,10 @@ All fields live under `platforms.nats.extra` in `~/.hermes/config.yaml`.
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `context` | one of `context`/`servers` | — | NATS CLI context name in `~/.config/nats/context/` |
-| `servers` | one of `context`/`servers` | — | List of NATS URLs, e.g. `["nats://demo.nats.io"]` |
-| `owner` | yes | — | 3rd subject token — your operator / account namespace |
-| `name` | yes | — | 4th subject token — instance label |
+| `context` | one of `context`/`servers` | - | NATS CLI context name in `~/.config/nats/context/` |
+| `servers` | one of `context`/`servers` | - | List of NATS URLs, e.g. `["nats://demo.nats.io"]` |
+| `owner` | yes | - | 3rd subject token - your operator / account namespace |
+| `name` | yes | - | 4th subject token - instance label |
 | `agent` | no | `hermes` | 2nd subject token; rarely changed |
 | `attachments_ok` | no | `true` | Accept inline base64 attachments |
 | `max_payload` | no | `"1MB"` | Per-request limit; must match `\d+(B\|KB\|MB\|GB)` |
@@ -185,14 +185,14 @@ Any `NATS_*` / `HERMES_NATS_*` env var flips `platforms.nats.enabled=true` autom
 ## Verify
 
 ```bash
-# Protocol-level discovery — Hermes should appear in the list
+# Protocol-level discovery - Hermes should appear in the list
 nats --context hermes-local req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
 
 # Micro service listing
 nats --context hermes-local micro list
 nats --context hermes-local micro info agents
 
-# Watch heartbeats — one frame every heartbeat_interval_s seconds
+# Watch heartbeats - one frame every heartbeat_interval_s seconds
 nats --context hermes-local sub 'agents.hermes.*.*.heartbeat'
 ```
 
@@ -222,9 +222,9 @@ nats --context hermes-local req agents.hermes.rene.local \
     --wait-for-empty --timeout 120s
 ```
 
-### With an attachment — "describe this image"
+### With an attachment - "describe this image"
 
-Hermes routes images through its `vision_analyze` tool, so the model actually sees the picture. The Hermes repo ships a small banner (`website/static/img/hermes-agent-banner.png`, ~12 KB — well under the 1 MB payload limit):
+Hermes routes images through its `vision_analyze` tool, so the model actually sees the picture. The Hermes repo ships a small banner (`website/static/img/hermes-agent-banner.png`, ~12 KB - well under the 1 MB payload limit):
 
 ```bash
 # from synadia-agents/client-sdk/python; the ../../../hermes-agent/... path
@@ -235,7 +235,7 @@ uv run python examples/03-prompt-attachment.py \
     ../../../hermes-agent/website/static/img/hermes-agent-banner.png
 ```
 
-Expected: a short description of the banner — what it depicts, colors, text — streamed back as `response` chunks.
+Expected: a short description of the banner - what it depicts, colors, text - streamed back as `response` chunks.
 
 ### With the Python SDK (programmatic)
 
@@ -260,7 +260,7 @@ async def main():
 asyncio.run(main())
 ```
 
-`session="alice"` keeps this conversation isolated from other callers hitting the same subject — see the `natsagent` SDK README for the full API.
+`session="alice"` keeps this conversation isolated from other callers hitting the same subject - see the `natsagent` SDK README for the full API.
 
 ### Other example scripts
 
@@ -283,8 +283,8 @@ agents.hermes.<owner>.<name>.heartbeat   # liveness beacon (spec §8)
 ```
 
 - `hermes` is both `metadata.agent` and its subject abbreviation (Appendix C).
-- `owner`: from `platforms.nats.extra.owner` — operator/account namespace.
-- `name`: from `platforms.nats.extra.name` — instance label. A single Hermes gateway registers **one** identity; multiple conversations share it and are distinguished by the envelope's `session` field.
+- `owner`: from `platforms.nats.extra.owner` - operator/account namespace.
+- `name`: from `platforms.nats.extra.name` - instance label. A single Hermes gateway registers **one** identity; multiple conversations share it and are distinguished by the envelope's `session` field.
 
 ## Sessions (Hermes-specific)
 
@@ -295,20 +295,20 @@ Pi, OpenClaw, and Claude Code each register one NATS identity **per conversation
 - On the wire: JSON envelope with `{"prompt": "...", "session": "alice"}`.
 - Omitted: falls back to `session_default` (configurable, default `"default"`).
 
-Sessions are isolated — one caller's history doesn't leak to another. Under the hood, `session=alice` produces a gateway session key of `agent:main:nats:dm:alice`.
+Sessions are isolated - one caller's history doesn't leak to another. Under the hood, `session=alice` produces a gateway session key of `agent:main:nats:dm:alice`.
 
 ## Tenant isolation
 
-The spec reserves the four-token subject structure; there is no additional namespace slot. For multi-tenant isolation, use NATS accounts and subject permissions (spec §10.1). Within an account, Hermes's scoped lock prevents two gateway instances from registering the same `(agent, owner, name)` triple on one machine — the second fails fast with an actionable error.
+The spec reserves the four-token subject structure; there is no additional namespace slot. For multi-tenant isolation, use NATS accounts and subject permissions (spec §10.1). Within an account, Hermes's scoped lock prevents two gateway instances from registering the same `(agent, owner, name)` triple on one machine - the second fails fast with an actionable error.
 
-Cross-machine collisions are deliberately allowed — the protocol permits multiple instances per identity (§3.3) for high availability.
+Cross-machine collisions are deliberately allowed - the protocol permits multiple instances per identity (§3.3) for high availability.
 
 ## Wire protocol (summary)
 
 Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>. Quick reference:
 
 - **Request**: plain UTF-8 text OR JSON `{"prompt":"…","session":"…","attachments":[{"filename":"…","content":"<base64>"},…]}`. Attachment `content` must be RFC 4648 §4 base64 (standard alphabet, padded, no URL-safe variant, no whitespace).
-- **Response**: typed chunks on the reply subject — `{"type":"status","data":"ack"}` (accepted / keep-alive), `{"type":"response","data":"<text>"}` (content), `{"type":"query","data":{…}}` (mid-stream approval).
+- **Response**: typed chunks on the reply subject - `{"type":"status","data":"ack"}` (accepted / keep-alive), `{"type":"response","data":"<text>"}` (content), `{"type":"query","data":{…}}` (mid-stream approval).
 - **Terminator**: empty body **and no headers** (§6.5).
 - **Errors**: `Nats-Service-Error-Code` header with `400`/`500`, followed by the terminator.
 
@@ -320,7 +320,7 @@ Current deferrals (candidates for future phases, not bugs):
 - **No `send_message` tool routing to NATS.** Same reason.
 - **No chunked `attachments` endpoint** (spec §5.5). Inline base64 only for now.
 - **No JetStream at-least-once delivery.**
-- **No E2E encryption** — delegated to NATS server TLS.
+- **No E2E encryption** - delegated to NATS server TLS.
 - **`/stop` doesn't interrupt a running NATS turn.** The adapter-owned agent pattern bypasses the gateway's `_active_sessions` tracking; callers drop their subscription to abandon a run.
 
 ## Troubleshooting
@@ -329,13 +329,13 @@ Current deferrals (candidates for future phases, not bugs):
 - **`$SRV.INFO.agents` returns nothing / Hermes not discovered.** Gateway didn't register. Check `platforms.nats.enabled: true`, that the NATS URL/context resolves, and look for `NATS: registered as …` in the gateway log. If another Hermes instance already holds the same `(agent, owner, name)`, the log shows `already registered`.
 - **`nats req` returns nothing or hangs.** Pass `--wait-for-empty`; the protocol signals end-of-stream with an empty-body message, not a single response.
 - **Caller hangs after the first chunk; `is_online()` returns False.** Gateway probably crashed or lost NATS connectivity. The protocol marks an agent offline after ~3 missed heartbeats (~90 s at the 30 s default). Check the gateway log.
-- **Dangerous command hangs for 5 minutes then fails.** The caller didn't handle the `query` chunk. Drain `query` in your SDK loop (see `examples/04-query-reply.py`) — after `gateway_timeout` (default 300 s) the command is auto-denied.
+- **Dangerous command hangs for 5 minutes then fails.** The caller didn't handle the `query` chunk. Drain `query` in your SDK loop (see `examples/04-query-reply.py`) - after `gateway_timeout` (default 300 s) the command is auto-denied.
 - **`400 attachment[N] has invalid base64 content`.** The caller emitted URL-safe base64 or unpadded output. Switch to RFC 4648 §4 (standard alphabet, padded).
-- **`ValueError: could not parse max_payload '…'`.** `max_payload` must match `\d+(B|KB|MB|GB)` — e.g. `"1MB"`, `"512KB"`, `"104857600B"`.
+- **`ValueError: could not parse max_payload '…'`.** `max_payload` must match `\d+(B|KB|MB|GB)` - e.g. `"1MB"`, `"512KB"`, `"104857600B"`.
 
 ## Further reading
 
-- **Hermes user guide for the NATS channel:** [`website/docs/user-guide/messaging/nats.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/website/docs/user-guide/messaging/nats.md) in the fork — deep dive on configuration, subject layout, sessions, attachments, profiles, full troubleshooting table.
-- **Architecture & design:** [`docs/nats-gateway-design.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/docs/nats-gateway-design.md) — protocol↔adapter mapping, streaming model, approval hook, failure modes, and §17 retrospective lessons.
+- **Hermes user guide for the NATS channel:** [`website/docs/user-guide/messaging/nats.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/website/docs/user-guide/messaging/nats.md) in the fork - deep dive on configuration, subject layout, sessions, attachments, profiles, full troubleshooting table.
+- **Architecture & design:** [`docs/nats-gateway-design.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/docs/nats-gateway-design.md) - protocol↔adapter mapping, streaming model, approval hook, failure modes, and §17 retrospective lessons.
 - **Adapter source:** [`gateway/platforms/nats.py`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/gateway/platforms/nats.py).
 - **Protocol spec:** <https://github.com/synadia-ai/nats-agent-sdk-docs>

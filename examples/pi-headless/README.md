@@ -2,7 +2,7 @@
 
 A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia/agents` and conforming to the NATS Agent Protocol v0.2.0-draft.
 
-Each spawned PI session registers as its own NATS agent instance under `agents.pi.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia/agents` SDK. A small **controller** service at `agents.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text).
+Each spawned PI session registers as its own NATS agent instance under `agents.pi.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia/agents` SDK. A small **controller** service at `agents.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text).
 
 In short: one process, many PI sessions, all first-class NATS agents.
 
@@ -19,7 +19,7 @@ cd ../../examples/pi-headless
 bun install
 bun run start                # connects via $NATS_CONTEXT or NATS_URL
 # pi-headless: controller listening on agents.pi.<you>.exec
-# pi-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
+# pi-headless: extra endpoints - …exec.spawn  …exec.stop  …exec.list
 
 # 3. Spawn a session + prompt + stop, from another shell.
 bun run scripts/spawn.ts --cwd /tmp/pi-sandbox --prompt "list the files here" --stop-after
@@ -77,7 +77,7 @@ nats req agents.pi.$USER.exec.spawn \
 # → { "session_id":"sess-a1b2c3d4", "subject":"agents.pi.$USER.sess-a1b2c3d4", ... }
 ```
 
-### Prompt (protocol-standard — no custom format)
+### Prompt (protocol-standard - no custom format)
 
 ```bash
 nats req agents.pi.$USER.sess-a1b2c3d4 \
@@ -129,9 +129,9 @@ Session prompt endpoints follow protocol §9.
 
 ## CLI helpers
 
-- `bun run scripts/spawn.ts --cwd /path [--prompt …] [--stop-after]` — end-to-end smoke test.
-- `bun run scripts/list.ts` — print active sessions from every reachable controller.
-- `bun run scripts/stop.ts SESSION_ID` — dispose a session.
+- `bun run scripts/spawn.ts --cwd /path [--prompt …] [--stop-after]` - end-to-end smoke test.
+- `bun run scripts/list.ts` - print active sessions from every reachable controller.
+- `bun run scripts/stop.ts SESSION_ID` - dispose a session.
 
 ## Notes
 

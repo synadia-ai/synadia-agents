@@ -9,10 +9,10 @@ typed responses.
 is tracked in [`tests/test_interop_e2e.py`](tests/test_interop_e2e.py).
 The TS SDK is currently still on protocol v0.1 while this release is on
 v0.2, so the interop tests are marked `xfail` until the TS side bumps
-— see [`CHANGELOG.md`](CHANGELOG.md) under `[0.2.0] › Interop`.
+- see [`CHANGELOG.md`](CHANGELOG.md) under `[0.2.0] › Interop`.
 
-**Agent author?** → [Quickstart — host an agent](#quickstart--host-an-agent).
-**Client / UI author?** → [Quickstart — call an agent](#quickstart--call-an-agent).
+**Agent author?** → [Quickstart - host an agent](#quickstart--host-an-agent).
+**Client / UI author?** → [Quickstart - call an agent](#quickstart--call-an-agent).
 
 ## Installation
 
@@ -40,11 +40,11 @@ nats-server -a 127.0.0.1 -p 4222
 
 See the [nats.io install docs](https://docs.nats.io/running-a-nats-service/introduction/installation)
 for more options. [Synadia Cloud](https://www.synadia.com/cloud/) or
-any hosted NATS works too — see
+any hosted NATS works too - see
 [Connecting to NATS in production](#connecting-to-nats-in-production)
 below.
 
-## Quickstart — host an agent
+## Quickstart - host an agent
 
 ```python
 import asyncio
@@ -82,7 +82,7 @@ nats req agents.demo.alice.worker-1 "hello"         # prompt it
 nats sub  "agents.demo.alice.worker-1.heartbeat"    # watch heartbeats
 ```
 
-## Quickstart — call an agent
+## Quickstart - call an agent
 
 ```python
 import asyncio
@@ -126,7 +126,7 @@ async def confirm(envelope: Envelope, stream: PromptStream) -> None:
         await stream.send("aborted")
 ```
 
-The caller replies inline — the stream stays open across the round-trip:
+The caller replies inline - the stream stays open across the round-trip:
 
 ```python
 async for msg in remote.prompt("do the thing", timeout=30.0):
@@ -162,7 +162,7 @@ CLI context and pass its name to `natsagent.connect`:
 nc = await natsagent.connect(context="prod")
 ```
 
-This loads `~/.config/nats/context/<name>.json` — URL, creds file,
+This loads `~/.config/nats/context/<name>.json` - URL, creds file,
 token, user/password, inbox prefix are all honoured. See
 [`CLAUDE.md`](CLAUDE.md#connecting-to-nats) for the full field-by-field
 table (including which NATS-context fields are not yet supported and
@@ -171,14 +171,14 @@ fail fast rather than silently).
 ## Documentation
 
 - [NATS Agent Protocol spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
-  — the wire contract (source of truth, lives in
+  - the wire contract (source of truth, lives in
   [`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs)).
-- [`docs/protocol-mapping.md`](docs/protocol-mapping.md) — every SDK call
+- [`docs/protocol-mapping.md`](docs/protocol-mapping.md) - every SDK call
   mapped to its spec section; for auditors and other-SDK implementers.
-- [`examples/README.md`](examples/README.md) — tour of the runnable
+- [`examples/README.md`](examples/README.md) - tour of the runnable
   demos under `examples/`.
-- [`CHANGELOG.md`](CHANGELOG.md) — release notes and migration guidance.
-- [`CLAUDE.md`](CLAUDE.md) — project context and engineering conventions.
+- [`CHANGELOG.md`](CHANGELOG.md) - release notes and migration guidance.
+- [`CLAUDE.md`](CLAUDE.md) - project context and engineering conventions.
 
 ## Development
 
