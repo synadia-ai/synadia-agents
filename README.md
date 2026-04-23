@@ -15,7 +15,7 @@ synadia-agents/
 │   └── python/            ← natsagent (Python ≥ 3.11)
 ├── agents/                ← plugins that put existing AI harnesses on NATS
 │   ├── README.md
-│   ├── hermes  /          ← Hermes Agent NATS gateway 
+│   ├── hermes/            ← Hermes Agent NATS gateway 
 │   ├── pi/                ← PI Agent channel
 │   ├── openclaw/          ← OpenClaw plugin
 │   └── claude-code/       ← Claude Code MCP plugin
@@ -38,12 +38,13 @@ agents.<type-token>.<owner>.<session>.heartbeat   # liveness beacon
 
 Type tokens currently in this repo:
 
-| Token  | Host                 | Path                  |
-| ------ | -------------------- | --------------------- |
-| `pi`   | PI Agent             | `agents/pi/`          |
-| `oc`   | OpenClaw             | `agents/openclaw/`    |
-| `ccc`  | Claude Code          | `agents/claude-code/` |
-| `dspy` | ax-llm ReAct (DSPy)  | `examples/dspy/`      |
+| Token     | Host                 | Path                  |
+| ----------| -------------------- | --------------------- |
+| `pi`      | PI Agent             | `agents/pi/`          |
+| `oc`      | OpenClaw             | `agents/openclaw/`    |
+| `ccc`     | Claude Code          | `agents/claude-code/` |
+| `hermes`  | Claude Code          | `agents/hermes/`      |
+| `dspy`    | ax-llm ReAct (DSPy)  | `examples/dspy/`      |
 
 Discovery is standard NATS micro:
 
