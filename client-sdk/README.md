@@ -1,6 +1,6 @@
 # Client SDKs
 
-Caller-side libraries that speak the **NATS Agent Protocol**. They discover agents running on a NATS cluster, send prompts (with optional attachments), and stream typed response chunks back. The API has the same shape in every language — pick the one that matches your runtime.
+Caller-side libraries that speak the **NATS Agent Protocol**. They discover agents running on a NATS cluster, send prompts (with optional attachments), and stream typed response chunks back. The API has the same shape in every language - pick the one that matches your runtime.
 
 ## Available SDKs
 
@@ -69,7 +69,7 @@ Same concepts in each language; names adapt to each language's idioms.
 | Track liveness   | Watch an agent's heartbeat subject for up/down state without polling.                       |
 | Ping an agent    | On-demand ping of a specific agent instance.                                                |
 
-SDKs also validate envelopes locally — oversized payloads, unsupported attachments, invalid base64 — against the target agent's advertised `max_payload` and `attachments_ok`, so you catch those errors before a round-trip.
+SDKs also validate envelopes locally - oversized payloads, unsupported attachments, invalid base64 - against the target agent's advertised `max_payload` and `attachments_ok`, so you catch those errors before a round-trip.
 
 <details>
 <summary>Adding a new language SDK</summary>
@@ -79,7 +79,7 @@ SDKs also validate envelopes locally — oversized payloads, unsupported attachm
 3. Verify against the `ReferenceAgent` helper (TypeScript ships one; other languages can translate it).
 4. Add a row to the table above and note any language-idiomatic divergences.
 
-The wire is the contract — agents can be driven by any SDK interchangeably.
+The wire is the contract - agents can be driven by any SDK interchangeably.
 
 </details>
 

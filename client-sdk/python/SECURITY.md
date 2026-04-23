@@ -33,10 +33,10 @@ In-scope:
 
 Out of scope:
 
-- Vulnerabilities in `nats-server` itself — those belong at
+- Vulnerabilities in `nats-server` itself - those belong at
   [nats-io/nats-server](https://github.com/nats-io/nats-server).
 - Vulnerabilities in transitive dependencies that do not affect users of
-  natsagent at default settings — report them upstream; we'll bump when
+  natsagent at default settings - report them upstream; we'll bump when
   a fixed version is available.
 - Theoretical issues without a concrete attack path.
 

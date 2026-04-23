@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [0.2.0] — protocol `0.2.0-draft`
+## [0.2.0] - protocol `0.2.0-draft`
 
 Tracks the rename of the protocol's service filter (spec §3.1) and the new
 queue-group requirement on the `prompt` endpoint (§3.3). **Not wire-compatible
@@ -47,7 +47,7 @@ with 0.1**: agents and callers must be upgraded together.
 ### Migration
 
 - Upgrade every agent in your deployment to a 0.2-speaking build before
-  upgrading the SDK — clean cutover, no dual-name accept.
+  upgrading the SDK - clean cutover, no dual-name accept.
 - Any custom agent registration needs `queue: "agents"` added to its
   `addEndpoint("prompt", ...)` options.
 
@@ -57,31 +57,31 @@ with 0.1**: agents and callers must be upgraded together.
   Common cases (`url`, `creds`, `token`, `user`/`password`, `user_jwt`,
   `inbox_prefix`) ship in `0.2`.
 
-## [0.1.0] — initial pre-release
+## [0.1.0] - initial pre-release
 
 Implements the client surface of the NATS Agent Protocol `0.1.0-draft`.
 
 ### Added
 
-- **`connect()` / `attach()`** factories for opening or wrapping a NATS connection (§3.2 service registration is agent-side — callers only discover).
+- **`connect()` / `attach()`** factories for opening or wrapping a NATS connection (§3.2 service registration is agent-side - callers only discover).
 - **`Client.discover({timeoutMs, filter})`** with auto subscribe-before-PING per §8.5 and client-side identity filtering (`{agent, owner, name, session, protocolVersion}`).
 - **`Client.bind(DiscoveredAgent)`** returns a `RemoteAgent` handle.
-- **`RemoteAgent.prompt(text, {attachments, signal, inactivityTimeoutMs})`** — JSON envelope per §5.1; attachments base64-encoded per RFC 4648 §4.
-- **Pre-publish local validation per §5.4:** `PromptEmptyError`, `AttachmentsNotSupportedError`, `PayloadTooLargeError` — all rejected before any wire traffic.
+- **`RemoteAgent.prompt(text, {attachments, signal, inactivityTimeoutMs})`** - JSON envelope per §5.1; attachments base64-encoded per RFC 4648 §4.
+- **Pre-publish local validation per §5.4:** `PromptEmptyError`, `AttachmentsNotSupportedError`, `PayloadTooLargeError` - all rejected before any wire traffic.
 - **`PromptStream`** implementing `AsyncIterable<StreamMessage>` with `.cancel()`, `.replySubject`, and `AbortSignal` support.
 - **Chunk decoder** for `response` (bare-string + object forms), `status`, `query` chunks per §6.2–§7. Unknown `type` values silently dropped per §6.6.
 - **Synthetic `{type: "status", status: "done"}`** emitted as the final event on terminator (§6.4 permits).
 - **Inactivity timeout** (§6.6) defaulting to 60 s; resets on every chunk including `status: ack`.
 - **`ServiceError`** carrying `code`, `description`, and parsed JSON body (§9.1).
 - **Mid-stream query (§7)** via `QueryEvent.reply(string | RequestEnvelope)`; second call throws `QueryAlreadyRepliedError`.
-- **Heartbeat tracking (§8)** keyed on `instance_id` (not subject) — multi-instance safe. Narrow wildcard via `heartbeatScope: {agent, owner}`.
+- **Heartbeat tracking (§8)** keyed on `instance_id` (not subject) - multi-instance safe. Narrow wildcard via `heartbeatScope: {agent, owner}`.
 - **`Client.ping(instanceId)`** for on-demand reachability (§8.4).
 - **`Client.close()`** aborts all in-flight streams via shared AbortController; closes connection iff owned.
 - **Subpath exports:** `@synadia/agents/errors`, `@synadia/agents/testing` (spec-compliant `ReferenceAgent` + harness).
-- **Runtime-agnostic pure core** — envelope, validation, chunk-decoder, terminator, bytes, version, subjects, endpoint-info, heartbeat-payload — enforced by ESLint.
+- **Runtime-agnostic pure core** - envelope, validation, chunk-decoder, terminator, bytes, version, subjects, endpoint-info, heartbeat-payload - enforced by ESLint.
 - **5 runnable examples** under `examples/`; spec-compliance docs under `docs/protocol-mapping.md`.
 
 ### Known upstream questions
 
-- `max_payload` base (1024 vs 1000) — spec silent. SDK uses 1024.
-- Size-unit case sensitivity — spec silent. SDK parses case-insensitive.
+- `max_payload` base (1024 vs 1000) - spec silent. SDK uses 1024.
+- Size-unit case sensitivity - spec silent. SDK parses case-insensitive.

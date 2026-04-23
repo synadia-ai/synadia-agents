@@ -16,7 +16,7 @@ bun add @synadia/agents
 
 ## 30-second quickstart
 
-Local dev — pick up whichever NATS context `nats context select` has active:
+Local dev - pick up whichever NATS context `nats context select` has active:
 
 ```ts
 import { connect } from "@synadia/agents";
@@ -60,7 +60,7 @@ try {
   }
 } catch (e) {
   if (e instanceof AttachmentsNotSupportedError) {
-    // agent's attachments_ok === false — no wire traffic.
+    // agent's attachments_ok === false - no wire traffic.
   } else if (e instanceof PayloadTooLargeError) {
     console.log(`${e.actual} > ${e.limit} bytes`);
     // Again: no wire traffic.
@@ -83,16 +83,16 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 
 Subpath exports:
 
-- **`@synadia/agents/errors`** — the error class hierarchy, for targeted `instanceof` branches.
-- **`@synadia/agents/testing`** — a `ReferenceAgent` helper for your own test suite.
+- **`@synadia/agents/errors`** - the error class hierarchy, for targeted `instanceof` branches.
+- **`@synadia/agents/testing`** - a `ReferenceAgent` helper for your own test suite.
 
 ## Documentation
 
-- [Getting started](./docs/getting-started.md) — end-to-end walkthrough with error handling, cancellation, and liveness.
-- [Protocol mapping](./docs/protocol-mapping.md) — every SDK call cross-referenced to the spec.
-- [`examples/`](./examples) — five runnable scripts (discover, prompt-text, prompt-attachment, query-reply, liveness).
+- [Getting started](./docs/getting-started.md) - end-to-end walkthrough with error handling, cancellation, and liveness.
+- [Protocol mapping](./docs/protocol-mapping.md) - every SDK call cross-referenced to the spec.
+- [`examples/`](./examples) - five runnable scripts (discover, prompt-text, prompt-attachment, query-reply, liveness).
 
-Browser support is planned but not shipped yet — the core validation and parsing layers are already runtime-agnostic.
+Browser support is planned but not shipped yet - the core validation and parsing layers are already runtime-agnostic.
 
 ## Contributing
 
@@ -101,7 +101,7 @@ bun install          # or: npm install
 bun run typecheck
 bun run lint
 bun run test:unit         # no NATS required
-bun run test:integration  # spawns nats-server — install via brew / apt / https://github.com/nats-io/nats-server/releases
+bun run test:integration  # spawns nats-server - install via brew / apt / https://github.com/nats-io/nats-server/releases
 ```
 
 Integration tests skip cleanly with a friendly message if `nats-server` isn't on PATH.

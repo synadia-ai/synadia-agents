@@ -1,6 +1,6 @@
 # Agents
 
-Plugins that wrap existing AI harnesses — PI, OpenClaw, Claude Code — as NATS micro services speaking the **NATS Agent Protocol**, so any SDK in `../client-sdk/` can drive them the same way.
+Plugins that wrap existing AI harnesses - PI, OpenClaw, Claude Code - as NATS micro services speaking the **NATS Agent Protocol**, so any SDK in `../client-sdk/` can drive them the same way.
 
 For an example of *building* a fresh agent from scratch using the TypeScript SDK, see [`../examples/dspy/`](../examples/dspy/).
 
@@ -16,13 +16,13 @@ Every agent also publishes `<subject>.heartbeat` every 30 s.
 
 ## How it works
 
-Every agent registers a NATS micro service called `agents` with an endpoint named `prompt`. The protocol only fixes the endpoint name — the subject is the agent's to choose. For the agents in this repo we've picked `agents.<type-token>.<owner>.<session>`. The endpoint accepts either plain UTF-8 text or a JSON envelope (optionally with inline base64 attachments), then streams typed JSON chunks back on the reply subject — `status` for keep-alive, `response` for content deltas, optional `query` for mid-stream questions — and ends the stream with an empty body. Each agent also publishes a heartbeat on `<subject>.heartbeat` and advertises its `max_payload` and `attachments_ok` in the endpoint metadata. That's the entire contract; everything else below is per-agent variation.
+Every agent registers a NATS micro service called `agents` with an endpoint named `prompt`. The protocol only fixes the endpoint name - the subject is the agent's to choose. For the agents in this repo we've picked `agents.<type-token>.<owner>.<session>`. The endpoint accepts either plain UTF-8 text or a JSON envelope (optionally with inline base64 attachments), then streams typed JSON chunks back on the reply subject - `status` for keep-alive, `response` for content deltas, optional `query` for mid-stream questions - and ends the stream with an empty body. Each agent also publishes a heartbeat on `<subject>.heartbeat` and advertises its `max_payload` and `attachments_ok` in the endpoint metadata. That's the entire contract; everything else below is per-agent variation.
 
 ## Per-agent notes
 
-- **`pi/`** — each running PI CLI session becomes one agent instance. Attachments stage at `~/.pi/agent/attachments/<session>/<uuid>/` and are cleaned on session shutdown.
-- **`openclaw/`** — one OpenClaw agent per configured account. Attachments stage at `~/.openclaw/attachments/<agentName>/<uuid>/`, cleaned on gateway stop. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific).
-- **`claude-code/`** — ships as a Claude Code plugin (`/plugin install`). Two permission modes: `terminal` (prompt locally) or `query` (relay as a `query` chunk over NATS). Attachments stage at `~/.claude/channels/nats/attachments/<request_id>/`, cleaned on reply completion.
+- **`pi/`** - each running PI CLI session becomes one agent instance. Attachments stage at `~/.pi/agent/attachments/<session>/<uuid>/` and are cleaned on session shutdown.
+- **`openclaw/`** - one OpenClaw agent per configured account. Attachments stage at `~/.openclaw/attachments/<agentName>/<uuid>/`, cleaned on gateway stop. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific).
+- **`claude-code/`** - ships as a Claude Code plugin (`/plugin install`). Two permission modes: `terminal` (prompt locally) or `query` (relay as a `query` chunk over NATS). Attachments stage at `~/.claude/channels/nats/attachments/<request_id>/`, cleaned on reply completion.
 
 When an agent accepts attachments, it decodes them to disk and prepends the absolute paths to the prompt text like so:
 
@@ -37,8 +37,8 @@ When an agent accepts attachments, it decodes them to disk and prepends the abso
 
 1. Create `agents/<name>/` with a project layout suited to the target harness.
 2. Pick a short, lowercase **type token** and add a row to the table above.
-3. Implement the protocol contract — registration, streaming, heartbeats, envelope handling, error codes, queue group. See the conformance checklist below.
-4. Cross-verify against any SDK in `../client-sdk/` — the SDK's integration tests are the wire-level contract.
+3. Implement the protocol contract - registration, streaming, heartbeats, envelope handling, error codes, queue group. See the conformance checklist below.
+4. Cross-verify against any SDK in `../client-sdk/` - the SDK's integration tests are the wire-level contract.
 
 <details>
 <summary>Conformance checklist</summary>

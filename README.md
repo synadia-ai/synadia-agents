@@ -1,8 +1,8 @@
 # Synadia Agents
 
-One home for everything built on the **NATS Agent Protocol** — the SDKs that speak it, the agent implementations that host it, and the example apps that use it.
+One home for everything built on the **NATS Agent Protocol** - the SDKs that speak it, the agent implementations that host it, and the example apps that use it.
 
-Every AI agent in this repo (Claude Code, OpenClaw, PI, DSPy-ReAct, …) registers as a NATS micro service named `agents`. Callers discover, prompt, and stream from it using any language's SDK — same wire format everywhere.
+Every AI agent in this repo (Claude Code, OpenClaw, PI, DSPy-ReAct, …) registers as a NATS micro service named `agents`. Callers discover, prompt, and stream from it using any language's SDK - same wire format everywhere.
 
 ## Repository layout
 
@@ -28,7 +28,7 @@ Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`,
 
 ## Subject namespace
 
-The protocol only requires an endpoint named `prompt` — the subject it's served on is up to each agent. For the agents in this repo we've chosen a single pattern:
+The protocol only requires an endpoint named `prompt` - the subject it's served on is up to each agent. For the agents in this repo we've chosen a single pattern:
 
 ```
 agents.<type-token>.<owner>.<session>             # prompt endpoint
@@ -54,7 +54,7 @@ nats sub 'agents.*.*.*.heartbeat'
 
 ## Wire protocol
 
-A request is either plain UTF-8 text or a JSON envelope `{"prompt": "...", "attachments": [{"filename": "...", "content": "<base64>"}]}`. The agent streams typed JSON chunks on the reply subject — `{"type":"response","data":"..."}` for content, `{"type":"status","data":"ack"}` for keep-alive, `{"type":"query","data":{...}}` for mid-stream questions. An **empty body with no headers** ends the stream. Errors use the `Nats-Service-Error-Code` header (`400` client, `500` server).
+A request is either plain UTF-8 text or a JSON envelope `{"prompt": "...", "attachments": [{"filename": "...", "content": "<base64>"}]}`. The agent streams typed JSON chunks on the reply subject - `{"type":"response","data":"..."}` for content, `{"type":"status","data":"ack"}` for keep-alive, `{"type":"query","data":{...}}` for mid-stream questions. An **empty body with no headers** ends the stream. Errors use the `Nats-Service-Error-Code` header (`400` client, `500` server).
 
 Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
 
@@ -66,9 +66,9 @@ Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
        └─── streamed chunks ───────┘
 ```
 
-- **`client-sdk/*`** — produce envelopes, validate locally against agent metadata (`max_payload`, `attachments_ok`), parse streamed chunks.
-- **`agents/*`** — register the `agents` micro service, drive the underlying AI harness, stream chunks back.
-- **`examples/*`** — demonstrate SDK usage end-to-end against real agents.
+- **`client-sdk/*`** - produce envelopes, validate locally against agent metadata (`max_payload`, `attachments_ok`), parse streamed chunks.
+- **`agents/*`** - register the `agents` micro service, drive the underlying AI harness, stream chunks back.
+- **`examples/*`** - demonstrate SDK usage end-to-end against real agents.
 
 ## Quickstart (TypeScript)
 
@@ -89,4 +89,4 @@ See `client-sdk/typescript/README.md` for install, error handling, and full exam
 
 ## License
 
-Apache-2.0 for the SDK, MIT for the agent channels and examples — see each subtree's `LICENSE` file.
+Apache-2.0 for the SDK, MIT for the agent channels and examples - see each subtree's `LICENSE` file.

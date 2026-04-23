@@ -8,19 +8,19 @@ The MCP server registers an `agents` micro service, exposes a
 at `agents.ccc.<owner>.<session>.heartbeat`, and bridges prompt requests
 into the Claude Code session. Replies stream back as typed JSON chunks
 (`{"type":"response","data":"..."}`) terminated by an empty headerless
-message — the protocol's uniform end-of-stream signal.
+message - the protocol's uniform end-of-stream signal.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) — the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`.
-- [NATS CLI](https://github.com/nats-io/natscli) — for managing contexts and testing.
-- A NATS server to connect to (local or remote) — the plugin defaults to `demo.nats.io`.
+- [Bun](https://bun.sh) - the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`.
+- [NATS CLI](https://github.com/nats-io/natscli) - for managing contexts and testing.
+- A NATS server to connect to (local or remote) - the plugin defaults to `demo.nats.io`.
 
 ## Quick Setup
 
 **1. Add the marketplace.**
 
-These are Claude Code commands — run `claude` to start a session first.
+These are Claude Code commands - run `claude` to start a session first.
 
 ```
 /plugin marketplace add synadia-ai/synadia-agents
@@ -99,7 +99,7 @@ an empty headerless message signals completion.
 
 This plugin implements the **NATS Agent Protocol v0.2** end-to-end:
 
-- Registers as an `agents` NATS micro service (§3.1 — the bare subject-safe
+- Registers as an `agents` NATS micro service (§3.1 - the bare subject-safe
   token).
 - Service metadata includes `agent`, `owner`, `session`, and
   `protocol_version: "0.2"` (§3.2).
@@ -188,7 +188,7 @@ To switch back to terminal mode:
 
 The legacy value `"nats"` is still accepted as an alias for `"query"` so
 old configs keep working. The older `permissions.subject` override field
-has been removed — query chunks always use a fresh NATS inbox per
+has been removed - query chunks always use a fresh NATS inbox per
 request.
 
 If Claude asks for permission while no NATS request is active (for
@@ -250,7 +250,7 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 
 | Field | Default | Description |
 | --- | --- | --- |
-| `context` | *(none — uses demo.nats.io)* | NATS CLI context name |
+| `context` | *(none - uses demo.nats.io)* | NATS CLI context name |
 | `sessionName` | CWD basename | Override the session name |
 | `permissions.mode` | `terminal` | `terminal` or `query` (`nats` accepted as legacy alias for `query`) |
 

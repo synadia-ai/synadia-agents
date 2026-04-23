@@ -1,9 +1,9 @@
-# examples/dspy — building an agent with the SDK
+# examples/dspy - building an agent with the SDK
 
-An example of **building a new agent from scratch** using the `@synadia/agents` TypeScript SDK. It runs a [ax-llm](https://github.com/ax-llm/ax) (DSPy-style signatures + ReAct) loop with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Once started it appears as a normal NATS Agent Protocol service and can be driven by any caller — the CLI examples in `../../client-sdk/typescript/examples/`, the web UI in `../agent-web-ui/`, or your own code.
+An example of **building a new agent from scratch** using the `@synadia/agents` TypeScript SDK. It runs a [ax-llm](https://github.com/ax-llm/ax) (DSPy-style signatures + ReAct) loop with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Once started it appears as a normal NATS Agent Protocol service and can be driven by any caller - the CLI examples in `../../client-sdk/typescript/examples/`, the web UI in `../agent-web-ui/`, or your own code.
 
 - `list_files` / `read_file` / `write_file` refuse any path that escapes the sandbox root.
-- `bash` runs commands with `cwd` set to the sandbox root, a 30 s timeout, and 8000-char output truncation. **Note:** a shell is a soft boundary — the model can `cd ..`, `curl`, etc. Don't point this at anything you care about.
+- `bash` runs commands with `cwd` set to the sandbox root, a 30 s timeout, and 8000-char output truncation. **Note:** a shell is a soft boundary - the model can `cd ..`, `curl`, etc. Don't point this at anything you care about.
 
 ## Subject
 
@@ -14,10 +14,10 @@ agents.dspy.<owner>.react.heartbeat   # 10 s heartbeat
 
 ## Streamed chunks
 
-1. `{"type":"status","data":"ack"}` — request accepted.
-2. `{"type":"status","data":"→ list_files(\".\")"}` — one per tool call, showing the ReAct trace live.
-3. `{"type":"response","data":"…"}` — final-answer deltas from the model.
-4. Empty-body no-headers message — end of stream.
+1. `{"type":"status","data":"ack"}` - request accepted.
+2. `{"type":"status","data":"→ list_files(\".\")"}` - one per tool call, showing the ReAct trace live.
+3. `{"type":"response","data":"…"}` - final-answer deltas from the model.
+4. Empty-body no-headers message - end of stream.
 
 ## Run
 
@@ -25,7 +25,7 @@ agents.dspy.<owner>.react.heartbeat   # 10 s heartbeat
 # 1. source your API key (NVIDIA OpenAI-compatible endpoint)
 source ../../.env
 
-# 2. install deps (requires the client SDK to be built first — see monorepo README)
+# 2. install deps (requires the client SDK to be built first - see monorepo README)
 bun install
 
 # 3. start

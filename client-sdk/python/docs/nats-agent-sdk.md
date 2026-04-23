@@ -60,17 +60,17 @@ Message types can be mixed, but each message has a type
 
 ## Python SDK resolutions
 
-This section captures decisions made while designing the Python SDK. It is appended as decisions accumulate — the TypeScript and Go SDKs can adopt, diverge with reason, or reconcile later. Wire-level decisions live in <https://github.com/synadia-ai/nats-agent-sdk-docs>; the entries here are Python API shape only.
+This section captures decisions made while designing the Python SDK. It is appended as decisions accumulate - the TypeScript and Go SDKs can adopt, diverge with reason, or reconcile later. Wire-level decisions live in <https://github.com/synadia-ai/nats-agent-sdk-docs>; the entries here are Python API shape only.
 
-### Wire format discrimination (Q1 — resolved)
+### Wire format discrimination (Q1 - resolved)
 
 - Hybrid text/JSON is the v0.1 wire shape; see protocol §3.1–3.2 and §4.2.
-- SDK presents a typed async stream of messages (`response`, `status`, `query` reserved). Plain-text chunks from a minimal agent are surfaced to the caller as `response` messages — the caller never has to parse raw text vs. JSON.
+- SDK presents a typed async stream of messages (`response`, `status`, `query` reserved). Plain-text chunks from a minimal agent are surfaced to the caller as `response` messages - the caller never has to parse raw text vs. JSON.
 - Long-term direction is JSON-only; the SDK should isolate the text→envelope promotion at a single boundary (protocol §3.4).
 
-### Attachments (Q2 — resolved)
+### Attachments (Q2 - resolved)
 
-**Wire.** See protocol §3.1 `file` part type (filename + base64 content). No MIME type at the transport layer — the agent interprets bytes by filename or content sniffing. `object` part type is dropped; structured data is either serialized into a `file` (e.g. `data.json`) or embedded in the text part.
+**Wire.** See protocol §3.1 `file` part type (filename + base64 content). No MIME type at the transport layer - the agent interprets bytes by filename or content sniffing. `object` part type is dropped; structured data is either serialized into a `file` (e.g. `data.json`) or embedded in the text part.
 
 **Python API.**
 
@@ -87,15 +87,15 @@ await remote.prompt(
 ```
 
 - `Attachment` is a small Pydantic model: `filename: str`, `content: bytes`.
-- `Attachment.from_path(path)` reads the file and takes the basename — no directory leakage into the wire.
-- Base64 encoding happens at the transport boundary (just before publish), not in `Attachment` — `content` stays as raw bytes in Python for ergonomics.
+- `Attachment.from_path(path)` reads the file and takes the basename - no directory leakage into the wire.
+- Base64 encoding happens at the transport boundary (just before publish), not in `Attachment` - `content` stays as raw bytes in Python for ergonomics.
 - v0.1 is inline base64 only. When protocol §3.5 (JetStream Object Store references) lands, a second constructor `Attachment.from_object_store(bucket, key, filename=...)` will be added; the `prompt()` API does not change.
 
-### Heartbeat (Q3 — resolved)
+### Heartbeat (Q3 - resolved)
 
 **Wire.** Protocol §5: pub/sub on `agents.{p}.{o}.{n}.heartbeat`, compact payload (`name` + `platform` + `owner` + `ts` + `interval_s`). On-demand reachability uses `$SRV.PING.{name}`.
 
-**Python API — agent side.**
+**Python API - agent side.**
 
 ```python
 agent = Agent(
@@ -103,19 +103,19 @@ agent = Agent(
     owner="rene",
     name="default",
     nc=nc,
-    heartbeat_interval_s=30,   # default; SDK rejects 0 — heartbeat is mandatory in v0.1
+    heartbeat_interval_s=30,   # default; SDK rejects 0 - heartbeat is mandatory in v0.1
 )
 ```
 
 - The SDK runs the heartbeat as a background task started at agent construction.
 
-**Python API — caller side.**
+**Python API - caller side.**
 
 ```python
 # On-demand reachability
 ok = await client.ping("agents.hermes.rene.default", timeout=2.0)
 
-# Passive liveness — automatic
+# Passive liveness - automatic
 status = client.status("agents.hermes.rene.default")
 # AgentStatus(subject="agents.hermes.rene.default", last_seen=datetime(...), interval_s=30)
 ```
@@ -125,13 +125,13 @@ status = client.status("agents.hermes.rene.default")
 - Per-agent offline threshold: `3 × interval_s` since last observed heartbeat (matches §5.2 recommendation).
 - `discover()` runs once at client startup (10⁴-agent scale assumption); subsequent liveness updates flow through the heartbeat stream, not polling.
 
-### Mid-stream queries (Q4 — resolved)
+### Mid-stream queries (Q4 - resolved)
 
 **Wire.** Protocol §4.5: `query` is a typed JSON chunk with `id`, `reply_subject`, and `parts`. Caller publishes exactly one reply to `reply_subject` using §3.1 envelope shape (plain text or JSON envelope). The agent's response stream stays open across the round-trip; the empty-payload terminator still arrives only when the agent is fully done.
 
-**The SDK is content-agnostic.** Queries arrive at the caller as typed messages and are surfaced verbatim — the SDK does not parse menu structures, validate replies, or enforce any answer schema. That's the application's job. Most queries in practice carry a single text part and most replies are a short string.
+**The SDK is content-agnostic.** Queries arrive at the caller as typed messages and are surfaced verbatim - the SDK does not parse menu structures, validate replies, or enforce any answer schema. That's the application's job. Most queries in practice carry a single text part and most replies are a short string.
 
-**Python API — caller side.**
+**Python API - caller side.**
 
 ```python
 async for msg in remote.prompt("delete all 200 files"):
@@ -145,10 +145,10 @@ async for msg in remote.prompt("delete all 200 files"):
             await q.reply(answer)                  # answer: str | Envelope
 ```
 
-- `Query.reply(answer)` accepts a `str` (sent via §3.2 plain-text shorthand) or an `Envelope`. Encodes and publishes once to `q.reply_subject`. Fire-and-forget — no agent ack to await.
+- `Query.reply(answer)` accepts a `str` (sent via §3.2 plain-text shorthand) or an `Envelope`. Encodes and publishes once to `q.reply_subject`. Fire-and-forget - no agent ack to await.
 - The `async for` loop continues yielding chunks after the reply is sent; the agent decides when to send the next chunk.
 
-**Python API — agent side.**
+**Python API - agent side.**
 
 ```python
 async def handle_prompt(envelope, stream):
@@ -165,9 +165,9 @@ async def handle_prompt(envelope, stream):
 
 - `stream.ask(prompt, timeout=N)` allocates a fresh inbox, publishes a `query` chunk (with a generated UUID `id`), awaits one reply with timeout, and returns a parsed `Envelope`.
 - `prompt` accepts a `str` (single text part) or a list of part objects.
-- On timeout: raises `QueryTimeout`. Per §4.5.3 the agent decides whether to error the stream or continue with a default — both are protocol-compliant.
+- On timeout: raises `QueryTimeout`. Per §4.5.3 the agent decides whether to error the stream or continue with a default - both are protocol-compliant.
 - Multiple concurrent `stream.ask(...)` calls are allowed (each gets its own inbox); sequential is the typical pattern.
 
 ### Deferred
 
-Session addressing was prototyped (SDK `sessions=True`, protocol §1.4) and rolled back on 2026-04-20 — the protocol stays at `agents.{platform}.{owner}.{name}` only. Any future session story starts from a blank page; carry a session id in the envelope payload if the platform needs one today.
+Session addressing was prototyped (SDK `sessions=True`, protocol §1.4) and rolled back on 2026-04-20 - the protocol stays at `agents.{platform}.{owner}.{name}` only. Any future session story starts from a blank page; carry a session id in the envelope payload if the platform needs one today.

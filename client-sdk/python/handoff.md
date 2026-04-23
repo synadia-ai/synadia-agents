@@ -1,19 +1,19 @@
 # Handoff
 
-You're picking up work on `natsagent` — a Python SDK for the NATS Agent
+You're picking up work on `natsagent` - a Python SDK for the NATS Agent
 Protocol. This document tells you where things stand and what to do next.
 
 ## Read first (in this order)
 
-1. **`CLAUDE.md`** — project context, toolchain, canonical commands,
+1. **`CLAUDE.md`** - project context, toolchain, canonical commands,
    engineering conventions, and the **no-bullshit testing** rule.
-2. **<https://github.com/synadia-ai/nats-agent-sdk-docs>** — the wire
+2. **<https://github.com/synadia-ai/nats-agent-sdk-docs>** - the wire
    protocol spec and source of truth. The implementation checklist in
    §12 defines what "compliant" means.
-3. **`docs/protocol-mapping.md`** — every SDK call mapped to its spec
+3. **`docs/protocol-mapping.md`** - every SDK call mapped to its spec
    section. Good cross-check when you're not sure what the SDK is
    supposed to do for some wire-level detail.
-4. **`CHANGELOG.md`** — what changed and when. The `0.1.0` entry
+4. **`CHANGELOG.md`** - what changed and when. The `0.1.0` entry
    captures the full migration from the v0.0.1 scaffold to the
    spec-aligned release; useful context for any decision that looks
    surprising.
@@ -27,18 +27,18 @@ public package needs. Once that branch merges and is tagged `v0.1.0`,
 
 Summary of what `0.1.0` ships:
 
-- **Spec-compliant wire** — service name `SynadiaAgents`, `{agent, owner,
+- **Spec-compliant wire** - service name `SynadiaAgents`, `{agent, owner,
   protocol_version, session?}` metadata, `max_payload` / `attachments_ok`
   endpoint caps, `{prompt, attachments}` envelope, typed `{type, data}`
   chunks with strict terminator, `instance_id`-bearing heartbeats.
-- **Clean-break API** — `Agent(agent=..., owner=..., name=..., session=...)`.
+- **Clean-break API** - `Agent(agent=..., owner=..., name=..., session=...)`.
   `Envelope(prompt=..., attachments=...)`. No more `TextPart` /
   `FilePart` / `Envelope.parts`. `DiscoveredAgent.prompt_endpoint`
   carries parsed endpoint caps for §5.4 pre-publish validation.
-- **New error classes** — `ValidationError`, `PromptEmptyError`,
+- **New error classes** - `ValidationError`, `PromptEmptyError`,
   `AttachmentsNotSupportedError`, `PayloadTooLargeError` (all rooted in
   `NatsAgentError`).
-- **Cross-SDK interop** — `tests/test_interop_e2e.py` drives the TS
+- **Cross-SDK interop** - `tests/test_interop_e2e.py` drives the TS
   reference agent at `../typescript/` and verifies round-trip on the
   same wire. Skips cleanly without `bun` or the sibling checkout.
 
@@ -63,7 +63,7 @@ In roughly increasing order of invasiveness:
    reserves the `attachments` endpoint at
    `agents.{agent}.{owner}.{name}.attachments` for out-of-band large
    files. Requires enabling JetStream in the test fixture
-   (`tests/harness/nats_server.py` — today launches without `-js`).
+   (`tests/harness/nats_server.py` - today launches without `-js`).
    Coordinate with the TS SDK before nailing down the Python API;
    symmetry matters.
 3. **NATS context support (§10.2).** The TS SDK has `connect({context: ...})`
@@ -91,7 +91,7 @@ In roughly increasing order of invasiveness:
 
 - **NATS headers are single-line.** `respond_error(description)`
   descriptions with newlines (e.g. multi-line pydantic validation
-  errors) get truncated by the receiver — the `Nats-Service-Error-Code`
+  errors) get truncated by the receiver - the `Nats-Service-Error-Code`
   header vanishes because it lands after a newline. Agent.py's
   `_sanitize_error_desc` collapses newlines to ` | ` and caps at 200
   chars; respect it in any new error paths.
@@ -105,10 +105,10 @@ In roughly increasing order of invasiveness:
 - **Empty body alone is NOT the terminator.** An empty-body message
   WITH NATS headers is an error frame (or some future protocol signal).
   The terminator requires empty body AND no headers. The client.py
-  check is `if msg.data == b"" and not headers` — don't "simplify" it.
+  check is `if msg.data == b"" and not headers` - don't "simplify" it.
 - **`$SRV.PING` doesn't carry endpoints.** v0.0.1 used `$SRV.PING` for
   discovery and derived the instance name from the service `name` field
-  — a hack that broke when service name became `SynadiaAgents` for
+  - a hack that broke when service name became `SynadiaAgents` for
   everyone. `0.1.0` uses `$SRV.INFO.SynadiaAgents` so each response
   carries its endpoints, and the instance name is taken from the 4th
   token of the prompt endpoint's subject (§4.3).
@@ -122,7 +122,7 @@ In roughly increasing order of invasiveness:
 - **Evidence recorder subscriptions.** Spying on `agents.>` and `$SRV.>`
   misses reply-inbox traffic (response chunks, query replies). The
   harness also subscribes to `_INBOX.>` so the wire trace in
-  `messages.jsonl` is complete — don't strip that.
+  `messages.jsonl` is complete - don't strip that.
 - **Heartbeat publisher emits one beacon immediately on start**, not
   after the first interval. Deliberate so callers that do
   subscribe-before-discover observe liveness without waiting a full
@@ -130,7 +130,7 @@ In roughly increasing order of invasiveness:
 - **`Query` carries a live NATS client** (`_nc` field). `asdict(query)`
   fails because dataclasses deepcopy chokes on `_asyncio.Task` objects
   inside the client. For serialisation (evidence snapshots, debug
-  logging), build the dict by hand — see `_snapshot` in
+  logging), build the dict by hand - see `_snapshot` in
   `tests/test_query_e2e.py`.
 - **`tests/__init__.py` must exist** or pytest can't resolve
   `from tests.harness.evidence import ...`. Empty file is fine.
@@ -142,7 +142,7 @@ In roughly increasing order of invasiveness:
 - Read **CLAUDE.md's three CRITICAL rules** before running anything:
   never retry a failed command, always verify output, no inline
   one-liners for real work.
-- Use `EnterPlanMode` for any non-trivial implementation — align on
+- Use `EnterPlanMode` for any non-trivial implementation - align on
   approach before coding.
 - Commit early, commit often. Prefer small focused commits over one
   big omnibus. Reference spec section(s) in wire-level commits.

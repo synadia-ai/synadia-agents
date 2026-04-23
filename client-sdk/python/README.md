@@ -5,7 +5,7 @@ Python SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agen
 `$SRV.PING.SynadiaAgents`, and prompt them from callers with streamed
 typed responses.
 
-**Wire-compatible with the [TypeScript SDK](../typescript)** — the
+**Wire-compatible with the [TypeScript SDK](../typescript)** - the
 two are validated against each other on every CI run via
 [`tests/test_interop_e2e.py`](tests/test_interop_e2e.py).
 
@@ -24,7 +24,7 @@ brew install nats-server         # macOS
 nats-server -a 127.0.0.1 -p 4222
 ```
 
-## Quickstart — host an agent
+## Quickstart - host an agent
 
 ```python
 import asyncio, nats
@@ -61,7 +61,7 @@ nats req agents.demo.alice.worker-1 "hello"         # prompt it
 nats sub  "agents.demo.alice.worker-1.heartbeat"    # watch heartbeats
 ```
 
-## Quickstart — call an agent
+## Quickstart - call an agent
 
 ```python
 import asyncio, nats
@@ -104,7 +104,7 @@ async def confirm(envelope: Envelope, stream: PromptStream) -> None:
         await stream.send("aborted")
 ```
 
-The caller replies inline — the stream stays open across the round-trip:
+The caller replies inline - the stream stays open across the round-trip:
 
 ```python
 async for msg in remote.prompt("do the thing", timeout=30.0):
@@ -116,13 +116,13 @@ async for msg in remote.prompt("do the thing", timeout=30.0):
 
 ## Documentation
 
-- <https://github.com/synadia-ai/nats-agent-sdk-docs> — the protocol spec
+- <https://github.com/synadia-ai/nats-agent-sdk-docs> - the protocol spec
   (source of truth).
-- [`docs/protocol-mapping.md`](docs/protocol-mapping.md) — every SDK call
+- [`docs/protocol-mapping.md`](docs/protocol-mapping.md) - every SDK call
   mapped to its spec section; for auditors and other-SDK implementers.
-- [`docs/nats-agent-sdk.md`](docs/nats-agent-sdk.md) — design notes and
+- [`docs/nats-agent-sdk.md`](docs/nats-agent-sdk.md) - design notes and
   Python-specific resolutions.
-- [`CLAUDE.md`](CLAUDE.md) — project context and engineering conventions.
+- [`CLAUDE.md`](CLAUDE.md) - project context and engineering conventions.
 
 ## Development
 

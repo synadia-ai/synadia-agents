@@ -6,8 +6,8 @@ as its code of conduct. The canonical text and FAQ are maintained at:
 - <https://www.contributor-covenant.org/version/2/1/code_of_conduct/>
 - <https://www.contributor-covenant.org/faq/>
 
-By participating in this project — contributing code, opening issues,
-reviewing PRs, or taking part in any project community space — you
+By participating in this project - contributing code, opening issues,
+reviewing PRs, or taking part in any project community space - you
 agree to abide by the Contributor Covenant.
 
 ## Reporting
