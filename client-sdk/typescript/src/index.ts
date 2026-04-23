@@ -18,7 +18,11 @@ export type { NatsConnection } from "@nats-io/nats-core";
 export { RemoteAgent } from "./remote-agent.js";
 
 // Discovery
-export { type DiscoveredAgent, type RawServiceInfo } from "./discovery/discovered-agent.js";
+export {
+  type DiscoveredAgent,
+  type RawServiceInfo,
+  buildDiscoveredAgent,
+} from "./discovery/discovered-agent.js";
 export { type EndpointInfo, PROMPT_ENDPOINT_NAME } from "./discovery/endpoint-info.js";
 export { type DiscoveryFilter, type DiscoverOptions } from "./discovery/srv-ping.js";
 export { SERVICE_NAME, PROMPT_QUEUE_GROUP } from "./internal/service-name.js";

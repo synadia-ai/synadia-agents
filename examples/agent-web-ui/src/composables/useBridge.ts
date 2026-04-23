@@ -3,7 +3,7 @@
 // and reactive state.
 
 import { bridgeState } from "../stores/bridge.ts";
-import { setAgents } from "../stores/agents.ts";
+import { addAgent, removeAgent, setAgents } from "../stores/agents.ts";
 import { recordHeartbeat } from "../stores/heartbeats.ts";
 import type {
   ClientMessage,
@@ -126,6 +126,12 @@ function handleServerMessage(msg: ServerMessage): void {
       break;
     case "heartbeat":
       recordHeartbeat(msg.instanceId);
+      break;
+    case "agent-added":
+      addAgent(msg.agent);
+      break;
+    case "agent-removed":
+      removeAgent(msg.instanceId);
       break;
     case "piexec-spawned": {
       const entry = pendingControl.get(msg.id);
