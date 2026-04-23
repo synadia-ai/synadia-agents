@@ -33,4 +33,6 @@ client-sdk/python/tests/_evidence/
 
 # Claude Code (local, per-user)
 .claude/settings.local.json
+
+# /security-audit scratch dir (transient)
 .security-audit/
