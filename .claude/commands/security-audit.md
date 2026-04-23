@@ -1,6 +1,6 @@
 # Full Security Audit
 
-You are performing a comprehensive security audit of the codebase in the current working directory. Treat this with the rigor of a professional penetration test. Your job is to find real, exploitable vulnerabilities — not style issues.
+You are performing a comprehensive security audit of the codebase in the current working directory. Treat this with the rigor of a professional penetration test. Your job is to find real, exploitable vulnerabilities - not style issues.
 
 ## Execution Strategy
 
@@ -8,11 +8,11 @@ You MUST use subagents extensively to avoid context exhaustion. Findings are pas
 
 The audit has 5 phases:
 
-1. **Planning** — Discover project structure, identify attack surface
-2. **Deep Investigation** — Parallel subagents per security domain → write full findings to `.security-audit/findings/`
-3. **Initial Report & Triage** — Synthesize TL;DR summaries, rank by severity → write triage index to `.security-audit/triage.md`
-4. **Verification & Fix** — Parallel subagents read finding files, verify, write PoC tests and fixes → write to `.security-audit/findings/SEC-*-verified.md`
-5. **Final Report** — Assemble from all files → write `SECURITY_AUDIT_REPORT.md`
+1. **Planning** - Discover project structure, identify attack surface
+2. **Deep Investigation** - Parallel subagents per security domain → write full findings to `.security-audit/findings/`
+3. **Initial Report & Triage** - Synthesize TL;DR summaries, rank by severity → write triage index to `.security-audit/triage.md`
+4. **Verification & Fix** - Parallel subagents read finding files, verify, write PoC tests and fixes → write to `.security-audit/findings/SEC-*-verified.md`
+5. **Final Report** - Assemble from all files → write `SECURITY_AUDIT_REPORT.md`
 
 After the report is written, clean up: `rm -rf .security-audit/` (the intermediate files are not meant to be committed).
 
@@ -41,7 +41,7 @@ Write down:
 2. The trust boundaries you identified
 3. The attack surface map (module → what untrusted input it handles)
 4. The threat actors relevant to this project
-5. Which of the 8 investigation domains below are applicable (skip domains that don't apply — e.g., skip "TLS & Crypto" for a pure CLI tool that doesn't do networking)
+5. Which of the 8 investigation domains below are applicable (skip domains that don't apply - e.g., skip "TLS & Crypto" for a pure CLI tool that doesn't do networking)
 
 Then proceed to Phase 2, adapting the agent prompts based on your discovery.
 
@@ -54,15 +54,15 @@ Before launching agents, create the output directory:
 mkdir -p .security-audit/findings
 ```
 
-Launch the applicable subagents **in parallel**. For each agent, you MUST customize the prompt based on what you learned in Phase 1 — replace the `[PLACEHOLDERS]` with actual file paths, module names, and project-specific details. Do not send generic prompts.
+Launch the applicable subagents **in parallel**. For each agent, you MUST customize the prompt based on what you learned in Phase 1 - replace the `[PLACEHOLDERS]` with actual file paths, module names, and project-specific details. Do not send generic prompts.
 
-Each agent must be thorough — read every relevant file, trace data flows end-to-end, check edge cases.
+Each agent must be thorough - read every relevant file, trace data flows end-to-end, check edge cases.
 
 ### Output protocol for ALL Phase 2 agents
 
 Each agent MUST:
-1. **Write full findings to a file**: Write all findings (with full detail, reproduction examples, and code references) to `.security-audit/findings/[domain].md` — e.g., `.security-audit/findings/network-parser.md`, `.security-audit/findings/crypto.md`, etc.
-2. **Return only a TL;DR summary**: The agent's return message to the main agent should contain ONLY a brief summary — one line per finding with severity, location, and title. No reproduction examples, no detailed descriptions. This keeps the main agent's context light.
+1. **Write full findings to a file**: Write all findings (with full detail, reproduction examples, and code references) to `.security-audit/findings/[domain].md` - e.g., `.security-audit/findings/network-parser.md`, `.security-audit/findings/crypto.md`, etc.
+2. **Return only a TL;DR summary**: The agent's return message to the main agent should contain ONLY a brief summary - one line per finding with severity, location, and title. No reproduction examples, no detailed descriptions. This keeps the main agent's context light.
 
 Example file content (`.security-audit/findings/network-parser.md`):
 ```markdown
@@ -110,11 +110,11 @@ PROJECT CONTEXT:
 Audit all network protocol parsing and serialization code for memory safety and correctness.
 
 Focus areas:
-- Buffer/stream handling — can a malicious peer send crafted input that causes:
+- Buffer/stream handling - can a malicious peer send crafted input that causes:
   - Buffer overflows, unbounded allocation (OOM / DoS)
   - Integer overflow in length/size fields
   - Incomplete frame/message handling that corrupts parser state
-- Message/frame parsing — for each message type the code can receive:
+- Message/frame parsing - for each message type the code can receive:
   - Malformed messages: missing delimiters, truncated data, extra fields
   - Oversized payloads: are size limits enforced?
   - Nested structure parsing: can malformed inner data cause panics?
@@ -135,7 +135,7 @@ For each finding, include in the output file:
 - Location: file:line_number
 - Description: What the issue is
 - Exploitation: How an attacker could trigger it
-- Reproduction: A concrete example that demonstrates the issue — this is MANDATORY for every finding rated Medium or above. Provide whichever is most appropriate:
+- Reproduction: A concrete example that demonstrates the issue - this is MANDATORY for every finding rated Medium or above. Provide whichever is most appropriate:
   - A crafted malicious input (hex bytes, protocol message, JSON payload, etc.)
   - A code snippet showing the vulnerable call with attacker-controlled values
   - A curl/CLI command that triggers the issue
@@ -280,7 +280,7 @@ Focus areas:
   - Template injection (SSTI)
   - Header injection: CRLF injection in HTTP headers, email headers, protocol frames
   - Log injection: can user input forge log entries?
-- Cross-site scripting (XSS) — if web-facing:
+- Cross-site scripting (XSS) - if web-facing:
   - Reflected, stored, DOM-based XSS
   - Content-Type sniffing
   - CSP headers
@@ -324,7 +324,7 @@ Focus areas:
   - Are optional/dev dependencies properly separated?
   - Are there vendored dependencies? Are they up to date?
 - Unsafe code review:
-  - [Rust] Search for all `unsafe` blocks — is each one necessary? Sound? Documented?
+  - [Rust] Search for all `unsafe` blocks - is each one necessary? Sound? Documented?
   - [C/C++] Search for dangerous functions: strcpy, sprintf, gets, system, etc.
   - [Go] Search for `unsafe.Pointer`
 - Build security:
@@ -389,7 +389,7 @@ Focus areas:
   - Are there TOCTOU (time-of-check-time-of-use) bugs? (especially in file operations, permission checks, auth)
   - [Rust] Are Arc<Mutex<T>> patterns used correctly? Any lock poisoning issues?
   - [Go] Are there race conditions on shared maps, slices, or structs? (suggest running with -race flag)
-  - [Python] GIL does not protect against logical races — check shared state in async code
+  - [Python] GIL does not protect against logical races - check shared state in async code
   - [Java/C++] Check for data races on shared fields without proper synchronization
 - Channel/queue safety:
   - Can messages be lost, duplicated, or reordered in a security-relevant way?
@@ -421,20 +421,20 @@ Write all findings to the output file specified in PROJECT CONTEXT. Return only 
 
 ## PHASE 3: INITIAL REPORT & TRIAGE
 
-After ALL Phase 2 agents complete, work from the **TL;DR summaries they returned** — do NOT read the full finding files yourself (that would defeat the purpose of offloading to files).
+After ALL Phase 2 agents complete, work from the **TL;DR summaries they returned** - do NOT read the full finding files yourself (that would defeat the purpose of offloading to files).
 
-1. **Deduplicate** — Multiple agents may report the same issue. Use the TL;DR lines to identify overlaps. Note which finding files contain duplicate entries.
+1. **Deduplicate** - Multiple agents may report the same issue. Use the TL;DR lines to identify overlaps. Note which finding files contain duplicate entries.
 2. **Classify** each unique finding:
    - **Severity**: Critical / High / Medium / Low / Informational
    - **Confidence**: Confirmed / Likely / Possible / Theoretical
    - **Category**: Memory Safety / Injection / DoS / Crypto / Auth / Race Condition / Supply Chain / Info Leak
 3. **Rank** by severity × confidence (Critical+Confirmed first, Informational+Theoretical last)
-4. **Filter**: Drop "Informational" findings with "Theoretical" confidence — they add noise, not signal
+4. **Filter**: Drop "Informational" findings with "Theoretical" confidence - they add noise, not signal
 5. Assign each finding an ID: `SEC-001`, `SEC-002`, etc.
-6. **Write the triage index** to `.security-audit/triage.md` — a table mapping each SEC-ID to its source file and finding number, severity, confidence, and title. This is what Phase 4 agents will reference.
+6. **Write the triage index** to `.security-audit/triage.md` - a table mapping each SEC-ID to its source file and finding number, severity, confidence, and title. This is what Phase 4 agents will reference.
 7. Present the triage summary table to the user.
 
-You do NOT need to carry reproduction examples in your context — they live in the finding files and Phase 4 agents will read them directly.
+You do NOT need to carry reproduction examples in your context - they live in the finding files and Phase 4 agents will read them directly.
 
 ---
 
@@ -442,7 +442,7 @@ You do NOT need to carry reproduction examples in your context — they live in 
 
 For each finding rated **Medium or above** AND **Possible confidence or above**, launch a subagent. Batch them in groups of 4-6 if there are many.
 
-Each agent gets a **lightweight prompt** — the detailed finding data lives in files, not in the prompt:
+Each agent gets a **lightweight prompt** - the detailed finding data lives in files, not in the prompt:
 
 ```
 You are verifying a specific security finding and proposing a fix for a [LANGUAGE] project.
@@ -459,7 +459,7 @@ You are verifying a specific security finding and proposing a fix for a [LANGUAG
 
 ### 1. Verify
 - Read the source code at the specified location
-- Use the reproduction example from the finding file as your starting point — reason through or run it to confirm it triggers the issue
+- Use the reproduction example from the finding file as your starting point - reason through or run it to confirm it triggers the issue
 - Check if existing defenses already mitigate this
 - Rate: Confirmed / Likely / Possible / False Positive
 
@@ -468,7 +468,7 @@ Convert the reproduction example into a proper test:
 - Place it in the project's existing test structure
 - Name it: `test_security_[id]_[short_description]`
 - The test should PASS when the vulnerability EXISTS (so it fails once fixed)
-- Fallback hierarchy — use the first level that's feasible:
+- Fallback hierarchy - use the first level that's feasible:
   1. **Unit test** in the project's test framework `[unit-test]`
   2. **Integration test** or standalone script `[integration-test]`
   3. **Detailed manual reproduction steps** with exact inputs and expected outputs `[manual-steps]`
@@ -479,14 +479,14 @@ Convert the reproduction example into a proper test:
 
 ### 4. Write Output
 Write your results to `.security-audit/findings/[SEC-NNN]-verified.md` with:
-- **Verified**: Yes / No / Partial — with explanation
-- **Confidence Adjustment**: Same / Upgraded / Downgraded to [level] — why?
+- **Verified**: Yes / No / Partial - with explanation
+- **Confidence Adjustment**: Same / Upgraded / Downgraded to [level] - why?
 - **PoC Test**: [the test code or manual steps, marked with level]
 - **Proposed Fix**: [the code change]
 - **Fix Explanation**: [correctness, compat, perf]
 - **Breaking Change**: Yes/No
 
-Return only a one-line summary: `SEC-NNN: Verified/FalsePositive — [one sentence]`
+Return only a one-line summary: `SEC-NNN: Verified/FalsePositive - [one sentence]`
 ```
 
 ---
@@ -494,9 +494,9 @@ Return only a one-line summary: `SEC-NNN: Verified/FalsePositive — [one senten
 ## PHASE 5: FINAL REPORT
 
 After Phase 4 completes, assemble the final report. Read the data you need from files:
-- **Phase 2 findings**: `.security-audit/findings/[domain].md` — full descriptions, reproduction examples
-- **Phase 3 triage**: `.security-audit/triage.md` — severity, confidence, IDs, ranking
-- **Phase 4 verification**: `.security-audit/findings/SEC-*-verified.md` — PoC tests, fixes, verification status
+- **Phase 2 findings**: `.security-audit/findings/[domain].md` - full descriptions, reproduction examples
+- **Phase 3 triage**: `.security-audit/triage.md` - severity, confidence, IDs, ranking
+- **Phase 4 verification**: `.security-audit/findings/SEC-*-verified.md` - PoC tests, fixes, verification status
 
 Write the report to `SECURITY_AUDIT_REPORT.md` in the working directory. For large audits with many findings, use a subagent for report assembly to avoid context exhaustion.
 
@@ -538,16 +538,16 @@ Structure:
 [What the vulnerability is]
 
 #### Root Cause
-[Why it exists — the specific code pattern or missing check]
+[Why it exists - the specific code pattern or missing check]
 
 #### Exploitation Scenario
 [Step-by-step how an attacker would exploit this]
 
 #### Reproduction Example
-[Concrete, runnable reproduction — crafted input, curl command, code snippet, or minimal script. This must be specific enough that a developer can copy-paste it to see the issue.]
+[Concrete, runnable reproduction - crafted input, curl command, code snippet, or minimal script. This must be specific enough that a developer can copy-paste it to see the issue.]
 
 #### Impact
-[What happens if exploited — DoS, info leak, auth bypass, RCE, etc.]
+[What happens if exploited - DoS, info leak, auth bypass, RCE, etc.]
 
 #### Proof of Concept `[unit-test|integration-test|manual-steps]`
 ```[language]
@@ -578,10 +578,10 @@ Structure:
 
 ## Important Guidelines
 
-- **Be thorough but precise**: False positives waste maintainer time. If you're unsure, mark confidence as "Possible" — never inflate to "Confirmed" without evidence.
-- **Language-aware analysis**: Understand what your language's type system / runtime prevents. Rust's borrow checker prevents use-after-free — don't report those. Go's GC prevents double-free — don't report those. Focus on what CAN go wrong in each language.
+- **Be thorough but precise**: False positives waste maintainer time. If you're unsure, mark confidence as "Possible" - never inflate to "Confirmed" without evidence.
+- **Language-aware analysis**: Understand what your language's type system / runtime prevents. Rust's borrow checker prevents use-after-free - don't report those. Go's GC prevents double-free - don't report those. Focus on what CAN go wrong in each language.
 - **Real-world exploitability**: Prioritize findings that a real attacker could exploit over theoretical concerns about code style or "best practices". A confirmed Medium beats a theoretical Critical.
-- **Every finding needs a reproduction example**: A vulnerability without a reproduction example is just an opinion. Phase 2 agents produce the initial example (they have the deepest code context) and write it to files. Phase 4 agents read those files and refine the example into a proper test. If Phase 4 is cut short, Phase 5 can still pull reproduction examples directly from Phase 2 finding files — nothing is lost.
-- **Don't skip phases**: Even if Phase 2 finds nothing critical, still run Phase 4 verification on Medium findings — initial analysis might have missed mitigating context.
+- **Every finding needs a reproduction example**: A vulnerability without a reproduction example is just an opinion. Phase 2 agents produce the initial example (they have the deepest code context) and write it to files. Phase 4 agents read those files and refine the example into a proper test. If Phase 4 is cut short, Phase 5 can still pull reproduction examples directly from Phase 2 finding files - nothing is lost.
+- **Don't skip phases**: Even if Phase 2 finds nothing critical, still run Phase 4 verification on Medium findings - initial analysis might have missed mitigating context.
 - **Adapt to the project**: Not every domain applies to every project. A pure computation library won't have auth issues. A CLI tool won't have XSS. Skip irrelevant agents but document what you skipped and why in the final report.
-- **Check cross-language equivalents**: If NATS MCP tools are available, use `find_equivalent` to check how other implementations of the same protocol handle the same security concern — this reveals whether an issue is protocol-level or implementation-specific.
+- **Check cross-language equivalents**: If NATS MCP tools are available, use `find_equivalent` to check how other implementations of the same protocol handle the same security concern - this reveals whether an issue is protocol-level or implementation-specific.

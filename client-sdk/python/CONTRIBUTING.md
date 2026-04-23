@@ -17,7 +17,7 @@ Prereqs:
   on `PATH`. Integration tests spawn one per test session; skip cleanly
   if absent.
 - **[`bun`](https://bun.sh)** + sibling `../typescript/` checkout with
-  `node_modules/` populated, for cross-SDK interop tests. Optional —
+  `node_modules/` populated, for cross-SDK interop tests. Optional -
   `tests/test_interop_e2e.py` skips if any of these is missing.
 
 ```bash
@@ -37,7 +37,7 @@ uv run mypy src tests examples           # strict type check
 uv build                                 # build sdist + wheel to dist/
 ```
 
-The full check sequence before pushing — with caches disabled so a
+The full check sequence before pushing - with caches disabled so a
 stale ruff/mypy cache can't hide a regression that CI will hit on a
 cold checkout:
 
@@ -54,9 +54,9 @@ any non-green step.
 Every integration test writes wire-level evidence to
 `tests/_evidence/<test-nodeid>/`:
 
-- `messages.jsonl` — every NATS message published during the test
+- `messages.jsonl` - every NATS message published during the test
   (agents + discovery + heartbeats).
-- `chunks.jsonl` — decoded response-stream items yielded to the client
+- `chunks.jsonl` - decoded response-stream items yielded to the client
   iterator.
 - Per-test extras: `srv-info.json`, `heartbeat.json`, `wire.jsonl`, etc.
 
@@ -105,11 +105,11 @@ Docs-only and pure-refactor PRs are the only exception.
 
 If you find the implementation contradicts the
 [canonical spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md),
-the implementation is wrong — open an issue or PR against the code.
+the implementation is wrong - open an issue or PR against the code.
 
 If you find the spec is ambiguous and the TS SDK at
 `../typescript/` picks a different default than this one, the two
-have drifted — flag it on the PR and both SDKs should land a coordinated
+have drifted - flag it on the PR and both SDKs should land a coordinated
 fix. The interop test at `tests/test_interop_e2e.py` catches drifts that
 actually break cross-implementation talk.
 
@@ -126,5 +126,5 @@ issue.
 ## License
 
 By contributing, you agree your contributions are licensed under the
-[Apache License 2.0](LICENSE) — the same license as the rest of the
+[Apache License 2.0](LICENSE) - the same license as the rest of the
 project.
