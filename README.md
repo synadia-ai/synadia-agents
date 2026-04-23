@@ -44,7 +44,7 @@ Type tokens currently in this repo:
 | `pi`      | PI Agent             | `agents/pi/`          |
 | `oc`      | OpenClaw             | `agents/openclaw/`    |
 | `ccc`     | Claude Code          | `agents/claude-code/` |
-| `hermes`  | Claude Code          | `agents/hermes/`      |
+| `hermes`  | Hermes Agent         | `agents/hermes/`      |
 | `dspy`    | ax-llm ReAct (DSPy)  | `examples/dspy/`      |
 
 Discovery is standard NATS micro:
