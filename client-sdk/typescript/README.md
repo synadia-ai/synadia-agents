@@ -46,7 +46,7 @@ const client = await connect({
 
 ## Local validation in action
 
-If the target agent doesn't accept attachments, or if the envelope exceeds its `max_payload`, the SDK fails your call *before* publishing:
+If the target agent doesn't accept attachments, or if the envelope exceeds its `max_payload`, the SDK fails your call _before_ publishing:
 
 ```ts
 import { AttachmentsNotSupportedError, connect, PayloadTooLargeError } from "@synadia/agents";
@@ -72,14 +72,14 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 
 ## What's in the box
 
-| API                                                               | Purpose                                                          |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `connect(options)` / `attach({nc})`                               | Open (or wrap) a NATS connection.                                |
-| `client.discover({timeoutMs, filter})`                            | Enumerate available agents; auto subscribe-before-ping.          |
-| `client.bind(agent)`                                              | Get a `RemoteAgent` handle.                                      |
-| `remote.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                         |
-| `client.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`        | Heartbeat tracking and on-demand ping.                           |
-| `client.close()`                                                  | Tear down; aborts all in-flight streams.                         |
+| API                                                               | Purpose                                                 |
+| ----------------------------------------------------------------- | ------------------------------------------------------- |
+| `connect(options)` / `attach({nc})`                               | Open (or wrap) a NATS connection.                       |
+| `client.discover({timeoutMs, filter})`                            | Enumerate available agents; auto subscribe-before-ping. |
+| `client.bind(agent)`                                              | Get a `RemoteAgent` handle.                             |
+| `remote.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                |
+| `client.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`        | Heartbeat tracking and on-demand ping.                  |
+| `client.close()`                                                  | Tear down; aborts all in-flight streams.                |
 
 Subpath exports:
 
