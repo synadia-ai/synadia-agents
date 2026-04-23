@@ -16,13 +16,13 @@ Prereqs:
 - **[`nats-server`](https://docs.nats.io/running-a-nats-service/introduction/installation)**
   on `PATH`. Integration tests spawn one per test session; skip cleanly
   if absent.
-- **[`bun`](https://bun.sh)** + sibling `../nats-ai-tssdk/` checkout with
+- **[`bun`](https://bun.sh)** + sibling `../typescript/` checkout with
   `node_modules/` populated, for cross-SDK interop tests. Optional —
   `tests/test_interop_e2e.py` skips if any of these is missing.
 
 ```bash
-git clone https://github.com/synadia-io/nats-ai-pysdk
-cd nats-ai-pysdk
+git clone https://github.com/synadia-ai/synadia-agents
+cd synadia-agents/client-sdk/python
 uv sync
 ```
 
@@ -108,7 +108,7 @@ If you find the implementation contradicts the
 the implementation is wrong — open an issue or PR against the code.
 
 If you find the spec is ambiguous and the TS SDK at
-`../nats-ai-tssdk/` picks a different default than this one, the two
+`../typescript/` picks a different default than this one, the two
 have drifted — flag it on the PR and both SDKs should land a coordinated
 fix. The interop test at `tests/test_interop_e2e.py` catches drifts that
 actually break cross-implementation talk.

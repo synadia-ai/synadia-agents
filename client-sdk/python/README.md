@@ -5,7 +5,7 @@ Python SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agen
 `$SRV.PING.agents`, and prompt them from callers with streamed
 typed responses.
 
-**Cross-SDK parity with the [TypeScript SDK](https://github.com/synadia-io/nats-ai-tssdk)**
+**Cross-SDK parity with the [TypeScript SDK](https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/typescript)**
 is tracked in [`tests/test_interop_e2e.py`](tests/test_interop_e2e.py).
 The TS SDK is currently still on protocol v0.1 while this release is on
 v0.2, so the interop tests are marked `xfail` until the TS side bumps
@@ -191,7 +191,7 @@ Integration tests spawn a real `nats-server` per session and record wire
 evidence under `tests/_evidence/<test-nodeid>/`. Cross-SDK interop tests
 (`tests/test_interop_e2e.py`) additionally spawn the TypeScript
 reference agent via `bun`; they skip cleanly if `bun` or the sibling
-`../nats-ai-tssdk/` checkout isn't present.
+`../typescript/` checkout isn't present.
 
 ## License
 

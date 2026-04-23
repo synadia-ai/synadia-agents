@@ -107,6 +107,6 @@ class ContextNotSupportedError(ContextInvalidError):
             name,
             f"`{field}` support is not yet implemented in natsagent; use `creds` / "
             "a credentials file if possible, or open an issue at "
-            "https://github.com/synadia-io/nats-ai-pysdk/issues",
+            "https://github.com/synadia-ai/synadia-agents/issues",
         )
         self.field = field

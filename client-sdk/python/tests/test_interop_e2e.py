@@ -1,17 +1,17 @@
 """Cross-SDK interop — Python client against the TypeScript reference agent.
 
 Spawns the TS SDK's reference agent via ``bun run
-../nats-ai-tssdk/examples/_run-reference-agent.ts``, points it at the
+../typescript/examples/_run-reference-agent.ts``, points it at the
 session's ``nats-server`` via ``NATS_URL``, and verifies the Python client
 can discover it, read its spec-compliant metadata + endpoint caps, and
 round-trip a prompt.
 
-The TS SDK isn't published yet; this test expects it to live as a sibling
-directory (``../nats-ai-tssdk/`` from the Python SDK root). The test
-skips cleanly — NOT fails — when:
+The TS SDK lives in the same monorepo as a sibling subdir
+(``../typescript/`` from this package's root). The test skips cleanly —
+NOT fails — when:
 
   - ``bun`` is not on PATH,
-  - ``../nats-ai-tssdk/`` doesn't exist, or
+  - ``../typescript/`` doesn't exist (unexpected in a fresh checkout), or
   - the subprocess fails to come up (missing ``node_modules``, broken
     install, etc).
 
@@ -44,9 +44,9 @@ if TYPE_CHECKING:
     from tests.harness.nats_server import RunningServer
 
 
-# Sibling checkout — the TS SDK isn't published yet, so we depend on a
-# workspace layout. CI and contributors have to check out both repos.
-TSSDK_DIR = Path(__file__).resolve().parent.parent.parent / "nats-ai-tssdk"
+# Sibling subdir inside the monorepo: client-sdk/python/ and
+# client-sdk/typescript/ live next to each other.
+TSSDK_DIR = Path(__file__).resolve().parent.parent.parent / "typescript"
 REFERENCE_AGENT_SCRIPT = TSSDK_DIR / "examples" / "_run-reference-agent.ts"
 
 # The reference agent prints this line on startup; we wait for it rather
@@ -62,8 +62,8 @@ def _interop_prereqs_missing() -> str | None:
         return "bun not on PATH — skipping cross-SDK interop test"
     if not TSSDK_DIR.is_dir():
         return (
-            f"sibling checkout not found at {TSSDK_DIR} — "
-            "clone nats-ai-tssdk alongside nats-ai-pysdk to run interop"
+            f"TS SDK sibling subdir not found at {TSSDK_DIR} — "
+            "unexpected in a fresh monorepo checkout"
         )
     if not REFERENCE_AGENT_SCRIPT.is_file():
         return f"reference agent script missing at {REFERENCE_AGENT_SCRIPT}"
@@ -156,7 +156,7 @@ async def ts_reference_agent(
 
 @pytest.mark.xfail(
     reason="TS SDK still on protocol v0.1 (service name 'SynadiaAgents'); "
-    "re-enable once ../nats-ai-tssdk/ bumps to v0.2 ('agents' + queue group).",
+    "re-enable once ../typescript/ bumps to v0.2 ('agents' + queue group).",
     strict=False,
 )
 @pytest.mark.asyncio
@@ -191,7 +191,7 @@ async def test_python_client_discovers_ts_reference_agent(
 
 @pytest.mark.xfail(
     reason="TS SDK still on protocol v0.1 (service name 'SynadiaAgents'); "
-    "re-enable once ../nats-ai-tssdk/ bumps to v0.2 ('agents' + queue group).",
+    "re-enable once ../typescript/ bumps to v0.2 ('agents' + queue group).",
     strict=False,
 )
 @pytest.mark.asyncio

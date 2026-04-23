@@ -1,6 +1,6 @@
 # Examples
 
-Runnable demos ported from the [TypeScript SDK](https://github.com/synadia-io/nats-ai-tssdk),
+Runnable demos ported from the [TypeScript SDK](https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/typescript),
 plus a Python-only interactive chat REPL. Start the reference agent in
 one terminal, then point the numbered demos at it from another. A user
 comparing the two SDKs should find the same demo set on both sides.

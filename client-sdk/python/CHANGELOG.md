@@ -154,7 +154,7 @@ caller as a pair.
 
 ### Interop
 
-- The TypeScript SDK (`../nats-ai-tssdk/`) is still on v0.1 at the time
+- The TypeScript SDK (`../typescript/`) is still on v0.1 at the time
   of this release. `tests/test_interop_e2e.py` is marked `xfail` until
   the TS SDK bumps to v0.2; a future TS v0.2 release will flip this
   back to green (`XPASS` surfaces as a test-suite signal).
@@ -207,7 +207,7 @@ of this entry.
 - **Cross-SDK interop test** — `tests/test_interop_e2e.py` spawns the
   TypeScript SDK's reference agent via `bun` and exercises Python ↔ TS
   on the same wire. Skips cleanly if `bun` or the sibling
-  `../nats-ai-tssdk/` checkout is missing.
+  `../typescript/` checkout is missing.
 - **`docs/protocol-mapping.md`** — every SDK call mapped to its spec
   section; mirrors the TypeScript SDK's equivalent doc.
 - **`scripts/demo_echo.py`** — runnable reference agent for manual
@@ -297,7 +297,7 @@ Initial scaffold. Released ahead of the finalised v0.1 spec; most wire
 shapes in this version no longer match the spec and are corrected in
 0.1.0.
 
-[Unreleased]: https://github.com/synadia-io/nats-ai-pysdk/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/synadia-io/nats-ai-pysdk/releases/tag/v0.2.0
-[0.1.0]: https://github.com/synadia-io/nats-ai-pysdk/releases/tag/v0.1.0
-[0.0.1]: https://github.com/synadia-io/nats-ai-pysdk/releases/tag/v0.0.1
+[Unreleased]: https://github.com/synadia-ai/synadia-agents/compare/python-v0.2.0...HEAD
+[0.2.0]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.2.0
+[0.1.0]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.1.0
+[0.0.1]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.0.1

@@ -6,7 +6,7 @@ SDK's ``connect()``/``attach()`` pair field-for-field so the two SDKs
 behave identically when pointed at the same broker — same context file
 layout, same auth precedence, same unsupported-field failures.
 
-Scope for v0.1 (matches ``nats-ai-tssdk`` v0.1.0):
+Scope for v0.1 (matches the TS SDK at ``../typescript/`` v0.1.0):
 
 * ``url`` → ``servers`` (comma-separated strings split)
 * ``token`` → ``token=``

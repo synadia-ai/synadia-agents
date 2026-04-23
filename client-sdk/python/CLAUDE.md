@@ -20,11 +20,13 @@ and break `agent`-scoped discovery.
 
 **The protocol spec is the source of truth.** Canonical location:
 [`synadia-ai/nats-agent-sdk-docs/core-protocol.md`](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
-(sibling checkout at `../nats-agent-sdk-docs/core-protocol.md` when
-working locally). This repo no longer keeps a copy — always read the
-canonical. The implementation checklist in §12 is what "compliant" means.
+(sibling checkout at `../../../nats-agent-sdk-docs/core-protocol.md`
+when working locally — that repo sits next to the `synadia-agents/`
+monorepo checkout). This subdir no longer keeps a copy — always read
+the canonical. The implementation checklist in §12 is what "compliant"
+means.
 
-**Wire compatibility with the TypeScript SDK** at `../nats-ai-tssdk/` is
+**Wire compatibility with the TypeScript SDK** at `../typescript/` is
 a hard requirement. Both SDKs are validated against each other via
 `tests/test_interop_e2e.py`. When the spec is silent and the two SDKs
 pick a default, they MUST pick the same default — drift is tracked in
@@ -76,22 +78,21 @@ v0.2 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
   The fixture `pytest.skip`s cleanly if the binary is absent.
   - macOS: `brew install nats-server`.
   - Linux: pin a version and `curl -L .../nats-server-v${VERSION}-linux-amd64.tar.gz`.
-- **`bun`** + sibling `../nats-ai-tssdk/` checkout — required only for
-  `tests/test_interop_e2e.py`, which spawns the TS SDK's reference agent
-  and asserts the Python client can discover + prompt it on the same
-  wire. Neither SDK is published yet, so interop depends on a workspace
-  layout: both repos cloned side-by-side under the same parent directory.
-  One-time setup on the TS side:
+- **`bun`** + the monorepo's `../typescript/` sibling — required only
+  for `tests/test_interop_e2e.py`, which spawns the TS SDK's reference
+  agent and asserts the Python client can discover + prompt it on the
+  same wire. Since the TS SDK lives next to this one inside the
+  monorepo, the only one-time setup is populating its `node_modules/`:
 
-      cd ../nats-ai-tssdk && bun install
+      cd ../typescript && bun install
 
-  If any prereq is absent (`bun` missing, sibling checkout absent,
-  `node_modules/` not populated), the two interop tests `pytest.skip`
-  with a pointed reason — they surface as `SKIPPED [2]` in the summary
-  (pytest is configured with `-ra`, so the skip reason prints). Running
-  the suite without TS interop is fine for day-to-day work; the wire-
-  shape guardrail just becomes best-effort until a contributor with the
-  sibling checkout runs the full matrix.
+  If any prereq is absent (`bun` missing, sibling subdir unexpectedly
+  absent, `node_modules/` not populated), the two interop tests
+  `pytest.skip` with a pointed reason — they surface as `SKIPPED [2]`
+  in the summary (pytest is configured with `-ra`, so the skip reason
+  prints). Running the suite without TS interop is fine for day-to-day
+  work; the wire-shape guardrail just becomes best-effort until a
+  contributor with `bun` runs the full matrix.
 - **`nats` CLI** (optional, for manual poking).
 
 ### Connecting to NATS
