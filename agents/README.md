@@ -13,7 +13,7 @@ Agent hosts that speak the **NATS Agent Protocol**. Each subdirectory wraps an e
 
 ## How it works
 
-Every agent registers a NATS micro service called `agents` with a `prompt` endpoint at `agents.<type-token>.<owner>.<session>`. It accepts either plain UTF-8 text or a JSON envelope (optionally with inline base64 attachments), then streams typed JSON chunks back on the reply subject — `status` for keep-alive, `response` for content deltas, optional `query` for mid-stream questions — and ends the stream with an empty body. It also publishes a heartbeat on `<subject>.heartbeat` and advertises its `max_payload` and `attachments_ok` in the endpoint metadata. That's the entire contract; everything else below is per-agent variation.
+Every agent registers a NATS micro service called `agents` with an endpoint named `prompt`. The protocol only fixes the endpoint name — the subject is implementation-chosen; across this repo we use `agents.<type-token>.<owner>.<session>` by convention. The endpoint accepts either plain UTF-8 text or a JSON envelope (optionally with inline base64 attachments), then streams typed JSON chunks back on the reply subject — `status` for keep-alive, `response` for content deltas, optional `query` for mid-stream questions — and ends the stream with an empty body. Each agent also publishes a heartbeat on `<subject>.heartbeat` and advertises its `max_payload` and `attachments_ok` in the endpoint metadata. That's the entire contract; everything else below is per-agent variation.
 
 ## Per-agent notes
 
@@ -42,7 +42,7 @@ When an agent accepts attachments, it decodes them to disk and prepends the abso
 <summary>Conformance checklist</summary>
 
 1. Register as a NATS micro service named `agents` with metadata `{agent, owner, session, protocol_version}`.
-2. Expose a `prompt` endpoint at `agents.<type-token>.<owner>.<session>` that advertises `max_payload` and `attachments_ok`.
+2. Expose an endpoint named `prompt` that advertises `max_payload` and `attachments_ok`. The subject is your choice; the convention in this repo is `agents.<type-token>.<owner>.<session>`.
 3. Publish heartbeats on `<subject>.heartbeat`.
 4. Accept plain-text OR JSON envelopes. Decode inline attachments to a per-session staging dir and prepend their absolute paths to the prompt.
 5. Stream typed chunks on the reply subject: `status` (ack / keep-alive), `response` (content deltas), `query` (mid-stream questions, when supported).
