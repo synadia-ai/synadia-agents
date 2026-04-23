@@ -1,48 +1,86 @@
 # Client SDKs
 
-Language SDKs that speak the **NATS Agent Protocol** (`0.2.0-draft`). Each SDK is the *caller* side: it discovers agents, sends prompts (with optional attachments), and streams typed response chunks back.
+Caller-side libraries that speak the **NATS Agent Protocol**. They discover agents running on a NATS cluster, send prompts (with optional attachments), and stream typed response chunks back. The API has the same shape in every language — pick the one that matches your runtime.
 
 ## Available SDKs
 
-| Language   | Path                 | Package            | Runtime                  | Status      |
-| ---------- | -------------------- | ------------------ | ------------------------ | ----------- |
-| TypeScript | `typescript/`        | `@synadia/agents`  | Node ≥ 20, Bun ≥ 1.2     | pre-release |
-| Python     | `python/`            | `natsagent`        | Python ≥ 3.11            | pre-release |
+| Language   | Path          | Package           | Runtime              |
+| ---------- | ------------- | ----------------- | -------------------- |
+| TypeScript | `typescript/` | `@synadia/agents` | Node ≥ 20, Bun ≥ 1.2 |
+| Python     | `python/`     | `natsagent`       | Python ≥ 3.11        |
 
-(Go and other languages are planned but not yet in-tree.)
+Go and other languages are planned.
 
-## What every SDK must provide
+## Quickstart
 
-Every compliant SDK exposes the same primitives — names may vary by idiom, semantics do not:
+**TypeScript**
 
-| Primitive                  | Purpose                                                                                    |
-| -------------------------- | ------------------------------------------------------------------------------------------ |
-| `connect(options)`         | Open a NATS connection. Accepts a NATS CLI context name or raw server URLs.                |
-| `discover({ timeoutMs })`  | Enumerate agents via `$SRV.PING.agents`. Subscribe-before-ping is the SDK's responsibility.|
-| `bind(agent)` → `remote`   | Wrap a discovered agent descriptor for subsequent calls.                                   |
-| `remote.prompt(text, opts)`| Send an envelope, return an async iterable over typed chunks (`response`, `status`, `query`). |
-| `liveness(id)` / heartbeat | Track `agents.<type>.<owner>.<session>.heartbeat` for up/down state without polling.       |
-| `ping(id)`                 | On-demand `$SRV.PING.agents.<id>`.                                                         |
+```ts
+import { connect } from "@synadia/agents";
 
-**Local validation is mandatory.** Oversized payloads, unsupported attachments, and invalid base64 must be rejected **before** hitting the wire, by inspecting the target agent's advertised `max_payload` and `attachments_ok`. This is spec §5.4.
+const client = await connect({ name: "demo", context: "current" });
+const [agent] = await client.discover({ timeoutMs: 2_000 });
 
-## Protocol reference
+for await (const msg of await client.bind(agent!).prompt("hello")) {
+  if (msg.type === "response") process.stdout.write(msg.text);
+}
 
-- **Spec:** <https://github.com/synadia-ai/nats-agent-sdk-docs> (external).
-- **Subject format:** `agents.<type-token>.<owner>.<session>` for prompts; `.heartbeat` suffix for liveness.
-- **Request body:** plain UTF-8 text OR JSON `{"prompt": "...", "attachments": [{"filename": "...", "content": "<base64>"}]}`. Base64 must be RFC 4648 §4 (standard alphabet, padded, no URL-safe, no whitespace).
-- **Response chunks:**
-  - `{"type":"response","data":"<text>"}` — content delta
-  - `{"type":"status","data":"ack"}` — accepted / keep-alive
-  - `{"type":"query","data":{...}}` — mid-stream question; reply to `reply_subject`
-- **Terminator:** empty body **and no headers**.
-- **Errors:** `Nats-Service-Error-Code: 400` (client) or `500` (server) header on an otherwise-empty final message.
+await client.close();
+```
 
-## Adding a new language SDK
+**Python**
+
+```python
+import asyncio, nats
+from natsagent import Client
+
+async def main():
+    nc = await nats.connect("nats://127.0.0.1:4222")
+    client = Client(nc=nc)
+    await client.start()
+
+    agents = await client.discover(timeout=2.0)
+    remote = client.bind(agents[0])
+
+    async for chunk in remote.prompt("hello"):
+        print(chunk)
+
+    await client.stop()
+    await nc.close()
+
+asyncio.run(main())
+```
+
+Each SDK's README covers install, options, error handling, and longer examples:
+
+- [`typescript/README.md`](typescript/README.md)
+- [`python/README.md`](python/README.md)
+
+## What an SDK gives you
+
+Same concepts in each language; names adapt to each language's idioms.
+
+| Capability       | Purpose                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------- |
+| Create a client  | Wire up a NATS connection and get a ready-to-use client.                                    |
+| Discover agents  | Enumerate running agents on the cluster. Subscribe-before-ping is handled for you.          |
+| Bind to an agent | Wrap a discovered agent descriptor for subsequent calls.                                    |
+| Prompt an agent  | Send a prompt, receive an async iterable over typed chunks (`response`, `status`, `query`). |
+| Track liveness   | Watch an agent's heartbeat subject for up/down state without polling.                       |
+| Ping an agent    | On-demand ping of a specific agent instance.                                                |
+
+SDKs also validate envelopes locally — oversized payloads, unsupported attachments, invalid base64 — against the target agent's advertised `max_payload` and `attachments_ok`, so you catch those errors before a round-trip.
+
+<details>
+<summary>Adding a new language SDK</summary>
 
 1. Create `client-sdk/<lang>/` with the language's standard project layout.
-2. Implement the primitives above. Re-use the canonical test vectors from `typescript/test/` where possible.
-3. Verify against the `testing` sub-export's `ReferenceAgent` (TypeScript ships one; other languages can translate it).
-4. Add a row to the table above and a paragraph describing any language-idiomatic divergences.
+2. Implement the capabilities above. The `typescript/test/` vectors make useful cross-language fixtures.
+3. Verify against the `ReferenceAgent` helper (TypeScript ships one; other languages can translate it).
+4. Add a row to the table above and note any language-idiomatic divergences.
 
-Agents can be tested against any SDK interchangeably — the wire is the contract, not the API shape.
+The wire is the contract — agents can be driven by any SDK interchangeably.
+
+</details>
+
+Full protocol spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
