@@ -36,6 +36,7 @@ const statusLabel = computed(() => {
     </div>
 
     <div class="right">
+      <slot name="actions" />
       <span class="agents-count mono">
         {{ agentsState.list.length }} agent{{ agentsState.list.length === 1 ? "" : "s" }}
       </span>

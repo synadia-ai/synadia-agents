@@ -45,3 +45,13 @@ export function sortAgents(list: DiscoveredAgentDTO[]): DiscoveredAgentDTO[] {
     return a.name.localeCompare(b.name);
   });
 }
+
+/** Discovered pi-headless controllers (agents flagged via `metadata.role`). */
+export const piexecControllers = computed<DiscoveredAgentDTO[]>(() =>
+  agentsState.list.filter((a) => a.metadata?.["role"] === "pi-headless-controller"),
+);
+
+/** Discovered pi-headless sessions (spawned by a controller; identified via `metadata.spawner`). */
+export const piexecSessions = computed<DiscoveredAgentDTO[]>(() =>
+  agentsState.list.filter((a) => a.metadata?.["spawner"] === "pi-headless"),
+);
