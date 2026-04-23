@@ -156,4 +156,14 @@ export type ServerMessage =
       id: string;
       controllerInstanceId: string;
       sessions: PiExecSessionSummary[];
+    }
+  | {
+      /** Pushed when an agent appears that wasn't in the last discovery snapshot. */
+      kind: "agent-added";
+      agent: DiscoveredAgentDTO;
+    }
+  | {
+      /** Pushed when an agent is removed (e.g. stopped via pi-headless). */
+      kind: "agent-removed";
+      instanceId: string;
     };

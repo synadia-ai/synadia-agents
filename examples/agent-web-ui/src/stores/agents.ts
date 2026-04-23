@@ -35,6 +35,22 @@ export function setAgents(list: DiscoveredAgentDTO[]): void {
   }
 }
 
+/** Append an agent if not already present (by instanceId). No-op if dup. */
+export function addAgent(dto: DiscoveredAgentDTO): void {
+  if (agentsState.list.some((a) => a.instanceId === dto.instanceId)) return;
+  agentsState.list = [...agentsState.list, dto];
+}
+
+/** Remove an agent by instanceId; also clears selection if it was selected. */
+export function removeAgent(instanceId: string): void {
+  const before = agentsState.list.length;
+  agentsState.list = agentsState.list.filter((a) => a.instanceId !== instanceId);
+  if (before === agentsState.list.length) return;
+  if (agentsState.selectedInstanceId === instanceId) {
+    agentsState.selectedInstanceId = null;
+  }
+}
+
 /** Stable sort key: agent → owner → session/name. */
 export function sortAgents(list: DiscoveredAgentDTO[]): DiscoveredAgentDTO[] {
   return [...list].sort((a, b) => {

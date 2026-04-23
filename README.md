@@ -22,7 +22,8 @@ synadia-agents/
 └── examples/              ← apps built with the SDK (callers and agents)
     ├── README.md
     ├── agent-web-ui/      ← Vue 3 + Bun browser client
-    └── dspy/              ← standalone agent built from scratch with the SDK (ax-llm ReAct)
+    ├── dspy/              ← standalone agent built from scratch with the SDK (ax-llm ReAct)
+    └── pi-headless/       ← spawn/stop many PI sessions, each as its own NATS agent
 ```
 
 Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`, `agents/README.md`, `examples/README.md`) describe what lives at each level.

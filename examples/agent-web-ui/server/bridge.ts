@@ -6,17 +6,21 @@
 
 import type { ServerWebSocket } from "bun";
 import {
+  buildDiscoveredAgent,
   decodeBase64,
   AttachmentsNotSupportedError,
   PayloadTooLargeError,
+  SERVICE_NAME,
   ServiceError,
   StreamStalledError,
   type Client,
   type DiscoveredAgent,
   type NatsConnection,
   type QueryEvent,
+  type RawServiceInfo,
   type RequestAttachment,
 } from "@synadia/agents";
+import type { Subscription } from "@nats-io/nats-core";
 import type {
   ClientMessage,
   DiscoveredAgentDTO,
@@ -35,6 +39,8 @@ export class Bridge {
   private activeStreams = new Map<string, ActiveStream>();
   private activeQueries = new Map<string, QueryEvent>();
   private heartbeatSubs = new Map<string, () => void>();
+  private heartbeatWildcardSub: Subscription | null = null;
+  private pendingInstanceLookups = new Set<string>();
   private closed = false;
 
   constructor(
@@ -49,6 +55,7 @@ export class Bridge {
       kind: "ready",
       sdkProtocolVersion: this.sdkProtocolVersion,
     });
+    this.startHeartbeatWatch();
   }
 
   onMessage(raw: string): void {
@@ -99,6 +106,15 @@ export class Bridge {
     this.activeQueries.clear();
     for (const unsub of this.heartbeatSubs.values()) unsub();
     this.heartbeatSubs.clear();
+    if (this.heartbeatWildcardSub) {
+      try {
+        this.heartbeatWildcardSub.unsubscribe();
+      } catch {
+        /* noop */
+      }
+      this.heartbeatWildcardSub = null;
+    }
+    this.pendingInstanceLookups.clear();
     this.ws = null;
   }
 
@@ -264,6 +280,10 @@ export class Bridge {
         return;
       }
       const descriptor = JSON.parse(rep.string()) as PiExecSpawnDescriptor;
+      // Register the new session with the UI immediately — no 30s heartbeat
+      // wait. The heartbeat-watch path would also pick this up, but a direct
+      // $SRV.INFO lookup here removes any race with the controller's reply.
+      await this.ensureAgentKnown(descriptor.instance_id);
       this.send({ kind: "piexec-spawned", id, descriptor });
     } catch (err) {
       this.sendError(id, "piexec_spawn_failed", (err as Error).message);
@@ -291,6 +311,17 @@ export class Bridge {
           rep.headers?.get("Nats-Service-Error") ?? "stop error",
         );
         return;
+      }
+      // Drop the stopped session from this bridge's agent map + UI eagerly.
+      // The session_id equals the 4th-token `name` of a pi-headless session.
+      for (const [instanceId, agent] of this.agentsByInstanceId) {
+        if (
+          agent.metadata["spawner"] === "pi-headless" &&
+          agent.name === sessionId
+        ) {
+          this.forgetAgent(instanceId);
+          break;
+        }
       }
       this.send({ kind: "piexec-stopped", id, sessionId });
     } catch (err) {
@@ -350,6 +381,108 @@ export class Bridge {
       return null;
     }
     return `${agent.promptEndpoint.subject}.${endpoint}`;
+  }
+
+  // ─── Auto-discovery via heartbeat wildcard ────────────────────────────────
+
+  /**
+   * Subscribe to `agents.*.*.*.heartbeat` (protocol-fixed subject, §2) so new
+   * agents are picked up as soon as they publish their first heartbeat —
+   * which `ReferenceAgent` does synchronously in `start()` (see
+   * `reference-agent.ts:173`), yielding sub-second latency for fresh
+   * instances. Unknown instance_ids trigger a direct `$SRV.INFO.agents.<id>`
+   * lookup (§4.2) so we add them to the map with full metadata.
+   */
+  private startHeartbeatWatch(): void {
+    if (this.heartbeatWildcardSub) return;
+    try {
+      this.heartbeatWildcardSub = this.nc.subscribe("agents.*.*.*.heartbeat", {
+        callback: (err, msg) => {
+          if (err || this.closed) return;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(msg.string());
+          } catch {
+            return;
+          }
+          if (!parsed || typeof parsed !== "object") return;
+          const instanceId = (parsed as { instance_id?: unknown }).instance_id;
+          if (typeof instanceId !== "string" || instanceId.length === 0) return;
+          if (this.agentsByInstanceId.has(instanceId)) return;
+          void this.ensureAgentKnown(instanceId);
+        },
+      });
+    } catch (e) {
+      console.warn("[bridge] heartbeat watch failed:", (e as Error).message);
+    }
+  }
+
+  /**
+   * If `instanceId` isn't already in our map, fetch its `$SRV.INFO` record,
+   * build a `DiscoveredAgent`, and push it to the UI. Reentrant calls for
+   * the same id coalesce via `pendingInstanceLookups`.
+   */
+  private async ensureAgentKnown(instanceId: string): Promise<void> {
+    if (this.agentsByInstanceId.has(instanceId)) return;
+    if (this.pendingInstanceLookups.has(instanceId)) return;
+    this.pendingInstanceLookups.add(instanceId);
+    try {
+      const info = await this.directServiceInfo(instanceId);
+      if (!info) return;
+      if (this.agentsByInstanceId.has(instanceId)) return; // raced
+      const agent = buildDiscoveredAgent(info);
+      if (!agent) return;
+      this.registerAgent(agent);
+    } catch (e) {
+      console.warn(
+        `[bridge] lookup for ${instanceId} failed:`,
+        (e as Error).message,
+      );
+    } finally {
+      this.pendingInstanceLookups.delete(instanceId);
+    }
+  }
+
+  private async directServiceInfo(instanceId: string): Promise<RawServiceInfo | null> {
+    const subject = `$SRV.INFO.${SERVICE_NAME}.${instanceId}`;
+    try {
+      const rep = await this.nc.request(subject, "", { timeout: 2_000 });
+      const parsed = JSON.parse(rep.string()) as RawServiceInfo;
+      if (!parsed || typeof parsed !== "object") return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private registerAgent(agent: DiscoveredAgent): void {
+    this.agentsByInstanceId.set(agent.instanceId, agent);
+    if (!this.heartbeatSubs.has(agent.instanceId)) {
+      const unsub = this.client.onHeartbeat(agent.instanceId, (hb) => {
+        this.send({
+          kind: "heartbeat",
+          instanceId: agent.instanceId,
+          ts: hb.ts,
+          intervalS: hb.intervalS,
+        });
+      });
+      this.heartbeatSubs.set(agent.instanceId, unsub);
+    }
+    this.send({ kind: "agent-added", agent: toDTO(agent) });
+  }
+
+  private forgetAgent(instanceId: string): void {
+    if (!this.agentsByInstanceId.delete(instanceId)) return;
+    const unsub = this.heartbeatSubs.get(instanceId);
+    if (unsub) {
+      try {
+        unsub();
+      } catch {
+        /* noop */
+      }
+      this.heartbeatSubs.delete(instanceId);
+    }
+    this.send({ kind: "agent-removed", instanceId });
   }
 
   // ─── Error mapping ─────────────────────────────────────────────────────────

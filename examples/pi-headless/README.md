@@ -4,7 +4,7 @@ A headless NATS agent host for the [PI coding agent](https://github.com/badlogic
 
 Each spawned PI session registers as its own NATS agent instance under `agents.pi.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia/agents` SDK. A small **controller** service at `agents.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text).
 
-This is the spiritual successor to the pre-protocol [`nats-pi-bridge`](https://github.com/M64GitHub/nats-pi-bridge): same capability (spawn/stop/prompt many concurrent PI sessions), now on the new wire.
+In short: one process, many PI sessions, all first-class NATS agents.
 
 ## Quickstart
 
@@ -137,6 +137,7 @@ Session prompt endpoints follow protocol §9.
 
 - **Session identity.** The 4th subject token is the session id; `metadata.session` echoes it. Controllers use `name = "exec"` by default.
 - **Metadata marker.** The controller carries `metadata.role = "pi-headless-controller"` so clients can tell it apart from other pi agents.
-- **Serial drain.** Per session, prompts are queued and processed one at a time — same pattern the old `nats-pi-bridge` used.
+- **One controller per `(owner, name)`.** The custom `spawn` / `stop` / `list` endpoints are NATS micro-service endpoints, which load-balance across all instances sharing the same subject. If you need multiple controllers side-by-side, give each one a distinct `--name` (e.g. `--name exec-a`, `--name exec-b`) so they advertise on different subjects and don't cross-steal each other's control requests.
+- **Serial drain.** Per session, prompts are queued and processed one at a time.
 - **Lifetime & pruning.** `max_lifetime_s` bounds a session's wall-clock life; pending requests older than 30 min are evicted (active requests are never evicted).
 - **Attachments.** Base64 attachments are decoded to `~/.pi-headless/attachments/<session_id>/<uuid>/` and their absolute paths are prepended to the prompt text, matching the `agents/pi/` staging pattern.
