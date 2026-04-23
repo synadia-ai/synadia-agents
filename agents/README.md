@@ -9,8 +9,9 @@ Agent hosts that implement the **NATS Agent Protocol** (`0.2.0-draft`). Each sub
 | `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.pi.<owner>.<session>`                      | 1 MB          | true             |
 | `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.oc.<owner>.<agentName>`                        | 1 MB          | true             |
 | `claude-code/`      | `ccc`      | [Claude Code](https://claude.com/claude-code) | `agents.ccc.<owner>.<session>`                      | 1 MB          | true             |
+| `dspy/`             | `dspy`     | [ax-llm](https://github.com/ax-llm/ax) ReAct | `agents.dspy.<owner>.react`                           | 1 MB          | false            |
 
-Each agent also publishes `<subject>.heartbeat` every 30 s with the spec §8.3 payload.
+Each agent also publishes `<subject>.heartbeat` on a regular interval (30 s for `pi`/`oc`/`ccc`, 10 s for `dspy`) with the spec §8.3 payload.
 
 ## What every agent must do
 
@@ -46,6 +47,7 @@ Staging locations differ per host:
 | `pi/`        | `~/.pi/agent/attachments/<session>/<uuid>/`        | on session shutdown                 |
 | `openclaw/`  | `~/.openclaw/attachments/<agentName>/<uuid>/`      | on gateway stop                     |
 | `claude-code/` | `~/.claude/channels/nats/attachments/<request_id>/` | on reply completion              |
+| `dspy/`      | n/a — advertises `attachments_ok: false`           | n/a                                 |
 
 Caller-side constraints (same across all three, rejected with `400`):
 
@@ -58,6 +60,7 @@ Caller-side constraints (same across all three, rejected with `400`):
 - **`pi/`** — each running PI CLI session becomes one agent instance.
 - **`openclaw/`** — one OpenClaw agent per configured account. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific, not part of the spec).
 - **`claude-code/`** — ships as a Claude Code plugin (`/plugin install`). Supports two permission modes: `terminal` (prompt locally) and `query` (relay as §7 query chunk over NATS).
+- **`dspy/`** — an [ax-llm](https://github.com/ax-llm/ax) ReAct loop (DSPy-style signatures) with four sandboxed tools (`list_files`, `read_file`, `write_file`, `bash`). Does not accept attachments. Streams each tool call as a `status` chunk so callers see the ReAct trace live; final answer arrives as `response` deltas.
 
 ## Adding a new agent
 

@@ -19,7 +19,8 @@ synadia-agents/
 │   ├── README.md
 │   ├── pi/                ← PI Agent channel
 │   ├── openclaw/          ← OpenClaw plugin
-│   └── claude-code/       ← Claude Code MCP plugin
+│   ├── claude-code/       ← Claude Code MCP plugin
+│   └── dspy/              ← ax-llm (DSPy-style) ReAct agent
 └── examples/              ← apps that use the SDK
     ├── README.md
     └── agent-web-ui/      ← Vue 3 + Bun browser client
@@ -38,11 +39,12 @@ agents.<type-token>.<owner>.<session>.heartbeat   # liveness beacon (30 s)
 
 Type tokens currently in this repo:
 
-| Token | Host                 | Path                  |
-| ----- | -------------------- | --------------------- |
-| `pi`  | PI Agent             | `agents/pi/`          |
-| `oc`  | OpenClaw             | `agents/openclaw/`    |
-| `ccc` | Claude Code          | `agents/claude-code/` |
+| Token  | Host                 | Path                  |
+| ------ | -------------------- | --------------------- |
+| `pi`   | PI Agent             | `agents/pi/`          |
+| `oc`   | OpenClaw             | `agents/openclaw/`    |
+| `ccc`  | Claude Code          | `agents/claude-code/` |
+| `dspy` | ax-llm ReAct (DSPy)  | `agents/dspy/`        |
 
 Discovery is standard NATS micro:
 
