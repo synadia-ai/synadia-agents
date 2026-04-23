@@ -1,17 +1,17 @@
 """Cross-SDK interop — Python client against the TypeScript reference agent.
 
 Spawns the TS SDK's reference agent via ``bun run
-../typescript/examples/_run-reference-agent.ts``, points it at the
+../nats-ai-tssdk/examples/_run-reference-agent.ts``, points it at the
 session's ``nats-server`` via ``NATS_URL``, and verifies the Python client
 can discover it, read its spec-compliant metadata + endpoint caps, and
 round-trip a prompt.
 
-The TS SDK lives as a sibling directory in this monorepo at
-``../typescript/`` (relative to the Python SDK root). The test skips
-cleanly — NOT fails — when:
+The TS SDK isn't published yet; this test expects it to live as a sibling
+directory (``../nats-ai-tssdk/`` from the Python SDK root). The test
+skips cleanly — NOT fails — when:
 
   - ``bun`` is not on PATH,
-  - ``../typescript/`` doesn't exist, or
+  - ``../nats-ai-tssdk/`` doesn't exist, or
   - the subprocess fails to come up (missing ``node_modules``, broken
     install, etc).
 
@@ -44,8 +44,9 @@ if TYPE_CHECKING:
     from tests.harness.nats_server import RunningServer
 
 
-# Sibling checkout inside the monorepo: client-sdk/python/ ↔ client-sdk/typescript/.
-TSSDK_DIR = Path(__file__).resolve().parent.parent.parent / "typescript"
+# Sibling checkout — the TS SDK isn't published yet, so we depend on a
+# workspace layout. CI and contributors have to check out both repos.
+TSSDK_DIR = Path(__file__).resolve().parent.parent.parent / "nats-ai-tssdk"
 REFERENCE_AGENT_SCRIPT = TSSDK_DIR / "examples" / "_run-reference-agent.ts"
 
 # The reference agent prints this line on startup; we wait for it rather
@@ -62,7 +63,7 @@ def _interop_prereqs_missing() -> str | None:
     if not TSSDK_DIR.is_dir():
         return (
             f"sibling checkout not found at {TSSDK_DIR} — "
-            "ensure client-sdk/typescript/ is present to run interop"
+            "clone nats-ai-tssdk alongside nats-ai-pysdk to run interop"
         )
     if not REFERENCE_AGENT_SCRIPT.is_file():
         return f"reference agent script missing at {REFERENCE_AGENT_SCRIPT}"
@@ -153,6 +154,11 @@ async def ts_reference_agent(
         await proc.stop()
 
 
+@pytest.mark.xfail(
+    reason="TS SDK still on protocol v0.1 (service name 'SynadiaAgents'); "
+    "re-enable once ../nats-ai-tssdk/ bumps to v0.2 ('agents' + queue group).",
+    strict=False,
+)
 @pytest.mark.asyncio
 async def test_python_client_discovers_ts_reference_agent(
     nc: NATSClient, ts_reference_agent: _ReferenceAgentProcess
@@ -183,11 +189,26 @@ async def test_python_client_discovers_ts_reference_agent(
         await client.stop()
 
 
+@pytest.mark.xfail(
+    reason="TS SDK still on protocol v0.1 (service name 'SynadiaAgents'); "
+    "re-enable once ../nats-ai-tssdk/ bumps to v0.2 ('agents' + queue group).",
+    strict=False,
+)
 @pytest.mark.asyncio
 async def test_python_client_prompts_ts_reference_agent(
     nc: NATSClient, ts_reference_agent: _ReferenceAgentProcess
 ) -> None:
-    """Python client round-trips a prompt through the TS reference agent."""
+    """Python client round-trips a prompt through the TS reference agent.
+
+    Note: the caller-supplied request-envelope ``session`` field is an SDK
+    convention tolerated per §5.6; it is NOT yet surfaced by the TS SDK —
+    its ``RequestEnvelope`` does not include ``session``. Sending the
+    field is still safe on the wire (§5.6 tolerance), but an end-to-end
+    session assertion across PY → TS has to wait for a matching TS PR.
+    Until then, this test only exercises the session-less path; the
+    session-bearing round-trip is covered intra-SDK by
+    ``tests/test_session_e2e.py``.
+    """
     assert ts_reference_agent.prompt_subject is not None
 
     client = Client(nc=nc)

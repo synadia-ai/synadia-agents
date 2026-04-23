@@ -18,13 +18,13 @@ paste the signature.
 ## Relationship to the protocol
 
 Does this require a change to the wire spec
-(`https://github.com/synadia-ai/nats-agent-sdk-docs`), or can it be built entirely on top of
-what's already defined?
+([`core-protocol.md`](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)),
+or can it be built entirely on top of what's already defined?
 
 - [ ] Purely SDK ergonomics — no spec change.
 - [ ] Uses an existing-but-unimplemented spec feature (name the section).
 - [ ] Requires a new spec section (expect an issue upstream at
-      [`nats-ai-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs) first).
+      [`nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs) first).
 
 ## Alternatives considered
 
@@ -32,5 +32,5 @@ What else could solve the problem, and why is this the right trade-off?
 
 ## TS SDK parity
 
-Does the TypeScript SDK at `../typescript/` already expose this?
+Does the TypeScript SDK at `../nats-ai-tssdk/` already expose this?
 Keeping the two in lockstep matters — if they disagree, call that out.

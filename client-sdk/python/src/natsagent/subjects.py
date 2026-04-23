@@ -27,11 +27,15 @@ _AGENT_RE = re.compile(r"^[a-z0-9-]+$")
 _OWNER_RE = re.compile(r"^[a-z0-9_-]+$")
 _NAME_RE = _OWNER_RE
 
-# Sub-subjects reserved by the protocol (§1.3).
+# Sub-subjects reserved by the protocol (§2). `.heartbeat` is protocol-fixed
+# (§8); `.attachments` is the reserved default subject for the future §5.5
+# endpoint — no code publishes or subscribes to it today, but the token is
+# kept out of instance-name slots so `agents.{a}.{o}.attachments` can't be
+# registered as an inbox and shadow the reserved subject.
 SUB_HEARTBEAT = "heartbeat"
-SUB_OUTBOUND = "outbound"
+SUB_ATTACHMENTS = "attachments"
 
-RESERVED_SUB_SUBJECTS = frozenset({SUB_HEARTBEAT, SUB_OUTBOUND})
+RESERVED_SUB_SUBJECTS = frozenset({SUB_HEARTBEAT, SUB_ATTACHMENTS})
 
 # `agents.{agent}.{owner}.{name}` — 4 tokens. Add one for a sub-subject like `.heartbeat`.
 _INBOX_TOKEN_COUNT = 4
@@ -73,10 +77,6 @@ class AgentSubject:
     @property
     def heartbeat(self) -> str:
         return f"{self.inbox}.{SUB_HEARTBEAT}"
-
-    @property
-    def outbound(self) -> str:
-        return f"{self.inbox}.{SUB_OUTBOUND}"
 
 
 def _sanitize(token: str, field: str, pattern: re.Pattern[str]) -> str:

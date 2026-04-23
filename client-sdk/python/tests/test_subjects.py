@@ -19,7 +19,6 @@ class TestConstruction:
         subj = AgentSubject.new(agent="occ", owner="derek", name="summarizer")
         assert subj.inbox == "agents.occ.derek.summarizer"
         assert subj.heartbeat == "agents.occ.derek.summarizer.heartbeat"
-        assert subj.outbound == "agents.occ.derek.summarizer.outbound"
 
     def test_hyphens_and_underscores_in_name(self) -> None:
         subj = AgentSubject.new(agent="hermes", owner="rene", name="default_worker-1")
@@ -64,7 +63,7 @@ class TestSubjectClassification:
         assert is_heartbeat_subject("agents.hermes.rene.default.heartbeat") is True
 
     def test_is_heartbeat_subject_wrong_suffix(self) -> None:
-        assert is_heartbeat_subject("agents.hermes.rene.default.outbound") is False
+        assert is_heartbeat_subject("agents.hermes.rene.default.attachments") is False
 
     def test_is_heartbeat_subject_wrong_length(self) -> None:
         assert is_heartbeat_subject("agents.hermes.rene.default") is False
@@ -86,7 +85,12 @@ class TestParseAgentSubject:
         assert parse_agent_subject("agents.hermes.rene.default.heartbeat") is None
 
     def test_name_equal_to_reserved_subject_rejected(self) -> None:
+        # Both `.heartbeat` (§8, protocol-fixed) and `.attachments`
+        # (§2 + §5.5, reserved default) MUST NOT be accepted as instance
+        # names — otherwise `agents.{a}.{o}.attachments` would parse as a
+        # valid inbox and shadow the reserved §5.5 subject.
         assert parse_agent_subject("agents.hermes.rene.heartbeat") is None
+        assert parse_agent_subject("agents.hermes.rene.attachments") is None
 
     def test_wrong_root(self) -> None:
         assert parse_agent_subject("services.hermes.rene.default") is None

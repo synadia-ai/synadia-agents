@@ -41,15 +41,14 @@ log = get_logger(__name__)
 
 PromptHandler = Callable[["Envelope", "PromptStream"], Awaitable[None]]
 
-# §3.1: canonical name is "Synadia Agents" (with a space); most NATS micro
-# frameworks reject spaces in the service name, so the spec permits the
-# compact form. We register with the compact form — discovery (§4) also
-# works with it because `$SRV.*.SynadiaAgents` is a valid subject.
-SERVICE_NAME = "SynadiaAgents"
+# §3.1: every compliant agent registers under the shared service name
+# `agents`. Callers filter on this single value to separate protocol-
+# compliant agents from other NATS micro services on the bus.
+SERVICE_NAME = "agents"
 
 # §3.2 + §11.1: metadata.protocol_version is MAJOR.MINOR only.
-_PROTOCOL_VERSION = "0.1"
-_SDK_VERSION = "0.1.0"
+_PROTOCOL_VERSION = "0.2"
+_SDK_VERSION = "0.2.0"
 
 # §2.1: prompt endpoint metadata defaults. Spec's own example uses 1MB;
 # attachments_ok defaults to True so envelopes with `attachments` just work
@@ -171,7 +170,7 @@ class Agent:
         session: str | None = None,
     ) -> None:
         if heartbeat_interval_s <= 0:
-            raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.1)")
+            raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.2)")
         # Validate max_payload eagerly so misconfiguration fails at construction
         # rather than surfacing later via caller-side validation (§5.4).
         parse_human_bytes(max_payload)
@@ -216,6 +215,11 @@ class Agent:
                 name="prompt",
                 subject=self.subject.inbox,
                 handler=self._on_prompt_request,
+                # §3.3: the `prompt` endpoint MUST use queue group `"agents"`
+                # so multiple instances of the same logical agent load-balance
+                # requests. Framework defaults differ between SDKs, which
+                # would break interop — pin to the spec value explicitly.
+                queue_group="agents",
                 # §2.1: endpoint metadata is a `Record<string, string>` on the
                 # wire — booleans are encoded as "true" / "false".
                 metadata={

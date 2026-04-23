@@ -1,18 +1,19 @@
 # Protocol mapping
 
-Every SDK call mapped to its section in the NATS Agent Protocol spec
-(<https://github.com/synadia-ai/nats-agent-sdk-docs>, version `0.1.0-draft`). Intended for
-implementers of other SDKs and for reviewers auditing this one.
+Every SDK call mapped to its section in the
+[NATS Agent Protocol spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+(version `0.2.0-draft`). Intended for implementers of other SDKs and
+for reviewers auditing this one.
 
 ## Discovery (§4)
 
 | SDK                                      | Wire behaviour                                                                         | Spec ref   |
 | ---------------------------------------- | -------------------------------------------------------------------------------------- | ---------- |
-| `Client.discover()`                      | Publishes `$SRV.INFO.SynadiaAgents`, collects multi-reply responses until `timeout`.   | §4, §4.1   |
-| `Client.ping(inbox)`                     | Publishes `$SRV.PING.SynadiaAgents`; `True` iff any response arrives within `timeout`. | §8.4       |
+| `Client.discover()`                      | Publishes `$SRV.INFO.agents`, collects multi-reply responses until `timeout`.          | §4, §4.1   |
+| `Client.ping(timeout)`                   | Publishes `$SRV.PING.agents`; `True` iff any response arrives within `timeout`. For per-instance liveness use `Client.status(inbox)`. | §8.4       |
 | Implicit subscribe-before-PING           | Heartbeat wildcard SUB established on `start()` BEFORE any discovery publish.          | §8.5       |
-| Service-name filter                      | Accepts `"Synadia Agents"` OR `"SynadiaAgents"` as equivalent.                         | §3.1       |
-| Non-agent services                       | Dropped — responses whose `name` isn't one of the two allowed values are ignored.      | §4.3       |
+| Service-name filter                      | Accepts only `"agents"`. v0.2 is wire-incompatible with v0.1 (§11.3), so no alias list. | §3.1       |
+| Non-agent services                       | Dropped — responses whose `name` isn't `"agents"` are ignored.                         | §4.3       |
 | `EndpointInfo.max_payload_bytes`         | Parsed from `metadata.max_payload` (case-insensitive; base-1024: KB=1024, MB=1024²).   | §2.1       |
 | `EndpointInfo.attachments_ok`            | Parsed from `metadata.attachments_ok` (`"true"` / `"false"`).                          | §2.1       |
 | `DiscoveredAgent.name` derivation        | 4th token of the prompt endpoint's subject when it matches `agents.{a}.{o}.{n}`; else `""`. | §4.3     |
@@ -22,10 +23,11 @@ implementers of other SDKs and for reviewers auditing this one.
 
 | SDK                        | Wire behaviour                                                                                  | Spec ref   |
 | -------------------------- | ----------------------------------------------------------------------------------------------- | ---------- |
-| `Agent.start()` service    | `ServiceConfig(name="SynadiaAgents", ...)`. Compact form used because NATS subjects reject spaces. | §3.1     |
+| `Agent.start()` service    | `ServiceConfig(name="agents", ...)` — the single shared name from §3.1.                        | §3.1     |
 | Service metadata emitted   | `{agent, owner, protocol_version}` + `session` when `Agent(session=...)` is set.                | §3.2       |
-| `protocol_version` value   | `"0.1"` — MAJOR.MINOR only (§11.1).                                                             | §3.2, §11.1 |
+| `protocol_version` value   | `"0.2"` — MAJOR.MINOR only (§11.1).                                                             | §3.2, §11.1 |
 | Endpoint `prompt` metadata | `{max_payload, attachments_ok}`. Boolean serialised as `"true"`/`"false"` on the wire.          | §2.1       |
+| `prompt` queue group       | `"agents"` — pinned explicitly; framework defaults differ between SDKs and would break interop. | §3.3       |
 | Subject layout             | `agents.{agent}.{owner}.{name}` — spec default; the SDK doesn't allow overrides today.          | §2, §2.3   |
 
 ## Request envelope (§5)
@@ -39,7 +41,8 @@ implementers of other SDKs and for reviewers auditing this one.
 | Pre-publish `max_payload` check              | `PayloadTooLargeError(limit, actual)` before any wire I/O.                            | §5.4       |
 | Empty prompt rejected pre-publish            | `PromptEmptyError` before any wire I/O.                                               | §5.1, §5.3 |
 | Endpoint subject resolution                  | Always `endpoints[].subject` from discovery; never constructed from identity.         | §4.3, §12  |
-| Unknown envelope fields                      | `Envelope` uses `extra="ignore"`; decoders tolerate, re-encode drops them.            | §5.6       |
+| Unknown envelope fields                      | `Envelope` uses `extra="allow"`; decode → encode round-trips lossless per §5.6.       | §5.6       |
+| `Envelope.session`                           | SDK convention tolerated per §5.6 (no longer a §5.1 field in v0.2); still round-trips. | §5.6      |
 
 ## Response streaming (§6)
 
@@ -84,7 +87,7 @@ implementers of other SDKs and for reviewers auditing this one.
 | Default interval             | `Agent(heartbeat_interval_s=30)` (spec recommendation).                                          | §8.2       |
 | Payload fields               | `{agent, owner, session?, instance_id, ts, interval_s}` — `session` omitted when absent.         | §8.3       |
 | `HeartbeatPayload` tolerance | `extra="ignore"` — unknown fields silently accepted per §8.3.                                    | §8.3       |
-| `instance_id` source         | `service.id` assigned by nats-py's micro framework (matches `$SRV.INFO` `id`).                   | §3.3, §8.3 |
+| `instance_id` source         | `service.id` assigned by nats-py's micro framework (matches `$SRV.INFO` `id`).                   | §3.4, §8.3 |
 | First heartbeat              | Published immediately after service registration so subscribe-then-discover sees liveness.       | §8.5       |
 | Tracker API                  | `Client.status(inbox)` → `AgentStatus` (indexed by subject). Multi-instance indexing is TODO.    | §8.2       |
 | Liveness threshold           | `AgentStatus.is_online(slack=3)` — configurable `slack × interval_s`.                            | §8.2       |
@@ -93,9 +96,9 @@ implementers of other SDKs and for reviewers auditing this one.
 
 | SDK                   | Wire behaviour                                                                                                     | Spec ref |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------ | -------- |
-| Protocol version      | Agent registers `metadata.protocol_version = "0.1"`. Callers compare MAJOR.MINOR only.                             | §11.1    |
+| Protocol version      | Agent registers `metadata.protocol_version = "0.2"`. Callers compare MAJOR.MINOR only.                             | §11.1    |
 | Compatibility         | Same MAJOR.MINOR ⇒ full interop. Forward compat rides on §5.6 and §6.6 (unknown fields / chunk types tolerated).   | §11.2    |
-| SDK version (`version` service field) | `_SDK_VERSION = "0.1.0"` — harness version, distinct from protocol version.                         | §3.1, §11 |
+| SDK version (`version` service field) | `_SDK_VERSION = "0.2.0"` — harness version, distinct from protocol version.                         | §3.1, §11 |
 
 ## Security (§10)
 

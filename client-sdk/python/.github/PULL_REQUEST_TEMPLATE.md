@@ -7,9 +7,9 @@ what; this block should answer "why now"._
 
 ## Spec reference
 
-_For wire-level changes, quote the section(s) of
-`https://github.com/synadia-ai/nats-agent-sdk-docs` this PR implements or corrects. For
-ergonomics-only PRs, delete this block._
+_For wire-level changes, quote the section(s) of the
+[canonical spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+this PR implements or corrects. For ergonomics-only PRs, delete this block._
 
 - §X.Y — …
 
@@ -19,8 +19,8 @@ _How you verified this works. Copy-pastable commands preferred.
 Checkboxes are for your own use before requesting review._
 
 - [ ] `uv run pytest` — all green.
-- [ ] `uv run ruff check . && uv run ruff format --check .`
-- [ ] `uv run mypy src tests`
+- [ ] `uv run ruff check --no-cache . && uv run ruff format --check .`
+- [ ] `uv run mypy --no-incremental src tests examples`
 - [ ] Manually exercised … (if applicable)
 
 ## Interop
@@ -28,7 +28,7 @@ Checkboxes are for your own use before requesting review._
 _Did you run the cross-SDK interop test? Circle one:_
 
 - [ ] Yes — `tests/test_interop_e2e.py` passed against
-      `../typescript/` at commit `<sha>`.
+      `../nats-ai-tssdk/` at commit `<sha>`.
 - [ ] Skipped — no wire behaviour changed.
 - [ ] Skipped — TS SDK not available in my environment.
 

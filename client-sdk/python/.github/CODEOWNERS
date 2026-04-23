@@ -6,11 +6,6 @@
 
 *                   @synadia-io/nats-ai-sdk-maintainers
 
-# Protocol spec lives in a sibling repo; changes that touch the local
-# copy of the spec need the spec maintainers loop, not just the SDK
-# maintainers.
-/docs/nats-agent-protocol.md   @synadia-io/nats-ai-spec-maintainers
-
 # CI / release workflows affect every run — keep these behind a
 # release-engineering reviewer in addition to SDK maintainers.
 /.github/workflows/            @synadia-io/nats-ai-sdk-maintainers @synadia-io/nats-ai-release

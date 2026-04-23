@@ -4,8 +4,9 @@ Spins up a real nats-server, registers an echo agent, connects a client,
 prompts the agent, and verifies:
 
 - the streamed response arrives in typed chunks and terminates with an empty payload
-- ``$SRV.INFO.SynadiaAgents`` reports spec §3.2 metadata (``agent``,
+- ``$SRV.INFO.agents`` reports spec §3.2 metadata (``agent``,
   ``owner``, ``protocol_version``) on the shared service name
+- the ``prompt`` endpoint is registered with queue group ``"agents"`` (§3.3)
 - a heartbeat is published on ``.heartbeat`` within the agent's configured interval
 
 All observations are captured to ``tests/_evidence/<testname>/`` — a reviewer
@@ -63,17 +64,15 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
 
     try:
         # Capture an $SRV.INFO response for evidence and verify registration metadata.
-        # §3.1: all compliant agents share service name "SynadiaAgents" (compact
-        # form; the canonical "Synadia Agents" is equivalent but contains a space
-        # and is therefore unusable in a NATS subject).
-        srv_info = await nc.request("$SRV.INFO.SynadiaAgents", b"", timeout=2.0)
+        # §3.1: all compliant agents share service name "agents".
+        srv_info = await nc.request("$SRV.INFO.agents", b"", timeout=2.0)
         srv_info_parsed = json.loads(srv_info.data)
         evidence.write_json("srv-info.json", srv_info_parsed)
-        assert srv_info_parsed["name"] == "SynadiaAgents"
+        assert srv_info_parsed["name"] == "agents"
         # §3.2: metadata shape.
         assert srv_info_parsed["metadata"]["agent"] == AGENT
         assert srv_info_parsed["metadata"]["owner"] == OWNER
-        assert srv_info_parsed["metadata"]["protocol_version"] == "0.1"
+        assert srv_info_parsed["metadata"]["protocol_version"] == "0.2"
         # Spec §3.2 forbids echoing the instance name into metadata.
         assert "name" not in srv_info_parsed["metadata"]
         # And the removed v0.0.1-era keys MUST be gone.
@@ -87,6 +86,11 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         assert prompt_ep["subject"] == agent.subject.inbox
         assert prompt_ep["metadata"]["max_payload"] == "1MB"
         assert prompt_ep["metadata"]["attachments_ok"] == "true"
+        # §3.3: the prompt endpoint MUST register queue group "agents" so
+        # multiple instances of the same logical agent load-balance. The
+        # micro service framework reports this back in $SRV.INFO as
+        # endpoints[].queue_group.
+        assert prompt_ep["queue_group"] == "agents"
 
         client = Client(nc=nc)
         await client.start()
@@ -144,7 +148,7 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         assert hb_payload.instance_id, "heartbeat MUST carry instance_id (§8.3)"
         assert hb_payload.interval_s == HEARTBEAT_INTERVAL_S
 
-        assert await client.ping(agent.subject.inbox, timeout=1.0) is True
+        assert await client.ping(timeout=1.0) is True
 
         await client.stop()
     finally:

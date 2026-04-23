@@ -1,6 +1,6 @@
 [project]
 name = "natsagent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for the NATS Agent Protocol — discover, prompt, and host spec-compliant agents over NATS"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,12 +25,17 @@ dependencies = [
     "pydantic>=2.5",
 ]
 
+[project.optional-dependencies]
+examples = [
+    "rich>=13",
+]
+
 [project.urls]
-Homepage = "https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/python"
-Repository = "https://github.com/synadia-ai/synadia-agents"
-Documentation = "https://github.com/synadia-ai/synadia-agents/blob/main/client-sdk/python/docs/protocol-mapping.md"
-Changelog = "https://github.com/synadia-ai/synadia-agents/blob/main/client-sdk/python/CHANGELOG.md"
-Issues = "https://github.com/synadia-ai/synadia-agents/issues"
+Homepage = "https://github.com/synadia-io/nats-ai-pysdk"
+Repository = "https://github.com/synadia-io/nats-ai-pysdk"
+Documentation = "https://github.com/synadia-io/nats-ai-pysdk/blob/main/docs/protocol-mapping.md"
+Changelog = "https://github.com/synadia-io/nats-ai-pysdk/blob/main/CHANGELOG.md"
+Issues = "https://github.com/synadia-io/nats-ai-pysdk/issues"
 
 [dependency-groups]
 dev = [
@@ -50,7 +55,7 @@ packages = ["src/natsagent"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["src", "tests"]
+src = ["src", "tests", "examples"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "PL", "RUF"]
@@ -61,6 +66,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["PLR2004"] # magic values in tests are fine
 "scripts/**" = ["PLR0915"] # diagnostic one-shots may run long linear setups
+"examples/**" = ["PLR0915"] # demo scripts may run long linear setups
 
 [tool.mypy]
 strict = true

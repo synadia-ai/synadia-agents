@@ -18,10 +18,13 @@ identifier when constructing an `Agent` and MUST validate it against §2
 under a generic `pysdk` value — that would pollute the subject namespace
 and break `agent`-scoped discovery.
 
-**The protocol spec is the source of truth:** <https://github.com/synadia-ai/nats-agent-sdk-docs>.
-The implementation checklist in §12 is what "compliant" means.
+**The protocol spec is the source of truth.** Canonical location:
+[`synadia-ai/nats-agent-sdk-docs/core-protocol.md`](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+(sibling checkout at `../nats-agent-sdk-docs/core-protocol.md` when
+working locally). This repo no longer keeps a copy — always read the
+canonical. The implementation checklist in §12 is what "compliant" means.
 
-**Wire compatibility with the TypeScript SDK** at `../typescript/` is
+**Wire compatibility with the TypeScript SDK** at `../nats-ai-tssdk/` is
 a hard requirement. Both SDKs are validated against each other via
 `tests/test_interop_e2e.py`. When the spec is silent and the two SDKs
 pick a default, they MUST pick the same default — drift is tracked in
@@ -29,7 +32,7 @@ pick a default, they MUST pick the same default — drift is tracked in
 
 ## Protocol surface at a glance
 
-v0.1 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
+v0.2 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
 
 - **Subject hierarchy**: `agents.{agent}.{owner}.{name}` plus
   `.heartbeat` sub-subject. `.attachments` is reserved for a future §5.5
@@ -37,9 +40,12 @@ v0.1 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
   escaped internally — an SDK implementation detail, not a protocol
   contract (see `src/natsagent/subjects.py::_sanitize`).
 - **Service registration** (§3): every agent registers as a NATS micro
-  service named `SynadiaAgents` with `metadata = {agent, owner,
-  protocol_version = "0.1", session?}`. The service name is shared
-  across all compliant agents — callers filter by this single value.
+  service named `agents` with `metadata = {agent, owner,
+  protocol_version = "0.2", session?}`. The `prompt` endpoint MUST be
+  registered with queue group `"agents"` (§3.3) — the framework default
+  differs between SDKs, so we pin the spec value explicitly. The service
+  name is shared across all compliant agents — callers filter by this
+  single value.
 - **Request envelope** (§5.1): `{prompt: str, attachments?: [{filename,
   content: <base64>}]}`. Plain-text request payloads are promoted to
   `{"prompt": <text>}` (§5.3).
@@ -70,10 +76,60 @@ v0.1 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
   The fixture `pytest.skip`s cleanly if the binary is absent.
   - macOS: `brew install nats-server`.
   - Linux: pin a version and `curl -L .../nats-server-v${VERSION}-linux-amd64.tar.gz`.
-- **`bun`** + sibling `../typescript/` with `node_modules/` populated —
-  required only for `tests/test_interop_e2e.py`; that file skips cleanly
-  otherwise.
+- **`bun`** + sibling `../nats-ai-tssdk/` checkout — required only for
+  `tests/test_interop_e2e.py`, which spawns the TS SDK's reference agent
+  and asserts the Python client can discover + prompt it on the same
+  wire. Neither SDK is published yet, so interop depends on a workspace
+  layout: both repos cloned side-by-side under the same parent directory.
+  One-time setup on the TS side:
+
+      cd ../nats-ai-tssdk && bun install
+
+  If any prereq is absent (`bun` missing, sibling checkout absent,
+  `node_modules/` not populated), the two interop tests `pytest.skip`
+  with a pointed reason — they surface as `SKIPPED [2]` in the summary
+  (pytest is configured with `-ra`, so the skip reason prints). Running
+  the suite without TS interop is fine for day-to-day work; the wire-
+  shape guardrail just becomes best-effort until a contributor with the
+  sibling checkout runs the full matrix.
 - **`nats` CLI** (optional, for manual poking).
+
+### Connecting to NATS
+
+Agent authors and callers open a connection via `natsagent.connect()`
+rather than calling `nats.connect()` directly. Three variants, mutually
+exclusive on `nc=`:
+
+```python
+# 1. Direct URL(s)
+nc = await natsagent.connect(servers="nats://127.0.0.1:4222")
+
+# 2. Load a `nats` CLI context (~/.config/nats/context/<name>.json).
+#    `context=True` or `context="current"` honours $NATS_CONTEXT →
+#    `context.txt` pointer written by `nats context select`.
+nc = await natsagent.connect(context="prod")
+nc = await natsagent.connect(context=True)
+
+# 3. Passthrough: return a caller-owned NATSClient as-is.
+nc = await natsagent.connect(nc=existing_nc)
+```
+
+Context-field support matches the TS SDK v0.1.0: `url`, `token`,
+`user`/`password`, `creds` (with `~` expansion), `user_jwt`,
+`inbox_prefix`, `description`. `nkey`, TLS triple, and `nsc://...` URLs
+raise `ContextNotSupportedError` with an actionable message — they are
+not silently ignored. The SDK itself does NOT read `NATS_URL`; that
+stays a convenience default inside `examples/`.
+
+### Examples vs scripts
+
+- `examples/` — user-facing demos ported one-for-one from the TS SDK:
+  `_reference_agent.py`, `01-discover.py` through `05-liveness.py`. A
+  user comparing the two SDKs should find the same demo set on both
+  sides. Every numbered example honours `--context <name>` / `--url
+  <url>` / `$NATS_URL` / selected-context resolution via the shared
+  `examples/_connect_cli.py` helper.
+- `scripts/` — dev diagnostics, not installed with the package.
 
 ### Canonical commands
 
@@ -81,9 +137,10 @@ v0.1 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
 uv sync                              # install dependencies
 uv run ruff check .                  # lint
 uv run ruff format --check .         # formatting check (drop --check to apply)
-uv run mypy src tests                # strict type check
+uv run mypy src tests examples       # strict type check
 uv run pytest -v                     # full suite; e2e auto-skip if nats-server missing
 uv run python scripts/demo_echo.py   # echo agent for manual poking
+uv run python examples/01-discover.py --url nats://127.0.0.1:4222  # user-facing demos
 uv build                             # build sdist + wheel to dist/
 ls tests/_evidence/                  # last run's per-test wire traces
 ```
@@ -143,6 +200,26 @@ script file first, then gets executed.** If it's reusable, add it to
 the project's diagnostic CLI. If it's one-off, drop a short script in
 `scripts/`.
 
+**Pre-push verification must bypass ruff/mypy caches.** `ruff`
+aggressively caches per-file results and can mark a file "clean" after
+a fresh checkout or config change even when the current rule set would
+flag it — meaning CI (which always starts cold) fails on a commit that
+passed locally. Before pushing, run lint and type checks with caches
+disabled:
+
+```bash
+uv run ruff check --no-cache .
+uv run ruff format --check .            # format is not cache-sensitive
+uv run mypy --no-incremental src tests examples
+uv run pytest
+```
+
+The `Development` one-liner in `README.md` is the cache-on version for
+inner-loop speed; the `--no-cache` / `--no-incremental` variant above
+is the pre-push gate. If CI fails on a lint rule that passed locally,
+assume cache staleness and re-run with the flags above before anything
+else.
+
 ## Work execution
 
 Use `TaskCreate`/`TaskUpdate` for non-trivial work. Update status as you
@@ -195,6 +272,15 @@ either guides them to success or frustrates them.
 
 ## Alignment milestones
 
+- **2026-04-22 — v0.2.0 wire bump.** Aligns with NATS Agent Protocol
+  v0.2: service name `SynadiaAgents` → `agents` (§3.1); discovery
+  subjects rebased to `$SRV.{PING,INFO}.agents` (§4.1/§4.2); `prompt`
+  endpoint now registered with queue group `"agents"` (§3.3);
+  `metadata.protocol_version` bumps to `"0.2"`. Envelope.session
+  re-labelled as §5.6-tolerated SDK convention (v0.2 §5.1 no longer
+  defines the field). TS SDK is still on v0.1 at the time of this bump
+  — `tests/test_interop_e2e.py` is xfail'd until it catches up. See
+  `CHANGELOG.md` for full migration notes.
 - **2026-04-21 — v0.1.0 alignment PR (`align-core-protocol-0.1`).** Full
   spec compliance: service name `SynadiaAgents`; `{agent, owner,
   protocol_version, session?}` metadata; §2.1 endpoint caps; §5.4
