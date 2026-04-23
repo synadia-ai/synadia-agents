@@ -18,11 +18,11 @@ Every agent registers a NATS micro service called `agents` with an endpoint name
 ## Per-agent notes
 
 - **`pi/`** — each running PI CLI session becomes one agent instance. Attachments stage at `~/.pi/agent/attachments/<session>/<uuid>/` and are cleaned on session shutdown.
-- **`openclaw/`** — one OpenClaw agent per configured account. Attachments stage at `~/.openclaw/attachments/<agentName>/<uuid>/`, cleaned on gateway stop. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific, not part of the spec).
-- **`claude-code/`** — ships as a Claude Code plugin (`/plugin install`). Two permission modes: `terminal` (prompt locally) or `query` (relay as a protocol query chunk over NATS). Attachments stage at `~/.claude/channels/nats/attachments/<request_id>/`, cleaned on reply completion.
+- **`openclaw/`** — one OpenClaw agent per configured account. Attachments stage at `~/.openclaw/attachments/<agentName>/<uuid>/`, cleaned on gateway stop. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific).
+- **`claude-code/`** — ships as a Claude Code plugin (`/plugin install`). Two permission modes: `terminal` (prompt locally) or `query` (relay as a `query` chunk over NATS). Attachments stage at `~/.claude/channels/nats/attachments/<request_id>/`, cleaned on reply completion.
 - **`dspy/`** — an [ax-llm](https://github.com/ax-llm/ax) ReAct loop (DSPy-style signatures) with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Streams each tool call as a `status` chunk so callers see the ReAct trace live; the final answer arrives as `response` deltas. Does not accept attachments.
 
-When an agent accepts attachments, it decodes them to disk and prepends the absolute paths to the prompt text using the spec-defined prefix:
+When an agent accepts attachments, it decodes them to disk and prepends the absolute paths to the prompt text like so:
 
 ```
 [Attachments available at the following absolute paths]
