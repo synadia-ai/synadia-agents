@@ -1,6 +1,6 @@
 # Agents
 
-Plugins that wrap existing AI harnesses - PI, OpenClaw, Claude Code - as NATS micro services speaking the **NATS Agent Protocol**, so any SDK in `../client-sdk/` can drive them the same way.
+Plugins that wrap existing AI harnesses - PI, OpenClaw, Claude Code, Hermes - as NATS micro services speaking the **NATS Agent Protocol**, so any SDK in `../client-sdk/` can drive them the same way.
 
 For an example of *building* a fresh agent from scratch using the TypeScript SDK, see [`../examples/dspy/`](../examples/dspy/).
 
@@ -11,6 +11,7 @@ For an example of *building* a fresh agent from scratch using the TypeScript SDK
 | `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.pi.<owner>.<session>`                      | 1 MB          | true             |
 | `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.oc.<owner>.<agentName>`                        | 1 MB          | true             |
 | `claude-code/`      | `ccc`      | [Claude Code](https://claude.com/claude-code) | `agents.ccc.<owner>.<session>`                      | 1 MB          | true             |
+| `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.hermes.<owner>.<name>`          | 1 MB (configurable) | true        |
 
 Every agent also publishes `<subject>.heartbeat` every 30 s.
 
@@ -23,6 +24,7 @@ Every agent registers a NATS micro service called `agents` with an endpoint name
 - **`pi/`** - each running PI CLI session becomes one agent instance. Attachments stage at `~/.pi/agent/attachments/<session>/<uuid>/` and are cleaned on session shutdown.
 - **`openclaw/`** - one OpenClaw agent per configured account. Attachments stage at `~/.openclaw/attachments/<agentName>/<uuid>/`, cleaned on gateway stop. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific).
 - **`claude-code/`** - ships as a Claude Code plugin (`/plugin install`). Two permission modes: `terminal` (prompt locally) or `query` (relay as a `query` chunk over NATS). Attachments stage at `~/.claude/channels/nats/attachments/<request_id>/`, cleaned on reply completion.
+- **`hermes/`** - full Hermes Agent (CLI + TUI + messaging gateway). Unlike the others, each gateway registers **one** identity and multiplexes conversations via the envelope's optional `session` field (§5.1); subject stays stable per instance. Images route through Hermes's `vision_analyze` tool so the model actually sees them. Currently installed from the `nats-gateway` branch of [`renerocksai/hermes-agent`](https://github.com/renerocksai/hermes-agent) — upstream PR pending.
 
 When an agent accepts attachments, it decodes them to disk and prepends the absolute paths to the prompt text like so:
 
