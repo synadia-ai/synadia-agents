@@ -10,17 +10,38 @@
 
 import { join, extname } from "node:path";
 import { existsSync, statSync } from "node:fs";
-import { connect, SDK_PROTOCOL_VERSION, type Client } from "@synadia/agents";
+import {
+  attach,
+  loadNatsContext,
+  SDK_PROTOCOL_VERSION,
+  type Client,
+  type NatsConnection,
+} from "@synadia/agents";
+import {
+  connect as natsConnect,
+  type NodeConnectionOptions,
+} from "@nats-io/transport-node";
 import { parseConfig } from "./config.ts";
 import { Bridge, formatSdkProtocolVersion, type BridgeWsData } from "./bridge.ts";
 
 const config = parseConfig(Bun.argv);
 
-const client: Client = await connect(
-  config.servers
-    ? { name: "testui", servers: config.servers }
-    : { name: "testui", context: config.context ?? "current" },
-);
+async function buildConnectOptions(): Promise<NodeConnectionOptions> {
+  if (config.servers) {
+    return { name: "testui", servers: config.servers };
+  }
+  const contextName = config.context ?? "current";
+  const ctx = await loadNatsContext(contextName);
+  return {
+    servers: [...ctx.servers],
+    ...ctx.connectionOptions,
+    name: "testui",
+  };
+}
+
+const connectOpts = await buildConnectOptions();
+const nc: NatsConnection = await natsConnect(connectOpts);
+const client: Client = attach({ nc, name: "testui" });
 
 const serverInfoNote = config.servers
   ? `servers=${config.servers}`
@@ -36,7 +57,7 @@ const server = Bun.serve<BridgeWsData>({
     const url = new URL(req.url);
 
     if (url.pathname === "/ws") {
-      const bridge = new Bridge(client, sdkVersionString);
+      const bridge = new Bridge(client, nc, sdkVersionString);
       const upgraded = srv.upgrade(req, { data: { bridge } });
       if (upgraded) return undefined;
       return new Response("expected WebSocket upgrade on /ws", { status: 400 });
@@ -103,6 +124,11 @@ async function shutdown(sig: NodeJS.Signals): Promise<void> {
     await client.close();
   } catch (e) {
     console.warn("[testui] client.close() failed:", (e as Error).message);
+  }
+  try {
+    await nc.close();
+  } catch {
+    /* noop */
   }
   process.exit(0);
 }

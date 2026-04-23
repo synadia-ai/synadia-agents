@@ -13,12 +13,15 @@ import {
   StreamStalledError,
   type Client,
   type DiscoveredAgent,
+  type NatsConnection,
   type QueryEvent,
   type RequestAttachment,
 } from "@synadia/agents";
 import type {
   ClientMessage,
   DiscoveredAgentDTO,
+  PiExecSessionSummary,
+  PiExecSpawnDescriptor,
   ServerMessage,
 } from "./wire.ts";
 
@@ -36,6 +39,7 @@ export class Bridge {
 
   constructor(
     private readonly client: Client,
+    private readonly nc: NatsConnection,
     private readonly sdkProtocolVersion: string,
   ) {}
 
@@ -69,6 +73,15 @@ export class Bridge {
         break;
       case "query-reply":
         void this.handleQueryReply(msg.id, msg.queryId, msg.answer);
+        break;
+      case "piexec-spawn":
+        void this.handlePiExecSpawn(msg.id, msg.controllerInstanceId, msg.spec);
+        break;
+      case "piexec-stop":
+        void this.handlePiExecStop(msg.id, msg.controllerInstanceId, msg.sessionId);
+        break;
+      case "piexec-list":
+        void this.handlePiExecList(msg.id, msg.controllerInstanceId);
         break;
       default: {
         const anyMsg = msg as { kind?: string };
@@ -228,6 +241,115 @@ export class Bridge {
     } catch (err) {
       this.sendError(id, "query_reply_failed", (err as Error).message);
     }
+  }
+
+  // ─── pi-headless control plane ────────────────────────────────────────────
+
+  private async handlePiExecSpawn(
+    id: string,
+    controllerInstanceId: string,
+    spec: unknown,
+  ): Promise<void> {
+    const subject = this.resolveControllerSubject(id, controllerInstanceId, "spawn");
+    if (!subject) return;
+    try {
+      const rep = await this.nc.request(subject, JSON.stringify(spec ?? {}), { timeout: 15_000 });
+      const errHeader = rep.headers?.get("Nats-Service-Error-Code");
+      if (errHeader) {
+        this.sendError(
+          id,
+          errHeader,
+          rep.headers?.get("Nats-Service-Error") ?? "spawn error",
+        );
+        return;
+      }
+      const descriptor = JSON.parse(rep.string()) as PiExecSpawnDescriptor;
+      this.send({ kind: "piexec-spawned", id, descriptor });
+    } catch (err) {
+      this.sendError(id, "piexec_spawn_failed", (err as Error).message);
+    }
+  }
+
+  private async handlePiExecStop(
+    id: string,
+    controllerInstanceId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const subject = this.resolveControllerSubject(id, controllerInstanceId, "stop");
+    if (!subject) return;
+    try {
+      const rep = await this.nc.request(
+        subject,
+        JSON.stringify({ session_id: sessionId }),
+        { timeout: 10_000 },
+      );
+      const errHeader = rep.headers?.get("Nats-Service-Error-Code");
+      if (errHeader) {
+        this.sendError(
+          id,
+          errHeader,
+          rep.headers?.get("Nats-Service-Error") ?? "stop error",
+        );
+        return;
+      }
+      this.send({ kind: "piexec-stopped", id, sessionId });
+    } catch (err) {
+      this.sendError(id, "piexec_stop_failed", (err as Error).message);
+    }
+  }
+
+  private async handlePiExecList(
+    id: string,
+    controllerInstanceId: string,
+  ): Promise<void> {
+    const subject = this.resolveControllerSubject(id, controllerInstanceId, "list");
+    if (!subject) return;
+    try {
+      const rep = await this.nc.request(subject, "", { timeout: 10_000 });
+      const errHeader = rep.headers?.get("Nats-Service-Error-Code");
+      if (errHeader) {
+        this.sendError(
+          id,
+          errHeader,
+          rep.headers?.get("Nats-Service-Error") ?? "list error",
+        );
+        return;
+      }
+      const body = JSON.parse(rep.string()) as { sessions: PiExecSessionSummary[] };
+      this.send({
+        kind: "piexec-listed",
+        id,
+        controllerInstanceId,
+        sessions: body.sessions ?? [],
+      });
+    } catch (err) {
+      this.sendError(id, "piexec_list_failed", (err as Error).message);
+    }
+  }
+
+  private resolveControllerSubject(
+    id: string,
+    controllerInstanceId: string,
+    endpoint: "spawn" | "stop" | "list",
+  ): string | null {
+    const agent = this.agentsByInstanceId.get(controllerInstanceId);
+    if (!agent) {
+      this.sendError(
+        id,
+        "agent_not_found",
+        `no pi-headless controller with instance id ${controllerInstanceId} in last discovery result — click Refresh`,
+      );
+      return null;
+    }
+    if (agent.metadata["role"] !== "pi-headless-controller") {
+      this.sendError(
+        id,
+        "not_a_controller",
+        `instance ${controllerInstanceId} is not a pi-headless controller`,
+      );
+      return null;
+    }
+    return `${agent.promptEndpoint.subject}.${endpoint}`;
   }
 
   // ─── Error mapping ─────────────────────────────────────────────────────────

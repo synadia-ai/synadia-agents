@@ -4,8 +4,9 @@ import ConnectionBar from "./components/ConnectionBar.vue";
 import AgentList from "./components/AgentList.vue";
 import MessageList from "./components/MessageList.vue";
 import PromptArea from "./components/PromptArea.vue";
+import PiExecView from "./components/piexec/PiExecView.vue";
 import { bridgeState } from "./stores/bridge.ts";
-import { agentsState, selectedAgent } from "./stores/agents.ts";
+import { agentsState, piexecControllers, selectedAgent } from "./stores/agents.ts";
 import {
   appendMessage,
   findMessage,
@@ -14,6 +15,30 @@ import {
   type Message,
 } from "./stores/chat.ts";
 import { fileToAttachment, useBridge } from "./composables/useBridge.ts";
+
+type ViewMode = "chat" | "piexec";
+const STORAGE_KEY = "testui:view-mode";
+const loadedMode =
+  typeof localStorage !== "undefined"
+    ? (localStorage.getItem(STORAGE_KEY) as ViewMode | null)
+    : null;
+const viewMode = ref<ViewMode>(loadedMode === "piexec" ? "piexec" : "chat");
+const piexecAvailable = computed(() => piexecControllers.value.length > 0);
+
+function setMode(mode: ViewMode): void {
+  if (mode === "piexec" && !piexecAvailable.value) return;
+  viewMode.value = mode;
+  try {
+    localStorage.setItem(STORAGE_KEY, mode);
+  } catch {
+    /* noop */
+  }
+}
+
+// Fall back to chat when no controllers exist; stay in piexec when they appear.
+watch(piexecAvailable, (available) => {
+  if (!available && viewMode.value === "piexec") viewMode.value = "chat";
+});
 
 const bridge = useBridge();
 
@@ -58,8 +83,9 @@ watch(
 );
 
 async function onSubmit(text: string, files: File[]): Promise<void> {
-  const agent = selectedAgent.value;
-  if (!agent) return;
+  const maybeAgent = selectedAgent.value;
+  if (!maybeAgent) return;
+  const agent = maybeAgent;
   const session = getSession(agent.instanceId);
 
   let attachments: Awaited<ReturnType<typeof fileToAttachment>>[] | undefined;
@@ -180,9 +206,29 @@ onMounted(() => {
 </script>
 
 <template>
-  <ConnectionBar @refresh="refreshAgents" />
+  <ConnectionBar @refresh="refreshAgents">
+    <template #actions>
+      <nav class="mode-toggle mono">
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: viewMode === 'chat' }"
+          @click="setMode('chat')"
+        >Chat</button>
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: viewMode === 'piexec' }"
+          :disabled="!piexecAvailable"
+          :title="piexecAvailable ? 'Spawn &amp; fan-out PI sessions' : 'start pi-headless to enable'"
+          @click="setMode('piexec')"
+        >PI Exec<span v-if="piexecAvailable" class="count">{{ piexecControllers.length }}</span></button>
+      </nav>
+    </template>
+  </ConnectionBar>
   <div v-if="error" class="global-error mono">{{ error }}</div>
-  <main class="shell">
+  <PiExecView v-if="viewMode === 'piexec'" />
+  <main v-else class="shell">
     <AgentList />
     <section class="chat-pane">
       <div v-if="!selectedAgent" class="chat-placeholder">
@@ -296,5 +342,43 @@ onMounted(() => {
 .chat-sub {
   color: var(--text-dim);
   font-size: var(--text-xs);
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-primary);
+  border: var(--border-subtle);
+  border-radius: var(--border-radius);
+  padding: 2px;
+}
+.mode-btn {
+  height: 26px;
+  padding: 0 var(--space-md);
+  font-size: var(--text-xs);
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.mode-btn.active {
+  background: var(--accent-gradient);
+  color: white;
+}
+.mode-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.mode-btn .count {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: var(--border-radius-sm);
+  background: rgba(255, 255, 255, 0.18);
 }
 </style>

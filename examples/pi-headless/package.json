@@ -1,0 +1,22 @@
+{
+  "name": "@synadia/nats-pi-headless",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Headless NATS agent host that spawns, prompts, and stops PI coding-agent sessions as first-class NATS Agent Protocol (v0.2.0-draft) instances. Each session registers as agents.pi.<owner>.<session_id>; a small controller service adds spawn/stop/list custom endpoints.",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "latest",
+    "@nats-io/services": "^3.3.1",
+    "@nats-io/transport-node": "^3.3.1",
+    "@synadia/agents": "file:../../client-sdk/typescript"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

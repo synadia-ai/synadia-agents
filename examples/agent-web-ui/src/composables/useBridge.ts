@@ -8,6 +8,9 @@ import { recordHeartbeat } from "../stores/heartbeats.ts";
 import type {
   ClientMessage,
   DiscoveredAgentDTO,
+  PiExecSessionSummary,
+  PiExecSpawnDescriptor,
+  PiExecSpawnSpec,
   ServerMessage,
   WireAttachment,
 } from "../wire.ts";
@@ -28,6 +31,17 @@ const streams = new Map<string, StreamHandlers>();
 let pendingDiscover:
   | { resolve: (a: DiscoveredAgentDTO[]) => void; reject: (e: Error) => void }
   | null = null;
+
+type PendingControl = {
+  resolve: (value: unknown) => void;
+  reject: (err: Error) => void;
+};
+const pendingControl = new Map<string, PendingControl>();
+
+function rejectPendingControls(err: Error): void {
+  for (const p of pendingControl.values()) p.reject(err);
+  pendingControl.clear();
+}
 
 function connect(): void {
   if (ws) return;
@@ -62,6 +76,7 @@ function connect(): void {
       pendingDiscover.reject(new Error("connection closed"));
       pendingDiscover = null;
     }
+    rejectPendingControls(new Error("connection closed"));
     for (const s of streams.values()) {
       s.onError?.("connection closed");
     }
@@ -112,9 +127,37 @@ function handleServerMessage(msg: ServerMessage): void {
     case "heartbeat":
       recordHeartbeat(msg.instanceId);
       break;
+    case "piexec-spawned": {
+      const entry = pendingControl.get(msg.id);
+      if (entry) {
+        pendingControl.delete(msg.id);
+        entry.resolve(msg.descriptor);
+      }
+      break;
+    }
+    case "piexec-stopped": {
+      const entry = pendingControl.get(msg.id);
+      if (entry) {
+        pendingControl.delete(msg.id);
+        entry.resolve(msg.sessionId);
+      }
+      break;
+    }
+    case "piexec-listed": {
+      const entry = pendingControl.get(msg.id);
+      if (entry) {
+        pendingControl.delete(msg.id);
+        entry.resolve(msg.sessions);
+      }
+      break;
+    }
     case "error": {
       if (msg.id && streams.has(msg.id)) {
         streams.get(msg.id)!.onError?.(msg.message, msg.code, msg.details);
+      } else if (msg.id && pendingControl.has(msg.id)) {
+        const entry = pendingControl.get(msg.id)!;
+        pendingControl.delete(msg.id);
+        entry.reject(new Error(msg.message));
       } else if (pendingDiscover) {
         pendingDiscover.reject(new Error(msg.message));
         pendingDiscover = null;
@@ -170,6 +213,53 @@ function queryReply(id: string, queryId: string, answer: string): void {
   send({ kind: "query-reply", id, queryId, answer });
 }
 
+function piexecRequest<T>(msg: ClientMessage & { id: string }): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    pendingControl.set(msg.id, {
+      resolve: resolve as (value: unknown) => void,
+      reject,
+    });
+    if (!send(msg)) {
+      pendingControl.delete(msg.id);
+      reject(new Error("WebSocket not open"));
+    }
+  });
+}
+
+function piexecSpawn(
+  controllerInstanceId: string,
+  spec: PiExecSpawnSpec,
+): Promise<PiExecSpawnDescriptor> {
+  const id = crypto.randomUUID();
+  return piexecRequest<PiExecSpawnDescriptor>({
+    kind: "piexec-spawn",
+    id,
+    controllerInstanceId,
+    spec,
+  });
+}
+
+function piexecStop(controllerInstanceId: string, sessionId: string): Promise<string> {
+  const id = crypto.randomUUID();
+  return piexecRequest<string>({
+    kind: "piexec-stop",
+    id,
+    controllerInstanceId,
+    sessionId,
+  });
+}
+
+function piexecList(
+  controllerInstanceId: string,
+): Promise<PiExecSessionSummary[]> {
+  const id = crypto.randomUUID();
+  return piexecRequest<PiExecSessionSummary[]>({
+    kind: "piexec-list",
+    id,
+    controllerInstanceId,
+  });
+}
+
 export function useBridge() {
   connect();
   return {
@@ -178,6 +268,9 @@ export function useBridge() {
     prompt,
     cancel,
     queryReply,
+    piexecSpawn,
+    piexecStop,
+    piexecList,
   };
 }
 

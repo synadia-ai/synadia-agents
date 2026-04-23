@@ -32,6 +32,44 @@ export type WireAttachment = {
   base64: string;
 };
 
+/** Summary of a pi-headless session as returned by the controller's `list` endpoint. */
+export type PiExecSessionSummary = {
+  session_id: string;
+  subject: string;
+  heartbeat_subject: string;
+  cwd: string;
+  model?: string;
+  thinking_level?: string;
+  max_lifetime_s: number;
+  remaining_lifetime_s: number;
+  active_request: boolean;
+  queued_requests: number;
+  created_at: string;
+  last_activity: string;
+};
+
+/** Spec for spawning a pi-headless session; mirrors the `spawn` wire. */
+export type PiExecSpawnSpec = {
+  cwd: string;
+  session_id?: string;
+  model?: string;
+  thinking_level?: string;
+  max_lifetime_s?: number;
+};
+
+/** Descriptor returned by a successful `spawn`. */
+export type PiExecSpawnDescriptor = {
+  session_id: string;
+  subject: string;
+  heartbeat_subject: string;
+  cwd: string;
+  model?: string;
+  thinking_level?: string;
+  max_lifetime_s: number;
+  created_at: string;
+  instance_id: string;
+};
+
 // ─── Client → Server ─────────────────────────────────────────────────────────
 
 export type ClientMessage =
@@ -44,7 +82,24 @@ export type ClientMessage =
       attachments?: WireAttachment[];
     }
   | { kind: "cancel"; id: string }
-  | { kind: "query-reply"; id: string; queryId: string; answer: string };
+  | { kind: "query-reply"; id: string; queryId: string; answer: string }
+  | {
+      kind: "piexec-spawn";
+      id: string;
+      controllerInstanceId: string;
+      spec: PiExecSpawnSpec;
+    }
+  | {
+      kind: "piexec-stop";
+      id: string;
+      controllerInstanceId: string;
+      sessionId: string;
+    }
+  | {
+      kind: "piexec-list";
+      id: string;
+      controllerInstanceId: string;
+    };
 
 // ─── Server → Client ─────────────────────────────────────────────────────────
 
@@ -85,4 +140,20 @@ export type ServerMessage =
       name?: string;
       message: string;
       details?: Record<string, unknown>;
+    }
+  | {
+      kind: "piexec-spawned";
+      id: string;
+      descriptor: PiExecSpawnDescriptor;
+    }
+  | {
+      kind: "piexec-stopped";
+      id: string;
+      sessionId: string;
+    }
+  | {
+      kind: "piexec-listed";
+      id: string;
+      controllerInstanceId: string;
+      sessions: PiExecSessionSummary[];
     };
