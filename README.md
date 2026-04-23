@@ -15,6 +15,7 @@ synadia-agents/
 │   └── python/            ← natsagent (Python ≥ 3.11)
 ├── agents/                ← plugins that put existing AI harnesses on NATS
 │   ├── README.md
+│   ├── hermes  /          ← Hermes Agent NATS gateway 
 │   ├── pi/                ← PI Agent channel
 │   ├── openclaw/          ← OpenClaw plugin
 │   └── claude-code/       ← Claude Code MCP plugin
