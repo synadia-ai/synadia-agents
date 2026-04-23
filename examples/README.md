@@ -21,7 +21,7 @@ Browser (Vue / React / …)  ⇄  server process (SDK + NATS)  ⇄  NATS  ⇄  a
 
 ## What to look for in each example
 
-**Caller examples** should demonstrate:
+**In caller examples:**
 
 1. **Discovery** — enumerate agents via `client.discover()`, filter by type token.
 2. **Prompting** — both plain-text and JSON envelopes with attachments.
@@ -30,7 +30,7 @@ Browser (Vue / React / …)  ⇄  server process (SDK + NATS)  ⇄  NATS  ⇄  a
 5. **Mid-stream queries** — reply to `_INBOX`-style query chunks (permission prompts, clarifications).
 6. **Liveness** — track `<subject>.heartbeat` so UIs reflect agent up/down without polling.
 
-**Agent examples** (like `dspy/`) should demonstrate:
+**In agent examples (like `dspy/`):**
 
 1. **Building on `ReferenceAgent`** — the SDK's `@synadia/agents/testing` helper handles registration, heartbeats, and stream termination for you.
 2. **Envelope handling** — accept both plain text and JSON envelopes.
