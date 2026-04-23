@@ -1,0 +1,34 @@
+name: Claude Code
+
+# GITHUB_TOKEN needs contents:read and actions:read — required by
+# claude-code-action for restoring trusted config files from the base branch.
+# All other GitHub API access uses the App token.
+permissions:
+  contents: read
+  actions: read
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, reopened]
+
+jobs:
+  claude:
+    uses: synadia-io/ai-workflows/.github/workflows/claude.yml@v2
+    with:
+      gh_app_id: ${{ vars.CLAUDE_GH_APP_ID }}
+      checkout_mode: base
+      review_focus: |
+        Additionally focus on:
+        - NATS Agent Protocol compliance (spec: https://github.com/synadia-ai/nats-agent-sdk-docs).
+        - Cross-SDK wire compatibility between client-sdk/typescript and client-sdk/python — anything that changes the wire shape must keep both SDKs interoperable.
+        - Attachment handling: base64 validation (strict RFC 4648), filename safety (no absolute paths, no ".." traversal, no NUL bytes), and path safety in per-agent staging directories.
+        - Public API stability in @synadia/agents (TypeScript) and natsagent (Python). Call out breaking changes explicitly.
+        - Sandbox soundness in examples/dspy — the bash tool is a soft boundary; flag anything that weakens it further.
+        - Error envelopes and Nats-Service-Error-Code handling (400 for client errors, 500 for server; terminator is an empty body with no headers).
+    secrets:
+      claude_oauth_token: ${{ secrets.CLAUDE_OAUTH_TOKEN }}
+      gh_app_private_key: ${{ secrets.CLAUDE_GH_APP_PRIVATE_KEY }}
