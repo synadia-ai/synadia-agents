@@ -12,8 +12,13 @@
 //
 // Precedence: `creds` > `user_jwt` > `user`/`password`/`token`.
 //
-// Keep in sync with `examples/agent-web-ui/server/nats-context.ts` —
-// the two copies are byte-identical on purpose.
+// Note: `user_jwt` without an accompanying nkey seed leaves the CONNECT
+// signature empty, so it only works against servers that do not require
+// nonce signing. Standard operator-mode deployments need `nkey` support
+// (see the "Skips" list above).
+//
+// Keep in sync with the other `nats-context.ts` copy in this monorepo —
+// the two example copies are byte-identical on purpose.
 
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
