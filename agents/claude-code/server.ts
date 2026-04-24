@@ -4,7 +4,7 @@
  * NATS Agent Protocol v0.1 (see https://github.com/synadia-ai/nats-agent-sdk-docs).
  *
  * Self-contained MCP server that registers as an `agents` micro service,
- * exposes a `prompt` endpoint on agents.ccc.<owner>.<session>, publishes
+ * exposes a `prompt` endpoint on agents.cc.<owner>.<name>, publishes
  * heartbeats on <subject>.heartbeat, and bridges prompt requests into the
  * Claude Code session via MCP <channel> notifications. Claude responds via
  * the `reply` tool; each response is emitted as typed JSON chunks
@@ -41,7 +41,7 @@ import { fileURLToPath } from 'url'
 // ── Constants ──────────────────────────────────────────────────────────
 const PROTOCOL_VERSION = '0.2'
 const AGENT_ID = 'claude-code'          // metadata.agent (canonical per Appendix C)
-const AGENT_SUBJECT_TOKEN = 'ccc'       // 2nd subject token (abbreviation per Appendix C)
+const AGENT_SUBJECT_TOKEN = 'cc'        // 2nd subject token (abbreviation per Appendix C)
 const SERVICE_NAME = 'agents'           // §3.1 — the bare token, subject-safe as-is
 const PROMPT_QUEUE_GROUP = 'agents'     // §3.3 — queue group on the prompt endpoint
 const MAX_PAYLOAD_STRING = '1MB'        // advertised in endpoint metadata
