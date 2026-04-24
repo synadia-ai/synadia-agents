@@ -4,6 +4,8 @@ One home for everything built on the **NATS Agent Protocol** - the SDKs that spe
 
 Every AI agent in this repo (Claude Code, OpenClaw, PI, DSPy-ReAct, …) registers as a NATS micro service named `agents`. Callers discover, prompt, and stream from it using any language's SDK - same wire format everywhere.
 
+The TypeScript SDK, the OpenClaw and PI channel plugins, and two runnable examples ship to npm under the **`@synadia-ai/*`** scope — see each package's `package.json` for its published identity.
+
 ## Repository layout
 
 ```
