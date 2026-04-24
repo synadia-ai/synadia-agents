@@ -72,12 +72,12 @@ The server reads connection details (URL, credentials) from
 
 **5. Send a prompt.**
 
-With the [`@synadia/agents`](../../client-sdk/typescript)
+With the [`@synadia-ai/agents`](../../client-sdk/typescript)
 TypeScript SDK:
 
 ```ts
 import { connect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const nc = await connect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });

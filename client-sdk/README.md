@@ -6,7 +6,7 @@ Caller-side libraries that speak the **NATS Agent Protocol**. They discover agen
 
 | Language   | Path          | Package           | Runtime              |
 | ---------- | ------------- | ----------------- | -------------------- |
-| TypeScript | `typescript/` | `@synadia/agents` | Node ≥ 20, Bun ≥ 1.2 |
+| TypeScript | `typescript/` | `@synadia-ai/agents` | Node ≥ 20, Bun ≥ 1.2 |
 | Python     | `python/`     | `natsagent`       | Python ≥ 3.11        |
 
 Go and other languages are planned.
@@ -17,7 +17,7 @@ Go and other languages are planned.
 
 ```ts
 import { connect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const nc = await connect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });

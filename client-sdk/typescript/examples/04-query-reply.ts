@@ -6,7 +6,7 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents, type QueryEvent } from "@synadia/agents";
+import { Agents, type QueryEvent } from "@synadia-ai/agents";
 
 async function ask(prompt: string): Promise<string> {
   const rl = createInterface({ input: stdin, output: stdout });

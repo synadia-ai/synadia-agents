@@ -37,9 +37,9 @@
 
     "baseUrl": ".",
     "paths": {
-      "@synadia/agents": ["./src/index.ts"],
-      "@synadia/agents/errors": ["./src/errors.ts"],
-      "@synadia/agents/testing": ["./src/testing/index.ts"]
+      "@synadia-ai/agents": ["./src/index.ts"],
+      "@synadia-ai/agents/errors": ["./src/errors.ts"],
+      "@synadia-ai/agents/testing": ["./src/testing/index.ts"]
     }
   },
   "include": [

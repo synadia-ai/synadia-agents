@@ -1,6 +1,6 @@
 # examples/dspy - building an agent with the SDK
 
-An example of **building a new agent from scratch** using the `@synadia/agents` TypeScript SDK. It runs a [ax-llm](https://github.com/ax-llm/ax) (DSPy-style signatures + ReAct) loop with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Once started it appears as a normal NATS Agent Protocol service and can be driven by any caller - the CLI examples in `../../client-sdk/typescript/examples/`, the web UI in `../agent-web-ui/`, or your own code.
+An example of **building a new agent from scratch** using the `@synadia-ai/agents` TypeScript SDK. It runs a [ax-llm](https://github.com/ax-llm/ax) (DSPy-style signatures + ReAct) loop with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Once started it appears as a normal NATS Agent Protocol service and can be driven by any caller - the CLI examples in `../../client-sdk/typescript/examples/`, the web UI in `../agent-web-ui/`, or your own code.
 
 - `list_files` / `read_file` / `write_file` refuse any path that escapes the sandbox root.
 - `bash` runs commands with `cwd` set to the sandbox root, a 30 s timeout, and 8000-char output truncation. **Note:** a shell is a soft boundary - the model can `cd ..`, `curl`, etc. Don't point this at anything you care about.

@@ -1,6 +1,6 @@
 # agent-web-ui
 
-A Bun + Vue 3 test client for the [`@synadia/agents`](../../client-sdk/typescript) SDK.
+A Bun + Vue 3 test client for the [`@synadia-ai/agents`](../../client-sdk/typescript) SDK.
 Discover agents over NATS, prompt them (with optional attachments),
 stream responses back, and — when a [`pi-headless`](../pi-headless) controller
 is online — spawn, prompt, and fan out PI sessions from the browser.

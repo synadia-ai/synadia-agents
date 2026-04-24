@@ -1,5 +1,5 @@
 // Wire-level smoke test for the NATS Agent Protocol 0.2.0-draft layer of
-// @m64/nats-channel (OpenClaw).
+// @synadia-ai/nats-channel (OpenClaw).
 //
 // This test does NOT boot a full OpenClaw pipeline. Instead it assembles a
 // minimal spec-compliant service from the same primitives gateway.ts uses

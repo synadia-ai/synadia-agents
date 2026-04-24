@@ -1,10 +1,8 @@
-# @synadia/nats-channel
-
-> Currently published on npm as `@m64/nats-channel`; moving to `@synadia/nats-channel` once Synadia publishing access lands. Install commands below use the current name.
+# @synadia-ai/nats-channel
 
 NATS channel plugin for [OpenClaw](https://openclaw.ai), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0**.
 
-Every configured OpenClaw agent becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia/agents`](../../client-sdk/typescript) - can enumerate running OpenClaw agents, prompt them, and stream responses back.
+Every configured OpenClaw agent becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) - can enumerate running OpenClaw agents, prompt them, and stream responses back.
 
 Sibling implementations sharing the same wire protocol: [`pi`](../pi) (PI), [`claude-code`](../claude-code) (Claude Code).
 
@@ -24,13 +22,7 @@ Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames ar
 ## Install
 
 ```bash
-openclaw plugins install @m64/nats-channel
-```
-
-Or use the one-line installer with a guided config wizard:
-
-```bash
-curl -fsSL https://m64.io/nats-channels/openclaw.sh | bash
+openclaw plugins install @synadia-ai/nats-channel
 ```
 
 ## Configure
@@ -147,7 +139,7 @@ With the TypeScript SDK:
 
 ```ts
 import { connect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const nc = await connect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });

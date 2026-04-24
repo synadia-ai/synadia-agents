@@ -2,7 +2,7 @@
 import process from "node:process";
 import { stdout } from "node:process";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const question = process.argv.slice(2).join(" ") || "list the sandbox contents and summarize what you find";
 

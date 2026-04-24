@@ -1,16 +1,16 @@
 # Getting started
 
-`@synadia/agents` is the TypeScript client SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs). This guide walks through the complete flow: connecting, discovering agents, prompting one with attachments, and handling the three protocol-defined failure modes locally.
+`@synadia-ai/agents` is the TypeScript client SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs). This guide walks through the complete flow: connecting, discovering agents, prompting one with attachments, and handling the three protocol-defined failure modes locally.
 
 ## Prerequisites
 
 - Node.js ≥ 20 **or** Bun ≥ 1.2
 - A running `nats-server` reachable from the client.
-- At least one protocol-compliant agent registered on the NATS system. The `@synadia/agents/testing` subpath ships a spec-compliant reference agent you can run locally:
+- At least one protocol-compliant agent registered on the NATS system. The `@synadia-ai/agents/testing` subpath ships a spec-compliant reference agent you can run locally:
 
   ```ts
   import { connect as natsConnect } from "@nats-io/transport-node";
-  import { ReferenceAgent } from "@synadia/agents/testing";
+  import { ReferenceAgent } from "@synadia-ai/agents/testing";
 
   const nc = await natsConnect({ servers: "nats://localhost:4222" });
   const agent = new ReferenceAgent({
@@ -26,7 +26,7 @@
 ## Install
 
 ```sh
-bun add @synadia/agents     # or: npm install @synadia/agents
+bun add @synadia-ai/agents     # or: npm install @synadia-ai/agents
 ```
 
 ## Connect + discover + prompt
@@ -38,7 +38,7 @@ KV, services, or any other `@nats-io/*` library.
 
 ```ts
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const nc = await natsConnect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });
@@ -61,7 +61,7 @@ That's the quickstart. Everything else below is depth on specific features.
 The boss's scenario - send a photo and ask about it:
 
 ```ts
-import { AttachmentsNotSupportedError, PayloadTooLargeError } from "@synadia/agents";
+import { AttachmentsNotSupportedError, PayloadTooLargeError } from "@synadia-ai/agents";
 
 try {
   const stream = await remote.prompt("describe this photo", {
@@ -181,10 +181,10 @@ The SDK enforces spec §8.5 automatically: the first call to `discover()` implic
 
 ## Bun usage
 
-`@synadia/agents` runs unchanged on Bun 1.2+:
+`@synadia-ai/agents` runs unchanged on Bun 1.2+:
 
 ```sh
-bun add @synadia/agents
+bun add @synadia-ai/agents
 bun run examples/01-discover.ts
 ```
 

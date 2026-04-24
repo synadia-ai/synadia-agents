@@ -1,6 +1,6 @@
 // nats-ai-testui — Bun server entry point.
 //
-// Owns the single @synadia/agents Client (one NATS connection for the whole
+// Owns the single @synadia-ai/agents Client (one NATS connection for the whole
 // process) and serves:
 //   - GET /ws     → WebSocket; each connection gets a fresh Bridge.
 //   - everything else → static files from ./dist/ (SPA fallback to index.html).
@@ -14,7 +14,7 @@ import {
   Agents,
   SDK_PROTOCOL_VERSION,
   type NatsConnection,
-} from "@synadia/agents";
+} from "@synadia-ai/agents";
 import {
   connect as natsConnect,
   type NodeConnectionOptions,

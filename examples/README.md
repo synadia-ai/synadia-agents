@@ -6,9 +6,9 @@ End-to-end apps built with the SDK in `../client-sdk/`. Some are **callers** tha
 
 | Path             | Kind   | Stack                                    | What it shows                                                                 |
 | ---------------- | ------ | ---------------------------------------- | ----------------------------------------------------------------------------- |
-| `agent-web-ui/`  | caller | Vue 3 + Bun (server) + `@synadia/agents` | Browser client for discovery, prompting with attachments, and streaming responses. Renders mid-stream `query` chunks inline with allow/deny controls. When a pi-headless controller is discovered, a second "PI Exec" workspace unlocks: spawn form, session list with lifetime/queue metadata, and a fan-out composer that streams one prompt across N working directories in parallel. |
-| `dspy/`          | agent  | Bun + `@synadia/agents` + [ax-llm](https://github.com/ax-llm/ax) | A standalone NATS Agent Protocol service built from scratch with the SDK's `ReferenceAgent` helper. Runs a DSPy-style ReAct loop with four sandboxed tools (`list_files`, `read_file`, `write_file`, `bash`). Registers as type token `dspy` and can be driven by any caller - including `agent-web-ui/`. |
-| `pi-headless/`   | agent  | Bun/Node + `@synadia/agents` + `@mariozechner/pi-coding-agent` | One process that spawns and manages any number of headless PI coding-agent sessions. Each session registers as its OWN first-class NATS agent at `agents.pi.<owner>.<session_id>` - discoverable and promptable with any protocol client. A small controller at `agents.pi.<owner>.exec` adds request/reply endpoints for session lifecycle (`spawn`, `stop`, `list`) alongside the protocol-required `prompt`. Pairs naturally with `agent-web-ui/` for an interactive spawn/prompt/fan-out UI. |
+| `agent-web-ui/`  | caller | Vue 3 + Bun (server) + `@synadia-ai/agents` | Browser client for discovery, prompting with attachments, and streaming responses. Renders mid-stream `query` chunks inline with allow/deny controls. When a pi-headless controller is discovered, a second "PI Exec" workspace unlocks: spawn form, session list with lifetime/queue metadata, and a fan-out composer that streams one prompt across N working directories in parallel. |
+| `dspy/`          | agent  | Bun + `@synadia-ai/agents` + [ax-llm](https://github.com/ax-llm/ax) | A standalone NATS Agent Protocol service built from scratch with the SDK's `ReferenceAgent` helper. Runs a DSPy-style ReAct loop with four sandboxed tools (`list_files`, `read_file`, `write_file`, `bash`). Registers as type token `dspy` and can be driven by any caller - including `agent-web-ui/`. |
+| `pi-headless/`   | agent  | Bun/Node + `@synadia-ai/agents` + `@mariozechner/pi-coding-agent` | One process that spawns and manages any number of headless PI coding-agent sessions. Each session registers as its OWN first-class NATS agent at `agents.pi.<owner>.<session_id>` - discoverable and promptable with any protocol client. A small controller at `agents.pi.<owner>.exec` adds request/reply endpoints for session lifecycle (`spawn`, `stop`, `list`) alongside the protocol-required `prompt`. Pairs naturally with `agent-web-ui/` for an interactive spawn/prompt/fan-out UI. |
 
 ## Architecture pattern (browser examples)
 
@@ -33,7 +33,7 @@ Browser (Vue / React / …)  ⇄  server process (SDK + NATS)  ⇄  NATS  ⇄  a
 
 **In agent examples (like `dspy/`):**
 
-1. **Building on `ReferenceAgent`** - the SDK's `@synadia/agents/testing` helper handles registration, heartbeats, and stream termination for you.
+1. **Building on `ReferenceAgent`** - the SDK's `@synadia-ai/agents/testing` helper handles registration, heartbeats, and stream termination for you.
 2. **Envelope handling** - accept both plain text and JSON envelopes.
 3. **Chunk streaming** - emit `status` for progress/keep-alive and `response` for content deltas.
 4. **Metadata** - advertise `max_payload` and `attachments_ok` correctly.

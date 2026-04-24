@@ -1,4 +1,4 @@
-// Public exports for the `@synadia/agents/testing` subpath.
+// Public exports for the `@synadia-ai/agents/testing` subpath.
 //
 // These helpers let third-party implementations test against a
 // spec-compliant counterparty without rolling their own.

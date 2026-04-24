@@ -1,5 +1,5 @@
 // Shared WebSocket message types — the contract between the Bun server (which
-// owns the @synadia/agents SDK client) and the browser UI.
+// owns the @synadia-ai/agents SDK client) and the browser UI.
 //
 // All messages are JSON text. Binary attachments are carried as base64 strings
 // so the wire stays a single JSON stream in both directions.

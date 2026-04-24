@@ -1,4 +1,4 @@
-// @synadia/agents — TypeScript SDK for the NATS Agent Protocol.
+// @synadia-ai/agents — TypeScript SDK for the NATS Agent Protocol.
 //
 // Public API:
 //   - {@link Agents}              — construct with a `NatsConnection`.
@@ -6,8 +6,8 @@
 //   - {@link Agent.prompt}        — stream a prompt to an agent.
 //
 // Subpath entry points:
-//   - `@synadia/agents/errors`  — error class hierarchy for `instanceof`.
-//   - `@synadia/agents/testing` — spec-compliant reference agent and harness.
+//   - `@synadia-ai/agents/errors`  — error class hierarchy for `instanceof`.
+//   - `@synadia-ai/agents/testing` — spec-compliant reference agent and harness.
 
 export { Agents, DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS, type AgentsOptions } from "./agents.js";
 

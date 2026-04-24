@@ -1,5 +1,5 @@
 {
-  "name": "@synadia/nats-pi-headless",
+  "name": "@synadia-ai/nats-pi-headless",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "@mariozechner/pi-coding-agent": "latest",
     "@nats-io/services": "^3.3.1",
     "@nats-io/transport-node": "^3.3.1",
-    "@synadia/agents": "file:../../client-sdk/typescript"
+    "@synadia-ai/agents": "file:../../client-sdk/typescript"
   },
   "devDependencies": {
     "@types/bun": "latest",

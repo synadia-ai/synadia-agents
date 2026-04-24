@@ -3,7 +3,7 @@
 // expected cadence.
 
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents, type HeartbeatPayload } from "@synadia/agents";
+import { Agents, type HeartbeatPayload } from "@synadia-ai/agents";
 
 async function main(): Promise<void> {
   const nc = await natsConnect({

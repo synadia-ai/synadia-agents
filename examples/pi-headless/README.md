@@ -1,8 +1,8 @@
 # pi-headless
 
-A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia/agents` and conforming to the NATS Agent Protocol v0.2.0.
+A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia-ai/agents` and conforming to the NATS Agent Protocol v0.2.0.
 
-Each spawned PI session registers as its own NATS agent instance under `agents.pi.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia/agents` SDK. A small **controller** service at `agents.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text).
+Each spawned PI session registers as its own NATS agent instance under `agents.pi.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text).
 
 In short: one process, many PI sessions, all first-class NATS agents.
 
@@ -93,7 +93,7 @@ Programmatically with the SDK:
 
 ```ts
 import { connect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const nc = await connect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });
