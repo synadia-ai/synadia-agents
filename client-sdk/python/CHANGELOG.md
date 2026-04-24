@@ -252,8 +252,8 @@ of this entry.
 ### Migration from 0.0.1
 
 ```diff
-- agent = Agent(platform="ccc", owner="alice", name="worker-1", nc=nc)
-+ agent = Agent(agent="ccc", owner="alice", name="worker-1", nc=nc)
+- agent = Agent(platform="claude-code", owner="alice", name="worker-1", nc=nc)
++ agent = Agent(agent="claude-code", owner="alice", name="worker-1", nc=nc)
 ```
 
 ```diff
