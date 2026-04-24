@@ -2,7 +2,7 @@
 
 > Currently published on npm as `@m64/nats-pi-channel`; moving to `@synadia/nats-pi-channel` once Synadia publishing access lands. Install commands below use the current name.
 
-NATS channel for [PI Agent](https://github.com/badlogic/pi-mono), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0-draft**.
+NATS channel for [PI Agent](https://github.com/badlogic/pi-mono), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0**.
 
 Every PI session becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia/agents`](../../client-sdk/typescript) - can enumerate running PI sessions, prompt them, and stream responses back.
 

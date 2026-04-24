@@ -2,7 +2,7 @@
 
 > Currently published on npm as `@m64/nats-channel`; moving to `@synadia/nats-channel` once Synadia publishing access lands. Install commands below use the current name.
 
-NATS channel plugin for [OpenClaw](https://openclaw.ai), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0-draft**.
+NATS channel plugin for [OpenClaw](https://openclaw.ai), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0**.
 
 Every configured OpenClaw agent becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia/agents`](../../client-sdk/typescript) - can enumerate running OpenClaw agents, prompt them, and stream responses back.
 
@@ -87,7 +87,7 @@ openclaw gateway restart
 | `credentials` | no | - | Path to `.creds` file for NATS authentication |
 | `owner` | no | `default` | 3rd subject token - operator/account namespace. Spec §2 requires a 4-token subject. |
 
-> **Migrating from v0.2:** the old `org` field has been renamed `owner` (§3.2 terminology). The old name is still accepted as an alias with a deprecation warning in logs.
+> **Migrating from v0.1:** the old `org` field has been renamed `owner` (§3.2 terminology). The old name is still accepted as an alias with a deprecation warning in logs.
 
 ### Environment variables (Docker / containers)
 

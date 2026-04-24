@@ -1,10 +1,12 @@
 # pi-headless
 
-A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia/agents` and conforming to the NATS Agent Protocol v0.2.0-draft.
+A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia/agents` and conforming to the NATS Agent Protocol v0.2.0.
 
 Each spawned PI session registers as its own NATS agent instance under `agents.pi.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia/agents` SDK. A small **controller** service at `agents.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text).
 
 In short: one process, many PI sessions, all first-class NATS agents.
+
+Paired with [`examples/agent-web-ui/`](../agent-web-ui) you also get a browser-based **PI Exec** workspace that picks up spawned sessions automatically, surfaces lifetime/queue metadata, and includes a fan-out composer for running one prompt across many working directories in parallel.
 
 ## Quickstart
 
