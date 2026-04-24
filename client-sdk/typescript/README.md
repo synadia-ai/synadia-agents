@@ -75,6 +75,7 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 | `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                    |
 | `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`       | Heartbeat tracking and on-demand ping.                      |
 | `agents.close()`                                                 | Tear down SDK state; aborts all in-flight streams.          |
+| `loadNatsContext(selector)`                                      | Read a `nats` CLI context file and return `{ servers, connectionOptions }` for you to pass to `connect()` / `wsconnect`. Pure helper — no connection lifecycle. |
 
 Subpath exports:
 

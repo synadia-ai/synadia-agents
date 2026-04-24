@@ -105,7 +105,7 @@ for reviewers auditing this one.
 | SDK                                   | Wire behaviour                                                                                 | Spec ref |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------- | -------- |
 | Authentication                        | Delegated to NATS connection (`nats.connect(...)`); SDK adds no handshake.                     | §10.1    |
-| NATS context support (`~/.config/nats/context/`) | Not implemented today - context loading is a caller-side concern in both SDKs (callers pass explicit `servers` / creds / authenticator to the underlying NATS client). Tracked as a follow-up if we decide to add a shared helper.  | §10.2    |
+| NATS context support (`~/.config/nats/context/`) | TS SDK re-exposes `loadNatsContext(selector)` as a pure helper that returns `{ servers, connectionOptions }` for the caller to pass into `connect()` / `wsconnect` — no connection lifecycle. Python SDK does not yet ship an equivalent helper; tracked as a follow-up.  | §10.2    |
 
 ## Cancellation (§6.7)
 

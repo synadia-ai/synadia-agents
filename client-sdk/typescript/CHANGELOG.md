@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`loadNatsContext(selector)`** — re-exposed as a pure helper (replaces
+  the former `connect({ context })` convenience that was removed earlier
+  this release). Reads a `nats` CLI context file under `~/.config/nats`
+  (or `$NATS_CONFIG_HOME` / `$XDG_CONFIG_HOME/nats`) and returns
+  `{ servers, connectionOptions, description?, name }`. No lifecycle, no
+  connection wrapping — callers pass the resolved options to their own
+  `connect()` / `wsconnect` call. Supports `url`, `creds`, `user_jwt`,
+  `user` + `password`, `token`, `inbox_prefix`, `description`;
+  precedence `creds > user_jwt > user/password/token`. Skips `nkey`,
+  TLS cert/key/ca, and `nsc` integration.
+
+```ts
+import { connect } from "@nats-io/transport-node";
+import { Agents, loadNatsContext } from "@synadia/agents";
+
+const { servers, connectionOptions } = await loadNatsContext("prod");
+const nc = await connect({ servers: [...servers], ...connectionOptions });
+const agents = new Agents({ nc });
+```
+
 ### Changed (breaking)
 
 - **Single entry point: `new Agents({ nc })`.** The SDK no longer opens
@@ -48,8 +70,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **`ClientOptions.heartbeatScope` / `HeartbeatScope`** — the heartbeat
   wildcard is now fixed at `agents.*.*.*.heartbeat`. Narrow discovery
   results with `agents.discover({ filter })` instead.
-- **NATS CLI context support** (already removed earlier this release):
-  `connect({ context })`, `loadNatsContext()`, and `NatsContextError`.
+- **`connect({ context })` + `NatsContextError` hierarchy** — the
+  connect-with-context convenience is gone. `loadNatsContext()` is
+  re-exposed as a pure helper (see Added); the typed error hierarchy
+  is not — the helper throws plain `Error` with a descriptive message.
 
 ### Migration
 
