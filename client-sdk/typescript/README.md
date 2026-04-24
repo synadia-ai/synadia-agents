@@ -28,7 +28,7 @@ import { Agents } from "@synadia/agents";
 const nc = await connect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });
 
-const found = await agents.discover();   // stall strategy — returns as soon as replies quiet down
+const found = await agents.discover(); // stall strategy — returns as soon as replies quiet down
 
 for await (const msg of await found[0]!.prompt("describe this photo", {
   attachments: ["./vacation.jpg"],
@@ -37,7 +37,7 @@ for await (const msg of await found[0]!.prompt("describe this photo", {
 }
 
 await agents.close();
-await nc.close();   // caller owns the NATS connection
+await nc.close(); // caller owns the NATS connection
 ```
 
 ## Local validation in action
@@ -68,13 +68,13 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 
 ## What's in the box
 
-| API                                                              | Purpose                                                        |
-| ---------------------------------------------------------------- | -------------------------------------------------------------- |
-| `new Agents({ nc, ... })`                                        | Construct from a caller-owned `NatsConnection`.                |
-| `agents.discover({filter?, timeoutMs?})`                         | Return a live `Agent[]`; auto subscribe-before-ping (§8.5).    |
-| `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                       |
-| `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`       | Heartbeat tracking and on-demand ping.                         |
-| `agents.close()`                                                 | Tear down SDK state; aborts all in-flight streams.             |
+| API                                                              | Purpose                                                     |
+| ---------------------------------------------------------------- | ----------------------------------------------------------- |
+| `new Agents({ nc, ... })`                                        | Construct from a caller-owned `NatsConnection`.             |
+| `agents.discover({filter?, timeoutMs?})`                         | Return a live `Agent[]`; auto subscribe-before-ping (§8.5). |
+| `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                    |
+| `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`       | Heartbeat tracking and on-demand ping.                      |
+| `agents.close()`                                                 | Tear down SDK state; aborts all in-flight streams.          |
 
 Subpath exports:
 

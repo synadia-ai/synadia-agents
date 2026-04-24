@@ -43,7 +43,7 @@ import { Agents } from "@synadia/agents";
 const nc = await natsConnect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });
 
-const found = await agents.discover();   // stall: returns once replies quiet down
+const found = await agents.discover(); // stall: returns once replies quiet down
 
 for await (const msg of await found[0]!.prompt("hello")) {
   if (msg.type === "response") process.stdout.write(msg.text);
@@ -168,10 +168,10 @@ await agents.ping(instanceId, { timeoutMs: 2000 });
 
 Two modes, selected by whether `timeoutMs` is passed:
 
-| Call                                    | Strategy  | When it returns                                          |
-| --------------------------------------- | --------- | -------------------------------------------------------- |
-| `agents.discover()`                     | **stall** | 200ms after the last reply, or 2000ms absolute cap.      |
-| `agents.discover({ timeoutMs: 500 })`   | timer     | exactly 500ms, gathers every responder in that window.   |
+| Call                                  | Strategy  | When it returns                                        |
+| ------------------------------------- | --------- | ------------------------------------------------------ |
+| `agents.discover()`                   | **stall** | 200ms after the last reply, or 2000ms absolute cap.    |
+| `agents.discover({ timeoutMs: 500 })` | timer     | exactly 500ms, gathers every responder in that window. |
 
 Use stall (the default) for interactive paths that want to feel snappy. Use timer when you need a deterministic scan duration — periodic refreshes, health checks, or when you know agents can take a while to respond.
 

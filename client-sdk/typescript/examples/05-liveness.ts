@@ -40,7 +40,10 @@ async function main(): Promise<void> {
 
   process.on("SIGINT", () => {
     clearInterval(interval);
-    void agents.close().then(() => nc.close()).then(() => process.exit(0));
+    void agents
+      .close()
+      .then(() => nc.close())
+      .then(() => process.exit(0));
   });
 }
 

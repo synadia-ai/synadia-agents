@@ -67,24 +67,24 @@ import { Agents } from "@synadia/agents";
 
 const nc = await natsConnect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });
-const found = await agents.discover();           // Agent[] — directly callable
+const found = await agents.discover(); // Agent[] — directly callable
 await found[0]!.prompt("hi");
 // ...
 await agents.close();
-await nc.close();   // caller owns the connection
+await nc.close(); // caller owns the connection
 ```
 
 **Config-driven binding** (common pattern for apps with an array of target agents):
 
 ```ts
 const configured = [
-  { agent: "ccc",    owner: "alice", name: "worker-1" },
-  { agent: "pi",     owner: "bob",   name: "oracle" },
+  { agent: "ccc", owner: "alice", name: "worker-1" },
+  { agent: "pi", owner: "bob", name: "oracle" },
 ];
 const found = await agents.discover({ timeoutMs: 2_000 });
-const byKey = new Map(found.map(a => [`${a.agent}/${a.owner}/${a.name}`, a]));
+const byKey = new Map(found.map((a) => [`${a.agent}/${a.owner}/${a.name}`, a]));
 const bound = configured
-  .map(c => byKey.get(`${c.agent}/${c.owner}/${c.name}`))
+  .map((c) => byKey.get(`${c.agent}/${c.owner}/${c.name}`))
   .filter((a): a is Agent => a !== undefined);
 ```
 
