@@ -4,9 +4,24 @@ All notable changes to `@synadia-ai/agents` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+> **Note:** this SDK was developed under the placeholder name
+> `@synadia/agents` but never actually published to npm under that name.
+> The `[0.2.0-dev]` and `[0.1.0-dev]` sections below document the API as
+> it evolved prior to the rebrand; they are retained as design history,
+> not actual npm releases. `[0.1.0]` is the first real release under
+> `@synadia-ai/agents`.
 
-### Changed (breaking)
+## [0.1.0] - 2026-04-24
+
+**First release under the `@synadia-ai/agents` npm scope.** The API
+shipped at 0.1.0 matches what was previously staged under `[Unreleased]`
+during pre-rebrand development — the `new Agents({ nc })` entry point,
+directly-callable `Agent[]` from `discover()`, and the `stall` default.
+Breakage and removals below are expressed relative to `[0.2.0-dev]`
+(the last pre-rebrand design state); as a first real release under the
+new scope, this *is* the shipping API.
+
+### Changed (breaking) vs `[0.2.0-dev]`
 
 - **Single entry point: `new Agents({ nc })`.** The SDK no longer opens
   NATS connections — callers build a `NatsConnection` via
@@ -88,7 +103,7 @@ const bound = configured
   .filter((a): a is Agent => a !== undefined);
 ```
 
-## [0.2.0] - protocol `0.2.0-draft`
+## [0.2.0-dev] - protocol `0.2.0-draft` (pre-rebrand design history)
 
 Tracks the rename of the protocol's service filter (spec §3.1) and the new
 queue-group requirement on the `prompt` endpoint (§3.3). **Not wire-compatible
@@ -139,7 +154,7 @@ with 0.1**: agents and callers must be upgraded together.
   Common cases (`url`, `creds`, `token`, `user`/`password`, `user_jwt`,
   `inbox_prefix`) ship in `0.2`.
 
-## [0.1.0] - initial pre-release
+## [0.1.0-dev] - initial pre-release (pre-rebrand design history)
 
 Implements the client surface of the NATS Agent Protocol `0.1.0-draft`.
 
