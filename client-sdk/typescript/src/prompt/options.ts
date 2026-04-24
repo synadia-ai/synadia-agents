@@ -6,7 +6,7 @@ import type { AttachmentInput } from "./attachments.js";
 export interface PromptOptions {
   /** Zero or more attachments — file path, `file:` URL, or bytes object. */
   readonly attachments?: ReadonlyArray<AttachmentInput>;
-  /** Per-stream inactivity timeout (§6.6). Default: Client's configured value (60_000ms). */
+  /** Per-stream inactivity timeout (§6.6). Default: the `Agents`-level configured value (60_000ms). */
   readonly inactivityTimeoutMs?: number;
   /** `AbortSignal` that aborts the stream when triggered (added in M5). */
   readonly signal?: AbortSignal;

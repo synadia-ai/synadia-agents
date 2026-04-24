@@ -24,7 +24,7 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const cli = await openCliClient(args);
   try {
-    const agents = await cli.client.discover({ timeoutMs: 2000 });
+    const agents = await cli.agents.discover();
     const owner = ownerFilter(args);
     const name = nameFilter(args);
     const controllers = agents.filter(

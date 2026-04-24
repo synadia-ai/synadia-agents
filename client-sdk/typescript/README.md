@@ -16,32 +16,28 @@ bun add @synadia/agents
 
 ## 30-second quickstart
 
-Local dev - pick up whichever NATS context `nats context select` has active:
+You bring a `NatsConnection`; the SDK uses it. Use `@nats-io/transport-node` for
+TCP (`nats://`, `tls://`) or `wsconnect` from `@nats-io/nats-core` for WebSocket
+(`ws://`, `wss://`) — the same connection can then be shared with JetStream, KV,
+services, and anything else in the `@nats-io/*` ecosystem.
 
 ```ts
-import { connect } from "@synadia/agents";
+import { connect } from "@nats-io/transport-node";
+import { Agents } from "@synadia/agents";
 
-const client = await connect({ name: "my-app", context: "current" });
+const nc = await connect({ servers: "nats://localhost:4222" });
+const agents = new Agents({ nc });
 
-const agents = await client.discover({ timeoutMs: 2_000 });
-const remote = client.bind(agents[0]!);
+const found = await agents.discover();   // stall strategy — returns as soon as replies quiet down
 
-for await (const msg of await remote.prompt("describe this photo", {
+for await (const msg of await found[0]!.prompt("describe this photo", {
   attachments: ["./vacation.jpg"],
 })) {
   if (msg.type === "response") process.stdout.write(msg.text);
 }
 
-await client.close();
-```
-
-Or connect directly without a context:
-
-```ts
-const client = await connect({
-  name: "my-app",
-  servers: "nats://localhost:4222",
-});
+await agents.close();
+await nc.close();   // caller owns the NATS connection
 ```
 
 ## Local validation in action
@@ -49,7 +45,7 @@ const client = await connect({
 If the target agent doesn't accept attachments, or if the envelope exceeds its `max_payload`, the SDK fails your call _before_ publishing:
 
 ```ts
-import { AttachmentsNotSupportedError, connect, PayloadTooLargeError } from "@synadia/agents";
+import { AttachmentsNotSupportedError, PayloadTooLargeError } from "@synadia/agents";
 
 try {
   const stream = await remote.prompt("describe this photo", {
@@ -72,14 +68,13 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 
 ## What's in the box
 
-| API                                                               | Purpose                                                 |
-| ----------------------------------------------------------------- | ------------------------------------------------------- |
-| `connect(options)` / `attach({nc})`                               | Open (or wrap) a NATS connection.                       |
-| `client.discover({timeoutMs, filter})`                            | Enumerate available agents; auto subscribe-before-ping. |
-| `client.bind(agent)`                                              | Get a `RemoteAgent` handle.                             |
-| `remote.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                |
-| `client.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`        | Heartbeat tracking and on-demand ping.                  |
-| `client.close()`                                                  | Tear down; aborts all in-flight streams.                |
+| API                                                              | Purpose                                                        |
+| ---------------------------------------------------------------- | -------------------------------------------------------------- |
+| `new Agents({ nc, ... })`                                        | Construct from a caller-owned `NatsConnection`.                |
+| `agents.discover({filter?, timeoutMs?})`                         | Return a live `Agent[]`; auto subscribe-before-ping (§8.5).    |
+| `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                       |
+| `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`       | Heartbeat tracking and on-demand ping.                         |
+| `agents.close()`                                                 | Tear down SDK state; aborts all in-flight streams.             |
 
 Subpath exports:
 

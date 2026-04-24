@@ -1,13 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
 import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
-import { attach, type Client, type HeartbeatPayload } from "../../src/index.js";
+import { Agents, type HeartbeatPayload } from "../../src/index.js";
 import { ReferenceAgent } from "../../src/testing/reference-agent.js";
 
 const natsUrl = inject("natsUrl");
 
 function waitForHeartbeat(
-  client: Client,
+  client: Agents,
   instanceId: string,
   timeoutMs = 3_000,
 ): Promise<HeartbeatPayload> {
@@ -26,7 +26,7 @@ function waitForHeartbeat(
 
 describe.skipIf(!natsUrl)("heartbeat tracking", () => {
   let nc: NatsConnection;
-  let client: Client;
+  let client: Agents;
   const agents: ReferenceAgent[] = [];
 
   beforeAll(async () => {
@@ -38,7 +38,7 @@ describe.skipIf(!natsUrl)("heartbeat tracking", () => {
   });
 
   beforeEach(async () => {
-    client = attach({ name: "heartbeat-test", nc });
+    client = new Agents({ nc });
     // Prime the tracker BEFORE starting any reference agents so their
     // immediate first heartbeat is captured (§8.5).
     await client.startTracking();

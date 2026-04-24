@@ -1,6 +1,6 @@
 // Pluggable logger interface. The SDK ships with a silent default — libraries
 // should not emit to the console unconditionally. Consumers inject their own
-// logger via `connect({ logger })` / `attach({ logger })`.
+// logger via `new Agents({ nc, logger })`.
 
 export interface Logger {
   debug(msg: string, ctx?: Record<string, unknown>): void;

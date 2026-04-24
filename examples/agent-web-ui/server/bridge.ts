@@ -1,20 +1,20 @@
 // One Bridge per WebSocket. Owns per-connection state: which agents were last
 // discovered, which streams are currently open, and pending in-stream queries.
 //
-// The underlying `Client` is shared across all Bridges — it holds the single
+// The underlying `Agents` is shared across all Bridges — it holds the single
 // NATS connection and heartbeat subscription for the whole server process.
 
 import type { ServerWebSocket } from "bun";
 import {
-  buildDiscoveredAgent,
+  Agent,
+  Agents,
+  buildAgentInfo,
   decodeBase64,
   AttachmentsNotSupportedError,
   PayloadTooLargeError,
   SERVICE_NAME,
   ServiceError,
   StreamStalledError,
-  type Client,
-  type DiscoveredAgent,
   type NatsConnection,
   type QueryEvent,
   type RawServiceInfo,
@@ -35,7 +35,7 @@ export type BridgeWsData = { bridge: Bridge };
 
 export class Bridge {
   private ws: ServerWebSocket<BridgeWsData> | null = null;
-  private agentsByInstanceId = new Map<string, DiscoveredAgent>();
+  private agentsByInstanceId = new Map<string, Agent>();
   private activeStreams = new Map<string, ActiveStream>();
   private activeQueries = new Map<string, QueryEvent>();
   private heartbeatSubs = new Map<string, () => void>();
@@ -44,7 +44,7 @@ export class Bridge {
   private closed = false;
 
   constructor(
-    private readonly client: Client,
+    private readonly agents: Agents,
     private readonly nc: NatsConnection,
     private readonly sdkProtocolVersion: string,
   ) {}
@@ -70,7 +70,7 @@ export class Bridge {
 
     switch (msg.kind) {
       case "discover":
-        void this.handleDiscover(msg.timeoutMs);
+        void this.handleDiscover();
         break;
       case "prompt":
         void this.handlePrompt(msg);
@@ -120,9 +120,9 @@ export class Bridge {
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
 
-  private async handleDiscover(timeoutMs?: number): Promise<void> {
+  private async handleDiscover(): Promise<void> {
     try {
-      const discovered = await this.client.discover({ timeoutMs: timeoutMs ?? 2000 });
+      const discovered = await this.agents.discover();
       this.agentsByInstanceId.clear();
       const dto: DiscoveredAgentDTO[] = [];
       const seenIds = new Set<string>();
@@ -136,7 +136,7 @@ export class Bridge {
       // Heartbeat tracking: subscribe for newly-seen instances, drop vanished ones.
       for (const id of seenIds) {
         if (this.heartbeatSubs.has(id)) continue;
-        const unsub = this.client.onHeartbeat(id, (hb) => {
+        const unsub = this.agents.onHeartbeat(id, (hb) => {
           this.send({
             kind: "heartbeat",
             instanceId: id,
@@ -173,15 +173,13 @@ export class Bridge {
     const controller = new AbortController();
     this.activeStreams.set(msg.id, { controller });
 
-    const remote = this.client.bind(agent);
-
     const attachments: RequestAttachment[] | undefined = msg.attachments?.map((a) => ({
       filename: a.filename,
       content: decodeBase64(a.base64),
     }));
 
     try {
-      const stream = await remote.prompt(msg.text, {
+      const stream = await agent.prompt(msg.text, {
         attachments,
         signal: controller.signal,
       });
@@ -419,7 +417,7 @@ export class Bridge {
 
   /**
    * If `instanceId` isn't already in our map, fetch its `$SRV.INFO` record,
-   * build a `DiscoveredAgent`, and push it to the UI. Reentrant calls for
+   * build a `Agent`, and push it to the UI. Reentrant calls for
    * the same id coalesce via `pendingInstanceLookups`.
    */
   private async ensureAgentKnown(instanceId: string): Promise<void> {
@@ -427,11 +425,12 @@ export class Bridge {
     if (this.pendingInstanceLookups.has(instanceId)) return;
     this.pendingInstanceLookups.add(instanceId);
     try {
-      const info = await this.directServiceInfo(instanceId);
-      if (!info) return;
+      const raw = await this.directServiceInfo(instanceId);
+      if (!raw) return;
       if (this.agentsByInstanceId.has(instanceId)) return; // raced
-      const agent = buildDiscoveredAgent(info);
-      if (!agent) return;
+      const info = buildAgentInfo(raw);
+      if (!info) return;
+      const agent = new Agent(this.nc, info, this.agents.streamInactivityTimeoutMs);
       this.registerAgent(agent);
     } catch (e) {
       console.warn(
@@ -455,10 +454,10 @@ export class Bridge {
     }
   }
 
-  private registerAgent(agent: DiscoveredAgent): void {
+  private registerAgent(agent: Agent): void {
     this.agentsByInstanceId.set(agent.instanceId, agent);
     if (!this.heartbeatSubs.has(agent.instanceId)) {
-      const unsub = this.client.onHeartbeat(agent.instanceId, (hb) => {
+      const unsub = this.agents.onHeartbeat(agent.instanceId, (hb) => {
         this.send({
           kind: "heartbeat",
           instanceId: agent.instanceId,
@@ -546,7 +545,7 @@ function queryKey(promptId: string, queryId: string): string {
   return `${promptId}:${queryId}`;
 }
 
-function toDTO(a: DiscoveredAgent): DiscoveredAgentDTO {
+function toDTO(a: Agent): DiscoveredAgentDTO {
   const ep = a.promptEndpoint;
   const dto: DiscoveredAgentDTO = {
     instanceId: a.instanceId,

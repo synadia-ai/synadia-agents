@@ -3,7 +3,7 @@
 // subclasses for targeted handling.
 //
 // Wire errors (spec §9) live under {@link ServiceError}. Local validation
-// errors (§5.4) are synchronous throws from `RemoteAgent.prompt` and live
+// errors (§5.4) are synchronous throws from `Agent.prompt` and live
 // under {@link ValidationError}.
 
 /** Base class for all errors produced by this SDK. */
@@ -95,45 +95,5 @@ export class ProtocolError extends NatsAgentError {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ProtocolError";
-  }
-}
-
-// ---------------------------------------------------------------------------
-// NATS context (§10.2) — thrown by `loadNatsContext` and `connect({ context })`.
-// ---------------------------------------------------------------------------
-
-export class NatsContextError extends NatsAgentError {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "NatsContextError";
-  }
-}
-
-export class NatsContextNotFoundError extends NatsContextError {
-  constructor(
-    public readonly contextName: string,
-    public readonly searchedPath: string,
-  ) {
-    super(`NATS context "${contextName}" not found at ${searchedPath}`);
-    this.name = "NatsContextNotFoundError";
-  }
-}
-
-export class NatsContextNotSelectedError extends NatsContextError {
-  constructor(public readonly selectionFilePath: string) {
-    super(
-      `no NATS context is currently selected (no $NATS_CONTEXT env var and no file at ${selectionFilePath})`,
-    );
-    this.name = "NatsContextNotSelectedError";
-  }
-}
-
-export class NatsContextInvalidError extends NatsContextError {
-  constructor(
-    public readonly contextName: string,
-    public readonly reason: string,
-  ) {
-    super(`NATS context "${contextName}" is invalid: ${reason}`);
-    this.name = "NatsContextInvalidError";
   }
 }

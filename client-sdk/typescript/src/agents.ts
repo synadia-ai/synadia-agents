@@ -1,58 +1,53 @@
-// The `Client` class — owner of the NATS connection wrapper and the
-// heartbeat wildcard subscription. Orchestrates discover-before-subscribe
-// per §8.5 and vends `RemoteAgent` handles.
+// `Agents` — owner of the heartbeat wildcard subscription and the entry
+// point for discovery. Orchestrates subscribe-before-discover per §8.5
+// and returns live `Agent` handles.
+//
+// Construct with a pre-opened `NatsConnection`:
+//
+//   import { connect } from "@nats-io/transport-node";
+//   import { Agents } from "@synadia/agents";
+//
+//   const nc = await connect({ servers: "nats://localhost:4222" });
+//   const agents = new Agents({ nc });
+//   const found = await agents.discover({ timeoutMs: 2_000 });
+//   for await (const msg of await found[0]!.prompt("hi")) { ... }
+//
+// The caller owns `nc`. `agents.close()` tears down SDK-owned state only;
+// closing the underlying connection is the caller's responsibility.
 
 import type { NatsConnection } from "@nats-io/nats-core";
-import type { DiscoveredAgent } from "./discovery/discovered-agent.js";
+import type { Agent } from "./agent.js";
 import { discoverAgents, pingInstance, type DiscoverOptions } from "./discovery/srv-ping.js";
-import { HeartbeatTracker, type HeartbeatScope, type Liveness } from "./heartbeat/tracker.js";
+import { HeartbeatTracker, type Liveness } from "./heartbeat/tracker.js";
 import { type HeartbeatPayload } from "./heartbeat/payload.js";
 import { type Logger, SILENT_LOGGER } from "./internal/logger.js";
-import { RemoteAgent } from "./remote-agent.js";
 
 /** Default per-stream inactivity timeout (§6.6) — 60 seconds. */
 export const DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS = 60_000;
 
-export interface ClientOptions {
-  /** Informational label for this caller — appears in logs, not on the wire. */
-  readonly name: string;
-  /** Scope the heartbeat wildcard to a specific agent/owner (§8.5). */
-  readonly heartbeatScope?: HeartbeatScope;
-  /** Per-stream inactivity timeout in milliseconds. Default: 60_000. */
+export interface AgentsOptions {
+  /** A pre-connected `NatsConnection`. Caller retains ownership. */
+  readonly nc: NatsConnection;
+  /** Default per-stream inactivity timeout in milliseconds. Default: 60_000. */
   readonly streamInactivityTimeoutMs?: number;
   /** Pluggable logger. Default: silent. */
   readonly logger?: Logger;
 }
 
-interface ClientInternalOptions extends ClientOptions {
-  readonly nc: NatsConnection;
-  /** True when the `Client` opened the connection and is therefore responsible for closing it. */
-  readonly ownsConnection: boolean;
-}
-
-export class Client {
+export class Agents {
   readonly #nc: NatsConnection;
-  readonly #ownsConnection: boolean;
   readonly #tracker: HeartbeatTracker;
   readonly #logger: Logger;
-  readonly #name: string;
   readonly #streamInactivityTimeoutMs: number;
   readonly #closeController = new AbortController();
   #closed = false;
 
-  constructor(options: ClientInternalOptions) {
+  constructor(options: AgentsOptions) {
     this.#nc = options.nc;
-    this.#ownsConnection = options.ownsConnection;
     this.#logger = options.logger ?? SILENT_LOGGER;
-    this.#name = options.name;
     this.#streamInactivityTimeoutMs =
       options.streamInactivityTimeoutMs ?? DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS;
-    this.#tracker = new HeartbeatTracker(options.nc, options.heartbeatScope ?? {}, this.#logger);
-  }
-
-  /** The caller identity provided at construction. */
-  get name(): string {
-    return this.#name;
+    this.#tracker = new HeartbeatTracker(options.nc, this.#logger);
   }
 
   /** The underlying NATS connection. */
@@ -60,35 +55,34 @@ export class Client {
     return this.#nc;
   }
 
-  /** Default per-stream inactivity timeout used by `RemoteAgent.prompt`. */
+  /** Default per-stream inactivity timeout applied to every `Agent.prompt()`. */
   get streamInactivityTimeoutMs(): number {
     return this.#streamInactivityTimeoutMs;
   }
 
   /**
    * Discover protocol-compliant agents reachable on the NATS connection.
+   * Returns a live `Agent[]` — each entry is directly callable via `.prompt()`.
    *
    * The first call to `discover()` lazily starts the heartbeat wildcard
    * subscription BEFORE publishing `$SRV.PING`, enforcing §8.5 automatically.
+   *
+   * Two instances of the same logical agent (same `(agent, owner, name)`)
+   * show up as separate entries with distinct `instanceId`s; callers who
+   * want one-per-logical-agent can group with `Map.groupBy`.
    */
-  async discover(opts: DiscoverOptions = {}): Promise<DiscoveredAgent[]> {
+  async discover(opts: DiscoverOptions = {}): Promise<Agent[]> {
     this.#ensureOpen();
     if (!this.#tracker.isStarted) {
       // tracker.start() flushes internally so the SUB is at the server before
       // we send $SRV.PING (§8.5 subscribe-before-discover).
       await this.#tracker.start();
     }
-    return discoverAgents(this.#nc, opts);
-  }
-
-  /** Bind a handle to a discovered agent. */
-  bind(agent: DiscoveredAgent): RemoteAgent {
-    this.#ensureOpen();
-    return new RemoteAgent(
+    return discoverAgents(
       this.#nc,
-      agent,
       this.#streamInactivityTimeoutMs,
       this.#closeController.signal,
+      opts,
     );
   }
 
@@ -110,8 +104,8 @@ export class Client {
   /**
    * Subscribe to heartbeats for a single instance. Returns an unsubscribe
    * function. Tracker is started lazily if needed — call `startTracking()`
-   * beforehand (and await it) if you need to guarantee subscription is live
-   * before a specific moment.
+   * beforehand (and await it) if you need to guarantee the subscription is
+   * live before a specific moment.
    */
   onHeartbeat(instanceId: string, listener: (payload: HeartbeatPayload) => void): () => void {
     if (!this.#tracker.isStarted) {
@@ -135,19 +129,16 @@ export class Client {
   }
 
   /**
-   * Close the client. Cancels all in-flight prompt streams (they throw an
-   * AbortError from the iterator), unsubscribes the heartbeat wildcard,
-   * and — if the client opened the underlying NATS connection — closes
-   * it as well.
+   * Close the SDK-owned state. Cancels all in-flight prompt streams (they
+   * throw AbortError from the iterator) and unsubscribes the heartbeat
+   * wildcard. The underlying `NatsConnection` is untouched — the caller
+   * who opened it is responsible for closing it.
    */
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.#closeController.abort(new Error("@synadia/agents: Client is closed"));
+    this.#closeController.abort(new Error("@synadia/agents: Agents is closed"));
     await this.#tracker.stop();
-    if (this.#ownsConnection) {
-      await this.#nc.close();
-    }
   }
 
   /** True if `close()` has been called. */
@@ -157,7 +148,7 @@ export class Client {
 
   #ensureOpen(): void {
     if (this.#closed) {
-      throw new Error("@synadia/agents: Client is closed");
+      throw new Error("@synadia/agents: Agents is closed");
     }
   }
 }

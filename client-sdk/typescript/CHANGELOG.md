@@ -6,6 +6,88 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **Single entry point: `new Agents({ nc })`.** The SDK no longer opens
+  NATS connections — callers build a `NatsConnection` via
+  `@nats-io/transport-node` (`connect`) or `@nats-io/nats-core` (`wsconnect`)
+  and hand it to `new Agents({ nc })`. This aligns with every other
+  `@nats-io/*` library (`jetstream(nc)`, `new Svcm(nc)`, `Kvm(nc)`…) and
+  lets callers share one `NatsConnection` across JetStream, KV, services,
+  and agents.
+- `Client` → `Agents`. `ClientOptions` → `AgentsOptions`.
+- `agents.close()` no longer closes the underlying `NatsConnection`; the
+  caller owns it and closes it themselves.
+- **`agents.discover()` returns a live `Agent[]`.** Each `Agent` is
+  directly callable — no `bind()` step. `DiscoveredAgent` + `RemoteAgent`
+  are merged into a single `Agent` class that carries both the parsed
+  `$SRV.INFO` metadata (flat fields: `instanceId`, `agent`, `owner`,
+  `name`, `session`, …) and the `.prompt()` method.
+- Group / filter agents with the built-in `Array` / `Map.groupBy` API —
+  no SDK-specific helpers. Identity is metadata-driven (`agent`, `owner`,
+  `name`, `session?`, `instanceId`); prompt subjects are agent-chosen per
+  spec §3.1 and should not be used as stable identity keys.
+- **`discover()` default now uses the `stall` strategy** — returns 200ms
+  after the most recent reply (safety cap 2000ms), so interactive paths
+  feel snappy instead of always blocking the full window. Passing
+  `timeoutMs` switches back to the `timer` strategy for deterministic
+  scans. New constants exported: `DEFAULT_DISCOVER_STALL_MS`,
+  `DEFAULT_DISCOVER_MAX_WAIT_MS`.
+
+### Removed
+
+- **`connect()` / `attach()` / `ConnectOptions` / `AttachOptions`**.
+  Replaced by `new Agents({ nc })`.
+- **`Agents.bind()`** — `discover()` now returns live handles directly.
+  Callers with a config-driven set of target agents discover once and
+  match by metadata (see README).
+- **`RemoteAgent` / `DiscoveredAgent`** — merged into `Agent`.
+- **`buildDiscoveredAgent`** — renamed to `buildAgentInfo`.
+- **`ClientOptions.name`** — the NATS connection already carries its own
+  `name` for server-side identification; the SDK-side label was unused.
+- **`ClientOptions.heartbeatScope` / `HeartbeatScope`** — the heartbeat
+  wildcard is now fixed at `agents.*.*.*.heartbeat`. Narrow discovery
+  results with `agents.discover({ filter })` instead.
+- **NATS CLI context support** (already removed earlier this release):
+  `connect({ context })`, `loadNatsContext()`, and `NatsContextError`.
+
+### Migration
+
+```ts
+// Before
+import { connect } from "@synadia/agents";
+const client = await connect({ name: "my-app", servers: "nats://localhost:4222" });
+const found = await client.discover();
+const remote = client.bind(found[0]!);
+await remote.prompt("hi");
+
+// After
+import { connect as natsConnect } from "@nats-io/transport-node";
+import { Agents } from "@synadia/agents";
+
+const nc = await natsConnect({ servers: "nats://localhost:4222" });
+const agents = new Agents({ nc });
+const found = await agents.discover();           // Agent[] — directly callable
+await found[0]!.prompt("hi");
+// ...
+await agents.close();
+await nc.close();   // caller owns the connection
+```
+
+**Config-driven binding** (common pattern for apps with an array of target agents):
+
+```ts
+const configured = [
+  { agent: "ccc",    owner: "alice", name: "worker-1" },
+  { agent: "pi",     owner: "bob",   name: "oracle" },
+];
+const found = await agents.discover({ timeoutMs: 2_000 });
+const byKey = new Map(found.map(a => [`${a.agent}/${a.owner}/${a.name}`, a]));
+const bound = configured
+  .map(c => byKey.get(`${c.agent}/${c.owner}/${c.name}`))
+  .filter((a): a is Agent => a !== undefined);
+```
+
 ## [0.2.0] - protocol `0.2.0-draft`
 
 Tracks the rename of the protocol's service filter (spec §3.1) and the new

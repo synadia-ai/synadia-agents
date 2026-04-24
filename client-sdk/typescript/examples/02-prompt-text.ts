@@ -2,22 +2,22 @@
 // response text to stdout, exit on the terminator.
 
 import { stdout } from "node:process";
-import { connect } from "@synadia/agents";
+import { connect as natsConnect } from "@nats-io/transport-node";
+import { Agents } from "@synadia/agents";
 
 async function main(): Promise<void> {
   const text = process.argv[2] ?? "hello";
-  const client = await connect({
-    name: "text-demo",
+  const nc = await natsConnect({
     servers: process.env["NATS_URL"] ?? "nats://127.0.0.1:4222",
   });
+  const agents = new Agents({ nc });
   try {
-    const [agent] = await client.discover({ timeoutMs: 2_000 });
+    const [agent] = await agents.discover();
     if (!agent) {
       console.error("no agents found — start the reference agent first.");
       process.exit(2);
     }
-    const remote = client.bind(agent);
-    for await (const msg of await remote.prompt(text)) {
+    for await (const msg of await agent.prompt(text)) {
       switch (msg.type) {
         case "response":
           stdout.write(msg.text);
@@ -28,7 +28,8 @@ async function main(): Promise<void> {
       }
     }
   } finally {
-    await client.close();
+    await agents.close();
+    await nc.close();
   }
 }
 

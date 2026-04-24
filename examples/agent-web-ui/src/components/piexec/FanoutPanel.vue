@@ -41,7 +41,7 @@ function resolveSession(instanceId: string, retries = 10, delayMs = 300): Promis
       if (agentsState.list.some((a) => a.instanceId === instanceId)) return resolve();
       if (remaining === 0) return reject(new Error(`session ${instanceId} not discoverable`));
       try {
-        await bridge.discover(1500);
+        await bridge.discover();
       } catch {
         /* swallow — retry */
       }

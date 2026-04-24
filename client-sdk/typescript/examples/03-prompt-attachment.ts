@@ -17,9 +17,10 @@
 // Or with npm: swap `bun run` for `npx tsx`.
 
 import { argv, exit, stdout } from "node:process";
+import { connect as natsConnect } from "@nats-io/transport-node";
 import {
+  Agents,
   AttachmentsNotSupportedError,
-  connect,
   NatsAgentError,
   PayloadTooLargeError,
   type ResponseAttachment,
@@ -32,28 +33,27 @@ async function main(): Promise<void> {
     exit(1);
   }
 
-  const client = await connect({
-    name: "attachment-demo",
+  const nc = await natsConnect({
     servers: process.env["NATS_URL"] ?? "nats://127.0.0.1:4222",
   });
+  const agents = new Agents({ nc });
 
   try {
-    const agents = await client.discover({ timeoutMs: 2_000 });
-    if (agents.length === 0) {
+    const found = await agents.discover();
+    if (found.length === 0) {
       console.error("no agents reachable — start the reference agent first");
       exit(2);
     }
 
-    const chosen = agents[0]!;
+    const chosen = found[0]!;
     console.log(
       `prompting ${chosen.agent}/${chosen.owner}/${chosen.name} (max_payload=${
         chosen.promptEndpoint.maxPayloadBytes ?? "unspecified"
       }, attachments_ok=${chosen.promptEndpoint.attachmentsOk ?? "unspecified"})`,
     );
-    const remote = client.bind(chosen);
 
     try {
-      const stream = await remote.prompt("describe this photo", { attachments: [attachmentPath] });
+      const stream = await chosen.prompt("describe this photo", { attachments: [attachmentPath] });
       for await (const msg of stream) {
         switch (msg.type) {
           case "response":
@@ -86,7 +86,8 @@ async function main(): Promise<void> {
       throw err;
     }
   } finally {
-    await client.close();
+    await agents.close();
+    await nc.close();
   }
 }
 

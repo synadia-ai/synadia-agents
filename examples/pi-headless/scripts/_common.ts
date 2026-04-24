@@ -3,7 +3,8 @@
 import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
-import { attach, loadNatsContext, type Client, type DiscoveredAgent } from "@synadia/agents";
+import { Agents, type Agent } from "@synadia/agents";
+import { loadNatsContext } from "../src/nats-context.js";
 
 export interface CliArgs {
   readonly context?: string;
@@ -96,13 +97,13 @@ export function nameFilter(args: CliArgs): string {
 }
 
 export async function findController(
-  client: Client,
+  agents: Agents,
   args: CliArgs,
-): Promise<DiscoveredAgent> {
-  const agents = await client.discover({ timeoutMs: 2000 });
+): Promise<Agent> {
+  const found = await agents.discover();
   const owner = ownerFilter(args);
   const name = nameFilter(args);
-  const candidates = agents.filter((a) => {
+  const candidates = found.filter((a) => {
     if (a.agent !== "pi") return false;
     if (a.metadata["role"] !== "pi-headless-controller") return false;
     if (owner && a.owner !== owner) return false;
@@ -123,15 +124,15 @@ export async function findController(
 }
 
 export async function waitForSession(
-  client: Client,
+  agents: Agents,
   instanceId: string,
   retries = 10,
   delayMs = 200,
-): Promise<DiscoveredAgent> {
+): Promise<Agent> {
   for (let i = 0; i < retries; i++) {
-    const agents = await client.discover({ timeoutMs: 1000 });
-    const found = agents.find((a) => a.instanceId === instanceId);
-    if (found) return found;
+    const found = await agents.discover();
+    const match = found.find((a) => a.instanceId === instanceId);
+    if (match) return match;
     await new Promise((r) => setTimeout(r, delayMs));
   }
   throw new Error(`spawned session ${instanceId} not discoverable after ${retries} tries`);
@@ -139,19 +140,19 @@ export async function waitForSession(
 
 export interface CliClient {
   readonly nc: NatsConnection;
-  readonly client: Client;
+  readonly agents: Agents;
   close(): Promise<void>;
 }
 
 export async function openCliClient(args: CliArgs): Promise<CliClient> {
   const nc = await openNats(args);
-  const client = attach({ nc, name: "pi-headless-cli" });
+  const agents = new Agents({ nc });
   return {
     nc,
-    client,
+    agents,
     async close() {
       try {
-        await client.close();
+        await agents.close();
       } catch {
         /* noop */
       }
