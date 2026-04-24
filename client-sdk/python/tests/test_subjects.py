@@ -16,9 +16,9 @@ from natsagent.subjects import (
 
 class TestConstruction:
     def test_valid_simple_tokens(self) -> None:
-        subj = AgentSubject.new(agent="occ", owner="derek", name="summarizer")
-        assert subj.inbox == "agents.occ.derek.summarizer"
-        assert subj.heartbeat == "agents.occ.derek.summarizer.heartbeat"
+        subj = AgentSubject.new(agent="oc", owner="derek", name="summarizer")
+        assert subj.inbox == "agents.oc.derek.summarizer"
+        assert subj.heartbeat == "agents.oc.derek.summarizer.heartbeat"
 
     def test_hyphens_and_underscores_in_name(self) -> None:
         subj = AgentSubject.new(agent="hermes", owner="rene", name="default_worker-1")

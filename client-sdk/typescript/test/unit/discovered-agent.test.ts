@@ -79,7 +79,7 @@ describe("buildDiscoveredAgent", () => {
     const a = buildDiscoveredAgent(
       validInfo({
         metadata: { agent: "openclaw", owner: "rene", protocol_version: "0.2" },
-        endpoints: [{ name: "prompt", subject: "agents.occ.rene.default", metadata: {} }],
+        endpoints: [{ name: "prompt", subject: "agents.oc.rene.default", metadata: {} }],
       }),
     );
     expect(a).not.toBeNull();

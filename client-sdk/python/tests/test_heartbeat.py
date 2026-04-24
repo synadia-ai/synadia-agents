@@ -40,18 +40,18 @@ def test_session_optional() -> None:
 def test_unknown_fields_tolerated() -> None:
     """§8.3: receivers MUST tolerate additional unknown fields."""
     wire = (
-        b'{"agent":"ccc","owner":"alice","instance_id":"X",'
+        b'{"agent":"claude-code","owner":"alice","instance_id":"X",'
         b'"ts":"2026-04-21T00:00:00Z","interval_s":30,'
         b'"future_field":42,"another":"ok"}'
     )
     hb = HeartbeatPayload.model_validate_json(wire)
-    assert hb.agent == "ccc"
+    assert hb.agent == "claude-code"
 
 
 def test_encoded_form_omits_session_when_absent() -> None:
     """Session-less payloads MUST NOT emit an empty `session` key on the wire."""
     hb = HeartbeatPayload(
-        agent="occ",
+        agent="openclaw",
         owner="rene",
         instance_id="X",
         ts="2026-04-21T00:00:00Z",
@@ -60,7 +60,7 @@ def test_encoded_form_omits_session_when_absent() -> None:
     parsed = json.loads(hb.model_dump_json(exclude_none=True))
     assert "session" not in parsed
     assert parsed == {
-        "agent": "occ",
+        "agent": "openclaw",
         "owner": "rene",
         "instance_id": "X",
         "ts": "2026-04-21T00:00:00Z",
