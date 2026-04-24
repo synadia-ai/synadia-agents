@@ -36,7 +36,7 @@ describe("decodeHeartbeatPayload", () => {
 
   it("preserves unknown fields on the `extras` map (§12 forward-compat)", () => {
     const raw = {
-      agent: "ccc",
+      agent: "claude-code",
       owner: "alice",
       instance_id: "abc",
       ts: "2026-04-21T14:23:01Z",
