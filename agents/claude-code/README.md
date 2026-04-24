@@ -1,7 +1,7 @@
 # NATS Channel for Claude Code
 
 Connect Claude Code to NATS messaging as a spec-compliant
-[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2 agent.
+[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0 agent.
 
 The MCP server registers an `agents` micro service, exposes a
 `prompt` endpoint at `agents.cc.<owner>.<name>`, publishes heartbeats
@@ -100,7 +100,7 @@ an empty headerless message signals completion.
 
 ## Protocol compliance
 
-This plugin implements the **NATS Agent Protocol v0.2** end-to-end:
+This plugin implements the **NATS Agent Protocol v0.2.0** end-to-end:
 
 - Registers as an `agents` NATS micro service (§3.1 - the bare subject-safe
   token).
