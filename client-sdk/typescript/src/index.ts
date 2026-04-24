@@ -67,6 +67,9 @@ export {
 // Logging
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";
 
+// NATS CLI context loader
+export { loadContextOptions, NatsContextError } from "./context.js";
+
 // Version metadata
 export {
   SDK_PROTOCOL_VERSION,
