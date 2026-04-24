@@ -64,6 +64,9 @@ export {
   type ServiceErrorBody,
 } from "./errors.js";
 
+// NATS CLI context loader (optional helper — callers still own their NatsConnection)
+export { loadNatsContext, type LoadedNatsContext } from "./context.js";
+
 // Logging
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";
 

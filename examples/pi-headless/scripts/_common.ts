@@ -3,8 +3,7 @@
 import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
-import { Agents, type Agent } from "@synadia/agents";
-import { loadNatsContext } from "../src/nats-context.js";
+import { Agents, loadNatsContext, type Agent } from "@synadia/agents";
 
 export interface CliArgs {
   readonly context?: string;

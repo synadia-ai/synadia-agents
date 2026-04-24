@@ -12,6 +12,7 @@ import { join, extname } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import {
   Agents,
+  loadNatsContext,
   SDK_PROTOCOL_VERSION,
   type NatsConnection,
 } from "@synadia/agents";
@@ -21,7 +22,6 @@ import {
 } from "@nats-io/transport-node";
 import { parseConfig } from "./config.ts";
 import { Bridge, formatSdkProtocolVersion, type BridgeWsData } from "./bridge.ts";
-import { loadNatsContext } from "./nats-context.ts";
 
 const config = parseConfig(Bun.argv);
 

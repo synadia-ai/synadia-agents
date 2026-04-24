@@ -1,14 +1,27 @@
-// Minimal `nats` CLI context loader for this example.
+// `nats` CLI context loader — pure helper.
 //
 // Reads context files written by `nats context add` / `nats context select`
-// under `~/.config/nats` (or $NATS_CONFIG_HOME / $XDG_CONFIG_HOME/nats) and
-// translates them into `@nats-io/transport-node` connection options.
+// under `~/.config/nats` (or `$NATS_CONFIG_HOME` / `$XDG_CONFIG_HOME/nats`)
+// and returns a {@link LoadedNatsContext} you can hand to `connect()` from
+// `@nats-io/transport-node` (or `wsconnect` from `@nats-io/nats-core`):
+//
+// ```ts
+// import { connect } from "@nats-io/transport-node";
+// import { Agents, loadNatsContext } from "@synadia/agents";
+//
+// const { servers, connectionOptions } = await loadNatsContext("prod");
+// const nc = await connect({ servers: [...servers], ...connectionOptions });
+// const agents = new Agents({ nc });
+// ```
+//
+// The SDK deliberately does NOT open, wrap, or own the connection — this is
+// purely a function that turns a context file into options. Callers pass
+// them through to the NATS transport they've chosen.
 //
 // Supports: `url`, `creds` (path), `user_jwt`, `user`+`password`, `token`,
-// `inbox_prefix`.
-// Skips: `nkey`, TLS cert/key/ca, `nsc` integration — those are uncommon
-// enough that we'd rather keep this helper small. Re-add here if you need
-// them.
+// `inbox_prefix`, `description`.
+// Skips: `nkey`, TLS cert/key/ca, `nsc` integration. Re-add inline or
+// extend the parser if you need them.
 //
 // Precedence: `creds` > `user_jwt` > `user`/`password`/`token`.
 //
@@ -16,9 +29,6 @@
 // signature empty, so it only works against servers that do not require
 // nonce signing. Standard operator-mode deployments need `nkey` support
 // (see the "Skips" list above).
-//
-// Keep in sync with the other `nats-context.ts` copy in this monorepo —
-// the two example copies are byte-identical on purpose.
 
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -26,18 +36,26 @@ import { join } from "node:path";
 import { credsAuthenticator, jwtAuthenticator } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
 
-export interface LoadedContext {
+/** A resolved NATS CLI context ready to plug into a NATS client. */
+export interface LoadedNatsContext {
+  /** The context name that was loaded. */
   readonly name: string;
+  /** Human-readable description, if the context file declared one. */
   readonly description?: string;
+  /** Servers parsed from the context's `url` field (comma-split, trimmed). */
   readonly servers: ReadonlyArray<string>;
+  /** Everything else, shaped for `@nats-io/transport-node`'s `connect()`. */
   readonly connectionOptions: Omit<NodeConnectionOptions, "servers">;
 }
 
 /**
  * Load a NATS CLI context by name, or `"current"` to resolve from
- * `$NATS_CONTEXT` or the `context.txt` selection file.
+ * `$NATS_CONTEXT` (if set) or the `context.txt` selection file that
+ * `nats context select` writes.
+ *
+ * @throws `Error` if the context file is missing, malformed, or has no `url`.
  */
-export async function loadNatsContext(selector: string): Promise<LoadedContext> {
+export async function loadNatsContext(selector: string): Promise<LoadedNatsContext> {
   const baseDir = resolveBaseDir();
   const name = selector === "current" ? await resolveCurrentName(baseDir) : selector;
 
@@ -61,7 +79,10 @@ export async function loadNatsContext(selector: string): Promise<LoadedContext> 
 
   const url = str(parsed["url"]);
   if (!url) throw new Error(`NATS context "${name}" is missing \`url\``);
-  const servers = url.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  const servers = url
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 
   const opts: Omit<NodeConnectionOptions, "servers"> = {};
 
@@ -88,7 +109,7 @@ export async function loadNatsContext(selector: string): Promise<LoadedContext> 
   if (inboxPrefix) opts.inboxPrefix = inboxPrefix;
 
   const description = str(parsed["description"]);
-  const result: LoadedContext = {
+  const result: LoadedNatsContext = {
     name,
     servers,
     connectionOptions: opts,
