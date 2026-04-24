@@ -4,8 +4,8 @@ Connect Claude Code to NATS messaging as a spec-compliant
 [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2 agent.
 
 The MCP server registers an `agents` micro service, exposes a
-`prompt` endpoint at `agents.ccc.<owner>.<session>`, publishes heartbeats
-at `agents.ccc.<owner>.<session>.heartbeat`, and bridges prompt requests
+`prompt` endpoint at `agents.cc.<owner>.<name>`, publishes heartbeats
+at `agents.cc.<owner>.<name>.heartbeat`, and bridges prompt requests
 into the Claude Code session. Replies stream back as typed JSON chunks
 (`{"type":"response","data":"..."}`) terminated by an empty headerless
 message - the protocol's uniform end-of-stream signal.
@@ -39,8 +39,8 @@ claude --dangerously-load-development-channels plugin:nats-channel@synadia-plugi
 ```
 
 By default, the server connects to `demo.nats.io` (no credentials required)
-and registers a micro service on `agents.ccc.<user>.<session>`, where
-`<session>` defaults to the working directory name.
+and registers a micro service on `agents.cc.<user>.<name>`, where
+`<name>` defaults to the working directory name.
 
 **4. (Optional) Configure the channel.**
 
@@ -52,7 +52,7 @@ and permissions. All state lives in `~/.claude/channels/nats/config.json`.
 | `/nats-channel:configure` | Show current config, list available contexts, and offer to switch |
 | `/nats-channel:configure list` | List available NATS CLI contexts |
 | `/nats-channel:configure <context-name>` | Select a NATS CLI context to connect to |
-| `/nats-channel:configure session <name>` | Override the session name (fourth token in `agents.ccc.<user>.<name>`) |
+| `/nats-channel:configure session <name>` | Override the session name (fourth token in `agents.cc.<user>.<name>`) |
 | `/nats-channel:configure session clear` | Remove session name override, revert to CWD basename |
 | `/nats-channel:configure permissions terminal` | Prompt for permissions in the terminal (default) |
 | `/nats-channel:configure permissions query` | Relay permission prompts as protocol query chunks |
@@ -89,7 +89,7 @@ await client.close();
 Or directly via the NATS CLI (plain-text shorthand per spec §5.1):
 
 ```sh
-nats req agents.ccc.<user>.<session-name> "Hello Claude" --replies=0 --timeout=90s
+nats req agents.cc.<user>.<name> "Hello Claude" --replies=0 --timeout=90s
 ```
 
 Claude's response streams back as typed JSON chunks on the reply subject;
@@ -129,7 +129,7 @@ canonical counterpart.
 
 ## Session names
 
-The micro service subject is `agents.ccc.<user>.<session-name>`.
+The micro service subject is `agents.cc.<user>.<name>`.
 
 - **Default:** sanitized basename of the working directory (e.g., `my-project`)
 - **Override:** set `NATS_SESSION_NAME` env var, or use `/nats-channel:configure session <name>`
@@ -222,7 +222,7 @@ If no reply is received within 2 minutes, the permission defaults to
 ## Access control
 
 NATS server authentication and authorization handle access control. If a
-user can connect and publish to `agents.ccc.<user>.<session>`, they can
+user can connect and publish to `agents.cc.<user>.<name>`, they can
 interact with Claude. No additional pairing or allowlist is needed.
 
 ## Configuration
@@ -258,5 +258,5 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 
 | Variable | Purpose |
 | --- | --- |
-| `NATS_SESSION_NAME` | Override the session name (fourth token in `agents.ccc.<user>.<name>`) |
+| `NATS_SESSION_NAME` | Override the session name (fourth token in `agents.cc.<user>.<name>`) |
 | `NATS_STATE_DIR` | Override the state directory (default: `~/.claude/channels/nats`) |
