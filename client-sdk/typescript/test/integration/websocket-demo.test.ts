@@ -19,7 +19,7 @@ const hasWebSocket = typeof WebSocket !== "undefined";
 const optedIn = process.env.TEST_REMOTE_WS === "1";
 
 describe.skipIf(!hasWebSocket || !optedIn)("Agents over WebSocket (demo.nats.io)", () => {
-  let agents: Agents;
+  let agents: Agents | null = null;
 
   beforeEach(async () => {
     const nc = await wsconnect({
@@ -31,13 +31,18 @@ describe.skipIf(!hasWebSocket || !optedIn)("Agents over WebSocket (demo.nats.io)
   });
 
   afterEach(async () => {
+    // Guard against a failed beforeEach (e.g. demo.nats.io unreachable) —
+    // otherwise teardown throws a confusing reference error that masks
+    // the real `wsconnect` failure.
+    if (!agents) return;
     const nc = agents.connection;
     await agents.close();
+    agents = null;
     await nc.close();
   });
 
   it("completes a pub/sub round-trip over wss", async () => {
-    const nc = agents.connection;
+    const nc = agents!.connection;
     const subject = `synadia.agents.ws-smoke.${crypto.randomUUID()}`;
 
     const sub: Subscription = nc.subscribe(subject, { max: 1 });
@@ -59,7 +64,7 @@ describe.skipIf(!hasWebSocket || !optedIn)("Agents over WebSocket (demo.nats.io)
   });
 
   it("completes a request/reply over the same connection", async () => {
-    const nc = agents.connection;
+    const nc = agents!.connection;
     const subject = `synadia.agents.ws-smoke.req.${crypto.randomUUID()}`;
 
     const sub = nc.subscribe(subject, { max: 1 });

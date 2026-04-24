@@ -154,11 +154,6 @@ async def ts_reference_agent(
         await proc.stop()
 
 
-@pytest.mark.xfail(
-    reason="TS SDK still on protocol v0.1 (service name 'SynadiaAgents'); "
-    "re-enable once ../typescript/ bumps to v0.2 ('agents' + queue group).",
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_python_client_discovers_ts_reference_agent(
     nc: NATSClient, ts_reference_agent: _ReferenceAgentProcess
@@ -189,11 +184,6 @@ async def test_python_client_discovers_ts_reference_agent(
         await client.stop()
 
 
-@pytest.mark.xfail(
-    reason="TS SDK still on protocol v0.1 (service name 'SynadiaAgents'); "
-    "re-enable once ../typescript/ bumps to v0.2 ('agents' + queue group).",
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_python_client_prompts_ts_reference_agent(
     nc: NATSClient, ts_reference_agent: _ReferenceAgentProcess
