@@ -2,7 +2,6 @@
   "name": "@synadia-ai/nats-channel",
   "version": "0.1.0",
   "description": "NATS Agent Protocol channel for OpenClaw. Makes every OpenClaw agent a discoverable, spec-compliant agent on NATS.",
-  "license": "MIT",
   "keywords": [
     "openclaw",
     "nats",
@@ -11,7 +10,29 @@
     "nats-agent-protocol",
     "synadia-agents"
   ],
+  "license": "Apache-2.0",
+  "author": "Synadia Communications",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "agents/openclaw"
+  },
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agents/openclaw",
+  "bugs": {
+    "url": "https://github.com/synadia-ai/synadia-agents/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
+  "files": [
+    "src",
+    "index.ts",
+    "setup-entry.ts",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
   "openclaw": {
     "extensions": [
       "./index.ts"

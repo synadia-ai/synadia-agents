@@ -2,8 +2,6 @@
   "name": "@synadia-ai/nats-pi-channel",
   "version": "0.1.0",
   "description": "NATS Agent Protocol channel for PI Agent. Makes every PI session a discoverable, spec-compliant agent on NATS.",
-  "license": "MIT",
-  "type": "module",
   "keywords": [
     "pi-package",
     "pi-agent",
@@ -13,8 +11,25 @@
     "nats-agent-protocol",
     "synadia-agents"
   ],
+  "license": "Apache-2.0",
+  "author": "Synadia Communications",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "agents/pi"
+  },
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agents/pi",
+  "bugs": {
+    "url": "https://github.com/synadia-ai/synadia-agents/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
   "files": [
-    "extensions"
+    "extensions",
+    "README.md",
+    "LICENSE"
   ],
   "pi": {
     "extensions": [

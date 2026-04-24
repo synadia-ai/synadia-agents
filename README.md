@@ -98,4 +98,4 @@ See `client-sdk/typescript/README.md` for install, error handling, and full exam
 
 ## License
 
-Apache-2.0 for the SDK, MIT for the agent channels and examples - see each subtree's `LICENSE` file.
+Apache-2.0 across this monorepo - see each package's `LICENSE` file.

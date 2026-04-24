@@ -230,4 +230,4 @@ The smoke test drives a minimal spec-compliant service assembled from the repo's
 
 ## License
 
-MIT
+Apache-2.0
