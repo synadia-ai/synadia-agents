@@ -45,7 +45,7 @@ export interface ReferenceAgentOptions {
   readonly promptHandler?: ReferenceAgentPromptHandler;
   /**
    * Override the 2nd subject token — useful when a deployment uses the
-   * abbreviation convention (e.g. `"ccc"` for `"claude-code"`). Defaults to
+   * abbreviation convention (e.g. `"cc"` for `"claude-code"`). Defaults to
    * `agent` verbatim.
    */
   readonly subjectAgentToken?: string;

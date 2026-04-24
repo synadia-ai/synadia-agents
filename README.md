@@ -43,7 +43,7 @@ Type tokens currently in this repo:
 | ----------| -------------------- | --------------------- |
 | `pi`      | PI Agent             | `agents/pi/`          |
 | `oc`      | OpenClaw             | `agents/openclaw/`    |
-| `ccc`     | Claude Code          | `agents/claude-code/` |
+| `cc`      | Claude Code          | `agents/claude-code/` |
 | `hermes`  | Hermes Agent         | `agents/hermes/`      |
 | `dspy`    | ax-llm ReAct (DSPy)  | `examples/dspy/`      |
 

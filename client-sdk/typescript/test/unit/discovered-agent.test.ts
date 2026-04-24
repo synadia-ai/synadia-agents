@@ -16,7 +16,7 @@ function validInfo(overrides: Partial<RawServiceInfo> = {}): RawServiceInfo {
     endpoints: [
       {
         name: "prompt",
-        subject: "agents.ccc.alice.sess-1",
+        subject: "agents.cc.alice.sess-1",
         queue_group: "agents",
         metadata: { max_payload: "1MB", attachments_ok: "true" },
       },
@@ -69,7 +69,7 @@ describe("buildDiscoveredAgent", () => {
     expect(
       buildDiscoveredAgent(
         validInfo({
-          endpoints: [{ name: "other", subject: "agents.ccc.alice.sess-1.other" }],
+          endpoints: [{ name: "other", subject: "agents.cc.alice.sess-1.other" }],
         }),
       ),
     ).toBeNull();

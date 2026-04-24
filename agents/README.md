@@ -10,7 +10,7 @@ For an example of *building* a fresh agent from scratch using the TypeScript SDK
 | ------------------- | ---------- | ------------------------------------------- | ------------------------------------------------------ | ------------- | ---------------- |
 | `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.pi.<owner>.<session>`                      | 1 MB          | true             |
 | `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.oc.<owner>.<agentName>`                        | 1 MB          | true             |
-| `claude-code/`      | `ccc`      | [Claude Code](https://claude.com/claude-code) | `agents.ccc.<owner>.<session>`                      | 1 MB          | true             |
+| `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.cc.<owner>.<name>`                          | 1 MB          | true             |
 | `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.hermes.<owner>.<name>`          | 1 MB (configurable) | true        |
 
 Every agent also publishes `<subject>.heartbeat` every 30 s.
