@@ -4,15 +4,21 @@
 // under `~/.config/nats` (or $NATS_CONFIG_HOME / $XDG_CONFIG_HOME/nats) and
 // translates them into `@nats-io/transport-node` connection options.
 //
-// Supports: `url`, `creds` (path), `user`+`password`, `token`, `inbox_prefix`.
-// Skips: `nkey`, `user_jwt`, TLS cert/key/ca, `nsc` integration — those are
-// uncommon enough that we'd rather keep this helper small. Re-add here if you
-// need them.
+// Supports: `url`, `creds` (path), `user_jwt`, `user`+`password`, `token`,
+// `inbox_prefix`.
+// Skips: `nkey`, TLS cert/key/ca, `nsc` integration — those are uncommon
+// enough that we'd rather keep this helper small. Re-add here if you need
+// them.
+//
+// Precedence: `creds` > `user_jwt` > `user`/`password`/`token`.
+//
+// Keep in sync with `examples/agent-web-ui/server/nats-context.ts` —
+// the two copies are byte-identical on purpose.
 
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { credsAuthenticator } from "@nats-io/nats-core";
+import { credsAuthenticator, jwtAuthenticator } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
 
 export interface LoadedContext {
@@ -55,12 +61,15 @@ export async function loadNatsContext(selector: string): Promise<LoadedContext> 
   const opts: Omit<NodeConnectionOptions, "servers"> = {};
 
   const creds = str(parsed["creds"]);
+  const userJwt = str(parsed["user_jwt"]);
   if (creds) {
     const credsPath = creds.startsWith("~/") ? join(homedir(), creds.slice(2)) : creds;
     const bytes = await readFile(credsPath);
     opts.authenticator = credsAuthenticator(
       new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     );
+  } else if (userJwt) {
+    opts.authenticator = jwtAuthenticator(userJwt);
   } else {
     const token = str(parsed["token"]);
     const user = str(parsed["user"]);

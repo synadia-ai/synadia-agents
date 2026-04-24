@@ -430,7 +430,12 @@ export class Bridge {
       if (this.agentsByInstanceId.has(instanceId)) return; // raced
       const info = buildAgentInfo(raw);
       if (!info) return;
-      const agent = new Agent(this.nc, info, this.agents.streamInactivityTimeoutMs);
+      const agent = new Agent(
+        this.nc,
+        info,
+        this.agents.streamInactivityTimeoutMs,
+        this.agents.closeSignal,
+      );
       this.registerAgent(agent);
     } catch (e) {
       console.warn(
