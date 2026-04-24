@@ -108,7 +108,10 @@ function str(v: unknown): string | undefined {
 
 function resolveBaseDir(): string {
   const explicit = process.env["NATS_CONFIG_HOME"];
-  if (explicit) return explicit;
+  const explicit = process.env["NATS_CONFIG_HOME"];
+  if (explicit) {
+    return explicit.startsWith("~/") ? join(homedir(), explicit.slice(2)) : explicit;
+  }
   const xdg = process.env["XDG_CONFIG_HOME"];
   if (xdg) return join(xdg, "nats");
   return join(homedir(), ".config", "nats");
