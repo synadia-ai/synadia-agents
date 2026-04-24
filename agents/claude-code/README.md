@@ -76,14 +76,17 @@ With the [`@synadia/agents`](../../client-sdk/typescript)
 TypeScript SDK:
 
 ```ts
-import { connect } from "@synadia/agents";
+import { connect } from "@nats-io/transport-node";
+import { Agents } from "@synadia/agents";
 
-const client = await connect({ name: "demo", servers: "nats://localhost:4222" });
-const [agent] = await client.discover({ timeoutMs: 2_000 });
-for await (const msg of await client.bind(agent!).prompt("hello Claude")) {
+const nc = await connect({ servers: "nats://localhost:4222" });
+const agents = new Agents({ nc });
+const [agent] = await agents.discover();
+for await (const msg of await agent!.prompt("hello Claude")) {
   if (msg.type === "response") process.stdout.write(msg.text);
 }
-await client.close();
+await agents.close();
+await nc.close();
 ```
 
 Or directly via the NATS CLI (plain-text shorthand per spec §5.1):

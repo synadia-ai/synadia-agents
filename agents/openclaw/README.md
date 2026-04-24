@@ -146,15 +146,20 @@ nats req agents.oc.<owner>.<agentName> '{
 With the TypeScript SDK:
 
 ```ts
-import { connect } from "@synadia/agents";
+import { connect } from "@nats-io/transport-node";
+import { Agents } from "@synadia/agents";
 
-const client = await connect({ context: "current" });
-const [agent] = await client.discover({ filter: { agent: "openclaw" } });
-const remote = client.bind(agent!);
+const nc = await connect({ servers: "nats://localhost:4222" });
+const agents = new Agents({ nc });
 
-for await (const msg of await remote.prompt("what can you do?")) {
+const [agent] = await agents.discover({ filter: { agent: "openclaw" } });
+
+for await (const msg of await agent!.prompt("what can you do?")) {
   if (msg.type === "response") process.stdout.write(msg.text);
 }
+
+await agents.close();
+await nc.close();
 ```
 
 ## Wire protocol (summary)

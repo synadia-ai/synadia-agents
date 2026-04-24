@@ -16,16 +16,20 @@ Go and other languages are planned.
 **TypeScript**
 
 ```ts
-import { connect } from "@synadia/agents";
+import { connect } from "@nats-io/transport-node";
+import { Agents } from "@synadia/agents";
 
-const client = await connect({ name: "demo", context: "current" });
-const [agent] = await client.discover({ timeoutMs: 2_000 });
+const nc = await connect({ servers: "nats://localhost:4222" });
+const agents = new Agents({ nc });
 
-for await (const msg of await client.bind(agent!).prompt("hello")) {
+const [agent] = await agents.discover();
+
+for await (const msg of await agent!.prompt("hello")) {
   if (msg.type === "response") process.stdout.write(msg.text);
 }
 
-await client.close();
+await agents.close();
+await nc.close();
 ```
 
 **Python**

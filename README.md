@@ -75,17 +75,23 @@ Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
 
 ## Quickstart (TypeScript)
 
+You bring a `NatsConnection`; the SDK uses it. Use `@nats-io/transport-node` for TCP or `wsconnect` from `@nats-io/nats-core` for WebSocket.
+
 ```ts
-import { connect } from "@synadia/agents";
+import { connect } from "@nats-io/transport-node";
+import { Agents } from "@synadia/agents";
 
-const client = await connect({ name: "demo", context: "current" });
-const [agent] = await client.discover({ timeoutMs: 2_000 });
+const nc = await connect({ servers: "nats://localhost:4222" });
+const agents = new Agents({ nc });
 
-for await (const msg of await client.bind(agent!).prompt("hello")) {
+const [agent] = await agents.discover();
+
+for await (const msg of await agent!.prompt("hello")) {
   if (msg.type === "response") process.stdout.write(msg.text);
 }
 
-await client.close();
+await agents.close();
+await nc.close();
 ```
 
 See `client-sdk/typescript/README.md` for install, error handling, and full examples. For Python, see `client-sdk/python/README.md`.

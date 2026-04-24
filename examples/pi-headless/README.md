@@ -90,15 +90,20 @@ nats req agents.pi.$USER.sess-a1b2c3d4 \
 Programmatically with the SDK:
 
 ```ts
-import { connect } from "@synadia/agents";
-const client = await connect({ context: "localhost" });
-const agents = await client.discover();
-const session = agents.find(a => a.name === "sess-a1b2c3d4")!;
-const remote = client.bind(session);
-const stream = await remote.prompt("summarise the files in this directory");
-for await (const ev of stream) {
+import { connect } from "@nats-io/transport-node";
+import { Agents } from "@synadia/agents";
+
+const nc = await connect({ servers: "nats://localhost:4222" });
+const agents = new Agents({ nc });
+
+const all = await agents.discover();
+const session = all.find(a => a.name === "sess-a1b2c3d4")!;
+for await (const ev of await session.prompt("summarise the files in this directory")) {
   if (ev.type === "response") process.stdout.write(ev.text);
 }
+
+await agents.close();
+await nc.close();
 ```
 
 ### Stop
