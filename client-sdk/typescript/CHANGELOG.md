@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `@synadia/agents` will be documented in this file.
+All notable changes to `@synadia-ai/agents` will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -55,7 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ```ts
 // Before
-import { connect } from "@synadia/agents";
+import { connect } from "@synadia-ai/agents";
 const client = await connect({ name: "my-app", servers: "nats://localhost:4222" });
 const found = await client.discover();
 const remote = client.bind(found[0]!);
@@ -63,7 +63,7 @@ await remote.prompt("hi");
 
 // After
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const nc = await natsConnect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });
@@ -159,7 +159,7 @@ Implements the client surface of the NATS Agent Protocol `0.1.0-draft`.
 - **Heartbeat tracking (§8)** keyed on `instance_id` (not subject) - multi-instance safe. Narrow wildcard via `heartbeatScope: {agent, owner}`.
 - **`Client.ping(instanceId)`** for on-demand reachability (§8.4).
 - **`Client.close()`** aborts all in-flight streams via shared AbortController; closes connection iff owned.
-- **Subpath exports:** `@synadia/agents/errors`, `@synadia/agents/testing` (spec-compliant `ReferenceAgent` + harness).
+- **Subpath exports:** `@synadia-ai/agents/errors`, `@synadia-ai/agents/testing` (spec-compliant `ReferenceAgent` + harness).
 - **Runtime-agnostic pure core** - envelope, validation, chunk-decoder, terminator, bytes, version, subjects, endpoint-info, heartbeat-payload - enforced by ESLint.
 - **5 runnable examples** under `examples/`; spec-compliance docs under `docs/protocol-mapping.md`.
 

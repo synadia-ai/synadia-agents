@@ -9,7 +9,7 @@
 
 NATS gateway for [Hermes Agent](https://github.com/NousResearch/hermes-agent), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0**.
 
-Hermes is a self-improving coding agent with a CLI, a TUI, and a messaging gateway sharing one agent core. With the NATS gateway enabled, each running Hermes instance becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`natsagent`](../../client-sdk/python) (Python) or [`@synadia/agents`](../../client-sdk/typescript) (TypeScript) - can enumerate running Hermes instances, prompt them (with attachments), and stream responses back.
+Hermes is a self-improving coding agent with a CLI, a TUI, and a messaging gateway sharing one agent core. With the NATS gateway enabled, each running Hermes instance becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`natsagent`](../../client-sdk/python) (Python) or [`@synadia-ai/agents`](../../client-sdk/typescript) (TypeScript) - can enumerate running Hermes instances, prompt them (with attachments), and stream responses back.
 
 Sibling implementations sharing the same wire protocol: [`pi`](../pi) (PI), [`openclaw`](../openclaw) (OpenClaw), [`claude-code`](../claude-code) (Claude Code).
 

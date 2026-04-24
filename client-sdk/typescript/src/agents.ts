@@ -5,7 +5,7 @@
 // Construct with a pre-opened `NatsConnection`:
 //
 //   import { connect } from "@nats-io/transport-node";
-//   import { Agents } from "@synadia/agents";
+//   import { Agents } from "@synadia-ai/agents";
 //
 //   const nc = await connect({ servers: "nats://localhost:4222" });
 //   const agents = new Agents({ nc });
@@ -148,7 +148,7 @@ export class Agents {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
-    this.#closeController.abort(new Error("@synadia/agents: Agents is closed"));
+    this.#closeController.abort(new Error("@synadia-ai/agents: Agents is closed"));
     await this.#tracker.stop();
   }
 
@@ -159,7 +159,7 @@ export class Agents {
 
   #ensureOpen(): void {
     if (this.#closed) {
-      throw new Error("@synadia/agents: Agents is closed");
+      throw new Error("@synadia-ai/agents: Agents is closed");
     }
   }
 }

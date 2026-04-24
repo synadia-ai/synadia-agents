@@ -3,7 +3,7 @@
 
 import { stdout } from "node:process";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 async function main(): Promise<void> {
   const text = process.argv[2] ?? "hello";

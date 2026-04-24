@@ -1,6 +1,6 @@
 {
-  "name": "@m64/nats-pi-channel",
-  "version": "0.4.1",
+  "name": "@synadia-ai/nats-pi-channel",
+  "version": "0.1.0",
   "description": "NATS Agent Protocol channel for PI Agent. Makes every PI session a discoverable, spec-compliant agent on NATS.",
   "license": "MIT",
   "type": "module",

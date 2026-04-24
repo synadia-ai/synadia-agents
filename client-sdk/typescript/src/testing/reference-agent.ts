@@ -11,7 +11,7 @@
 //   - Emits an empty-body no-headers terminator after each prompt (default handler).
 //
 // Third parties can use this as a canonical counterparty for their own test
-// suites. Exported via the `@synadia/agents/testing` subpath.
+// suites. Exported via the `@synadia-ai/agents/testing` subpath.
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";

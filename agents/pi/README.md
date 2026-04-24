@@ -1,10 +1,8 @@
-# @synadia/nats-pi-channel
-
-> Currently published on npm as `@m64/nats-pi-channel`; moving to `@synadia/nats-pi-channel` once Synadia publishing access lands. Install commands below use the current name.
+# @synadia-ai/nats-pi-channel
 
 NATS channel for [PI Agent](https://github.com/badlogic/pi-mono), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0**.
 
-Every PI session becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia/agents`](../../client-sdk/typescript) - can enumerate running PI sessions, prompt them, and stream responses back.
+Every PI session becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) - can enumerate running PI sessions, prompt them, and stream responses back.
 
 Sibling implementations (same wire protocol): [`claude-code`](../claude-code), [`openclaw`](../openclaw).
 
@@ -24,8 +22,8 @@ Multiple PI sessions on the same host register as distinct instances of the same
 ## Install
 
 ```bash
-# From npm (once published)
-pi install npm:@m64/nats-pi-channel
+# From npm
+pi install npm:@synadia-ai/nats-pi-channel
 
 # From a local clone during development
 pi install /absolute/path/to/nats-pi-channel
@@ -103,7 +101,7 @@ With the TypeScript SDK:
 
 ```ts
 import { connect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const nc = await connect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });

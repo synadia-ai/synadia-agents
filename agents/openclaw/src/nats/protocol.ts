@@ -11,7 +11,7 @@ import type { MsgHdrs } from "@nats-io/nats-core";
 import type { DecodedAttachment, HeartbeatPayload, ParsedEnvelope } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Spec constants (mirror `@synadia/agents` 0.2.0-draft)
+// Spec constants (mirror `@synadia-ai/agents` 0.2.0-draft)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Spec §3.1: the service name is the bare token `agents`. Subject-safe as-is. */

@@ -19,7 +19,7 @@ import {
   type QueryEvent,
   type RawServiceInfo,
   type RequestAttachment,
-} from "@synadia/agents";
+} from "@synadia-ai/agents";
 import type { Subscription } from "@nats-io/nats-core";
 import type {
   ClientMessage,

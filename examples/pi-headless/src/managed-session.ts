@@ -5,7 +5,7 @@
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
-import { ReferenceAgent } from "@synadia/agents/testing";
+import { ReferenceAgent } from "@synadia-ai/agents/testing";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 
 import { cleanupStaged, decorateWithAttachments, stageAttachments } from "./attachments.js";

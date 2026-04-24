@@ -11,7 +11,7 @@ synadia-agents/
 ├── README.md              ← you are here
 ├── client-sdk/            ← language SDKs (callers)
 │   ├── README.md
-│   ├── typescript/        ← @synadia/agents (TypeScript/Node/Bun)
+│   ├── typescript/        ← @synadia-ai/agents (TypeScript/Node/Bun)
 │   └── python/            ← natsagent (Python ≥ 3.11)
 ├── agents/                ← plugins that put existing AI harnesses on NATS
 │   ├── README.md
@@ -79,7 +79,7 @@ You bring a `NatsConnection`; the SDK uses it. Use `@nats-io/transport-node` for
 
 ```ts
 import { connect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const nc = await connect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });

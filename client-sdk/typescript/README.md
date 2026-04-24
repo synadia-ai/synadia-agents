@@ -1,4 +1,4 @@
-# @synadia/agents
+# @synadia-ai/agents
 
 **TypeScript SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs).** Discover, prompt, and stream from AI agents over NATS.
 
@@ -9,9 +9,9 @@
 ## Install
 
 ```sh
-bun add @synadia/agents
-# or: npm install @synadia/agents
-# or: pnpm add @synadia/agents
+bun add @synadia-ai/agents
+# or: npm install @synadia-ai/agents
+# or: pnpm add @synadia-ai/agents
 ```
 
 ## 30-second quickstart
@@ -23,7 +23,7 @@ services, and anything else in the `@nats-io/*` ecosystem.
 
 ```ts
 import { connect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 const nc = await connect({ servers: "nats://localhost:4222" });
 const agents = new Agents({ nc });
@@ -45,7 +45,7 @@ await nc.close(); // caller owns the NATS connection
 If the target agent doesn't accept attachments, or if the envelope exceeds its `max_payload`, the SDK fails your call _before_ publishing:
 
 ```ts
-import { AttachmentsNotSupportedError, PayloadTooLargeError } from "@synadia/agents";
+import { AttachmentsNotSupportedError, PayloadTooLargeError } from "@synadia-ai/agents";
 
 try {
   const stream = await remote.prompt("describe this photo", {
@@ -78,8 +78,8 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 
 Subpath exports:
 
-- **`@synadia/agents/errors`** - the error class hierarchy, for targeted `instanceof` branches.
-- **`@synadia/agents/testing`** - a `ReferenceAgent` helper for your own test suite.
+- **`@synadia-ai/agents/errors`** - the error class hierarchy, for targeted `instanceof` branches.
+- **`@synadia-ai/agents/testing`** - a `ReferenceAgent` helper for your own test suite.
 
 ## Documentation
 

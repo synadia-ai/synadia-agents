@@ -2,7 +2,7 @@
 // Useful as a quick sanity check when bringing up a new environment.
 
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents } from "@synadia/agents";
+import { Agents } from "@synadia-ai/agents";
 
 async function main(): Promise<void> {
   const nc = await natsConnect({

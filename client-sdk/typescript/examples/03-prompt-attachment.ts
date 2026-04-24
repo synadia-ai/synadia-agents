@@ -24,7 +24,7 @@ import {
   NatsAgentError,
   PayloadTooLargeError,
   type ResponseAttachment,
-} from "@synadia/agents";
+} from "@synadia-ai/agents";
 
 async function main(): Promise<void> {
   const attachmentPath = argv[2];

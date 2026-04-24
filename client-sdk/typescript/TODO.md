@@ -32,7 +32,7 @@ Flag once this SDK is tested & published:
 
 ## Agent-hosting surface (planned for 0.2)
 
-`@synadia/agents` today is client-only. A future release adds an
+`@synadia-ai/agents` today is client-only. A future release adds an
 agent-hosting side so TS authors can build protocol-compliant agents
 without re-implementing service registration + chunk framing by hand.
 

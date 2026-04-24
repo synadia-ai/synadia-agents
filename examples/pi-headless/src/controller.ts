@@ -18,7 +18,7 @@ import {
   SDK_PROTOCOL_VERSION,
   SERVICE_NAME,
   PROMPT_QUEUE_GROUP,
-} from "@synadia/agents";
+} from "@synadia-ai/agents";
 
 import { responseText, statusAck } from "./chunk-encoder.js";
 import {
