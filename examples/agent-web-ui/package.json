@@ -36,7 +36,8 @@
     "vite": "vite",
     "build": "vite build",
     "start": "bun run server/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
   },
   "dependencies": {
     "@nats-io/transport-node": "^3.3.1",
