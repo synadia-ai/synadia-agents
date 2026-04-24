@@ -61,6 +61,17 @@ export class Agents {
   }
 
   /**
+   * Abort signal that fires when `close()` is called. Callers that construct
+   * `Agent` instances outside of `discover()` (e.g. materialising one from a
+   * heartbeat + `$SRV.INFO.agents.<id>` lookup) SHOULD pass this to the
+   * `Agent` constructor so in-flight streams on those handles are aborted
+   * when the `Agents` client is torn down, matching what `discover()` does.
+   */
+  get closeSignal(): AbortSignal {
+    return this.#closeController.signal;
+  }
+
+  /**
    * Discover protocol-compliant agents reachable on the NATS connection.
    * Returns a live `Agent[]` — each entry is directly callable via `.prompt()`.
    *
