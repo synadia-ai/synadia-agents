@@ -9,22 +9,14 @@
 //   - `@synadia/agents/errors`  — error class hierarchy for `instanceof`.
 //   - `@synadia/agents/testing` — spec-compliant reference agent and harness.
 
-export {
-  Agents,
-  DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS,
-  type AgentsOptions,
-} from "./agents.js";
+export { Agents, DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS, type AgentsOptions } from "./agents.js";
 
 /** Re-export from `@nats-io/nats-core` for callers using the hard path. */
 export type { NatsConnection } from "@nats-io/nats-core";
 export { Agent } from "./agent.js";
 
 // Discovery
-export {
-  type AgentInfo,
-  type RawServiceInfo,
-  buildAgentInfo,
-} from "./discovery/agent-info.js";
+export { type AgentInfo, type RawServiceInfo, buildAgentInfo } from "./discovery/agent-info.js";
 export { type EndpointInfo, PROMPT_ENDPOINT_NAME } from "./discovery/endpoint-info.js";
 export {
   type DiscoveryFilter,
@@ -36,11 +28,7 @@ export { SERVICE_NAME, PROMPT_QUEUE_GROUP } from "./internal/service-name.js";
 
 // Liveness
 export { type HeartbeatPayload } from "./heartbeat/payload.js";
-export {
-  type Liveness,
-  DEFAULT_LIVENESS_SLACK,
-  HEARTBEAT_SUBJECT,
-} from "./heartbeat/tracker.js";
+export { type Liveness, DEFAULT_LIVENESS_SLACK, HEARTBEAT_SUBJECT } from "./heartbeat/tracker.js";
 
 // Prompt + streaming
 export {

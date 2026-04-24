@@ -64,14 +64,14 @@ Every SDK call mapped to its NATS Agent Protocol section, for implementers of ot
 
 ## Heartbeat (§8)
 
-| SDK                      | Wire behaviour                                                                | Spec ref   |
-| ------------------------ | ----------------------------------------------------------------------------- | ---------- |
+| SDK                      | Wire behaviour                                                                        | Spec ref   |
+| ------------------------ | ------------------------------------------------------------------------------------- | ---------- |
 | Subject                  | `agents.*.*.*.heartbeat` (fixed wildcard). Callers filter via `discover({ filter })`. | §8.1, §8.5 |
-| Payload required fields  | `agent`, `owner`, `instance_id`, `ts`, `interval_s`. `session` when present.  | §8.3       |
-| Unknown heartbeat fields | Preserved on `HeartbeatPayload.extras`.                                       | §8.3, §12  |
-| Tracker keying           | `instance_id` (from the payload), NOT the subject. Multi-instance safe.       | §3.3, §8.3 |
-| Liveness                 | `isOnline === (age < 3 × interval_s)`.                                        | §8.2       |
-| Start timing             | Tracker SUB established + flushed before first `$SRV.PING`.                   | §8.5       |
+| Payload required fields  | `agent`, `owner`, `instance_id`, `ts`, `interval_s`. `session` when present.          | §8.3       |
+| Unknown heartbeat fields | Preserved on `HeartbeatPayload.extras`.                                               | §8.3, §12  |
+| Tracker keying           | `instance_id` (from the payload), NOT the subject. Multi-instance safe.               | §3.3, §8.3 |
+| Liveness                 | `isOnline === (age < 3 × interval_s)`.                                                | §8.2       |
+| Start timing             | Tracker SUB established + flushed before first `$SRV.PING`.                           | §8.5       |
 
 ## Versioning (§11)
 
@@ -83,10 +83,10 @@ Every SDK call mapped to its NATS Agent Protocol section, for implementers of ot
 
 ## Security / credentials (§10)
 
-| SDK                    | Wire behaviour                                                                       | Spec ref |
-| ---------------------- | ------------------------------------------------------------------------------------ | -------- |
-| Connection ownership   | Caller builds the `NatsConnection` and passes it to `new Agents({ nc })`. SDK delegates auth entirely. | §10.1    |
-| Authentication         | Delegated entirely to NATS server configuration - the protocol defines no handshake. | §10.1    |
+| SDK                  | Wire behaviour                                                                                         | Spec ref |
+| -------------------- | ------------------------------------------------------------------------------------------------------ | -------- |
+| Connection ownership | Caller builds the `NatsConnection` and passes it to `new Agents({ nc })`. SDK delegates auth entirely. | §10.1    |
+| Authentication       | Delegated entirely to NATS server configuration - the protocol defines no handshake.                   | §10.1    |
 
 ## Cancellation (§6.7)
 

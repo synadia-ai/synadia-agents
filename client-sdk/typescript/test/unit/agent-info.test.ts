@@ -56,9 +56,7 @@ describe("buildAgentInfo", () => {
       buildAgentInfo(validInfo({ metadata: { owner: "alice", protocol_version: "0.2" } })),
     ).toBeNull();
     expect(
-      buildAgentInfo(
-        validInfo({ metadata: { agent: "claude-code", protocol_version: "0.2" } }),
-      ),
+      buildAgentInfo(validInfo({ metadata: { agent: "claude-code", protocol_version: "0.2" } })),
     ).toBeNull();
     expect(
       buildAgentInfo(validInfo({ metadata: { agent: "claude-code", owner: "alice" } })),

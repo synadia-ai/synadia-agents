@@ -3,7 +3,6 @@ import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
 import {
-
   Agents,
   PayloadTooLargeError,
   PromptEmptyError,
