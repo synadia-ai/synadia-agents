@@ -19,7 +19,7 @@ during pre-rebrand development — the `new Agents({ nc })` entry point,
 directly-callable `Agent[]` from `discover()`, and the `stall` default.
 Breakage and removals below are expressed relative to `[0.2.0-dev]`
 (the last pre-rebrand design state); as a first real release under the
-new scope, this *is* the shipping API.
+new scope, this _is_ the shipping API.
 
 ### Changed (breaking) vs `[0.2.0-dev]`
 
