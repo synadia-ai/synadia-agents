@@ -6,9 +6,9 @@ import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
 import {
-  attach,
+
   AttachmentsNotSupportedError,
-  type Client,
+  Agents,
   decodeBase64,
   PayloadTooLargeError,
   type StreamMessage,
@@ -43,9 +43,9 @@ function echoAttachmentsHandler(msg: ServiceMsg): void {
   msg.respond(""); // terminator
 }
 
-describe.skipIf(!natsUrl)("RemoteAgent.prompt — attachments + local validation", () => {
+describe.skipIf(!natsUrl)("Agent.prompt — attachments + local validation", () => {
   let nc: NatsConnection;
-  let client: Client;
+  let client: Agents;
   let tmp: string;
   const agents: ReferenceAgent[] = [];
 
@@ -60,7 +60,7 @@ describe.skipIf(!natsUrl)("RemoteAgent.prompt — attachments + local validation
   });
 
   beforeEach(async () => {
-    client = attach({ name: "attachment-test", nc });
+    client = new Agents({ nc });
     await client.startTracking();
   });
 
@@ -92,7 +92,7 @@ describe.skipIf(!natsUrl)("RemoteAgent.prompt — attachments + local validation
       timeoutMs: 1000,
       filter: { agent: "att-agent", name: instanceName },
     });
-    return client.bind(found!);
+    return found!;
   }
 
   it("round-trips a Uint8Array attachment via base64", async () => {

@@ -1,10 +1,11 @@
-// DiscoveredAgent — the high-level view of an agent assembled from a
-// `$SRV.INFO` record per spec §4.3.
+// `AgentInfo` — the pure-data view of an agent assembled from a
+// `$SRV.INFO` record per spec §4.3. The `Agent` class wraps this with the
+// `NatsConnection` needed to prompt it.
 
 import { buildEndpointInfo, PROMPT_ENDPOINT_NAME, type EndpointInfo } from "./endpoint-info.js";
 import { isAgentServiceName } from "../internal/service-name.js";
 
-export interface DiscoveredAgent {
+export interface AgentInfo {
   /** Service id — unique per running instance (matches `heartbeat.instance_id`). */
   readonly instanceId: string;
   /** `metadata.agent`. */
@@ -45,7 +46,7 @@ export interface RawServiceInfo {
 }
 
 /**
- * Attempt to convert a raw `ServiceInfo` record into a {@link DiscoveredAgent}.
+ * Attempt to convert a raw `ServiceInfo` record into an {@link AgentInfo}.
  *
  * Returns `null` when the record is not a protocol-compliant agent — callers
  * silently drop these rather than erroring so unrelated micro-services
@@ -56,7 +57,7 @@ export interface RawServiceInfo {
  *   - Any of `metadata.agent`, `metadata.owner`, `metadata.protocol_version` is missing.
  *   - No endpoint named `prompt` is declared.
  */
-export function buildDiscoveredAgent(info: RawServiceInfo): DiscoveredAgent | null {
+export function buildAgentInfo(info: RawServiceInfo): AgentInfo | null {
   if (!isAgentServiceName(info.name)) return null;
 
   const metadata = info.metadata ?? {};

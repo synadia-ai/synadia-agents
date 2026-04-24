@@ -1,35 +1,46 @@
 // @synadia/agents — TypeScript SDK for the NATS Agent Protocol.
 //
 // Public API:
-//   - {@link connect} / {@link attach}  — obtain a {@link Client}.
-//   - {@link Client.discover}            — find agents on the NATS system.
-//   - {@link Client.bind}                — get a {@link RemoteAgent} handle.
-//   - {@link RemoteAgent.prompt}         — (M2+) stream a prompt to an agent.
+//   - {@link Agents}              — construct with a `NatsConnection`.
+//   - {@link Agents.discover}     — enumerate agents; returns a live `Agent[]`.
+//   - {@link Agent.prompt}        — stream a prompt to an agent.
 //
 // Subpath entry points:
 //   - `@synadia/agents/errors`  — error class hierarchy for `instanceof`.
 //   - `@synadia/agents/testing` — spec-compliant reference agent and harness.
 
-export { connect, attach, type ConnectOptions, type AttachOptions } from "./connect.js";
-export { Client, DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS, type ClientOptions } from "./client.js";
+export {
+  Agents,
+  DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS,
+  type AgentsOptions,
+} from "./agents.js";
 
 /** Re-export from `@nats-io/nats-core` for callers using the hard path. */
 export type { NatsConnection } from "@nats-io/nats-core";
-export { RemoteAgent } from "./remote-agent.js";
+export { Agent } from "./agent.js";
 
 // Discovery
 export {
-  type DiscoveredAgent,
+  type AgentInfo,
   type RawServiceInfo,
-  buildDiscoveredAgent,
-} from "./discovery/discovered-agent.js";
+  buildAgentInfo,
+} from "./discovery/agent-info.js";
 export { type EndpointInfo, PROMPT_ENDPOINT_NAME } from "./discovery/endpoint-info.js";
-export { type DiscoveryFilter, type DiscoverOptions } from "./discovery/srv-ping.js";
+export {
+  type DiscoveryFilter,
+  type DiscoverOptions,
+  DEFAULT_DISCOVER_MAX_WAIT_MS,
+  DEFAULT_DISCOVER_STALL_MS,
+} from "./discovery/srv-ping.js";
 export { SERVICE_NAME, PROMPT_QUEUE_GROUP } from "./internal/service-name.js";
 
 // Liveness
 export { type HeartbeatPayload } from "./heartbeat/payload.js";
-export { type Liveness, type HeartbeatScope, DEFAULT_LIVENESS_SLACK } from "./heartbeat/tracker.js";
+export {
+  type Liveness,
+  DEFAULT_LIVENESS_SLACK,
+  HEARTBEAT_SUBJECT,
+} from "./heartbeat/tracker.js";
 
 // Prompt + streaming
 export {
@@ -62,15 +73,8 @@ export {
   ServiceError,
   StreamStalledError,
   ProtocolError,
-  NatsContextError,
-  NatsContextNotFoundError,
-  NatsContextNotSelectedError,
-  NatsContextInvalidError,
   type ServiceErrorBody,
 } from "./errors.js";
-
-// NATS context loader (spec §10.2)
-export { loadNatsContext, type NatsContext, type ContextSelector } from "./context.js";
 
 // Logging
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";

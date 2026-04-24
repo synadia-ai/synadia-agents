@@ -3,8 +3,8 @@ import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
 import {
-  attach,
-  type Client,
+
+  Agents,
   PayloadTooLargeError,
   PromptEmptyError,
   ServiceError,
@@ -26,9 +26,9 @@ function respondResponseChunks(msg: ServiceMsg, chunks: string[]): void {
   msg.respond(""); // terminator
 }
 
-describe.skipIf(!natsUrl)("RemoteAgent.prompt — text + streaming", () => {
+describe.skipIf(!natsUrl)("Agent.prompt — text + streaming", () => {
   let nc: NatsConnection;
-  let client: Client;
+  let client: Agents;
   const agents: ReferenceAgent[] = [];
 
   beforeAll(async () => {
@@ -40,7 +40,7 @@ describe.skipIf(!natsUrl)("RemoteAgent.prompt — text + streaming", () => {
   });
 
   beforeEach(async () => {
-    client = attach({ name: "prompt-text-test", nc });
+    client = new Agents({ nc });
     await client.startTracking();
   });
 
@@ -71,7 +71,7 @@ describe.skipIf(!natsUrl)("RemoteAgent.prompt — text + streaming", () => {
       timeoutMs: 1000,
       filter: { agent: "pt-agent", name: instanceName },
     });
-    return client.bind(found!);
+    return found!;
   }
 
   it("streams response chunks and emits synthetic status:done on terminator", async () => {

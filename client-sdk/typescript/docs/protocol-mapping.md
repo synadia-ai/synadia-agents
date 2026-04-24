@@ -6,12 +6,12 @@ Every SDK call mapped to its NATS Agent Protocol section, for implementers of ot
 
 | SDK                            | Wire behaviour                                                                                          | Spec ref  |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------- | --------- |
-| `client.discover()`            | Publishes `$SRV.INFO.agents` via `@nats-io/services`, gathers multi-replies.                            | §4, §4.1  |
-| `client.ping(instanceId)`      | Publishes `$SRV.PING.agents.{instanceId}`; `true` iff any response arrives.                             | §8.4      |
+| `agents.discover()`            | Publishes `$SRV.INFO.agents` via `@nats-io/services`, gathers multi-replies.                            | §4, §4.1  |
+| `agents.ping(instanceId)`      | Publishes `$SRV.PING.agents.{instanceId}`; `true` iff any response arrives.                             | §8.4      |
 | Implicit subscribe-before-PING | On first `discover()`, heartbeat wildcard SUB is established + flushed BEFORE PING.                     | §8.5      |
 | Filter by service name         | Accepts `"agents"` only; the pre-0.2 names `"Synadia Agents"` / `"SynadiaAgents"` are silently dropped. | §3.1      |
 | Non-agent services             | Silently dropped - matches only services whose `name` is the protocol value.                            | §4.3      |
-| `DiscoveredAgent.metadata`     | Preserves all unknown metadata keys verbatim.                                                           | §5.6, §12 |
+| `Agent.metadata`               | Preserves all unknown metadata keys verbatim.                                                           | §5.6, §12 |
 | `EndpointInfo.queueGroup`      | Read from `$SRV.INFO.endpoints[].queue_group`. Prompt endpoint MUST be `"agents"` (§3.3).               | §3.3      |
 | `EndpointInfo.maxPayloadBytes` | Parsed from `metadata.max_payload` (case-insensitive; base-1024: KB=1024, MB=1024²).                    | §2.1      |
 | `EndpointInfo.attachmentsOk`   | Parsed from `metadata.attachments_ok` (`"true"` / `"false"`).                                           | §2.1      |
@@ -66,7 +66,7 @@ Every SDK call mapped to its NATS Agent Protocol section, for implementers of ot
 
 | SDK                      | Wire behaviour                                                                | Spec ref   |
 | ------------------------ | ----------------------------------------------------------------------------- | ---------- |
-| Subject                  | `agents.*.*.*.heartbeat` (narrowable via `heartbeatScope: {agent?, owner?}`). | §8.1, §8.5 |
+| Subject                  | `agents.*.*.*.heartbeat` (fixed wildcard). Callers filter via `discover({ filter })`. | §8.1, §8.5 |
 | Payload required fields  | `agent`, `owner`, `instance_id`, `ts`, `interval_s`. `session` when present.  | §8.3       |
 | Unknown heartbeat fields | Preserved on `HeartbeatPayload.extras`.                                       | §8.3, §12  |
 | Tracker keying           | `instance_id` (from the payload), NOT the subject. Multi-instance safe.       | §3.3, §8.3 |
@@ -81,18 +81,12 @@ Every SDK call mapped to its NATS Agent Protocol section, for implementers of ot
 | `compareProtocolVersion()` | `compatible` (exact MAJOR.MINOR) / `minor-drift` / `incompatible` (MAJOR differs). | §11.2    |
 | Version parsing            | Drops patch + pre-release (`"0.2.0-draft"` → `{ major:0, minor:2 }`).              | §11.1    |
 
-## Security / credentials (§10.2)
+## Security / credentials (§10)
 
-| SDK                               | Wire behaviour                                                                           | Spec ref |
-| --------------------------------- | ---------------------------------------------------------------------------------------- | -------- |
-| `connect({ context: "prod" })`    | Loads `~/.config/nats/context/prod.json` and applies its settings.                       | §10.2    |
-| `connect({ context: "current" })` | Uses `$NATS_CONTEXT` env var or `context.txt` selection file.                            | §10.2    |
-| `connect({ context: true })`      | Alias for `"current"`.                                                                   | §10.2    |
-| `loadNatsContext(name)`           | Stand-alone loader returning `{ name, servers, connectionOptions, description? }`.       | §10.2    |
-| Base-dir resolution               | `$NATS_CONFIG_HOME` → `$XDG_CONFIG_HOME/nats` → `$HOME/.config/nats` → `%APPDATA%/nats`. | §10.2    |
-| Supported context fields          | `url`, `creds`, `token`, `user`+`password`, `user_jwt`, `inbox_prefix`, `description`.   | §10.2    |
-| Deferred context fields           | `nkey`, `cert`/`key`/`ca`, `nsc` - tracked in `TODO.md`.                                 | §10.2    |
-| Authentication otherwise          | Delegated entirely to NATS server configuration - the protocol defines no handshake.     | §10.1    |
+| SDK                    | Wire behaviour                                                                       | Spec ref |
+| ---------------------- | ------------------------------------------------------------------------------------ | -------- |
+| Connection ownership   | Caller builds the `NatsConnection` and passes it to `new Agents({ nc })`. SDK delegates auth entirely. | §10.1    |
+| Authentication         | Delegated entirely to NATS server configuration - the protocol defines no handshake. | §10.1    |
 
 ## Cancellation (§6.7)
 
@@ -101,7 +95,7 @@ Every SDK call mapped to its NATS Agent Protocol section, for implementers of ot
 | `stream.cancel()`            | Unsubscribes the reply inbox; iterator exits cleanly.                  | §6.7     |
 | Early `break` from for-await | Triggers `Symbol.asyncIterator.return()` → same cleanup as `cancel()`. | §6.7     |
 | `opts.signal` (AbortSignal)  | Iterator throws `signal.reason` when aborted.                          | §6.7     |
-| `client.close()`             | Aborts ALL in-flight streams via a shared AbortController.             | §6.7     |
+| `agents.close()`             | Aborts ALL in-flight streams via a shared AbortController.             | §6.7     |
 | Wire-level cancel message    | **Not sent** - spec defines none; interest-based delivery handles it.  | §6.7     |
 
 ## Open questions flagged upstream

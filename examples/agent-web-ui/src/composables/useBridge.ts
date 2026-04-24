@@ -181,13 +181,13 @@ function send(msg: ClientMessage): boolean {
   return true;
 }
 
-function discover(timeoutMs = 2000): Promise<DiscoveredAgentDTO[]> {
+function discover(): Promise<DiscoveredAgentDTO[]> {
   return new Promise((resolve, reject) => {
     if (pendingDiscover) {
       pendingDiscover.reject(new Error("superseded by another discover() call"));
     }
     pendingDiscover = { resolve, reject };
-    if (!send({ kind: "discover", timeoutMs })) {
+    if (!send({ kind: "discover" })) {
       pendingDiscover = null;
       reject(new Error("WebSocket not open"));
     }

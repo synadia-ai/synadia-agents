@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDiscoveredAgent, type RawServiceInfo } from "../../src/discovery/discovered-agent.js";
+import { buildAgentInfo, type RawServiceInfo } from "../../src/discovery/agent-info.js";
 
 function validInfo(overrides: Partial<RawServiceInfo> = {}): RawServiceInfo {
   return {
@@ -25,9 +25,9 @@ function validInfo(overrides: Partial<RawServiceInfo> = {}): RawServiceInfo {
   };
 }
 
-describe("buildDiscoveredAgent", () => {
-  it("builds a DiscoveredAgent from a valid ServiceInfo record", () => {
-    const a = buildDiscoveredAgent(validInfo());
+describe("buildAgentInfo", () => {
+  it("builds an AgentInfo from a valid ServiceInfo record", () => {
+    const a = buildAgentInfo(validInfo());
     expect(a).not.toBeNull();
     expect(a!.instanceId).toBe("VMKS6MHK71PCPWGY38A7N5");
     expect(a!.agent).toBe("claude-code");
@@ -43,31 +43,31 @@ describe("buildDiscoveredAgent", () => {
   });
 
   it("rejects the pre-0.2 service names", () => {
-    expect(buildDiscoveredAgent(validInfo({ name: "Synadia Agents" }))).toBeNull();
-    expect(buildDiscoveredAgent(validInfo({ name: "SynadiaAgents" }))).toBeNull();
+    expect(buildAgentInfo(validInfo({ name: "Synadia Agents" }))).toBeNull();
+    expect(buildAgentInfo(validInfo({ name: "SynadiaAgents" }))).toBeNull();
   });
 
   it("returns null for non-agent service names", () => {
-    expect(buildDiscoveredAgent(validInfo({ name: "SomeOtherService" }))).toBeNull();
+    expect(buildAgentInfo(validInfo({ name: "SomeOtherService" }))).toBeNull();
   });
 
   it("returns null when required metadata is missing", () => {
     expect(
-      buildDiscoveredAgent(validInfo({ metadata: { owner: "alice", protocol_version: "0.2" } })),
+      buildAgentInfo(validInfo({ metadata: { owner: "alice", protocol_version: "0.2" } })),
     ).toBeNull();
     expect(
-      buildDiscoveredAgent(
+      buildAgentInfo(
         validInfo({ metadata: { agent: "claude-code", protocol_version: "0.2" } }),
       ),
     ).toBeNull();
     expect(
-      buildDiscoveredAgent(validInfo({ metadata: { agent: "claude-code", owner: "alice" } })),
+      buildAgentInfo(validInfo({ metadata: { agent: "claude-code", owner: "alice" } })),
     ).toBeNull();
   });
 
   it("returns null when no prompt endpoint is declared", () => {
     expect(
-      buildDiscoveredAgent(
+      buildAgentInfo(
         validInfo({
           endpoints: [{ name: "other", subject: "agents.cc.alice.sess-1.other" }],
         }),
@@ -76,7 +76,7 @@ describe("buildDiscoveredAgent", () => {
   });
 
   it("session is undefined when metadata.session is absent or empty", () => {
-    const a = buildDiscoveredAgent(
+    const a = buildAgentInfo(
       validInfo({
         metadata: { agent: "openclaw", owner: "rene", protocol_version: "0.2" },
         endpoints: [{ name: "prompt", subject: "agents.oc.rene.default", metadata: {} }],
@@ -87,7 +87,7 @@ describe("buildDiscoveredAgent", () => {
   });
 
   it("preserves unknown metadata keys (§12 forward-compat)", () => {
-    const a = buildDiscoveredAgent(
+    const a = buildAgentInfo(
       validInfo({
         metadata: {
           agent: "claude-code",
@@ -103,7 +103,7 @@ describe("buildDiscoveredAgent", () => {
   });
 
   it("freezes the returned object and nested collections", () => {
-    const a = buildDiscoveredAgent(validInfo())!;
+    const a = buildAgentInfo(validInfo())!;
     expect(Object.isFrozen(a)).toBe(true);
     expect(Object.isFrozen(a.metadata)).toBe(true);
     expect(Object.isFrozen(a.endpoints)).toBe(true);

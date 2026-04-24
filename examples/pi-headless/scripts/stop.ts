@@ -18,7 +18,7 @@ async function main(): Promise<void> {
 
   const cli = await openCliClient(args);
   try {
-    const controller = await findController(cli.client, args);
+    const controller = await findController(cli.agents, args);
     const stopSubject = `${controller.promptEndpoint.subject}.stop`;
     const rep = await cli.nc.request(
       stopSubject,

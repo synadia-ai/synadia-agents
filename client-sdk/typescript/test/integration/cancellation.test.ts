@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, i
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { attach, type Client, type StreamMessage } from "../../src/index.js";
+import { Agents, type StreamMessage } from "../../src/index.js";
 import { ReferenceAgent } from "../../src/testing/reference-agent.js";
 
 const natsUrl = inject("natsUrl");
@@ -24,7 +24,7 @@ function makeChattyHandler(delayMs: number) {
 
 describe.skipIf(!natsUrl)("cancellation (§6.7)", () => {
   let nc: NatsConnection;
-  let client: Client;
+  let client: Agents;
   const agents: ReferenceAgent[] = [];
 
   beforeAll(async () => {
@@ -36,7 +36,7 @@ describe.skipIf(!natsUrl)("cancellation (§6.7)", () => {
   });
 
   beforeEach(async () => {
-    client = attach({ name: "cancel-test", nc });
+    client = new Agents({ nc });
     await client.startTracking();
   });
 
@@ -67,7 +67,7 @@ describe.skipIf(!natsUrl)("cancellation (§6.7)", () => {
       timeoutMs: 1000,
       filter: { agent: "cx-agent", name: instanceName },
     });
-    return client.bind(found!);
+    return found!;
   }
 
   it("early `break` from `for await` unsubscribes cleanly", async () => {
@@ -142,7 +142,7 @@ describe.skipIf(!natsUrl)("cancellation (§6.7)", () => {
     expect(seen).toBe(0);
   });
 
-  it("Client.close() cancels in-flight prompt streams", async () => {
+  it("Agents.close() cancels in-flight prompt streams", async () => {
     const agent = await startAgent({ promptHandler: makeChattyHandler(30) });
     const remote = await discoverRemote(agent);
     const stream = await remote.prompt("chatty");
@@ -165,6 +165,6 @@ describe.skipIf(!natsUrl)("cancellation (§6.7)", () => {
 
     const result = await iteratePromise;
     expect(result).toBeInstanceOf(Error);
-    expect((result as Error).message).toContain("Client is closed");
+    expect((result as Error).message).toContain("Agents is closed");
   });
 });

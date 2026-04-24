@@ -5,7 +5,8 @@
 
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { connect, type QueryEvent } from "@synadia/agents";
+import { connect as natsConnect } from "@nats-io/transport-node";
+import { Agents, type QueryEvent } from "@synadia/agents";
 
 async function ask(prompt: string): Promise<string> {
   const rl = createInterface({ input: stdin, output: stdout });
@@ -18,19 +19,18 @@ async function ask(prompt: string): Promise<string> {
 
 async function main(): Promise<void> {
   const text = process.argv[2] ?? "plan the migration";
-  const client = await connect({
-    name: "query-demo",
+  const nc = await natsConnect({
     servers: process.env["NATS_URL"] ?? "nats://127.0.0.1:4222",
   });
+  const agents = new Agents({ nc });
   try {
-    const [agent] = await client.discover({ timeoutMs: 2_000 });
+    const [agent] = await agents.discover();
     if (!agent) {
       console.error("no agents found.");
       process.exit(2);
     }
-    const remote = client.bind(agent);
 
-    for await (const msg of await remote.prompt(text)) {
+    for await (const msg of await agent.prompt(text)) {
       switch (msg.type) {
         case "response":
           stdout.write(msg.text);
@@ -44,7 +44,8 @@ async function main(): Promise<void> {
       }
     }
   } finally {
-    await client.close();
+    await agents.close();
+    await nc.close();
   }
 }
 

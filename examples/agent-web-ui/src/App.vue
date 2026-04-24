@@ -63,7 +63,7 @@ async function refreshAgents(): Promise<void> {
   agentsState.discovering = true;
   error.value = null;
   try {
-    await bridge.discover(2000);
+    await bridge.discover();
   } catch (e) {
     error.value = (e as Error).message;
   } finally {

@@ -14,15 +14,11 @@ export interface Liveness {
   readonly isOnline: boolean;
 }
 
-export interface HeartbeatScope {
-  /** Filter wildcard by `metadata.agent` (second subject token). */
-  readonly agent?: string;
-  /** Filter wildcard by `metadata.owner` (third subject token). */
-  readonly owner?: string;
-}
-
 /** Default offline threshold multiplier: online iff last seen within `3 × interval_s` (§8.2). */
 export const DEFAULT_LIVENESS_SLACK = 3;
+
+/** Heartbeat wildcard (§8.1): `agents.<type>.<owner>.<instance>.heartbeat`. */
+export const HEARTBEAT_SUBJECT = "agents.*.*.*.heartbeat";
 
 type HeartbeatListener = (payload: HeartbeatPayload) => void;
 
@@ -39,14 +35,11 @@ export class HeartbeatTracker {
 
   constructor(
     private readonly nc: NatsConnection,
-    private readonly scope: HeartbeatScope = {},
     private readonly logger: Logger = SILENT_LOGGER,
   ) {}
 
   get subject(): string {
-    const agent = this.scope.agent ?? "*";
-    const owner = this.scope.owner ?? "*";
-    return `agents.${agent}.${owner}.*.heartbeat`;
+    return HEARTBEAT_SUBJECT;
   }
 
   get isStarted(): boolean {

@@ -2,10 +2,20 @@
 // `$SRV.INFO.agents` (§4), filters the responses through the
 // agent-shape validator, and applies optional client-side identity filters.
 
-import { NoRespondersError, type NatsConnection } from "@nats-io/nats-core";
+import {
+  NoRespondersError,
+  type NatsConnection,
+  type RequestManyOptions,
+} from "@nats-io/nats-core";
 import { Svcm } from "@nats-io/services";
+import { Agent } from "../agent.js";
 import { SERVICE_NAME } from "../internal/service-name.js";
-import { buildDiscoveredAgent, type DiscoveredAgent } from "./discovered-agent.js";
+import { buildAgentInfo, type AgentInfo } from "./agent-info.js";
+
+/** Absolute safety cap when using the stall strategy (no explicit timeoutMs). */
+export const DEFAULT_DISCOVER_MAX_WAIT_MS = 2000;
+/** Idle window after the last reply before the stall strategy returns. */
+export const DEFAULT_DISCOVER_STALL_MS = 200;
 
 export interface DiscoveryFilter {
   readonly agent?: string;
@@ -16,7 +26,18 @@ export interface DiscoveryFilter {
 }
 
 export interface DiscoverOptions {
-  /** Maximum time to wait for responses. Default: 2000ms. */
+  /**
+   * When set, `discover()` waits exactly `timeoutMs` milliseconds and
+   * returns every responder seen in that window (`strategy: "timer"`).
+   * Use this when you need a deterministic scan duration — e.g. a
+   * health-check or a periodic refresh.
+   *
+   * When omitted, `discover()` uses `strategy: "stall"`: it returns
+   * {@link DEFAULT_DISCOVER_STALL_MS}ms after the most recent reply, or
+   * after {@link DEFAULT_DISCOVER_MAX_WAIT_MS}ms absolute, whichever
+   * comes first. This is snappier on lightly-loaded systems where most
+   * agents reply within tens of milliseconds.
+   */
   readonly timeoutMs?: number;
   /** Client-side AND-matched identity filter. */
   readonly filter?: DiscoveryFilter;
@@ -24,19 +45,28 @@ export interface DiscoverOptions {
 
 export async function discoverAgents(
   nc: NatsConnection,
+  defaultInactivityTimeoutMs: number,
+  closeSignal: AbortSignal,
   opts: DiscoverOptions = {},
-): Promise<DiscoveredAgent[]> {
-  const maxWait = opts.timeoutMs ?? 2000;
+): Promise<Agent[]> {
+  const requestOpts: RequestManyOptions =
+    opts.timeoutMs !== undefined
+      ? { strategy: "timer", maxWait: opts.timeoutMs }
+      : {
+          strategy: "stall",
+          maxWait: DEFAULT_DISCOVER_MAX_WAIT_MS,
+          stall: DEFAULT_DISCOVER_STALL_MS,
+        };
   const svcm = new Svcm(nc);
-  const client = svcm.client({ strategy: "timer", maxWait });
+  const client = svcm.client(requestOpts);
 
-  const found: DiscoveredAgent[] = [];
+  const found: Agent[] = [];
   try {
     const infos = await client.info(SERVICE_NAME);
     for await (const info of infos) {
-      const agent = buildDiscoveredAgent(info);
-      if (agent && matchesFilter(agent, opts.filter)) {
-        found.push(agent);
+      const agentInfo = buildAgentInfo(info);
+      if (agentInfo && matchesFilter(agentInfo, opts.filter)) {
+        found.push(new Agent(nc, agentInfo, defaultInactivityTimeoutMs, closeSignal));
       }
     }
   } catch (err) {
@@ -49,13 +79,13 @@ export async function discoverAgents(
   return found;
 }
 
-export function matchesFilter(agent: DiscoveredAgent, filter?: DiscoveryFilter): boolean {
+export function matchesFilter(info: AgentInfo, filter?: DiscoveryFilter): boolean {
   if (!filter) return true;
-  if (filter.agent !== undefined && agent.agent !== filter.agent) return false;
-  if (filter.owner !== undefined && agent.owner !== filter.owner) return false;
-  if (filter.name !== undefined && agent.name !== filter.name) return false;
-  if (filter.session !== undefined && agent.session !== filter.session) return false;
-  if (filter.protocolVersion !== undefined && agent.protocolVersion !== filter.protocolVersion) {
+  if (filter.agent !== undefined && info.agent !== filter.agent) return false;
+  if (filter.owner !== undefined && info.owner !== filter.owner) return false;
+  if (filter.name !== undefined && info.name !== filter.name) return false;
+  if (filter.session !== undefined && info.session !== filter.session) return false;
+  if (filter.protocolVersion !== undefined && info.protocolVersion !== filter.protocolVersion) {
     return false;
   }
   return true;

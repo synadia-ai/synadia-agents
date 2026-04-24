@@ -2,14 +2,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, i
 import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm } from "@nats-io/services";
-import { attach, type Client } from "../../src/index.js";
+import { Agents } from "../../src/index.js";
 import { ReferenceAgent } from "../../src/testing/reference-agent.js";
 
 const natsUrl = inject("natsUrl");
 
-describe.skipIf(!natsUrl)("Client.discover", () => {
+describe.skipIf(!natsUrl)("Agents.discover", () => {
   let nc: NatsConnection;
-  let client: Client;
+  let client: Agents;
   const agents: ReferenceAgent[] = [];
 
   beforeAll(async () => {
@@ -21,7 +21,7 @@ describe.skipIf(!natsUrl)("Client.discover", () => {
   });
 
   beforeEach(() => {
-    client = attach({ name: "discovery-test", nc });
+    client = new Agents({ nc });
   });
 
   afterEach(async () => {
@@ -118,7 +118,7 @@ describe.skipIf(!natsUrl)("Client.discover", () => {
     // Fresh client that hasn't discovered yet. Starting it should
     // establish the heartbeat subscription and flush BEFORE sending PING —
     // so the agent's immediate post-start heartbeat is caught.
-    const freshClient = attach({ name: "heartbeat-order-test", nc });
+    const freshClient = new Agents({ nc });
     try {
       // discover() is the path that implicitly enforces subscribe-before-PING.
       const discoverPromise = freshClient.discover({ timeoutMs: 500 });
@@ -146,11 +146,10 @@ describe.skipIf(!natsUrl)("Client.discover", () => {
     }
   });
 
-  it("bind() returns a RemoteAgent carrying the prompt subject", async () => {
+  it("discover() returns a live Agent carrying the prompt subject", async () => {
     const agent = await startAgent();
     const [discovered] = await client.discover({ timeoutMs: 1000 });
-    const remote = client.bind(discovered!);
-    expect(remote.instanceId).toBe(agent.instanceId);
-    expect(remote.promptSubject).toBe(agent.promptSubject);
+    expect(discovered!.instanceId).toBe(agent.instanceId);
+    expect(discovered!.promptSubject).toBe(agent.promptSubject);
   });
 });

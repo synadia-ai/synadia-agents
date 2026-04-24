@@ -34,7 +34,7 @@ async function main(): Promise<void> {
 
   const cli = await openCliClient(args);
   try {
-    const controller = await findController(cli.client, args);
+    const controller = await findController(cli.agents, args);
     const spawnSubject = `${controller.promptEndpoint.subject}.spawn`;
     process.stderr.write(`pi-headless-cli: calling ${spawnSubject}\n`);
 
@@ -54,10 +54,9 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify(descriptor, null, 2)}\n`);
 
     if (prompt) {
-      const session = await waitForSession(cli.client, descriptor.instance_id);
-      const remote = cli.client.bind(session);
+      const session = await waitForSession(cli.agents, descriptor.instance_id);
       process.stderr.write(`pi-headless-cli: prompting ${session.promptEndpoint.subject}\n`);
-      const stream = await remote.prompt(prompt);
+      const stream = await session.prompt(prompt);
       for await (const ev of stream) {
         if (ev.type === "response") {
           process.stdout.write(ev.text);

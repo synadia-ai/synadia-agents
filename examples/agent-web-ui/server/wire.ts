@@ -73,7 +73,7 @@ export type PiExecSpawnDescriptor = {
 // ─── Client → Server ─────────────────────────────────────────────────────────
 
 export type ClientMessage =
-  | { kind: "discover"; timeoutMs?: number }
+  | { kind: "discover" }
   | {
       kind: "prompt";
       id: string;

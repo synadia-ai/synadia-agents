@@ -11,10 +11,8 @@
 import { join, extname } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import {
-  attach,
-  loadNatsContext,
+  Agents,
   SDK_PROTOCOL_VERSION,
-  type Client,
   type NatsConnection,
 } from "@synadia/agents";
 import {
@@ -23,6 +21,7 @@ import {
 } from "@nats-io/transport-node";
 import { parseConfig } from "./config.ts";
 import { Bridge, formatSdkProtocolVersion, type BridgeWsData } from "./bridge.ts";
+import { loadNatsContext } from "./nats-context.ts";
 
 const config = parseConfig(Bun.argv);
 
@@ -41,7 +40,7 @@ async function buildConnectOptions(): Promise<NodeConnectionOptions> {
 
 const connectOpts = await buildConnectOptions();
 const nc: NatsConnection = await natsConnect(connectOpts);
-const client: Client = attach({ nc, name: "testui" });
+const agents = new Agents({ nc });
 
 const serverInfoNote = config.servers
   ? `servers=${config.servers}`
@@ -57,7 +56,7 @@ const server = Bun.serve<BridgeWsData>({
     const url = new URL(req.url);
 
     if (url.pathname === "/ws") {
-      const bridge = new Bridge(client, nc, sdkVersionString);
+      const bridge = new Bridge(agents, nc, sdkVersionString);
       const upgraded = srv.upgrade(req, { data: { bridge } });
       if (upgraded) return undefined;
       return new Response("expected WebSocket upgrade on /ws", { status: 400 });
@@ -121,9 +120,9 @@ async function shutdown(sig: NodeJS.Signals): Promise<void> {
     /* noop */
   }
   try {
-    await client.close();
+    await agents.close();
   } catch (e) {
-    console.warn("[testui] client.close() failed:", (e as Error).message);
+    console.warn("[testui] agents.close() failed:", (e as Error).message);
   }
   try {
     await nc.close();

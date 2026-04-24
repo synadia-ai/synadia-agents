@@ -1,5 +1,5 @@
 // PromptStream — the user-facing stream of typed events yielded by
-// `RemoteAgent.prompt`. Implements `AsyncIterable<StreamMessage>` so the
+// `Agent.prompt`. Implements `AsyncIterable<StreamMessage>` so the
 // caller writes `for await (const msg of stream) { ... }`.
 //
 // Wire behaviour:

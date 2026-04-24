@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, i
 import { createInbox, type NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { attach, type Client, type QueryEvent, type StreamMessage } from "../../src/index.js";
+import { Agents, type QueryEvent, type StreamMessage } from "../../src/index.js";
 import { ReferenceAgent } from "../../src/testing/reference-agent.js";
 
 const natsUrl = inject("natsUrl");
@@ -45,7 +45,7 @@ async function askUser(
 
 describe.skipIf(!natsUrl)("mid-stream query (§7)", () => {
   let nc: NatsConnection;
-  let client: Client;
+  let client: Agents;
   const agents: ReferenceAgent[] = [];
 
   beforeAll(async () => {
@@ -57,7 +57,7 @@ describe.skipIf(!natsUrl)("mid-stream query (§7)", () => {
   });
 
   beforeEach(async () => {
-    client = attach({ name: "query-test", nc });
+    client = new Agents({ nc });
     await client.startTracking();
   });
 
@@ -88,7 +88,7 @@ describe.skipIf(!natsUrl)("mid-stream query (§7)", () => {
       timeoutMs: 1000,
       filter: { agent: "q-agent", name: instanceName },
     });
-    return client.bind(found!);
+    return found!;
   }
 
   it("round-trips a single mid-stream query (happy path)", async () => {

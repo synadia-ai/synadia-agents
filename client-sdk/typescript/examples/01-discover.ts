@@ -1,22 +1,23 @@
 // Enumerate every agent reachable on the NATS system and print a summary.
 // Useful as a quick sanity check when bringing up a new environment.
 
-import { connect } from "@synadia/agents";
+import { connect as natsConnect } from "@nats-io/transport-node";
+import { Agents } from "@synadia/agents";
 
 async function main(): Promise<void> {
-  const client = await connect({
-    name: "discover-demo",
+  const nc = await natsConnect({
     servers: process.env["NATS_URL"] ?? "nats://127.0.0.1:4222",
   });
+  const agents = new Agents({ nc });
 
   try {
-    const agents = await client.discover({ timeoutMs: 2_000 });
-    if (agents.length === 0) {
+    const found = await agents.discover();
+    if (found.length === 0) {
       console.log("no agents found.");
       return;
     }
-    console.log(`found ${agents.length} agent(s):\n`);
-    for (const a of agents) {
+    console.log(`found ${found.length} agent(s):\n`);
+    for (const a of found) {
       console.log(`  ${a.agent}/${a.owner}/${a.name}`);
       console.log(`    instance_id:      ${a.instanceId}`);
       console.log(`    protocol_version: ${a.protocolVersion}`);
@@ -28,7 +29,8 @@ async function main(): Promise<void> {
       console.log();
     }
   } finally {
-    await client.close();
+    await agents.close();
+    await nc.close();
   }
 }
 
