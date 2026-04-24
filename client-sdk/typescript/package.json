@@ -74,7 +74,7 @@
     "url": "https://github.com/synadia-ai/synadia-agents/issues"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "restricted"
   },
   "dependencies": {
     "@nats-io/nats-core": "^3.3.0",
