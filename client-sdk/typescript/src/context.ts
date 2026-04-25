@@ -26,15 +26,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { credsAuthenticator, jwtAuthenticator } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
-import { NatsAgentError } from "./errors.js";
-
-/** Base error for context resolution failures. */
-export class NatsContextError extends NatsAgentError {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "NatsContextError";
-  }
-}
+import { NatsContextError } from "./errors.js";
 
 /**
  * Resolve a NATS CLI context by name into `NodeConnectionOptions` ready to

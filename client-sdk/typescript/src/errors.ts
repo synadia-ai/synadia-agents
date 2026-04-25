@@ -97,3 +97,15 @@ export class ProtocolError extends NatsAgentError {
     this.name = "ProtocolError";
   }
 }
+
+// ---------------------------------------------------------------------------
+// Configuration / context resolution.
+// ---------------------------------------------------------------------------
+
+/** Failure resolving a `nats` CLI context (see {@link loadContextOptions}). */
+export class NatsContextError extends NatsAgentError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "NatsContextError";
+  }
+}

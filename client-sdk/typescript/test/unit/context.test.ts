@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadContextOptions, NatsContextError } from "../../src/context.js";
+import { loadContextOptions } from "../../src/context.js";
+import { NatsContextError } from "../../src/errors.js";
 
 describe("loadContextOptions", () => {
   let baseDir: string;
