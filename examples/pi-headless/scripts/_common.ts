@@ -3,8 +3,7 @@
 import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
-import { Agents, type Agent } from "@synadia-ai/agents";
-import { loadNatsContext } from "../src/nats-context.js";
+import { Agents, loadContextOptions, type Agent } from "@synadia-ai/agents";
 
 export interface CliArgs {
   readonly context?: string;
@@ -78,8 +77,7 @@ export async function openNats(args: CliArgs): Promise<NatsConnection> {
   const url = args.natsUrl ?? process.env["NATS_URL"];
   let opts: NodeConnectionOptions;
   if (context) {
-    const ctx = await loadNatsContext(context);
-    opts = { servers: [...ctx.servers], ...ctx.connectionOptions, name: "pi-headless-cli" };
+    opts = { ...(await loadContextOptions(context)), name: "pi-headless-cli" };
   } else if (url) {
     opts = { servers: url, name: "pi-headless-cli" };
   } else {

@@ -13,6 +13,7 @@ import { existsSync, statSync } from "node:fs";
 import {
   Agents,
   SDK_PROTOCOL_VERSION,
+  loadContextOptions,
   type NatsConnection,
 } from "@synadia-ai/agents";
 import {
@@ -21,7 +22,6 @@ import {
 } from "@nats-io/transport-node";
 import { parseConfig } from "./config.ts";
 import { Bridge, formatSdkProtocolVersion, type BridgeWsData } from "./bridge.ts";
-import { loadNatsContext } from "./nats-context.ts";
 
 const config = parseConfig(Bun.argv);
 
@@ -30,12 +30,7 @@ async function buildConnectOptions(): Promise<NodeConnectionOptions> {
     return { name: "testui", servers: config.servers };
   }
   const contextName = config.context ?? "current";
-  const ctx = await loadNatsContext(contextName);
-  return {
-    servers: [...ctx.servers],
-    ...ctx.connectionOptions,
-    name: "testui",
-  };
+  return { ...(await loadContextOptions(contextName)), name: "testui" };
 }
 
 const connectOpts = await buildConnectOptions();
