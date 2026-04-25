@@ -9,10 +9,10 @@ import process from "node:process";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
 import { connect as natsConnect } from "@nats-io/transport-node";
+import { loadContextOptions } from "@synadia-ai/agents";
 
 import { Controller } from "./controller.js";
 import { loadConfig, parseCliOverrides } from "./config.js";
-import { loadNatsContext } from "./nats-context.js";
 import { PiSessionManager } from "./pi-session-manager.js";
 
 const log = (line: string): void => {
@@ -24,12 +24,7 @@ async function resolveNatsOptions(
   natsUrl: string | undefined,
 ): Promise<NodeConnectionOptions> {
   if (context) {
-    const ctx = await loadNatsContext(context);
-    return {
-      servers: [...ctx.servers],
-      ...ctx.connectionOptions,
-      name: "pi-headless",
-    };
+    return { ...(await loadContextOptions(context)), name: "pi-headless" };
   }
   if (natsUrl) {
     return { servers: natsUrl, name: "pi-headless" };

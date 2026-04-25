@@ -8,7 +8,7 @@
         "@mariozechner/pi-coding-agent": "latest",
         "@nats-io/services": "^3.3.1",
         "@nats-io/transport-node": "^3.3.1",
-        "@synadia-ai/agents": "^0.1.0",
+        "@synadia-ai/agents": "^0.1.1",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -252,7 +252,7 @@
 
     "@smithy/uuid": ["@smithy/uuid@1.1.2", "", { "dependencies": { "tslib": "^2.6.2" } }, "sha512-O/IEdcCUKkubz60tFbGA7ceITTAJsty+lBjNoorP4Z6XRqaFb/OjQjZODophEcuq68nKm6/0r+6/lLQ+XVpk8g=="],
 
-    "@synadia-ai/agents": ["@synadia-ai/agents@0.1.0", "", { "dependencies": { "@nats-io/nats-core": "^3.3.0", "@nats-io/services": "^3.3.0", "@nats-io/transport-node": "^3.3.0" } }, "sha512-FDQUFzocK7zcAs3XEFU1nd9//4Cbg6/zJqDYAPO9WqMirulG4UUigvEtOPlVFeJRq4JlEDyqK/T7jbBF0eqrQg=="],
+    "@synadia-ai/agents": ["@synadia-ai/agents@0.1.1", "", { "dependencies": { "@nats-io/nats-core": "^3.3.0", "@nats-io/services": "^3.3.0", "@nats-io/transport-node": "^3.3.0" } }, "sha512-+P6vsNZcgr2J8UuVCIZi8hOja7yBir9UT+bPL/h1NRDbkktPsC6IGbvxvQTM7fIPQqtbgnfM7IHhxxCLtlQSrw=="],
 
     "@tokenizer/inflate": ["@tokenizer/inflate@0.4.1", "", { "dependencies": { "debug": "^4.4.3", "token-types": "^6.1.1" } }, "sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA=="],
 
