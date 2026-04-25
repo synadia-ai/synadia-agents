@@ -6,7 +6,7 @@
 // pass straight to `connect()`:
 //
 //     import { connect } from "@nats-io/transport-node";
-//     import { Agents, loadContextOptions } from "@synadia/agents";
+//     import { Agents, loadContextOptions } from "@synadia-ai/agents";
 //
 //     const opts = await loadContextOptions("prod");
 //     const nc = await connect(opts);
