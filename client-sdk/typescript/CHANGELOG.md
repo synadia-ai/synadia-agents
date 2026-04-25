@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > not actual npm releases. `[0.1.0]` is the first real release under
 > `@synadia-ai/agents`.
 
+## [0.1.1] - 2026-04-25
+
+### Added
+
+- **`loadContextOptions(selector)`** — resolves a `nats` CLI context by
+  name (or `"current"`) into `NodeConnectionOptions` ready to pass to
+  `connect()`. Re-introduces the lookup logic that was dropped in `[0.1.0]`,
+  this time as a thin standalone helper rather than a `connect({ context })`
+  factory: callers still own the `NatsConnection`. Supports `url`, `creds`,
+  `user_jwt`, `user`/`password`/`token`, and `inbox_prefix`; `nkey` and TLS
+  cert/key/ca remain deferred. Strict name validation rejects path
+  separators, null bytes, and bare `..`.
+- **`NatsContextError`** exported as the single error class for context
+  resolution failures.
+
 ## [0.1.0] - 2026-04-24
 
 **First release under the `@synadia-ai/agents` npm scope.** The API
