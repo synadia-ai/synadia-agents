@@ -98,4 +98,29 @@ describe("loadContextOptions", () => {
   it("throws NatsContextError when 'current' has no selection", async () => {
     await expect(loadContextOptions("current")).rejects.toBeInstanceOf(NatsContextError);
   });
+
+  it("loads creds file and sets authenticator", async () => {
+    const credsPath = join(baseDir, "user.creds");
+    await writeFile(
+      credsPath,
+      "-----BEGIN NATS USER JWT-----\nstub\n------END NATS USER JWT------\n" +
+        "-----BEGIN USER NKEY SEED-----\nSUASTUB\n------END USER NKEY SEED------\n",
+    );
+    await writeContext("with-creds", {
+      url: "nats://localhost:4222",
+      creds: credsPath,
+      user: "ignored",
+      token: "ignored",
+    });
+    const opts = await loadContextOptions("with-creds");
+    expect(opts.authenticator).toBeDefined();
+    expect(opts.user).toBeUndefined();
+    expect(opts.token).toBeUndefined();
+  });
+
+  it("rejects context names that contain path separators", async () => {
+    await expect(loadContextOptions("../escape")).rejects.toBeInstanceOf(NatsContextError);
+    await expect(loadContextOptions("foo/../etc/passwd")).rejects.toBeInstanceOf(NatsContextError);
+    await expect(loadContextOptions("foo\\bar")).rejects.toBeInstanceOf(NatsContextError);
+  });
 });
