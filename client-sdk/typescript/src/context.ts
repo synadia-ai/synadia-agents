@@ -45,12 +45,7 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
   const baseDir = resolveBaseDir();
   const name = selector === "current" ? await resolveCurrentName(baseDir) : selector;
 
-  if (
-    name.includes("/") ||
-    name.includes("\\") ||
-    name.includes("\0") ||
-    name === ".."
-  ) {
+  if (name.includes("/") || name.includes("\\") || name.includes("\0") || name === "..") {
     throw new NatsContextError(`invalid context name: "${name}"`);
   }
   const path = join(baseDir, "context", `${name}.json`);
