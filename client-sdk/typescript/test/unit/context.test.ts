@@ -122,5 +122,12 @@ describe("loadContextOptions", () => {
     await expect(loadContextOptions("../escape")).rejects.toBeInstanceOf(NatsContextError);
     await expect(loadContextOptions("foo/../etc/passwd")).rejects.toBeInstanceOf(NatsContextError);
     await expect(loadContextOptions("foo\\bar")).rejects.toBeInstanceOf(NatsContextError);
+    await expect(loadContextOptions("..")).rejects.toBeInstanceOf(NatsContextError);
+    await expect(loadContextOptions("foo\0bar")).rejects.toBeInstanceOf(NatsContextError);
+  });
+
+  it("rejects traversal names resolved via $NATS_CONTEXT", async () => {
+    process.env["NATS_CONTEXT"] = "../escape";
+    await expect(loadContextOptions("current")).rejects.toBeInstanceOf(NatsContextError);
   });
 });

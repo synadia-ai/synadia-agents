@@ -48,9 +48,8 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
   if (
     name.includes("/") ||
     name.includes("\\") ||
-    name === ".." ||
-    name.includes("../") ||
-    name.includes("..\\")
+    name.includes("\0") ||
+    name === ".."
   ) {
     throw new NatsContextError(`invalid context name: "${name}"`);
   }
