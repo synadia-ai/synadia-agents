@@ -61,6 +61,7 @@ export {
   ServiceError,
   StreamStalledError,
   ProtocolError,
+  NatsContextError,
   type ServiceErrorBody,
 } from "./errors.js";
 
@@ -68,7 +69,7 @@ export {
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";
 
 // NATS CLI context loader
-export { loadContextOptions, NatsContextError } from "./context.js";
+export { loadContextOptions } from "./context.js";
 
 // Version metadata
 export {
