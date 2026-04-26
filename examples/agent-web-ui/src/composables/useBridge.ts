@@ -6,6 +6,9 @@ import { bridgeState } from "../stores/bridge.ts";
 import { addAgent, removeAgent, setAgents } from "../stores/agents.ts";
 import { recordHeartbeat } from "../stores/heartbeats.ts";
 import type {
+  CcExecSessionSummary,
+  CcExecSpawnDescriptor,
+  CcExecSpawnSpec,
   ClientMessage,
   DiscoveredAgentDTO,
   PiExecSessionSummary,
@@ -157,6 +160,30 @@ function handleServerMessage(msg: ServerMessage): void {
       }
       break;
     }
+    case "ccexec-spawned": {
+      const entry = pendingControl.get(msg.id);
+      if (entry) {
+        pendingControl.delete(msg.id);
+        entry.resolve(msg.descriptor);
+      }
+      break;
+    }
+    case "ccexec-stopped": {
+      const entry = pendingControl.get(msg.id);
+      if (entry) {
+        pendingControl.delete(msg.id);
+        entry.resolve(msg.sessionId);
+      }
+      break;
+    }
+    case "ccexec-listed": {
+      const entry = pendingControl.get(msg.id);
+      if (entry) {
+        pendingControl.delete(msg.id);
+        entry.resolve(msg.sessions);
+      }
+      break;
+    }
     case "error": {
       if (msg.id && streams.has(msg.id)) {
         streams.get(msg.id)!.onError?.(msg.message, msg.code, msg.details);
@@ -219,7 +246,7 @@ function queryReply(id: string, queryId: string, answer: string): void {
   send({ kind: "query-reply", id, queryId, answer });
 }
 
-function piexecRequest<T>(msg: ClientMessage & { id: string }): Promise<T> {
+function controlRequest<T>(msg: ClientMessage & { id: string }): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     pendingControl.set(msg.id, {
       resolve: resolve as (value: unknown) => void,
@@ -237,7 +264,7 @@ function piexecSpawn(
   spec: PiExecSpawnSpec,
 ): Promise<PiExecSpawnDescriptor> {
   const id = crypto.randomUUID();
-  return piexecRequest<PiExecSpawnDescriptor>({
+  return controlRequest<PiExecSpawnDescriptor>({
     kind: "piexec-spawn",
     id,
     controllerInstanceId,
@@ -247,7 +274,7 @@ function piexecSpawn(
 
 function piexecStop(controllerInstanceId: string, sessionId: string): Promise<string> {
   const id = crypto.randomUUID();
-  return piexecRequest<string>({
+  return controlRequest<string>({
     kind: "piexec-stop",
     id,
     controllerInstanceId,
@@ -259,8 +286,42 @@ function piexecList(
   controllerInstanceId: string,
 ): Promise<PiExecSessionSummary[]> {
   const id = crypto.randomUUID();
-  return piexecRequest<PiExecSessionSummary[]>({
+  return controlRequest<PiExecSessionSummary[]>({
     kind: "piexec-list",
+    id,
+    controllerInstanceId,
+  });
+}
+
+function ccexecSpawn(
+  controllerInstanceId: string,
+  spec: CcExecSpawnSpec,
+): Promise<CcExecSpawnDescriptor> {
+  const id = crypto.randomUUID();
+  return controlRequest<CcExecSpawnDescriptor>({
+    kind: "ccexec-spawn",
+    id,
+    controllerInstanceId,
+    spec,
+  });
+}
+
+function ccexecStop(controllerInstanceId: string, sessionId: string): Promise<string> {
+  const id = crypto.randomUUID();
+  return controlRequest<string>({
+    kind: "ccexec-stop",
+    id,
+    controllerInstanceId,
+    sessionId,
+  });
+}
+
+function ccexecList(
+  controllerInstanceId: string,
+): Promise<CcExecSessionSummary[]> {
+  const id = crypto.randomUUID();
+  return controlRequest<CcExecSessionSummary[]>({
+    kind: "ccexec-list",
     id,
     controllerInstanceId,
   });
@@ -277,6 +338,9 @@ export function useBridge() {
     piexecSpawn,
     piexecStop,
     piexecList,
+    ccexecSpawn,
+    ccexecStop,
+    ccexecList,
   };
 }
 

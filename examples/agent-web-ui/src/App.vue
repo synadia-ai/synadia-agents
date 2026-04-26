@@ -5,8 +5,14 @@ import AgentList from "./components/AgentList.vue";
 import MessageList from "./components/MessageList.vue";
 import PromptArea from "./components/PromptArea.vue";
 import PiExecView from "./components/piexec/PiExecView.vue";
+import CcExecView from "./components/ccexec/CcExecView.vue";
 import { bridgeState } from "./stores/bridge.ts";
-import { agentsState, piexecControllers, selectedAgent } from "./stores/agents.ts";
+import {
+  agentsState,
+  ccexecControllers,
+  piexecControllers,
+  selectedAgent,
+} from "./stores/agents.ts";
 import {
   appendMessage,
   findMessage,
@@ -16,17 +22,21 @@ import {
 } from "./stores/chat.ts";
 import { fileToAttachment, useBridge } from "./composables/useBridge.ts";
 
-type ViewMode = "chat" | "piexec";
+type ViewMode = "chat" | "piexec" | "ccexec";
 const STORAGE_KEY = "testui:view-mode";
 const loadedMode =
   typeof localStorage !== "undefined"
     ? (localStorage.getItem(STORAGE_KEY) as ViewMode | null)
     : null;
-const viewMode = ref<ViewMode>(loadedMode === "piexec" ? "piexec" : "chat");
+const viewMode = ref<ViewMode>(
+  loadedMode === "piexec" || loadedMode === "ccexec" ? loadedMode : "chat",
+);
 const piexecAvailable = computed(() => piexecControllers.value.length > 0);
+const ccexecAvailable = computed(() => ccexecControllers.value.length > 0);
 
 function setMode(mode: ViewMode): void {
   if (mode === "piexec" && !piexecAvailable.value) return;
+  if (mode === "ccexec" && !ccexecAvailable.value) return;
   viewMode.value = mode;
   try {
     localStorage.setItem(STORAGE_KEY, mode);
@@ -35,9 +45,12 @@ function setMode(mode: ViewMode): void {
   }
 }
 
-// Fall back to chat when no controllers exist; stay in piexec when they appear.
+// Fall back to chat when the active mode's controllers vanish; stay otherwise.
 watch(piexecAvailable, (available) => {
   if (!available && viewMode.value === "piexec") viewMode.value = "chat";
+});
+watch(ccexecAvailable, (available) => {
+  if (!available && viewMode.value === "ccexec") viewMode.value = "chat";
 });
 
 const bridge = useBridge();
@@ -223,11 +236,20 @@ onMounted(() => {
           :title="piexecAvailable ? 'Spawn &amp; fan-out PI sessions' : 'start pi-headless to enable'"
           @click="setMode('piexec')"
         >PI Exec<span v-if="piexecAvailable" class="count">{{ piexecControllers.length }}</span></button>
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: viewMode === 'ccexec' }"
+          :disabled="!ccexecAvailable"
+          :title="ccexecAvailable ? 'Spawn Claude Code sessions' : 'start claude-code-headless to enable'"
+          @click="setMode('ccexec')"
+        >CC Exec<span v-if="ccexecAvailable" class="count">{{ ccexecControllers.length }}</span></button>
       </nav>
     </template>
   </ConnectionBar>
   <div v-if="error" class="global-error mono">{{ error }}</div>
   <PiExecView v-if="viewMode === 'piexec'" />
+  <CcExecView v-else-if="viewMode === 'ccexec'" />
   <main v-else class="shell">
     <AgentList />
     <section class="chat-pane">

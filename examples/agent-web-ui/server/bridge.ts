@@ -22,6 +22,8 @@ import {
 } from "@synadia-ai/agents";
 import type { Subscription } from "@nats-io/nats-core";
 import type {
+  CcExecSessionSummary,
+  CcExecSpawnDescriptor,
   ClientMessage,
   DiscoveredAgentDTO,
   PiExecSessionSummary,
@@ -89,6 +91,15 @@ export class Bridge {
         break;
       case "piexec-list":
         void this.handlePiExecList(msg.id, msg.controllerInstanceId);
+        break;
+      case "ccexec-spawn":
+        void this.handleCcExecSpawn(msg.id, msg.controllerInstanceId, msg.spec);
+        break;
+      case "ccexec-stop":
+        void this.handleCcExecStop(msg.id, msg.controllerInstanceId, msg.sessionId);
+        break;
+      case "ccexec-list":
+        void this.handleCcExecList(msg.id, msg.controllerInstanceId);
         break;
       default: {
         const anyMsg = msg as { kind?: string };
@@ -360,25 +371,141 @@ export class Bridge {
     id: string,
     controllerInstanceId: string,
     endpoint: "spawn" | "stop" | "list",
+    role: string = "pi-headless-controller",
+    label: string = "pi-headless",
   ): string | null {
     const agent = this.agentsByInstanceId.get(controllerInstanceId);
     if (!agent) {
       this.sendError(
         id,
         "agent_not_found",
-        `no pi-headless controller with instance id ${controllerInstanceId} in last discovery result — click Refresh`,
+        `no ${label} controller with instance id ${controllerInstanceId} in last discovery result — click Refresh`,
       );
       return null;
     }
-    if (agent.metadata["role"] !== "pi-headless-controller") {
+    if (agent.metadata["role"] !== role) {
       this.sendError(
         id,
         "not_a_controller",
-        `instance ${controllerInstanceId} is not a pi-headless controller`,
+        `instance ${controllerInstanceId} is not a ${label} controller`,
       );
       return null;
     }
     return `${agent.promptEndpoint.subject}.${endpoint}`;
+  }
+
+  // ─── claude-code-headless control plane ───────────────────────────────────
+
+  private async handleCcExecSpawn(
+    id: string,
+    controllerInstanceId: string,
+    spec: unknown,
+  ): Promise<void> {
+    const subject = this.resolveControllerSubject(
+      id,
+      controllerInstanceId,
+      "spawn",
+      "claude-code-headless-controller",
+      "claude-code-headless",
+    );
+    if (!subject) return;
+    try {
+      const rep = await this.nc.request(subject, JSON.stringify(spec ?? {}), { timeout: 15_000 });
+      const errHeader = rep.headers?.get("Nats-Service-Error-Code");
+      if (errHeader) {
+        this.sendError(
+          id,
+          errHeader,
+          rep.headers?.get("Nats-Service-Error") ?? "spawn error",
+        );
+        return;
+      }
+      const descriptor = JSON.parse(rep.string()) as CcExecSpawnDescriptor;
+      await this.ensureAgentKnown(descriptor.instance_id);
+      this.send({ kind: "ccexec-spawned", id, descriptor });
+    } catch (err) {
+      this.sendError(id, "ccexec_spawn_failed", (err as Error).message);
+    }
+  }
+
+  private async handleCcExecStop(
+    id: string,
+    controllerInstanceId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const subject = this.resolveControllerSubject(
+      id,
+      controllerInstanceId,
+      "stop",
+      "claude-code-headless-controller",
+      "claude-code-headless",
+    );
+    if (!subject) return;
+    try {
+      const rep = await this.nc.request(
+        subject,
+        JSON.stringify({ session_id: sessionId }),
+        { timeout: 10_000 },
+      );
+      const errHeader = rep.headers?.get("Nats-Service-Error-Code");
+      if (errHeader) {
+        this.sendError(
+          id,
+          errHeader,
+          rep.headers?.get("Nats-Service-Error") ?? "stop error",
+        );
+        return;
+      }
+      // Drop the stopped session from this bridge's agent map + UI eagerly.
+      // The session_id equals the 4th-token `name` of a claude-code-headless session.
+      for (const [instanceId, agent] of this.agentsByInstanceId) {
+        if (
+          agent.metadata["spawner"] === "claude-code-headless" &&
+          agent.name === sessionId
+        ) {
+          this.forgetAgent(instanceId);
+          break;
+        }
+      }
+      this.send({ kind: "ccexec-stopped", id, sessionId });
+    } catch (err) {
+      this.sendError(id, "ccexec_stop_failed", (err as Error).message);
+    }
+  }
+
+  private async handleCcExecList(
+    id: string,
+    controllerInstanceId: string,
+  ): Promise<void> {
+    const subject = this.resolveControllerSubject(
+      id,
+      controllerInstanceId,
+      "list",
+      "claude-code-headless-controller",
+      "claude-code-headless",
+    );
+    if (!subject) return;
+    try {
+      const rep = await this.nc.request(subject, "", { timeout: 10_000 });
+      const errHeader = rep.headers?.get("Nats-Service-Error-Code");
+      if (errHeader) {
+        this.sendError(
+          id,
+          errHeader,
+          rep.headers?.get("Nats-Service-Error") ?? "list error",
+        );
+        return;
+      }
+      const body = JSON.parse(rep.string()) as { sessions: CcExecSessionSummary[] };
+      this.send({
+        kind: "ccexec-listed",
+        id,
+        controllerInstanceId,
+        sessions: body.sessions ?? [],
+      });
+    } catch (err) {
+      this.sendError(id, "ccexec_list_failed", (err as Error).message);
+    }
   }
 
   // ─── Auto-discovery via heartbeat wildcard ────────────────────────────────

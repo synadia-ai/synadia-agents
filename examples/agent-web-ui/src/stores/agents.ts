@@ -71,3 +71,13 @@ export const piexecControllers = computed<DiscoveredAgentDTO[]>(() =>
 export const piexecSessions = computed<DiscoveredAgentDTO[]>(() =>
   agentsState.list.filter((a) => a.metadata?.["spawner"] === "pi-headless"),
 );
+
+/** Discovered claude-code-headless controllers (agents flagged via `metadata.role`). */
+export const ccexecControllers = computed<DiscoveredAgentDTO[]>(() =>
+  agentsState.list.filter((a) => a.metadata?.["role"] === "claude-code-headless-controller"),
+);
+
+/** Discovered claude-code-headless sessions (spawned by a controller; identified via `metadata.spawner`). */
+export const ccexecSessions = computed<DiscoveredAgentDTO[]>(() =>
+  agentsState.list.filter((a) => a.metadata?.["spawner"] === "claude-code-headless"),
+);
