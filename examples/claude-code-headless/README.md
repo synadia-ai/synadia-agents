@@ -58,7 +58,8 @@ Optional defaults live in `~/.claude-code-headless/config.json`:
   "defaultPermissionMode": "dontAsk",
   "defaultAllowedTools": ["Read", "Glob", "Grep"],
   "defaultMaxTurns": 50,
-  "defaultMaxLifetimeS": 1800
+  "defaultMaxLifetimeS": 1800,
+  "claudeCodePath": "/home/you/.local/bin/claude"
 }
 ```
 
@@ -70,6 +71,23 @@ Env overrides:
 - `CLAUDE_CODE_HEADLESS_DEFAULT_ALLOWED_TOOLS` (comma-separated)
 - `CLAUDE_CODE_HEADLESS_DEFAULT_MAX_TURNS`
 - `CLAUDE_CODE_HEADLESS_DEFAULT_MAX_LIFETIME`
+- `CLAUDE_CODE_HEADLESS_CLAUDE_PATH`
+
+CLI flag: `--claude-code-path /abs/path/to/claude` (alias `--claude-path`).
+
+### Claude Code binary
+
+The Claude Agent SDK ships per-platform native binaries via optional npm packages, but auto-detection sometimes picks a variant that isn't installed (e.g. `linux-x64-musl` on glibc machines). When that happens you'll see `Claude Code native binary not found at .../claude-agent-sdk-<platform>/claude` on the first spawn.
+
+This entry point side-steps that by resolving an explicit path on startup, in priority order:
+
+1. `--claude-code-path` CLI flag
+2. `CLAUDE_CODE_HEADLESS_CLAUDE_PATH` env var
+3. `claudeCodePath` field in `~/.claude-code-headless/config.json`
+4. Auto-detected via `which claude` on PATH (typically the binary installed by the official Claude Code installer at `~/.local/bin/claude`)
+5. None of the above → the SDK falls back to its bundled native binary, which is where the failure mode above shows up
+
+The active path is logged at startup. If you need to override it, the CLI flag is the quickest route.
 
 ### Anthropic auth
 

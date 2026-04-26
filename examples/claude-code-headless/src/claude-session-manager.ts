@@ -62,6 +62,8 @@ export interface ClaudeSessionManagerOptions {
   readonly defaultAllowedTools: ReadonlyArray<string>;
   readonly defaultMaxTurns: number;
   readonly defaultMaxLifetimeS: number;
+  /** Absolute path to the `claude` binary; passed to the SDK as `pathToClaudeCodeExecutable`. */
+  readonly claudeCodePath?: string;
   readonly logger?: (line: string) => void;
 }
 
@@ -206,6 +208,7 @@ export class ClaudeSessionManager {
       permissionMode,
       maxTurns,
       maxLifetimeS,
+      ...(this.options.claudeCodePath ? { claudeCodePath: this.options.claudeCodePath } : {}),
     });
 
     try {

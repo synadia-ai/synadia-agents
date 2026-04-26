@@ -32,6 +32,12 @@ export interface ClaudeCodeHeadlessConfig {
   readonly defaultMaxTurns: number;
   /** Default session lifetime in seconds. 0 means unbounded. */
   readonly defaultMaxLifetimeS: number;
+  /**
+   * Absolute path to the `claude` executable to spawn. When unset, the entry
+   * point auto-detects via `which claude`; when that fails, the SDK falls
+   * back to the (possibly missing) bundled native binary.
+   */
+  readonly claudeCodePath?: string;
 }
 
 const CONFIG_FILE = join(homedir(), ".claude-code-headless", "config.json");
@@ -59,6 +65,7 @@ interface RawConfigFile {
   defaultAllowedTools?: ReadonlyArray<string>;
   defaultMaxTurns?: number;
   defaultMaxLifetimeS?: number;
+  claudeCodePath?: string;
 }
 
 function readConfigFile(): RawConfigFile {
@@ -81,6 +88,7 @@ export interface CliOverrides {
   natsUrl?: string;
   owner?: string;
   name?: string;
+  claudeCodePath?: string;
 }
 
 /** Parse simple `--key value` / `--key=value` CLI flags. Unknown flags are ignored. */
@@ -115,6 +123,10 @@ export function parseCliOverrides(argv: ReadonlyArray<string>): CliOverrides {
         break;
       case "name":
         out.name = value;
+        break;
+      case "claude-code-path":
+      case "claude-path":
+        out.claudeCodePath = value;
         break;
     }
   }
@@ -173,6 +185,9 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
     );
   }
 
+  const claudeCodePath =
+    cli.claudeCodePath ?? env["CLAUDE_CODE_HEADLESS_CLAUDE_PATH"] ?? file.claudeCodePath;
+
   return {
     ...(context ? { context } : {}),
     ...(natsUrl ? { natsUrl } : {}),
@@ -183,5 +198,6 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
     defaultAllowedTools,
     defaultMaxTurns,
     defaultMaxLifetimeS,
+    ...(claudeCodePath ? { claudeCodePath } : {}),
   };
 }

@@ -25,6 +25,8 @@ export interface ManagedSessionOptions {
   readonly permissionMode: PermissionMode;
   readonly maxTurns: number;
   readonly maxLifetimeS: number;
+  /** Absolute path to the `claude` binary, forwarded to the SDK. */
+  readonly claudeCodePath?: string;
 }
 
 export interface SessionSummary {
@@ -64,6 +66,7 @@ export class ManagedSession {
   readonly permissionMode: PermissionMode;
   readonly maxTurns: number;
   readonly maxLifetimeS: number;
+  readonly claudeCodePath: string | undefined;
   readonly createdAt: number;
   readonly subject: string;
   readonly heartbeatSubject: string;
@@ -90,6 +93,7 @@ export class ManagedSession {
     this.permissionMode = opts.permissionMode;
     this.maxTurns = opts.maxTurns;
     this.maxLifetimeS = opts.maxLifetimeS;
+    this.claudeCodePath = opts.claudeCodePath;
     this.createdAt = Date.now();
     this.lastActivity = this.createdAt;
     this.subject = sessionPromptSubject(this.owner, this.sessionId);
@@ -254,6 +258,9 @@ export class ManagedSession {
       };
       if (this.sdkSessionId) {
         queryOptions.resume = this.sdkSessionId;
+      }
+      if (this.claudeCodePath) {
+        queryOptions.pathToClaudeCodeExecutable = this.claudeCodePath;
       }
 
       const stream = query({ prompt: pr.body, options: queryOptions });

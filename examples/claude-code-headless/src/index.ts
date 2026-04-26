@@ -4,6 +4,7 @@
 // starts the ClaudeSessionManager and Controller, and wires graceful
 // shutdown on SIGINT/SIGTERM.
 
+import { existsSync } from "node:fs";
 import process from "node:process";
 
 import type { NatsConnection } from "@nats-io/nats-core";
@@ -47,6 +48,19 @@ async function main(): Promise<void> {
     );
   }
 
+  // Resolve the `claude` binary path. Configured > auto-detected (via
+  // `which`-equivalent on PATH) > undefined (let the SDK try its bundled
+  // native binary, which can fail when the installed musl/glibc variant
+  // doesn't match this machine).
+  const claudeCodePath = await resolveClaudeCodePath(config.claudeCodePath);
+  if (claudeCodePath) {
+    log(`claude-code-headless: using claude binary at ${claudeCodePath}`);
+  } else {
+    log(
+      "claude-code-headless: no claude binary found on PATH; SDK will use its bundled native binary (may fail if the installed variant doesn't match this platform — set --claude-code-path to override).",
+    );
+  }
+
   const connOpts = await resolveNatsOptions(config.context, config.natsUrl);
   log(
     `claude-code-headless: connecting (${config.context ? `context=${config.context}` : `url=${config.natsUrl}`})`,
@@ -62,6 +76,7 @@ async function main(): Promise<void> {
     defaultAllowedTools: config.defaultAllowedTools,
     defaultMaxTurns: config.defaultMaxTurns,
     defaultMaxLifetimeS: config.defaultMaxLifetimeS,
+    ...(claudeCodePath ? { claudeCodePath } : {}),
   });
   await manager.start();
 
@@ -127,6 +142,20 @@ async function main(): Promise<void> {
       /* status iterator ended */
     }
   })();
+}
+
+async function resolveClaudeCodePath(configured: string | undefined): Promise<string | undefined> {
+  if (configured) {
+    if (!existsSync(configured)) {
+      throw new Error(
+        `claude-code-headless: configured claudeCodePath does not exist: ${configured}`,
+      );
+    }
+    return configured;
+  }
+  // Bun.which is the cross-platform PATH lookup. Returns null when not found.
+  const found = Bun.which("claude");
+  return found ?? undefined;
 }
 
 main().catch((err) => {
