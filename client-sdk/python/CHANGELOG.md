@@ -8,6 +8,16 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reject NUL bytes in `nats` CLI context names.** `natsagent.connect(context=...)`
+  now raises `ContextInvalidError` when the resolved name contains
+  `\x00`, instead of letting it propagate into `Path` and surface as a
+  confusing `ValueError: embedded null byte`. Brings the validator into
+  full parity with the TS SDK's `loadContextOptions` path-traversal
+  guard (PR #17 on the TS side). Other separators (`/`, `\`), ``..``
+  components, and leading-dot names were already rejected.
+
 ## [0.2.0] - 2026-04-22
 
 Aligns the SDK with **NATS Agent Protocol v0.2** (draft dated

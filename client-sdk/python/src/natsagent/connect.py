@@ -196,10 +196,14 @@ def _assert_valid_context_name(name: str) -> None:
 
     The `nats` CLI only produces names matching ``^[a-zA-Z0-9._-]+$``; we
     tolerate the same plus a little slack for forward compat, but always
-    reject separators, ``..``, and leading ``.``.
+    reject separators, ``..``, leading ``.``, and embedded NUL bytes (which
+    would otherwise crash deep in ``Path``-land with a confusing
+    ``ValueError``).
     """
     if not isinstance(name, str) or not name:
         raise ContextInvalidError(name or "", "context name must be a non-empty string")
+    if "\x00" in name:
+        raise ContextInvalidError(name, f"context name {name!r} contains a NUL byte")
     if "/" in name or "\\" in name or name == ".." or ".." in name.replace("\\", "/").split("/"):
         raise ContextInvalidError(name, f"context name {name!r} contains illegal characters")
     if name.startswith("."):

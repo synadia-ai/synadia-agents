@@ -113,7 +113,17 @@ def test_load_context_malformed_json_raises(
 
 @pytest.mark.parametrize(
     "bad_name",
-    ["", "..", "../escape", "a/b", "a\\b", ".hidden"],
+    [
+        "",
+        "..",
+        "../escape",
+        "a/b",
+        "a\\b",
+        ".hidden",
+        "a\x00b",
+        "\x00",
+        "ok\x00..",
+    ],
 )
 def test_context_name_validation(bad_name: str) -> None:
     with pytest.raises(ContextInvalidError):
