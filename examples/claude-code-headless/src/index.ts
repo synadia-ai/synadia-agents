@@ -38,13 +38,11 @@ async function main(): Promise<void> {
   const cli = parseCliOverrides(process.argv.slice(2));
   const config = loadConfig(cli);
 
-  // Informational only: the SDK accepts either an API key OR the local OAuth
-  // credentials from `claude login`. We can't tell which is in play without
-  // first spawning a session, so just hint at the fallback when the env var
-  // is absent.
+  // Surface a startup hint when ANTHROPIC_API_KEY isn't set so misconfig
+  // shows up at boot rather than as a confusing SDK error on first spawn.
   if (!process.env["ANTHROPIC_API_KEY"]) {
     log(
-      "claude-code-headless: no ANTHROPIC_API_KEY in env — sessions will fall back to local Claude Code OAuth credentials (~/.claude) if you've run `claude login`.",
+      "claude-code-headless: ANTHROPIC_API_KEY is not set in env. See the README for the recommended auth setup.",
     );
   }
 
