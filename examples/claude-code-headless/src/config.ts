@@ -189,13 +189,15 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
 
   // Validate owner / name as NATS-safe subject tokens (§2.2). $USER values
   // like `alice.b` would silently build invalid subjects later (the dot is a
-  // subject separator); fail fast at boot with a readable error instead.
-  if (sanitizeToken(owner) !== owner) {
+  // subject separator); fail fast at boot with a readable error instead. The
+  // explicit length check catches the empty-string case — sanitizeToken("")
+  // returns "" so the equality check alone wouldn't trip on it.
+  if (owner.length === 0 || sanitizeToken(owner) !== owner) {
     throw new Error(
       `claude-code-headless: invalid owner "${owner}" — must match [a-z0-9_-]{1,63}. Override with --owner or CLAUDE_CODE_HEADLESS_OWNER.`,
     );
   }
-  if (sanitizeToken(name) !== name) {
+  if (name.length === 0 || sanitizeToken(name) !== name) {
     throw new Error(
       `claude-code-headless: invalid name "${name}" — must match [a-z0-9_-]{1,63}. Override with --name or CLAUDE_CODE_HEADLESS_NAME.`,
     );

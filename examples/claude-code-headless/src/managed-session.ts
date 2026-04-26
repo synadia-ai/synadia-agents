@@ -528,8 +528,16 @@ export class ManagedSession {
     }
     this.activeAborts.clear();
 
-    // Terminate in-flight replies so callers don't hang.
+    // Terminate in-flight replies so callers don't hang. Mirror the
+    // pruneStale pattern: surface as a 503 error before the terminator so
+    // queued-but-not-active callers see onError("session stopped") rather
+    // than a misleading onDone identical to a clean completion.
     for (const pr of this.pendingRequests.values()) {
+      try {
+        pr.msg.respondError(503, "session stopped");
+      } catch {
+        /* noop */
+      }
       try {
         pr.msg.respond("");
       } catch {
