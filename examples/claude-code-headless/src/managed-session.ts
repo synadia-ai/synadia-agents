@@ -461,7 +461,7 @@ export class ManagedSession {
       try {
         for await (const m of sub) {
           const reply = m.string().trim();
-          return interpretPermissionReply(reply);
+          return interpretPermissionReply(reply, input);
         }
         // Subscription ended without a message — timeout, abort, or stream end.
         return { behavior: "deny", message: "permission request timed out" };
@@ -612,9 +612,16 @@ function previewInput(input: Record<string, unknown>): string {
 const ALLOW_TOKENS = new Set(["yes", "y", "allow", "approve", "ok", "true"]);
 const DENY_TOKENS = new Set(["no", "n", "deny", "reject", "cancel", "false"]);
 
-function interpretPermissionReply(reply: string): PermissionResult {
+function interpretPermissionReply(
+  reply: string,
+  input: Record<string, unknown>,
+): PermissionResult {
   const norm = reply.toLowerCase().trim();
-  if (ALLOW_TOKENS.has(norm)) return { behavior: "allow" };
+  // The SDK's runtime Zod validator requires `updatedInput` on allow even
+  // though the TS type marks it optional — echo the original input back as
+  // the no-op "use as-is" case. (canUseTool can also rewrite tool inputs
+  // before they execute; we don't, but the field still has to be set.)
+  if (ALLOW_TOKENS.has(norm)) return { behavior: "allow", updatedInput: input };
   if (DENY_TOKENS.has(norm)) return { behavior: "deny", message: "user denied" };
   // Treat any other text as a denial reason — preserves operator intent
   // ("not in this directory") rather than silently allowing.
