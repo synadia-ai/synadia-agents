@@ -190,9 +190,7 @@ class Agent:
         if heartbeat_interval_s <= 0:
             raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.2)")
         if keepalive_interval_s is not None and keepalive_interval_s <= 0:
-            raise ValueError(
-                "keepalive_interval_s must be > 0 or None (None disables keep-alive)"
-            )
+            raise ValueError("keepalive_interval_s must be > 0 or None (None disables keep-alive)")
         # Validate max_payload eagerly so misconfiguration fails at construction
         # rather than surfacing later via caller-side validation (§5.4).
         parse_human_bytes(max_payload)

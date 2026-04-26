@@ -120,9 +120,7 @@ async def test_keepalive_emits_ack_during_slow_handler(
 
 
 @pytest.mark.asyncio
-async def test_keepalive_disabled_emits_no_ack(
-    nc: NATSClient, evidence: EvidenceRecorder
-) -> None:
+async def test_keepalive_disabled_emits_no_ack(nc: NATSClient, evidence: EvidenceRecorder) -> None:
     """`keepalive_interval_s=None` suppresses keep-alive even on slow handlers."""
     handler_duration = 0.3
 
