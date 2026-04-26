@@ -228,6 +228,16 @@ NATS server authentication and authorization handle access control. If a
 user can connect and publish to `agents.cc.<user>.<name>`, they can
 interact with Claude. No additional pairing or allowlist is needed.
 
+## Anthropic auth
+
+Set `ANTHROPIC_API_KEY` in your environment before launching `claude`.
+Claude Code uses the env var in preference to any `~/.claude/`
+credentials, so logging out is unnecessary.
+
+Bedrock / Vertex / Azure deployments work too — set the standard
+provider env vars before launching `claude` and Claude Code will use
+those instead.
+
 ## Configuration
 
 State lives in `~/.claude/channels/nats/`:
