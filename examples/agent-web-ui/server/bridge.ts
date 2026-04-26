@@ -209,9 +209,20 @@ export class Bridge {
               })),
             });
             break;
-          case "status":
-            this.send({ kind: "status", id: msg.id, status: ev.status });
+          case "status": {
+            // Inspect for our prefixed observability tokens before falling
+            // through to the generic status path. The agent encodes tool
+            // calls / results / cost as `<kind>:<json>` status strings so the
+            // wire stays §6.4-compliant; here we translate them into typed
+            // server messages the UI can render richly.
+            const structured = parseStructuredStatus(msg.id, ev.status);
+            if (structured) {
+              this.send(structured);
+            } else {
+              this.send({ kind: "status", id: msg.id, status: ev.status });
+            }
             break;
+          }
           case "query": {
             const key = queryKey(msg.id, ev.id);
             this.activeQueries.set(key, ev);
@@ -675,6 +686,64 @@ export class Bridge {
 
 function queryKey(promptId: string, queryId: string): string {
   return `${promptId}:${queryId}`;
+}
+
+/**
+ * Translate a `<prefix>:<json>` status payload into a typed server message.
+ * Returns null if the status doesn't match a known observability prefix —
+ * caller falls back to the generic `status` send.
+ */
+function parseStructuredStatus(promptId: string, status: string): ServerMessage | null {
+  const colonAt = status.indexOf(":");
+  if (colonAt < 0) return null;
+  const prefix = status.slice(0, colonAt);
+  const rest = status.slice(colonAt + 1);
+  switch (prefix) {
+    case "tool_use": {
+      const parsed = safeParse<{ id?: string; name?: string; input?: Record<string, unknown> }>(rest);
+      if (!parsed || typeof parsed.id !== "string" || typeof parsed.name !== "string") return null;
+      return {
+        kind: "tool-use",
+        id: promptId,
+        toolUseId: parsed.id,
+        toolName: parsed.name,
+        input: parsed.input ?? {},
+      };
+    }
+    case "tool_result": {
+      const parsed = safeParse<{ tool_use_id?: string; output?: string; is_error?: boolean }>(rest);
+      if (!parsed || typeof parsed.tool_use_id !== "string") return null;
+      return {
+        kind: "tool-result",
+        id: promptId,
+        toolUseId: parsed.tool_use_id,
+        output: typeof parsed.output === "string" ? parsed.output : "",
+        isError: parsed.is_error === true,
+      };
+    }
+    case "cost": {
+      const parsed = safeParse<{ turn_cost_usd?: number; total_cost_usd?: number }>(rest);
+      if (!parsed) return null;
+      return {
+        kind: "cost",
+        id: promptId,
+        turnCostUsd: typeof parsed.turn_cost_usd === "number" ? parsed.turn_cost_usd : 0,
+        totalCostUsd: typeof parsed.total_cost_usd === "number" ? parsed.total_cost_usd : 0,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+function safeParse<T>(text: string): T | null {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === "object") return parsed as T;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function toDTO(a: Agent): DiscoveredAgentDTO {

@@ -23,6 +23,12 @@ export type StreamHandlers = {
   onResponse?: (text: string, attachments?: WireAttachment[]) => void;
   onStatus?: (status: string) => void;
   onQuery?: (queryId: string, prompt: string, attachments?: WireAttachment[]) => void;
+  /** Claude Code surfaces tool calls (Bash, Read, Edit, etc.) — agent emitted a tool_use. */
+  onToolUse?: (toolUseId: string, toolName: string, input: Record<string, unknown>) => void;
+  /** Result of a previously-emitted tool_use, paired by toolUseId. */
+  onToolResult?: (toolUseId: string, output: string, isError: boolean) => void;
+  /** Per-turn cost notification, fires when each turn completes. */
+  onCost?: (turnCostUsd: number, totalCostUsd: number) => void;
   onDone?: () => void;
   onError?: (message: string, code?: string | number, details?: Record<string, unknown>) => void;
 };
@@ -123,6 +129,15 @@ function handleServerMessage(msg: ServerMessage): void {
       break;
     case "query":
       streams.get(msg.id)?.onQuery?.(msg.queryId, msg.prompt, msg.attachments);
+      break;
+    case "tool-use":
+      streams.get(msg.id)?.onToolUse?.(msg.toolUseId, msg.toolName, msg.input);
+      break;
+    case "tool-result":
+      streams.get(msg.id)?.onToolResult?.(msg.toolUseId, msg.output, msg.isError);
+      break;
+    case "cost":
+      streams.get(msg.id)?.onCost?.(msg.turnCostUsd, msg.totalCostUsd);
       break;
     case "done":
       streams.get(msg.id)?.onDone?.();

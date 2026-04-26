@@ -85,6 +85,12 @@ function fmtTools(summary: CcExecSessionSummary | undefined, agent: DiscoveredAg
   if (tools.length <= 3) return tools.join(",");
   return `${tools.slice(0, 3).join(",")}+${tools.length - 3}`;
 }
+
+function fmtCost(summary: CcExecSessionSummary | undefined): string {
+  if (!summary || summary.total_cost_usd <= 0) return "-";
+  if (summary.total_cost_usd < 0.0001) return "<$0.0001";
+  return `$${summary.total_cost_usd.toFixed(4)}`;
+}
 </script>
 
 <template>
@@ -127,6 +133,10 @@ function fmtTools(summary: CcExecSessionSummary | undefined, agent: DiscoveredAg
             <span class="meta-val mono">{{ fmtTools(summary, agent) }}</span>
             <span class="meta-key mono">ttl</span>
             <span class="meta-val mono">{{ fmtRemaining(summary) }}</span>
+            <span class="meta-key mono">cost</span>
+            <span class="meta-val mono">{{ fmtCost(summary) }}</span>
+            <span v-if="summary && summary.turn_count > 0" class="meta-key mono">turns</span>
+            <span v-if="summary && summary.turn_count > 0" class="meta-val mono">{{ summary.turn_count }}</span>
             <span v-if="summary && summary.queued_requests > 0" class="meta-key mono">queue</span>
             <span v-if="summary && summary.queued_requests > 0" class="meta-val mono">{{ summary.queued_requests }}</span>
           </div>

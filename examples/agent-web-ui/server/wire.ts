@@ -88,6 +88,10 @@ export type CcExecSessionSummary = {
   last_activity: string;
   /** SDK session id, populated after the first turn finishes (used for resume). */
   sdk_session_id?: string;
+  /** Cumulative USD cost across all completed turns. */
+  total_cost_usd: number;
+  /** Number of completed turns. */
+  turn_count: number;
 };
 
 /** Spec for spawning a claude-code-headless session; mirrors the `spawn` wire. */
@@ -114,6 +118,8 @@ export type CcExecSpawnDescriptor = {
   max_lifetime_s: number;
   created_at: string;
   instance_id: string;
+  total_cost_usd: number;
+  turn_count: number;
 };
 
 // ─── Client → Server ─────────────────────────────────────────────────────────
@@ -186,6 +192,29 @@ export type ServerMessage =
       queryId: string;
       prompt: string;
       attachments?: WireAttachment[];
+    }
+  | {
+      /** A tool call started (Claude Code etc.). The same toolUseId will appear in a later tool-result. */
+      kind: "tool-use";
+      id: string;
+      toolUseId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      /** A previously-emitted tool call's result. */
+      kind: "tool-result";
+      id: string;
+      toolUseId: string;
+      output: string;
+      isError: boolean;
+    }
+  | {
+      /** Per-turn + cumulative cost, emitted when a turn completes. */
+      kind: "cost";
+      id: string;
+      turnCostUsd: number;
+      totalCostUsd: number;
     }
   | { kind: "done"; id: string }
   | {

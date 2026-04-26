@@ -16,6 +16,7 @@ import {
 import {
   appendMessage,
   findMessage,
+  findMessageByToolId,
   getSession,
   messagesFor,
   type Message,
@@ -179,6 +180,32 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
         attachments: queryAttachments,
       });
       newAgentBubble();
+    },
+    onToolUse(toolUseId, toolName, input) {
+      // Close current agent bubble, drop a tool card in chronological order,
+      // open a fresh agent bubble for whatever Claude says next.
+      const prev = findMessage(agent.instanceId, currentAgentMsgId);
+      if (prev) prev.streaming = false;
+      appendMessage(agent.instanceId, {
+        id: randomUUID(),
+        role: "tool",
+        content: "",
+        streaming: false,
+        timestamp: Date.now(),
+        tool: { id: toolUseId, name: toolName, input },
+      });
+      newAgentBubble();
+    },
+    onToolResult(toolUseId, output, isError) {
+      const m = findMessageByToolId(agent.instanceId, toolUseId);
+      if (m && m.tool) {
+        m.tool.result = output;
+        m.tool.isError = isError;
+      }
+    },
+    onCost(turnCostUsd) {
+      const m = findMessage(agent.instanceId, currentAgentMsgId);
+      if (m) m.costUsd = turnCostUsd;
     },
     onDone() {
       const m = findMessage(agent.instanceId, currentAgentMsgId);

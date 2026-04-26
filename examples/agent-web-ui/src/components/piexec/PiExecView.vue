@@ -10,6 +10,7 @@ import {
 import {
   appendMessage,
   findMessage,
+  findMessageByToolId,
   getSession,
   messagesFor,
   type Message,
@@ -91,31 +92,83 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
       : {}),
   });
 
-  const agentMsgId = randomUUID();
+  let currentAgentMsgId = randomUUID();
   appendMessage(agent.instanceId, {
-    id: agentMsgId,
+    id: currentAgentMsgId,
     role: "agent",
     content: "",
     streaming: true,
     timestamp: Date.now(),
   });
 
-  const promptId = bridge.prompt(agent.instanceId, text, attachments, {
+  function newAgentBubble(): void {
+    currentAgentMsgId = randomUUID();
+    appendMessage(agent.instanceId, {
+      id: currentAgentMsgId,
+      role: "agent",
+      content: "",
+      streaming: true,
+      timestamp: Date.now(),
+    });
+  }
+
+  let promptId = "";
+  promptId = bridge.prompt(agent.instanceId, text, attachments, {
     onResponse(chunk) {
-      const m = findMessage(agent.instanceId, agentMsgId);
+      const m = findMessage(agent.instanceId, currentAgentMsgId);
       if (m) m.content += chunk;
     },
     onStatus(status) {
-      const m = findMessage(agent.instanceId, agentMsgId);
+      const m = findMessage(agent.instanceId, currentAgentMsgId);
       if (m && status === "stopped") m.statusNote = "(stopped)";
     },
+    onQuery(queryId, queryPrompt, queryAttachments) {
+      const prev = findMessage(agent.instanceId, currentAgentMsgId);
+      if (prev) prev.streaming = false;
+      appendMessage(agent.instanceId, {
+        id: randomUUID(),
+        role: "query",
+        content: queryPrompt,
+        streaming: false,
+        timestamp: Date.now(),
+        queryId,
+        promptId,
+        replied: false,
+        attachments: queryAttachments,
+      });
+      newAgentBubble();
+    },
+    onToolUse(toolUseId, toolName, input) {
+      const prev = findMessage(agent.instanceId, currentAgentMsgId);
+      if (prev) prev.streaming = false;
+      appendMessage(agent.instanceId, {
+        id: randomUUID(),
+        role: "tool",
+        content: "",
+        streaming: false,
+        timestamp: Date.now(),
+        tool: { id: toolUseId, name: toolName, input },
+      });
+      newAgentBubble();
+    },
+    onToolResult(toolUseId, output, isError) {
+      const m = findMessageByToolId(agent.instanceId, toolUseId);
+      if (m && m.tool) {
+        m.tool.result = output;
+        m.tool.isError = isError;
+      }
+    },
+    onCost(turnCostUsd) {
+      const m = findMessage(agent.instanceId, currentAgentMsgId);
+      if (m) m.costUsd = turnCostUsd;
+    },
     onDone() {
-      const m = findMessage(agent.instanceId, agentMsgId);
+      const m = findMessage(agent.instanceId, currentAgentMsgId);
       if (m) m.streaming = false;
       session.activePromptId = null;
     },
     onError(message, code) {
-      const m = findMessage(agent.instanceId, agentMsgId);
+      const m = findMessage(agent.instanceId, currentAgentMsgId);
       if (m) {
         const detail = code ? ` [${code}]` : "";
         m.error = `${message}${detail}`;
@@ -134,9 +187,7 @@ function onStop(): void {
   if (s.activePromptId) bridge.cancel(s.activePromptId);
 }
 
-function _onQueryReply(message: Message, answer: string): void {
-  // Sessions may emit queries via pi tooling permission prompts; reuse chat
-  // flow's reply primitive. No-op when message isn't a query.
+function onQueryReply(message: Message, answer: string): void {
   if (message.replied) return;
   if (!message.promptId || !message.queryId) return;
   bridge.queryReply(message.promptId, message.queryId, answer);
@@ -172,7 +223,7 @@ function _onQueryReply(message: Message, answer: string): void {
           </div>
           <div class="sub mono">{{ selected.promptEndpoint.subject }}</div>
         </header>
-        <MessageList :messages="currentMessages" @reply="_onQueryReply" />
+        <MessageList :messages="currentMessages" @reply="onQueryReply" />
         <PromptArea
           :busy="busy"
           :disabled="false"

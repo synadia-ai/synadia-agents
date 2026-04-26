@@ -76,7 +76,16 @@ export function onCcSpawned(descriptor: CcExecSpawnDescriptor): void {
     queued_requests: 0,
     created_at: descriptor.created_at,
     last_activity: descriptor.created_at,
+    total_cost_usd: descriptor.total_cost_usd,
+    turn_count: descriptor.turn_count,
   });
+}
+
+/** Update the summary's running cost as `cost` events stream in for a session. */
+export function bumpCcSessionCost(sessionId: string, totalCostUsd: number): void {
+  const s = ccexecState.summaries.get(sessionId);
+  if (!s) return;
+  s.total_cost_usd = totalCostUsd;
 }
 
 export function onCcStopped(sessionId: string): void {
