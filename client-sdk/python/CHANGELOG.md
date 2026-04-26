@@ -8,6 +8,20 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Added
+
+- **`Agent(keepalive_interval_s=...)` — automatic per-request keep-alive
+  ack.** While a prompt handler is running, the agent now emits
+  `{"type":"status","data":"ack"}` (§6.4) every `keepalive_interval_s`
+  seconds, matching the behaviour every TS reference harness
+  (`agents/pi/`, `agents/claude-code/`, `agents/openclaw/`) implements
+  inline. This prevents callers using a stream inactivity timeout (the
+  TS SDK default is 60 s) from giving up on Python agents whose
+  handlers do real work between response chunks. Defaults to **30 s**;
+  pass `keepalive_interval_s=None` to disable (e.g. when the handler
+  emits its own status chunks at a finer cadence). Constructor
+  validates `> 0` or `None`. Covered by `tests/test_keepalive_e2e.py`.
+
 ### Fixed
 
 - **Reject NUL bytes in `nats` CLI context names.** `natsagent.connect(context=...)`

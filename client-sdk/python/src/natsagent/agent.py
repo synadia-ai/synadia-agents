@@ -56,6 +56,15 @@ _SDK_VERSION = "0.2.0"
 DEFAULT_MAX_PAYLOAD = "1MB"
 DEFAULT_ATTACHMENTS_OK = True
 
+# §6.4: callers may wire a stream-inactivity timeout — the TS SDK defaults to
+# 60 s — so an agent that goes quiet for too long looks dead even if its
+# handler is still working. To avoid that, every TS reference harness
+# (`agents/pi/`, `agents/claude-code/`, `agents/openclaw/`) emits
+# `{type:"status",data:"ack"}` periodically while a request is in flight. We
+# match that behaviour by default; agent authors who don't want it pass
+# `keepalive_interval_s=None`.
+DEFAULT_KEEPALIVE_INTERVAL_S: float = 30.0
+
 
 class PromptStream:
     """Handle given to a prompt handler for emitting response chunks.
@@ -154,6 +163,14 @@ class Agent:
     carried in both service metadata (§3.2) and the heartbeat payload
     (§8.3) when set; session-aware harnesses (``claude-code``, ``pi``,
     ``hermes``) MUST supply it.
+
+    ``keepalive_interval_s`` controls per-request keep-alive: while a
+    handler is running, the agent emits ``{"type":"status","data":"ack"}``
+    every ``keepalive_interval_s`` seconds so callers using a stream
+    inactivity timeout (the TS SDK default is 60 s) don't fire on slow
+    handlers. Defaults to 30 s, matching the TS reference harnesses.
+    Pass ``None`` to disable — for example when the handler emits its
+    own status chunks at a finer cadence.
     """
 
     def __init__(
@@ -168,9 +185,14 @@ class Agent:
         max_payload: str = DEFAULT_MAX_PAYLOAD,
         attachments_ok: bool = DEFAULT_ATTACHMENTS_OK,
         session: str | None = None,
+        keepalive_interval_s: float | None = DEFAULT_KEEPALIVE_INTERVAL_S,
     ) -> None:
         if heartbeat_interval_s <= 0:
             raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.2)")
+        if keepalive_interval_s is not None and keepalive_interval_s <= 0:
+            raise ValueError(
+                "keepalive_interval_s must be > 0 or None (None disables keep-alive)"
+            )
         # Validate max_payload eagerly so misconfiguration fails at construction
         # rather than surfacing later via caller-side validation (§5.4).
         parse_human_bytes(max_payload)
@@ -181,6 +203,7 @@ class Agent:
         self._heartbeat_interval_s = heartbeat_interval_s
         self._max_payload = max_payload
         self._attachments_ok = attachments_ok
+        self._keepalive_interval_s = keepalive_interval_s
         self._prompt_handler: PromptHandler | None = None
         self._service: Service | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -257,6 +280,7 @@ class Agent:
         log.info("agent stopped on %s", self.subject.inbox)
 
     async def _on_prompt_request(self, request: Request) -> None:
+        keepalive_task: asyncio.Task[None] | None = None
         try:
             try:
                 envelope = decode(request.data)
@@ -269,12 +293,25 @@ class Agent:
             handler = self._prompt_handler
             assert handler is not None  # enforced in start()
 
+            if self._keepalive_interval_s is not None:
+                keepalive_task = asyncio.create_task(
+                    _keepalive_loop(request, self._keepalive_interval_s),
+                    name=f"keepalive-{request.subject}",
+                )
+
             try:
                 await handler(envelope, stream)
             except Exception as exc:
                 log.exception("prompt handler raised on %s", request.subject)
                 await request.respond_error("500", _sanitize_error_desc(f"handler error: {exc}"))
         finally:
+            # Stop the keep-alive *before* the terminator so we don't race an
+            # ack chunk in after the empty-body terminator the caller is
+            # already treating as end-of-stream.
+            if keepalive_task is not None:
+                keepalive_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await keepalive_task
             # §6.5 + §9.3: every stream — successful or errored — ends with a
             # zero-byte body message that carries NO NATS headers. The error
             # frame emitted by `respond_error` above is NOT the terminator;
@@ -283,6 +320,26 @@ class Agent:
                 await request.respond(b"")
             except Exception:
                 log.exception("failed to emit stream terminator on %s", request.subject)
+
+
+async def _keepalive_loop(request: Request, interval_s: float) -> None:
+    """Emit a `status="ack"` chunk every `interval_s` seconds until cancelled.
+
+    Runs as a sibling task to the user's prompt handler; cancelled by
+    :meth:`Agent._on_prompt_request` once the handler returns or raises, so
+    the ack stream never extends past the §6.5 terminator.
+    """
+    payload = encode_chunk(StatusChunk(status="ack"))
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await request.respond(payload)
+        except Exception:
+            # An emit failure (broker dropped, request reply already torn down,
+            # etc.) is best-effort — log and stop. The terminator path will
+            # fail loudly enough on its own if the request is truly dead.
+            log.exception("keepalive emit failed on %s", request.subject)
+            return
 
 
 # NATS message headers are single-line (CR/LF delimited in the wire format),
