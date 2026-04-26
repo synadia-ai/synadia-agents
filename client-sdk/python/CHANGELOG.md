@@ -178,10 +178,12 @@ caller as a pair.
 
 ### Interop
 
-- The TypeScript SDK (`../typescript/`) is still on v0.1 at the time
-  of this release. `tests/test_interop_e2e.py` is marked `xfail` until
-  the TS SDK bumps to v0.2; a future TS v0.2 release will flip this
-  back to green (`XPASS` surfaces as a test-suite signal).
+- The TypeScript SDK (`../typescript/`) was still on v0.1 at the time
+  of this release. The test `tests/test_interop_e2e.py` `pytest.skip`s
+  cleanly when its prereqs (`bun` on PATH, sibling `../typescript/`
+  with `node_modules/`) are missing. The TS SDK has since caught up to
+  protocol `0.2`; running the suite with the prereqs in place
+  rounds-trips a prompt through the TS reference agent.
 
 ## [0.1.0] - 2026-04-21
 
