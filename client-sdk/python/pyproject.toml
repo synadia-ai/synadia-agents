@@ -43,6 +43,12 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
+    # `rich` is an examples-extra runtime dep, but `tests/test_chat_commands.py`
+    # imports the chat parser out of `examples/06-chat.py`, which top-level
+    # imports rich and `sys.exit(3)`s on ImportError. Including rich in the
+    # default dev set means `uv sync` (no extras) gets a clean `pytest` run
+    # instead of 16 ERROR rows.
+    "rich>=13",
 ]
 
 [build-system]

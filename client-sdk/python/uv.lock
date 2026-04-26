@@ -210,6 +210,7 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "rich" },
     { name = "ruff" },
 ]
 
@@ -226,6 +227,7 @@ dev = [
     { name = "mypy", specifier = ">=1.10" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "rich", specifier = ">=13" },
     { name = "ruff", specifier = ">=0.5" },
 ]
 
