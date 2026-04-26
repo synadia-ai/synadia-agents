@@ -8,6 +8,17 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Deferred for follow-up
+
+- The 2026-04-26 TS-parity sweep deliberately deferred a handful of
+  convenience features (session-name auto-resolution, attachment
+  filesystem-staging helper) and surfaced two behavioural divergences
+  (bare-string vs JSON-wrapped response chunks, no global TTL on
+  mid-stream `ask()` queries). All catalogued in
+  [`docs/protocol-mapping.md` › Deferred TS-parity work](docs/protocol-mapping.md#deferred-ts-parity-work)
+  with rationale + a suggested next step for each, so the team can
+  pick them up in a follow-up PR.
+
 ### Added
 
 - **`Agent(keepalive_interval_s=...)` — automatic per-request keep-alive
