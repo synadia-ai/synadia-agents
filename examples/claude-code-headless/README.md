@@ -21,7 +21,9 @@ bun run build
 # 2. Install + run claude-code-headless.
 cd ../../examples/claude-code-headless
 bun install
-export ANTHROPIC_API_KEY=sk-...                  # required
+# Anthropic auth: either of these works (see "Anthropic auth" below).
+#   export ANTHROPIC_API_KEY=sk-...
+#   ...OR you've already run `claude login` on this machine.
 bun run start                                    # connects via $NATS_CONTEXT or NATS_URL
 # claude-code-headless: controller listening on agents.cc.<you>.exec
 # claude-code-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
@@ -69,7 +71,14 @@ Env overrides:
 - `CLAUDE_CODE_HEADLESS_DEFAULT_MAX_TURNS`
 - `CLAUDE_CODE_HEADLESS_DEFAULT_MAX_LIFETIME`
 
-Anthropic auth comes from `ANTHROPIC_API_KEY` (the standard SDK env var). Bedrock / Vertex deployments work too — set the SDK's standard provider env vars before launch.
+### Anthropic auth
+
+Two paths work — pick whichever fits the deployment:
+
+- **Local OAuth (subscription).** If you've already run `claude login` on this machine, the Claude Agent SDK picks up your subscription credentials from `~/.claude` automatically — no env var needed. Best for laptop / single-user dev. Sessions are billed against your subscription and rate-limited by your subscription tier.
+- **`ANTHROPIC_API_KEY` (API account).** Required for unattended / server deployments where there's no `claude login` flow. Set it in env before launch. Takes precedence over OAuth when both are configured. Sessions are billed against the API account.
+
+Bedrock / Vertex deployments work too — set the SDK's standard provider env vars before launch (`CLAUDE_CODE_USE_BEDROCK=1` etc).
 
 ### Defaults rationale
 
