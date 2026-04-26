@@ -13,6 +13,7 @@ import {
   type FanoutRun,
 } from "../../stores/piexec.ts";
 import FanoutRunCard from "./FanoutRunCard.vue";
+import { randomUUID } from "../../uuid.ts";
 
 const bridge = useBridge();
 
@@ -126,7 +127,7 @@ async function onSubmit(e: Event): Promise<void> {
 
   try {
     const runs: FanoutRun[] = targets.map((cwd) => ({
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       cwd,
       status: "pending",
       content: "",

@@ -21,6 +21,7 @@ import {
   type Message,
 } from "./stores/chat.ts";
 import { fileToAttachment, useBridge } from "./composables/useBridge.ts";
+import { randomUUID } from "./uuid.ts";
 
 type ViewMode = "chat" | "piexec" | "ccexec";
 const STORAGE_KEY = "testui:view-mode";
@@ -112,7 +113,7 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
   }
 
   const userMsg = appendMessage(agent.instanceId, {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     role: "user",
     content: text,
     streaming: false,
@@ -122,7 +123,7 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
     userMsg.attachments = attachments.map((a) => ({ filename: a.filename, base64: a.base64 }));
   }
 
-  let currentAgentMsgId = crypto.randomUUID();
+  let currentAgentMsgId = randomUUID();
   appendMessage(agent.instanceId, {
     id: currentAgentMsgId,
     role: "agent",
@@ -134,7 +135,7 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
   let promptId = "";
 
   function newAgentBubble(): void {
-    currentAgentMsgId = crypto.randomUUID();
+    currentAgentMsgId = randomUUID();
     appendMessage(agent.instanceId, {
       id: currentAgentMsgId,
       role: "agent",
@@ -167,7 +168,7 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
       const prev = findMessage(agent.instanceId, currentAgentMsgId);
       if (prev) prev.streaming = false;
       appendMessage(agent.instanceId, {
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         role: "query",
         content: queryPrompt,
         streaming: false,

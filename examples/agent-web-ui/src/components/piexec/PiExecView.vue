@@ -21,6 +21,7 @@ import SessionList from "./SessionList.vue";
 import FanoutPanel from "./FanoutPanel.vue";
 import MessageList from "../MessageList.vue";
 import PromptArea from "../PromptArea.vue";
+import { randomUUID } from "../../uuid.ts";
 
 const bridge = useBridge();
 
@@ -78,7 +79,7 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
   }
 
   appendMessage(agent.instanceId, {
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     role: "user",
     content: text,
     streaming: false,
@@ -90,7 +91,7 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
       : {}),
   });
 
-  const agentMsgId = crypto.randomUUID();
+  const agentMsgId = randomUUID();
   appendMessage(agent.instanceId, {
     id: agentMsgId,
     role: "agent",

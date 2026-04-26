@@ -5,6 +5,7 @@
 import { bridgeState } from "../stores/bridge.ts";
 import { addAgent, removeAgent, setAgents } from "../stores/agents.ts";
 import { recordHeartbeat } from "../stores/heartbeats.ts";
+import { randomUUID } from "../uuid.ts";
 import type {
   CcExecSessionSummary,
   CcExecSpawnDescriptor,
@@ -227,7 +228,7 @@ function prompt(
   attachments: WireAttachment[] | undefined,
   handlers: StreamHandlers,
 ): string {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   streams.set(id, handlers);
   const payload: ClientMessage = { kind: "prompt", id, instanceId, text };
   if (attachments && attachments.length > 0) payload.attachments = attachments;
@@ -263,7 +264,7 @@ function piexecSpawn(
   controllerInstanceId: string,
   spec: PiExecSpawnSpec,
 ): Promise<PiExecSpawnDescriptor> {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   return controlRequest<PiExecSpawnDescriptor>({
     kind: "piexec-spawn",
     id,
@@ -273,7 +274,7 @@ function piexecSpawn(
 }
 
 function piexecStop(controllerInstanceId: string, sessionId: string): Promise<string> {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   return controlRequest<string>({
     kind: "piexec-stop",
     id,
@@ -285,7 +286,7 @@ function piexecStop(controllerInstanceId: string, sessionId: string): Promise<st
 function piexecList(
   controllerInstanceId: string,
 ): Promise<PiExecSessionSummary[]> {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   return controlRequest<PiExecSessionSummary[]>({
     kind: "piexec-list",
     id,
@@ -297,7 +298,7 @@ function ccexecSpawn(
   controllerInstanceId: string,
   spec: CcExecSpawnSpec,
 ): Promise<CcExecSpawnDescriptor> {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   return controlRequest<CcExecSpawnDescriptor>({
     kind: "ccexec-spawn",
     id,
@@ -307,7 +308,7 @@ function ccexecSpawn(
 }
 
 function ccexecStop(controllerInstanceId: string, sessionId: string): Promise<string> {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   return controlRequest<string>({
     kind: "ccexec-stop",
     id,
@@ -319,7 +320,7 @@ function ccexecStop(controllerInstanceId: string, sessionId: string): Promise<st
 function ccexecList(
   controllerInstanceId: string,
 ): Promise<CcExecSessionSummary[]> {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   return controlRequest<CcExecSessionSummary[]>({
     kind: "ccexec-list",
     id,
