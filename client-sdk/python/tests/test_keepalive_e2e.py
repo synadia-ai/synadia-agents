@@ -30,6 +30,7 @@ from natsagent import (
     Agent,
     Client,
     Envelope,
+    PromptHandler,
     PromptStream,
     ResponseChunk,
     StatusChunk,
@@ -45,7 +46,7 @@ AGENT = "test"
 OWNER = "pytest"
 
 
-def _make_slow_handler(duration_s: float) -> object:
+def _make_slow_handler(duration_s: float) -> PromptHandler:
     async def handler(envelope: Envelope, stream: PromptStream) -> None:
         del envelope
         await asyncio.sleep(duration_s)
@@ -84,7 +85,7 @@ async def test_keepalive_emits_ack_during_slow_handler(
         nc=nc,
         keepalive_interval_s=interval,
     )
-    agent.on_prompt(_make_slow_handler(handler_duration))  # type: ignore[arg-type]
+    agent.on_prompt(_make_slow_handler(handler_duration))
     await agent.start()
 
     try:
@@ -131,7 +132,7 @@ async def test_keepalive_disabled_emits_no_ack(nc: NATSClient, evidence: Evidenc
         nc=nc,
         keepalive_interval_s=None,
     )
-    agent.on_prompt(_make_slow_handler(handler_duration))  # type: ignore[arg-type]
+    agent.on_prompt(_make_slow_handler(handler_duration))
     await agent.start()
 
     try:
@@ -159,6 +160,92 @@ async def test_keepalive_disabled_emits_no_ack(nc: NATSClient, evidence: Evidenc
         assert acks == [], f"expected no keep-alive acks when disabled, got: {acks!r}"
     finally:
         await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_keepalive_no_ack_between_error_frame_and_terminator(
+    nc: NATSClient, evidence: EvidenceRecorder
+) -> None:
+    """Regression-guard: ack chunks MUST NOT slip between error(500) and the §6.5 terminator.
+
+    PR #20 reviewer surfaced a race: when the handler raises,
+    ``await request.respond_error(...)`` yields to the event loop. If the
+    keep-alive timer fires during that yield, the caller would observe
+    ``error(500) → ack → terminator`` instead of ``error(500) → terminator``.
+    Spec-compliant (terminator is still last) but undesirable. The fix
+    cancels keep-alive *before* calling ``respond_error``; this test
+    asserts that on the wire by subscribing to the reply inbox directly
+    rather than going through ``Client._stream_prompt`` (which raises on
+    the error frame and so can't observe what comes after).
+    """
+    interval = 0.05  # very short, so multiple ticks fire during the handler
+    handler_duration = 0.25  # ~5 intervals of opportunity to race
+
+    async def raising_handler(envelope: Envelope, stream: PromptStream) -> None:
+        del envelope, stream
+        await asyncio.sleep(handler_duration)
+        raise RuntimeError("intentional")
+
+    agent = Agent(
+        agent=AGENT,
+        owner=OWNER,
+        name="raises",
+        nc=nc,
+        keepalive_interval_s=interval,
+    )
+    agent.on_prompt(raising_handler)
+    await agent.start()
+
+    try:
+        # Subscribe to a fresh inbox before publishing so we don't miss any frames.
+        reply_inbox = nc.new_inbox()
+        sub = await nc.subscribe(reply_inbox)
+        try:
+            # The agent's prompt endpoint expects an envelope; a bare-string
+            # request is promoted to {"prompt": "..."} per §5.3.
+            await nc.publish(agent.subject.inbox, b"hi", reply=reply_inbox)
+
+            # Drain frames until we see the empty-body, headerless §6.5 terminator.
+            frames: list[tuple[bytes, dict[str, str]]] = []
+            deadline = asyncio.get_event_loop().time() + 5.0
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    msg = await sub.next_msg(timeout=1.0)
+                except TimeoutError:
+                    pytest.fail(f"no terminator within deadline; frames: {frames!r}")
+                headers = dict(msg.headers or {})
+                frames.append((msg.data, headers))
+                # §6.5 terminator: empty body, NO headers.
+                if msg.data == b"" and not headers:
+                    break
+            else:
+                pytest.fail(f"loop exited without terminator; frames: {frames!r}")
+        finally:
+            await sub.unsubscribe()
+    finally:
+        await agent.stop()
+
+    evidence.write_jsonl(
+        "frames.jsonl",
+        [
+            {"data": data.decode("utf-8", errors="replace"), "headers": headers}
+            for data, headers in frames
+        ],
+    )
+
+    # Find the index of the error frame and the terminator.
+    error_idx = next(i for i, (_, h) in enumerate(frames) if "Nats-Service-Error-Code" in h)
+    terminator_idx = len(frames) - 1
+    assert frames[terminator_idx] == (b"", {}), (
+        f"last frame must be the §6.5 terminator, got: {frames[terminator_idx]!r}"
+    )
+    # Every frame strictly between error and terminator must be empty (the
+    # spec doesn't define what could legitimately go there; the keep-alive
+    # ack is what we're guarding against).
+    between = frames[error_idx + 1 : terminator_idx]
+    assert between == [], (
+        f"no frames may appear between error(500) and the §6.5 terminator; saw: {between!r}"
+    )
 
 
 @pytest.mark.asyncio

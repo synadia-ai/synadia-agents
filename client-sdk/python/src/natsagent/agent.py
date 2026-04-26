@@ -301,15 +301,22 @@ class Agent:
                 await handler(envelope, stream)
             except Exception as exc:
                 log.exception("prompt handler raised on %s", request.subject)
+                # Stop keep-alive BEFORE the §9 error frame so the keepalive
+                # task can't race an ack chunk in between error(500) and the
+                # §6.5 terminator emitted in the outer `finally`. Ditto in
+                # the success path right below.
+                await _stop_keepalive(keepalive_task)
+                keepalive_task = None
                 await request.respond_error("500", _sanitize_error_desc(f"handler error: {exc}"))
+            else:
+                await _stop_keepalive(keepalive_task)
+                keepalive_task = None
         finally:
-            # Stop the keep-alive *before* the terminator so we don't race an
-            # ack chunk in after the empty-body terminator the caller is
-            # already treating as end-of-stream.
-            if keepalive_task is not None:
-                keepalive_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await keepalive_task
+            # Belt-and-braces: if anything above failed before we could stop
+            # the keepalive (e.g. respond_error itself raised), don't leak the
+            # task and don't let it slip an ack past the terminator. No-op
+            # when keepalive_task is already None.
+            await _stop_keepalive(keepalive_task)
             # §6.5 + §9.3: every stream — successful or errored — ends with a
             # zero-byte body message that carries NO NATS headers. The error
             # frame emitted by `respond_error` above is NOT the terminator;
@@ -318,6 +325,20 @@ class Agent:
                 await request.respond(b"")
             except Exception:
                 log.exception("failed to emit stream terminator on %s", request.subject)
+
+
+async def _stop_keepalive(task: asyncio.Task[None] | None) -> None:
+    """Cancel and await a keep-alive task, swallowing the resulting CancelledError.
+
+    No-op when ``task`` is ``None``, so the outer ``finally`` can call this
+    unconditionally as a belt-and-braces guard after the success/error paths
+    have already cleared their own task handles.
+    """
+    if task is None:
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
 
 
 async def _keepalive_loop(request: Request, interval_s: float) -> None:
