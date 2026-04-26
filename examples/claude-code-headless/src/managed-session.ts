@@ -228,6 +228,10 @@ export class ManagedSession {
       } catch (e) {
         try {
           msg.respondError(400, `failed to stage attachments: ${(e as Error).message}`);
+        } catch {
+          /* noop */
+        }
+        try {
           msg.respond("");
         } catch {
           /* noop */
@@ -490,6 +494,13 @@ export class ManagedSession {
         this.pendingRequests.delete(id);
         const qi = this.requestQueue.indexOf(id);
         if (qi >= 0) this.requestQueue.splice(qi, 1);
+        // Surface as an explicit timeout error so the caller's onError fires —
+        // a bare terminator would look identical to a successful completion.
+        try {
+          pr.msg.respondError(408, "request timed out in queue");
+        } catch {
+          /* noop */
+        }
         try {
           pr.msg.respond("");
         } catch {

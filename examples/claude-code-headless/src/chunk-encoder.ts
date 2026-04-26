@@ -47,13 +47,28 @@ export function queryChunk(id: string, replySubject: string, prompt: string): Ui
  * Tool-call observability: a status chunk whose data string is
  * `tool_use:<json>`. The bridge detects the prefix and re-emits as a
  * structured server message; raw SDK callers see it as an opaque token.
+ *
+ * Inputs are bounded the same way `tool_result` outputs are — a Write/Bash
+ * call with a large argument would otherwise blow past the session's
+ * `max_payload` and the chunk would silently drop. When the serialised form
+ * exceeds the cap, swap `input` for a truncation marker that preserves the
+ * record shape so the bridge's parsing stays uniform.
  */
 export function toolUseStatus(
   toolUseId: string,
   name: string,
   input: Record<string, unknown>,
 ): Uint8Array {
-  const payload = JSON.stringify({ id: toolUseId, name, input });
+  const inputJson = JSON.stringify(input);
+  let safeInput: Record<string, unknown> = input;
+  if (inputJson.length > 4_000) {
+    safeInput = {
+      _truncated: true,
+      _original_size_bytes: inputJson.length,
+      _preview: inputJson.slice(0, 1_000) + "…[truncated]",
+    };
+  }
+  const payload = JSON.stringify({ id: toolUseId, name, input: safeInput });
   return encodeChunk("status", `tool_use:${payload}`);
 }
 

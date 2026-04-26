@@ -13,6 +13,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 
+import { sanitizeToken } from "./subjects.js";
+
 export interface ClaudeCodeHeadlessConfig {
   /** NATS CLI context name. Empty/undefined means "use NATS_URL only". */
   readonly context?: string;
@@ -182,6 +184,20 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
   if (!context && !natsUrl) {
     throw new Error(
       "claude-code-headless: no NATS target configured. Set --context, NATS_CONTEXT, or NATS_URL.",
+    );
+  }
+
+  // Validate owner / name as NATS-safe subject tokens (§2.2). $USER values
+  // like `alice.b` would silently build invalid subjects later (the dot is a
+  // subject separator); fail fast at boot with a readable error instead.
+  if (sanitizeToken(owner) !== owner) {
+    throw new Error(
+      `claude-code-headless: invalid owner "${owner}" — must match [a-z0-9_-]{1,63}. Override with --owner or CLAUDE_CODE_HEADLESS_OWNER.`,
+    );
+  }
+  if (sanitizeToken(name) !== name) {
+    throw new Error(
+      `claude-code-headless: invalid name "${name}" — must match [a-z0-9_-]{1,63}. Override with --name or CLAUDE_CODE_HEADLESS_NAME.`,
     );
   }
 

@@ -73,8 +73,11 @@ export function validateSessionId(
 
 /** Generate a short session id prefixed with `sess-`. URL-safe, 8 hex chars. */
 export function generateSessionId(): string {
-  const rand = Math.floor(Math.random() * 0xffffffff)
-    .toString(16)
-    .padStart(8, "0");
+  // crypto.getRandomValues is uniformly distributed and available in Bun and
+  // Node ≥ 19 without an import. Math.random would give the same nominal 32
+  // bits but with a biased distribution, so use the Web Crypto API instead.
+  const bytes = new Uint8Array(4);
+  globalThis.crypto.getRandomValues(bytes);
+  const rand = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   return `sess-${rand}`;
 }
