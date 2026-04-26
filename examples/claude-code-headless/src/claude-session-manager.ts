@@ -48,6 +48,10 @@ export interface SpawnDescriptor {
   readonly max_lifetime_s: number;
   readonly created_at: string;
   readonly instance_id: string;
+  /** Cumulative cost so far. Always 0 at spawn time; included for shape parity with summary. */
+  readonly total_cost_usd: number;
+  /** Number of completed turns. Always 0 at spawn time; included for shape parity. */
+  readonly turn_count: number;
 }
 
 export type SpawnError =
@@ -237,6 +241,8 @@ export class ClaudeSessionManager {
       max_lifetime_s: managed.maxLifetimeS,
       created_at: new Date(managed.createdAt).toISOString(),
       instance_id: managed.instanceId,
+      total_cost_usd: 0,
+      turn_count: 0,
     };
   }
 

@@ -8,7 +8,7 @@ In short: one process, many Claude Code sessions, all first-class NATS agents.
 
 This example is the Claude Code analogue of [`examples/pi-headless/`](../pi-headless) and is wire-compatible with the same callers — including the [`examples/agent-web-ui/`](../agent-web-ui) browser workspace.
 
-> **Status.** Spike example proving multi-session Claude Code can be fronted by the protocol. Surfaces only the assistant's text output today (tool calls / permission queries are not yet relayed as protocol §7 query chunks). See **Roadmap** below.
+> **Status.** Demo-quality reference. Streams text per-token, surfaces tool calls + results inline, asks for permission via protocol §7 query chunks, and tracks cost per session. See **Features** below for the wire shapes; **Roadmap** for what's still ahead.
 
 ## Quickstart
 
@@ -206,14 +206,60 @@ Session prompt endpoints follow protocol §9.
 - **Session resumption.** Each prompt after the first is sent to the SDK with `resume: <sdkSessionId>` so context carries forward within a session for its full lifetime.
 - **Lifetime & pruning.** `max_lifetime_s` bounds a session's wall-clock life; pending requests older than 30 min are evicted (active requests are never evicted).
 - **Attachments.** Base64 attachments are decoded to `~/.claude-code-headless/attachments/<session_id>/<uuid>/` and their absolute paths are prepended to the prompt text, matching the staging pattern used by `agents/pi/` and `examples/pi-headless/`.
+- **Tool-call payload sizes.** Tool result outputs are truncated to 4 KB before encoding into a status chunk to stay well under `max_payload`. The truncation marker is `…[truncated]`.
+- **Permission timeout.** A pending §7 permission query is denied after 2 minutes of caller silence, so a vanished UI doesn't park a session forever.
+
+## Features
+
+What this example showcases beyond the bare wire-compat proof:
+
+### Per-token streaming
+
+The SDK's `includePartialMessages` option is on — text deltas arrive as they're generated and are forwarded as individual `response` chunks. Web-UI clients see Claude "type" in real time instead of a wall of text per turn. No knob, no opt-in; it's the default.
+
+### Tool-call observability
+
+Every `tool_use` block Claude emits is forwarded as a status chunk with a prefix-tagged JSON payload:
+
+```
+{"type": "status", "data": "tool_use:{\"id\":\"...\",\"name\":\"Bash\",\"input\":{\"command\":\"ls /tmp\"}}"}
+```
+
+Tool results come back the same way:
+
+```
+{"type": "status", "data": "tool_result:{\"tool_use_id\":\"...\",\"output\":\"file1\\nfile2\",\"is_error\":false}"}
+```
+
+Encoding inside `status.data` keeps the wire spec-compliant (§6.4 says `data` is a string). SDK callers that don't recognize the prefix just see opaque status tokens; the agent-web-ui bridge translates them into typed events and renders them as collapsible tool cards.
+
+### Interactive permissions via §7 queries
+
+When the spawn spec uses `permission_mode: "default"` (or any mode other than `dontAsk`/`bypassPermissions`), the SDK calls our `canUseTool` callback for each tool not already in `allowed_tools`. We turn each call into a protocol §7 query chunk:
+
+```
+{"type": "query", "data": {"id": "...", "reply_subject": "...", "prompt": "Claude wants to use tool: Bash\n{\"command\":\"ls /tmp\"}\n\nReply 'yes' to allow or 'no' to deny."}}
+```
+
+Then we wait (up to 2 minutes) for a single reply on `reply_subject`. The reply text is normalised: `yes/y/allow/approve/ok` → allow, `no/n/deny/reject/cancel` → deny, anything else → deny with the reply preserved as the reason. The SDK proceeds (or doesn't) based on what the user answered.
+
+### Cost tracking
+
+Each successful turn emits a final `cost` status chunk with the per-turn and cumulative costs:
+
+```
+{"type": "status", "data": "cost:{\"turn_cost_usd\":0.0123,\"total_cost_usd\":0.0456}"}
+```
+
+Both values flow into the session summary (`total_cost_usd`, `turn_count`) and the UI surfaces them on each agent bubble (per-turn) and the session-list card (running total).
 
 ## Roadmap
 
-This spike intentionally ships the smallest end-to-end loop. Likely next steps, roughly in priority order:
+What's still ahead, roughly in priority order:
 
-1. **Stream tool calls / permission queries as protocol §7 chunks.** Today only assistant text is forwarded; tool_use blocks and permission decisions are filtered out.
-2. **Per-token streaming** via the SDK's partial-message option, so the response arrives chunk-by-chunk instead of one assistant message at a time.
-3. **Programmatic MCP server attachment** through the spawn spec (`mcp_servers` field).
-4. **System prompt / append-system-prompt** override per spawn.
-5. **Cost tracking** — surface `total_cost_usd` from each `result` event in the session summary.
-6. **Session-file cleanup** — periodic pruning of the SDK's on-disk session store so a long-running host doesn't accumulate state forever.
+1. **Programmatic MCP server attachment** through the spawn spec (`mcp_servers` field) — bring your own tools per session.
+2. **System prompt / append-system-prompt** override per spawn — useful for personas (code reviewer, test writer, security auditor, …).
+3. **"Always allow" stickiness for permissions** — the SDK exposes `updatedPermissions` on the canUseTool result; we currently ignore it. Wiring it would let users approve once per tool/per session.
+4. **Tool result truncation policy** — we cap result output at 4 KB to keep payloads manageable; for large outputs (file dumps, build logs) a streaming or paginated approach would be nicer than `…[truncated]`.
+5. **Session-file cleanup** — periodic pruning of the SDK's on-disk session store so a long-running host doesn't accumulate state forever.
+6. **Bedrock / Vertex / Azure auth ergonomics** — works today via the SDK's standard env vars but undocumented here; could surface in config + status badge.

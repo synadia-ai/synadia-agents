@@ -3,15 +3,31 @@
 // envelope parsing, request queueing for serial drain (the SDK's `query()`
 // is one full multi-turn round-trip per call, and concurrent re-entry into
 // the same logical session would interleave context), typed-chunk
-// streaming, error headers, and disposal.
+// streaming, error headers, tool-call observability, interactive
+// permission requests via §7 query chunks, per-token streaming, cost
+// tracking, and disposal.
 
+import { createInbox } from "@nats-io/nats-core";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
 import { ReferenceAgent } from "@synadia-ai/agents/testing";
-import { query, type Options, type PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import {
+  query,
+  type CanUseTool,
+  type Options,
+  type PermissionMode,
+  type PermissionResult,
+} from "@anthropic-ai/claude-agent-sdk";
 
 import { cleanupStaged, decorateWithAttachments, stageAttachments } from "./attachments.js";
-import { responseText, statusAck } from "./chunk-encoder.js";
+import {
+  costStatus,
+  queryChunk,
+  responseText,
+  statusAck,
+  toolResultStatus,
+  toolUseStatus,
+} from "./chunk-encoder.js";
 import { EnvelopeError, parseEnvelope, type ParsedAttachment } from "./envelope.js";
 import { sessionHeartbeatSubject, sessionPromptSubject } from "./subjects.js";
 
@@ -46,6 +62,10 @@ export interface SessionSummary {
   readonly last_activity: string;
   /** SDK session id, populated after the first turn finishes (used for resume). */
   readonly sdk_session_id?: string;
+  /** Cumulative USD cost across all completed turns in this session. */
+  readonly total_cost_usd: number;
+  /** Number of turns (SDK `query()` invocations) completed. */
+  readonly turn_count: number;
 }
 
 interface PendingRequest {
@@ -57,6 +77,7 @@ interface PendingRequest {
 }
 
 const HEARTBEAT_INTERVAL_S = 30;
+const PERMISSION_TIMEOUT_MS = 120_000; // 2 minutes for a user to decide
 
 export class ManagedSession {
   readonly sessionId: string;
@@ -81,6 +102,8 @@ export class ManagedSession {
   private lastActivity: number;
   private requestCounter = 0;
   private sdkSessionId: string | undefined;
+  private totalCostUsd = 0;
+  private turnCount = 0;
   private disposed = false;
 
   constructor(opts: ManagedSessionOptions) {
@@ -157,6 +180,8 @@ export class ManagedSession {
       created_at: new Date(this.createdAt).toISOString(),
       last_activity: new Date(this.lastActivity).toISOString(),
       ...(this.sdkSessionId ? { sdk_session_id: this.sdkSessionId } : {}),
+      total_cost_usd: this.totalCostUsd,
+      turn_count: this.turnCount,
     };
   }
 
@@ -241,6 +266,10 @@ export class ManagedSession {
     const abortController = new AbortController();
     this.activeAborts.add(abortController);
 
+    // Reply subject for chunks streamed back to the caller; also where any
+    // §7 query chunks emitted by canUseTool will land.
+    const replySubject = pr.msg.reply ?? "";
+
     try {
       try {
         pr.msg.respond(statusAck());
@@ -255,6 +284,14 @@ export class ManagedSession {
         permissionMode: this.permissionMode,
         maxTurns: this.maxTurns,
         abortController,
+        // Per-token streaming: the SDK emits stream_event partials for
+        // incremental text deltas in addition to the final assistant message.
+        includePartialMessages: true,
+        // Permission asking: the SDK calls this when it wants to use a tool
+        // that isn't auto-allowed by the current permissionMode + allowedTools.
+        // We surface it as a §7 query chunk, await the caller's reply, and
+        // resolve the SDK promise accordingly.
+        canUseTool: this.makeCanUseTool(replySubject, abortController.signal),
       };
       if (this.sdkSessionId) {
         queryOptions.resume = this.sdkSessionId;
@@ -269,26 +306,74 @@ export class ManagedSession {
           this.sdkSessionId = ev.session_id;
           continue;
         }
+        if (ev.type === "stream_event") {
+          // Per-token streaming: text deltas inside content_block_delta events.
+          // Other partial events (block start/stop, message_delta, etc.) we
+          // intentionally drop — UI cares only about visible text and we get
+          // the final blocks (incl. tool_use) via the assistant event below.
+          const text = extractPartialText(ev);
+          if (text && text.length > 0) {
+            try {
+              pr.msg.respond(responseText(text));
+            } catch {
+              /* noop */
+            }
+          }
+          continue;
+        }
         if (ev.type === "assistant") {
+          // Surface tool_use blocks for visibility. Text was already streamed
+          // via stream_event partials, so we skip text blocks here to avoid
+          // duplication.
           for (const block of ev.message.content) {
-            if (block.type === "text") {
-              const text = (block as { text?: unknown }).text;
-              if (typeof text === "string" && text.length > 0) {
+            if (block.type === "tool_use") {
+              const tu = block as { id: string; name: string; input: Record<string, unknown> };
+              try {
+                pr.msg.respond(toolUseStatus(tu.id, tu.name, tu.input));
+              } catch {
+                /* noop */
+              }
+            }
+            // text blocks: already streamed via partials; intentionally skip.
+          }
+          continue;
+        }
+        if (ev.type === "user") {
+          // Tool results arrive here as a synthetic user-role message whose
+          // content is an array of `tool_result` blocks paired by tool_use_id.
+          const userContent = (ev as { message?: { content?: unknown } }).message?.content;
+          if (Array.isArray(userContent)) {
+            for (const block of userContent) {
+              if (block && typeof block === "object" && (block as { type?: string }).type === "tool_result") {
+                const tr = block as {
+                  tool_use_id: string;
+                  content?: unknown;
+                  is_error?: boolean;
+                };
+                const output = stringifyToolResultContent(tr.content);
                 try {
-                  pr.msg.respond(responseText(text));
+                  pr.msg.respond(toolResultStatus(tr.tool_use_id, output, tr.is_error === true));
                 } catch {
                   /* noop */
                 }
               }
             }
-            // tool_use / thinking blocks intentionally suppressed in the spike.
-            // TODO: relay tool_use as protocol §7 query chunks.
           }
           continue;
         }
         if (ev.type === "result") {
           this.sdkSessionId = ev.session_id;
-          if (ev.subtype !== "success") {
+          this.turnCount += 1;
+          // Cost: only success carries `total_cost_usd`. Errors may not.
+          if (ev.subtype === "success") {
+            const turnCost = (ev as { total_cost_usd?: number }).total_cost_usd ?? 0;
+            this.totalCostUsd += turnCost;
+            try {
+              pr.msg.respond(costStatus(turnCost, this.totalCostUsd));
+            } catch {
+              /* noop */
+            }
+          } else {
             try {
               pr.msg.respondError(500, `claude-agent-sdk: ${ev.subtype}`);
             } catch {
@@ -327,6 +412,64 @@ export class ManagedSession {
         setImmediate(() => void this.drain());
       }
     }
+  }
+
+  /**
+   * Build a canUseTool callback bound to the active request's reply subject.
+   * Each invocation emits a fresh §7 query chunk on a unique inbox, awaits a
+   * single-message reply (with a 2-minute timeout), and translates the
+   * caller's text reply into a PermissionResult the SDK understands.
+   */
+  private makeCanUseTool(
+    replySubject: string,
+    abortSignal: AbortSignal,
+  ): CanUseTool {
+    return async (toolName, input, opts): Promise<PermissionResult> => {
+      // No reply subject means the caller bailed before we got here — deny.
+      if (!replySubject) {
+        return { behavior: "deny", message: "no active reply channel" };
+      }
+      const replyInbox = createInbox();
+      const sub = this.nc.subscribe(replyInbox, { max: 1 });
+      const promptText = buildPermissionPrompt(toolName, input, opts);
+      try {
+        this.nc.publish(replySubject, queryChunk(opts.toolUseID, replyInbox, promptText));
+        await this.nc.flush();
+      } catch (e) {
+        try {
+          sub.unsubscribe();
+        } catch {
+          /* noop */
+        }
+        return { behavior: "deny", message: `failed to emit query: ${(e as Error).message}` };
+      }
+      const timer = setTimeout(() => {
+        try {
+          sub.unsubscribe();
+        } catch {
+          /* noop */
+        }
+      }, PERMISSION_TIMEOUT_MS);
+      const onAbort = (): void => {
+        try {
+          sub.unsubscribe();
+        } catch {
+          /* noop */
+        }
+      };
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+      try {
+        for await (const m of sub) {
+          const reply = m.string().trim();
+          return interpretPermissionReply(reply);
+        }
+        // Subscription ended without a message — timeout, abort, or stream end.
+        return { behavior: "deny", message: "permission request timed out" };
+      } finally {
+        clearTimeout(timer);
+        abortSignal.removeEventListener("abort", onAbort);
+      }
+    };
   }
 
   // ─── Lifetime / pruning (called by ClaudeSessionManager) ───────────────────
@@ -393,4 +536,87 @@ export class ManagedSession {
       );
     }
   }
+}
+
+// ─── Pure helpers ────────────────────────────────────────────────────────────
+
+function extractPartialText(ev: unknown): string | undefined {
+  // SDK shape: { type: "stream_event", event: BetaRawMessageStreamEvent, ... }
+  // Anthropic stream events: content_block_delta with delta.type === "text_delta"
+  // carry { delta: { type: "text_delta", text: "..." } }.
+  if (!ev || typeof ev !== "object") return undefined;
+  const inner = (ev as { event?: unknown }).event;
+  if (!inner || typeof inner !== "object") return undefined;
+  const e = inner as { type?: unknown; delta?: unknown };
+  if (e.type !== "content_block_delta") return undefined;
+  const delta = e.delta;
+  if (!delta || typeof delta !== "object") return undefined;
+  const d = delta as { type?: unknown; text?: unknown };
+  if (d.type !== "text_delta") return undefined;
+  return typeof d.text === "string" ? d.text : undefined;
+}
+
+function stringifyToolResultContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    // tool_result.content is often an array of {type:"text", text:"..."} blocks.
+    const parts: string[] = [];
+    for (const item of content) {
+      if (item && typeof item === "object") {
+        const obj = item as { type?: unknown; text?: unknown };
+        if (obj.type === "text" && typeof obj.text === "string") {
+          parts.push(obj.text);
+          continue;
+        }
+      }
+      parts.push(JSON.stringify(item));
+    }
+    return parts.join("\n");
+  }
+  if (content === undefined || content === null) return "";
+  return JSON.stringify(content);
+}
+
+function buildPermissionPrompt(
+  toolName: string,
+  input: Record<string, unknown>,
+  opts: { title?: string; description?: string },
+): string {
+  // Prefer the SDK's pre-rendered title when present (e.g. "Claude wants to
+  // read foo.txt"). Otherwise build a concise one from the tool name + input.
+  if (opts.title && typeof opts.title === "string") {
+    const lines = [opts.title];
+    if (opts.description) lines.push(opts.description);
+    lines.push("", `Reply 'yes' to allow or 'no' to deny.`);
+    return lines.join("\n");
+  }
+  const inputPreview = previewInput(input);
+  return [
+    `Claude wants to use tool: ${toolName}`,
+    inputPreview,
+    "",
+    "Reply 'yes' to allow or 'no' to deny.",
+  ]
+    .filter((l) => l.length > 0)
+    .join("\n");
+}
+
+function previewInput(input: Record<string, unknown>): string {
+  const keys = Object.keys(input);
+  if (keys.length === 0) return "";
+  const json = JSON.stringify(input, null, 2);
+  if (json.length <= 600) return json;
+  return json.slice(0, 600) + "…[truncated]";
+}
+
+const ALLOW_TOKENS = new Set(["yes", "y", "allow", "approve", "ok", "true"]);
+const DENY_TOKENS = new Set(["no", "n", "deny", "reject", "cancel", "false"]);
+
+function interpretPermissionReply(reply: string): PermissionResult {
+  const norm = reply.toLowerCase().trim();
+  if (ALLOW_TOKENS.has(norm)) return { behavior: "allow" };
+  if (DENY_TOKENS.has(norm)) return { behavior: "deny", message: "user denied" };
+  // Treat any other text as a denial reason — preserves operator intent
+  // ("not in this directory") rather than silently allowing.
+  return { behavior: "deny", message: reply || "user denied (no reason given)" };
 }
