@@ -7,9 +7,11 @@ typed responses.
 
 **Cross-SDK parity with the [TypeScript SDK](https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/typescript)**
 is tracked in [`tests/test_interop_e2e.py`](tests/test_interop_e2e.py).
-The TS SDK is currently still on protocol v0.1 while this release is on
-v0.2, so the interop tests are marked `xfail` until the TS side bumps
-- see [`CHANGELOG.md`](CHANGELOG.md) under `[0.2.0] › Interop`.
+Both SDKs declare `protocol_version = "0.2"` in service metadata, so the
+test spawns the TS reference agent via `bun` and rounds-trips a prompt
+through it. The test `pytest.skip`s cleanly when `bun` or the sibling
+`../typescript/` checkout is missing — running the suite without TS
+interop is fine for day-to-day work.
 
 **Agent author?** → [Quickstart - host an agent](#quickstart--host-an-agent).
 **Client / UI author?** → [Quickstart - call an agent](#quickstart--call-an-agent).

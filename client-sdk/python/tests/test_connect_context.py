@@ -113,7 +113,17 @@ def test_load_context_malformed_json_raises(
 
 @pytest.mark.parametrize(
     "bad_name",
-    ["", "..", "../escape", "a/b", "a\\b", ".hidden"],
+    [
+        "",
+        "..",
+        "../escape",
+        "a/b",
+        "a\\b",
+        ".hidden",
+        "a\x00b",
+        "\x00",
+        "ok\x00..",
+    ],
 )
 def test_context_name_validation(bad_name: str) -> None:
     with pytest.raises(ContextInvalidError):
@@ -319,6 +329,45 @@ async def test_connect_nats_kwargs_merge_over_context(
     # inbox_prefix came from context, token got overridden.
     assert captured["kwargs"]["inbox_prefix"] == b"_FROM_CTX"
     assert captured["kwargs"]["token"] == "override-token"
+
+
+async def test_connect_user_jwt_only_context_produces_authenticated_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `user_jwt`-only context wires `user_jwt_cb` into nats-py kwargs.
+
+    Regression guard against the TS SDK's PR #10 bug, where the example
+    context loaders silently dropped ``user_jwt`` and produced an
+    unauthenticated connection that failed deep in the broker handshake
+    with no useful error. This exercises the full public path:
+    ``connect(context=...)`` → ``_load_context`` → ``_build_connection_kwargs``
+    → ``nats.connect(**kwargs)``, asserting the JWT callback survives the
+    trip and that no fallback auth-fields sneak in.
+    """
+    base = _point_env_at(tmp_path, monkeypatch)
+    _write_context(
+        base,
+        "jwt-only",
+        {"url": "nats://127.0.0.1:4222", "user_jwt": "ey.header.payload"},
+    )
+
+    captured: dict[str, Any] = {}
+
+    async def fake_connect(servers: Any, **kwargs: Any) -> Any:
+        captured["servers"] = servers
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(connect_module.nats, "connect", fake_connect)
+    await natsagent.connect(context="jwt-only")
+
+    kw = captured["kwargs"]
+    assert "user_jwt_cb" in kw, "JWT-only context must wire user_jwt_cb into nats kwargs"
+    assert callable(kw["user_jwt_cb"])
+    assert kw["user_jwt_cb"]() == b"ey.header.payload"
+    # Belt-and-braces: nothing else slid in to silently change the auth shape.
+    for k in ("user_credentials", "token", "user", "password"):
+        assert k not in kw, f"unexpected fallback auth field {k!r} in {kw!r}"
 
 
 async def test_connect_current_honours_env_over_selection_file(

@@ -123,3 +123,83 @@ mirror the TypeScript SDK so the two stay in lockstep.
 1. **`max_payload` base (§2.1).** 1024 vs 1000 - spec silent. SDK uses **1024** (NATS server convention).
 2. **Size-unit case sensitivity (§2.1).** Spec silent. SDK parses **case-insensitive**.
 3. **Unparseable `max_payload` value (§2.1).** `EndpointInfo.max_payload_bytes` is `None`; raw string preserved in `metadata`. No local enforcement - the agent decides server-side.
+
+## Deferred TS-parity work
+
+Items surfaced during the 2026-04-26 TS-parity sweep that were
+intentionally **not** addressed in that round, kept here so the team
+can decide which ones land in a follow-up. Each entry says **what**
+the gap is, **why** it matters, and a hint at the **next step**.
+
+### Convenience features the TS reference harnesses ship that the Python SDK doesn't
+
+1. **Session-name auto-resolution at `Agent.start()`.**
+   PI's harness (`agents/pi/extensions/nats-channel.ts` ~lines 356-377)
+   queries `$SRV.INFO.agents` on startup, sees a name collision, and
+   auto-suffixes `-2`, `-3`, … so two PI instances under the same owner
+   don't fight over a single subject. Python `Agent(name=...)` registers
+   the name as-given; collisions are the developer's problem. Convenience,
+   not wire-compat. Next step: optional `Agent(autosuffix=True)` mirroring
+   the PI behaviour.
+
+2. **Filesystem attachment-staging helper.**
+   PI and Claude Code stage base64-decoded attachments to disk under
+   `ATTACHMENT_DIR/{requestId}` so handlers can pass file paths to
+   tools (shell-outs, MCP servers, etc.). Python keeps attachments
+   in-memory on `Envelope.attachments` and leaves staging to the
+   developer. Next step: an `Attachment.stage_to(path)` helper that
+   handles tempdir creation, RFC 4648 base64 decode, and safe filename
+   sanitisation in one call.
+
+### Behavioural divergences (both spec-valid, different shape)
+
+3. **Bare-string vs JSON-wrapped `response` chunks (§6.3).**
+   Python's `encode_chunk(ResponseChunk)` emits the bare-string
+   shorthand `{"type":"response","data":"<text>"}` when there are no
+   attachments; the TS reference harnesses always emit the wrapped
+   `{"text":...,"attachments":[]}` form even for text-only. Both are
+   valid per §6.3. Worth aligning before any cross-SDK assertion test
+   tries to compare exact wire bytes. Next step: pick one as the
+   canonical Python emit shape, document in CHANGELOG.
+
+4. **Pending-request TTL on mid-stream `ask()` queries (§7).**
+   TS harnesses prune pending request state >30 minutes old (defends
+   against memory leaks from caller-dropped queries). Python's
+   `PromptStream.ask()` pending replies are bounded by an explicit
+   `timeout=` and the surrounding handler's lifetime, so the failure
+   mode is "handler hangs forever" rather than "memory leak"; still,
+   a global ceiling parallel to TS's would be a useful belt. Next
+   step: cap `ask()` at a sensible upper bound or document that
+   handlers are responsible for setting `timeout=`.
+
+### Caller-side parity confirmed but not test-covered
+
+5. **`Agents.closeSignal` analogue.**
+   TS exposes `Agents.closeSignal: AbortSignal` for callers that
+   materialize `Agent` instances outside `discover()` (e.g. lazily
+   from a heartbeat). Python's `Client` doesn't have a parallel
+   materialization path today (everything goes through `Client.discover`
+   + `Client.bind`), so there's no observable gap yet. Next step:
+   no action until/unless a lazy-materialisation path appears; revisit
+   if so.
+
+6. **`NatsContextError` analogue.**
+   TS exposes a single `NatsContextError` class. Python already has
+   finer-grained types (`ContextNotFoundError`, `ContextNotSelectedError`,
+   `ContextInvalidError`, `ContextNotSupportedError`) - Python is
+   already more specific. No port needed; documented here for
+   completeness so a reader doesn't see "missing class" and assume a
+   gap.
+
+### Behaviour-change risks introduced by the 2026-04-26 sweep
+
+7. **Default-on 30 s keep-alive ack.**
+   `Agent` now emits a `status="ack"` chunk every 30 s during
+   long-running handlers by default (`keepalive_interval_s=30.0`).
+   This is extra wire traffic vs prior Python releases - quiet
+   handlers that comfortably fit under the TS SDK's 60 s stream
+   inactivity timeout don't need it. No spec violation (§6.4 status
+   chunks are at the agent's discretion). Pass
+   `keepalive_interval_s=None` to disable. Next step: monitor for
+   integrator complaints; consider documenting "when to disable" as
+   the SDK matures.

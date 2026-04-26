@@ -279,9 +279,12 @@ either guides them to success or frustrates them.
   endpoint now registered with queue group `"agents"` (§3.3);
   `metadata.protocol_version` bumps to `"0.2"`. Envelope.session
   re-labelled as §5.6-tolerated SDK convention (v0.2 §5.1 no longer
-  defines the field). TS SDK is still on v0.1 at the time of this bump
-  - `tests/test_interop_e2e.py` is xfail'd until it catches up. See
-  `CHANGELOG.md` for full migration notes.
+  defines the field). The TS SDK has since caught up to protocol
+  `0.2` (`client-sdk/typescript/src/version.ts`); the interop test
+  `tests/test_interop_e2e.py` rounds-trips a prompt through the TS
+  reference agent and `pytest.skip`s only when `bun` or the sibling
+  `../typescript/` checkout is missing. See `CHANGELOG.md` for full
+  migration notes.
 - **2026-04-21 - v0.1.0 alignment PR (`align-core-protocol-0.1`).** Full
   spec compliance: service name `SynadiaAgents`; `{agent, owner,
   protocol_version, session?}` metadata; §2.1 endpoint caps; §5.4

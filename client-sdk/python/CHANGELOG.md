@@ -8,6 +8,41 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Deferred for follow-up
+
+- The 2026-04-26 TS-parity sweep deliberately deferred a handful of
+  convenience features (session-name auto-resolution, attachment
+  filesystem-staging helper) and surfaced two behavioural divergences
+  (bare-string vs JSON-wrapped response chunks, no global TTL on
+  mid-stream `ask()` queries). All catalogued in
+  [`docs/protocol-mapping.md` › Deferred TS-parity work](docs/protocol-mapping.md#deferred-ts-parity-work)
+  with rationale + a suggested next step for each, so the team can
+  pick them up in a follow-up PR.
+
+### Added
+
+- **`Agent(keepalive_interval_s=...)` — automatic per-request keep-alive
+  ack.** While a prompt handler is running, the agent now emits
+  `{"type":"status","data":"ack"}` (§6.4) every `keepalive_interval_s`
+  seconds, matching the behaviour every TS reference harness
+  (`agents/pi/`, `agents/claude-code/`, `agents/openclaw/`) implements
+  inline. This prevents callers using a stream inactivity timeout (the
+  TS SDK default is 60 s) from giving up on Python agents whose
+  handlers do real work between response chunks. Defaults to **30 s**;
+  pass `keepalive_interval_s=None` to disable (e.g. when the handler
+  emits its own status chunks at a finer cadence). Constructor
+  validates `> 0` or `None`. Covered by `tests/test_keepalive_e2e.py`.
+
+### Fixed
+
+- **Reject NUL bytes in `nats` CLI context names.** `natsagent.connect(context=...)`
+  now raises `ContextInvalidError` when the resolved name contains
+  `\x00`, instead of letting it propagate into `Path` and surface as a
+  confusing `ValueError: embedded null byte`. Brings the validator into
+  full parity with the TS SDK's `loadContextOptions` path-traversal
+  guard (PR #17 on the TS side). Other separators (`/`, `\`), ``..``
+  components, and leading-dot names were already rejected.
+
 ## [0.2.0] - 2026-04-22
 
 Aligns the SDK with **NATS Agent Protocol v0.2** (draft dated
@@ -154,10 +189,12 @@ caller as a pair.
 
 ### Interop
 
-- The TypeScript SDK (`../typescript/`) is still on v0.1 at the time
-  of this release. `tests/test_interop_e2e.py` is marked `xfail` until
-  the TS SDK bumps to v0.2; a future TS v0.2 release will flip this
-  back to green (`XPASS` surfaces as a test-suite signal).
+- The TypeScript SDK (`../typescript/`) was still on v0.1 at the time
+  of this release. The test `tests/test_interop_e2e.py` `pytest.skip`s
+  cleanly when its prereqs (`bun` on PATH, sibling `../typescript/`
+  with `node_modules/`) are missing. The TS SDK has since caught up to
+  protocol `0.2`; running the suite with the prereqs in place
+  rounds-trips a prompt through the TS reference agent.
 
 ## [0.1.0] - 2026-04-21
 
