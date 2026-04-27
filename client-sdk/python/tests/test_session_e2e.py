@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 import pytest
 import pytest_asyncio
 
-from natsagent import (
+from synadia_ai.agents import (
     Agent,
     Agents,
     AgentService,

@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
-from natsagent import Agents, ResponseChunk, StatusChunk
+from synadia_ai.agents import Agents, ResponseChunk, StatusChunk
 
 
 async def main() -> None:

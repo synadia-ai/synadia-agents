@@ -1,12 +1,44 @@
 # Changelog
 
-All notable changes to `natsagent` are documented here.
+All notable changes to `synadia-ai-agents` are documented here.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
 the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
+
+### Changed (breaking)
+
+- **PyPI distribution renamed `natsagent` → `synadia-ai-agents`.**
+  Mirrors the TypeScript sibling on npm (`@synadia-ai/agents`) so users
+  comparing the two SDKs see matching package names. Nothing was ever
+  published to PyPI under the old name, so no deprecation shim ships.
+- **Import path `natsagent` → `synadia_ai.agents`.** The SDK now lives
+  inside a [PEP 420 implicit namespace package](https://peps.python.org/pep-0420/)
+  rooted at `synadia_ai/`, leaving room for future siblings (`synadia-ai-foo`
+  → `synadia_ai.foo`) without conflict. There is no `__init__.py` at
+  `src/synadia_ai/`; mypy's `namespace_packages = true` and
+  `explicit_package_bases = true` are set in `pyproject.toml` to support
+  the layout.
+- **Logger root `natsagent` → `synadia_ai.agents`.** Callers configuring
+  per-logger handlers/levels must update their selectors (e.g.
+  `logging.getLogger("natsagent.discovery")` →
+  `logging.getLogger("synadia_ai.agents.discovery")`).
+
+The public API surface is **unchanged** — every symbol in `__all__`
+keeps its name, every signature and behavior is preserved. Migration is
+mechanical:
+
+```diff
+- from natsagent import Agents
++ from synadia_ai.agents import Agents
+```
+
+```diff
+- pip install natsagent
++ pip install synadia-ai-agents
+```
 
 ## [0.3.0] - 2026-04-27
 
@@ -41,7 +73,7 @@ reference agent on the same wire.
   `description`, `version`, `metadata`, `endpoints`, `prompt_endpoint`,
   `prompt_subject`) and the `.prompt()` method.
 - **Server-side `Agent` → `AgentService`.** Full rename — file moves
-  from `src/natsagent/agent.py` to `src/natsagent/service.py`,
+  from `src/synadia_ai/agents/agent.py` to `src/synadia_ai/agents/service.py`,
   exported as `AgentService` from the package root. **Hermes is the
   affected downstream consumer**; behaviour, signature, and
   constructor kwargs are unchanged.
@@ -108,7 +140,7 @@ reference agent on the same wire.
 - **`Client.bind()`** — discovery returns live handles directly.
   Callers with a config-driven set of target agents discover once and
   match by metadata via `DiscoverFilter` or a list comprehension.
-- **`natsagent.connect()` and `NatsContext`.** Replaced by
+- **`synadia_ai.agents.connect()` and `NatsContext`.** Replaced by
   `nats.connect(**load_context_options(...))`. The SDK does not own a
   connection factory; callers do.
 - **`AgentStatus`** — replaced by `Liveness` (frozen, snapshot-style).
@@ -121,10 +153,10 @@ reference agent on the same wire.
 Caller — connect, discover, prompt:
 
 ```diff
-- import natsagent
-- from natsagent import Client
+- import synadia_ai.agents
+- from synadia_ai.agents import Client
 -
-- nc = await natsagent.connect(servers="nats://127.0.0.1:4222")
+- nc = await synadia_ai.agents.connect(servers="nats://127.0.0.1:4222")
 - client = Client(nc)
 - await client.start()
 - found = await client.discover(timeout=2.0)
@@ -134,7 +166,7 @@ Caller — connect, discover, prompt:
 - await client.stop()
 - await nc.close()
 + import nats
-+ from natsagent import Agents
++ from synadia_ai.agents import Agents
 +
 + nc = await nats.connect(servers="nats://127.0.0.1:4222")
 + agents = Agents(nc=nc)
@@ -148,18 +180,18 @@ Caller — connect, discover, prompt:
 Caller — context resolution:
 
 ```diff
-- nc = await natsagent.connect(context="prod")
+- nc = await synadia_ai.agents.connect(context="prod")
 + import nats
-+ from natsagent import load_context_options
++ from synadia_ai.agents import load_context_options
 + nc = await nats.connect(**load_context_options("prod"))
 ```
 
 Server (Hermes-style harness):
 
 ```diff
-- from natsagent import Agent
+- from synadia_ai.agents import Agent
 - service = Agent(agent="hermes", owner="alice", name="alice-1", nc=nc)
-+ from natsagent import AgentService
++ from synadia_ai.agents import AgentService
 + service = AgentService(agent="hermes", owner="alice", name="alice-1", nc=nc)
   service.on_prompt(handler)
   await service.start()
@@ -211,7 +243,7 @@ All addressed in-PR before tagging:
   decoding to corrupted bytes.
 - **`AgentService` reads its `version` from package metadata.**
   `service.py` no longer hardcodes `_SDK_VERSION`; it reads
-  `importlib.metadata.version("natsagent")` so `pyproject.toml` is the
+  `importlib.metadata.version("synadia-ai-agents")` so `pyproject.toml` is the
   single source of truth across releases.
 - **`HeartbeatTracker` listener storage switched from `set` to `list`.**
   Mirrors the TS SDK's array semantics: registering the same callable
@@ -252,7 +284,7 @@ All addressed in-PR before tagging:
 
 ### Fixed
 
-- **Reject NUL bytes in `nats` CLI context names.** `natsagent.connect(context=...)`
+- **Reject NUL bytes in `nats` CLI context names.** `synadia_ai.agents.connect(context=...)`
   now raises `ContextInvalidError` when the resolved name contains
   `\x00`, instead of letting it propagate into `Path` and surface as a
   confusing `ValueError: embedded null byte`. Brings the validator into
@@ -328,7 +360,7 @@ There is no back-compat shim; 0.x permits breaking changes per §11.2.
   Requires the new `[project.optional-dependencies].examples` extra -
   install with `uv sync --extra examples`. Parser covered by
   `tests/test_chat_commands.py`.
-- **`natsagent.connect()`** - NATS connection factory with three
+- **`synadia_ai.agents.connect()`** - NATS connection factory with three
   variants: direct `servers=` URL(s), `context=` (nats-cli JSON at
   `~/.config/nats/context/<name>.json`, XDG-compliant; pass `True` or
   `"current"` to honour `$NATS_CONTEXT` → the selection pointer written
@@ -351,7 +383,7 @@ There is no back-compat shim; 0.x permits breaking changes per §11.2.
   service metadata / the `$SRV.INFO` record so `01-discover.py` can
   print them alongside the endpoint caps. Additive; defaults to `""`.
 - **Structured log records on three client I/O paths** (logger
-  `natsagent.client`): `debug` on `Client.ping` timeout, `warning` on
+  `synadia_ai.agents.client`): `debug` on `Client.ping` timeout, `warning` on
   prompt stream inactivity timeout, `warning` on service-error frames
   received mid-stream. Field-debugging visibility only - no wire
   change.

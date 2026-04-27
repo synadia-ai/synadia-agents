@@ -13,7 +13,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from natsagent.heartbeat import (
+from synadia_ai.agents.heartbeat import (
     DEFAULT_LIVENESS_SLACK,
     HeartbeatPayload,
     HeartbeatTracker,

@@ -11,7 +11,7 @@ Every numbered example honours the same resolution order:
 Mirrors what the TS ``examples/`` do with their inline loader. The SDK
 does not open NATS connections — every example builds its own
 :class:`~nats.aio.client.Client` via :func:`nats.connect` and hands it to
-:class:`~natsagent.Agents` / :class:`~natsagent.AgentService`.
+:class:`~synadia_ai.agents.Agents` / :class:`~synadia_ai.agents.AgentService`.
 
 The leading underscore on the filename is intentional: this helper is
 internal plumbing for the examples, not itself a demo.
@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 import nats
 
-from natsagent import NatsContextError, load_context_options
+from synadia_ai.agents import NatsContextError, load_context_options
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient

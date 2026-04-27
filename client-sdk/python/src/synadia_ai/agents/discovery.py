@@ -3,7 +3,7 @@
 Mirrors the TS SDK's ``discovery/`` subtree (PR #7) field-for-field:
 
 - :class:`AgentInfo` — pure data record assembled from a ``$SRV.INFO`` reply
-  per spec §4.3. The :class:`~natsagent.agent.Agent` class wraps this with
+  per spec §4.3. The :class:`~synadia_ai.agents.agent.Agent` class wraps this with
   the :class:`~nats.aio.client.Client` needed to prompt it.
 - :class:`EndpointInfo` — parsed endpoint record (§2.1, §4.3); ``max_payload``
   / ``attachments_ok`` parsed for the ``prompt`` endpoint, raw strings always
@@ -97,7 +97,7 @@ class EndpointInfo:
 class AgentInfo:
     """Pure-data view of an agent assembled from a ``$SRV.INFO`` reply (§4.3).
 
-    The :class:`~natsagent.agent.Agent` class wraps this with the
+    The :class:`~synadia_ai.agents.agent.Agent` class wraps this with the
     :class:`~nats.aio.client.Client` needed to prompt it. ``instance_id`` is
     the NATS micro service id; matches ``heartbeat.instance_id`` (§8.3) and
     is the addressing key for ``$SRV.INFO.agents.{id}`` direct lookup (§4.2).

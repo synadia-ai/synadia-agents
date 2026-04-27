@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import (
+from synadia_ai.agents import (
     DEFAULT_DISCOVER_MAX_WAIT_S,
     Agents,
     AgentService,

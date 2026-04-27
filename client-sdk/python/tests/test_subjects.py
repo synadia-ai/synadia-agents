@@ -6,9 +6,9 @@ import base64
 
 import pytest
 
-from natsagent import AgentSubject
-from natsagent.errors import InvalidSubjectToken
-from natsagent.subjects import (
+from synadia_ai.agents import AgentSubject
+from synadia_ai.agents.errors import InvalidSubjectToken
+from synadia_ai.agents.subjects import (
     is_heartbeat_subject,
     parse_agent_subject,
 )

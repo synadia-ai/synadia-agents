@@ -10,9 +10,9 @@ import json
 
 import pytest
 
-from natsagent import QueryChunk, ResponseChunk, StatusChunk
-from natsagent.errors import ProtocolError
-from natsagent.messages import decode_chunk, encode_chunk
+from synadia_ai.agents import QueryChunk, ResponseChunk, StatusChunk
+from synadia_ai.agents.errors import ProtocolError
+from synadia_ai.agents.messages import decode_chunk, encode_chunk
 
 
 class TestResponseChunk:

@@ -20,7 +20,7 @@ from types import FrameType
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
-from natsagent import Agents, HeartbeatPayload
+from synadia_ai.agents import Agents, HeartbeatPayload
 
 
 def _make_listener(identity: str) -> Callable[[HeartbeatPayload], None]:

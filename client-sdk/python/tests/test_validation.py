@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`natsagent.validation` (§5.4 pre-publish checks).
+"""Unit tests for :mod:`synadia_ai.agents.validation` (§5.4 pre-publish checks).
 
 Pure tests — the assertions are synchronous and don't touch NATS. The e2e
 companion in ``test_validation_e2e.py`` verifies the assertions fire from
@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from natsagent import (
+from synadia_ai.agents import (
     AttachmentsNotSupportedError,
     PayloadTooLargeError,
     PromptEmptyError,
     ValidationError,
 )
-from natsagent.validation import (
+from synadia_ai.agents.validation import (
     assert_attachments_allowed,
     assert_prompt_non_empty,
     assert_within_max_payload,

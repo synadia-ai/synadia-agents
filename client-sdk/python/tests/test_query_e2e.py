@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from natsagent import (
+from synadia_ai.agents import (
     Agents,
     AgentService,
     Envelope,

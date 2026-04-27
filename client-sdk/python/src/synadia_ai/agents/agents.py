@@ -4,7 +4,7 @@ Owner of the heartbeat wildcard subscription and the entry point for
 discovery. Construct with a pre-opened :class:`~nats.aio.client.Client`::
 
     import nats
-    from natsagent import Agents
+    from synadia_ai.agents import Agents
 
     nc = await nats.connect(servers="nats://127.0.0.1:4222")
     agents = Agents(nc=nc)
@@ -54,7 +54,7 @@ class Agents:
     The caller retains ownership of ``nc`` — :meth:`close` does NOT close
     the underlying connection. Pass a custom logger via ``logger=`` to
     surface SDK-internal events through your app's logging stack;
-    defaults to ``logging.getLogger("natsagent.agents")``.
+    defaults to ``logging.getLogger("synadia_ai.agents.agents")``.
     """
 
     def __init__(
@@ -218,7 +218,7 @@ class Agents:
 
     def _ensure_open(self) -> None:
         if self._closed:
-            raise RuntimeError("natsagent.Agents is closed")
+            raise RuntimeError("synadia_ai.agents.Agents is closed")
 
 
 __all__ = ["Agents"]

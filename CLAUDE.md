@@ -24,7 +24,7 @@ they are not the spec itself.
 | Path | Package | Published as | Notes |
 | --- | --- | --- | --- |
 | `client-sdk/typescript/` | `@synadia-ai/agents` | npm (restricted) | TS SDK — Node/Bun callers |
-| `client-sdk/python/` | `natsagent` | PyPI (beta) | Python SDK — has its own CLAUDE.md |
+| `client-sdk/python/` | `synadia-ai-agents` (import: `synadia_ai.agents`) | PyPI (not yet published) | Python SDK — has its own CLAUDE.md |
 | `agents/pi/` | `@synadia-ai/nats-pi-channel` | npm (restricted) | PI extension plugin |
 | `agents/openclaw/` | `@synadia-ai/nats-channel` | npm (restricted) | OpenClaw plugin |
 | `agents/claude-code/` | `claude-channel-nats` | npm (restricted) | Claude Code MCP plugin |
@@ -54,14 +54,14 @@ Two distinct version axes:
   - TS: `SDK_PROTOCOL_VERSION = { major: 0, minor: 2 }` in
     `client-sdk/typescript/src/version.ts`.
   - Python: `_PROTOCOL_VERSION = "0.2"` in
-    `client-sdk/python/src/natsagent/agent.py`.
+    `client-sdk/python/src/synadia_ai/agents/service.py`.
   - Agent harnesses hard-code the same string (e.g.
     `agents/pi/extensions/nats-channel.ts`,
     `agents/claude-code/server.ts`). If the spec ever bumps, all four
     locations move in lockstep.
 - **Package version (npm/PyPI)** — independent per SDK.
   - TS: `@synadia-ai/agents@0.1.x` on npm.
-  - Python: `natsagent@0.2.x` on PyPI.
+  - Python: `synadia-ai-agents@0.x` — not yet published to PyPI.
 
 The package versions differ for historical reasons. They are **not** a
 protocol skew. The Python `tests/test_interop_e2e.py` runs the TS
