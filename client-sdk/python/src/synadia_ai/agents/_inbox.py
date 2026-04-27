@@ -11,17 +11,20 @@ allocates a reply subject.
 
 from __future__ import annotations
 
+import os
+
 from nats.nuid import NUID
 
 SDK_INBOX_PREFIX = "_INBOX.agents"
 
 _nuid = NUID()
 
-try:
-    import os as _os
-    _os.register_at_fork(after_in_child=_nuid.randomize)
-except AttributeError:
-    pass  # register_at_fork not available on Windows
+# After fork() the child inherits the parent's NUID state and would mint
+# identical inboxes until its sequence ticked past the parent's. Re-roll
+# the prefix in the child so its inbox stream is disjoint. POSIX-only;
+# Windows has no fork to defend against.
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_nuid.randomize_prefix)
 
 
 def new_inbox() -> str:
