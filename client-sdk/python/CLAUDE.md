@@ -233,6 +233,25 @@ is the pre-push gate. If CI fails on a lint rule that passed locally,
 assume cache staleness and re-run with the flags above before anything
 else.
 
+**Doc snippets are not compiler-checked — verify before propagating.**
+When a sweep mechanically rewrites identifiers in docs (rename, package
+move, large refactor), every code example you touch is potentially
+stale. Doc text doesn't break the build, so a snippet that referenced
+`Client.bind(...)` keeps "looking valid" long after `Client` was
+removed in 0.3.0. A literal find-and-replace propagates the staleness
+under the new name and ships docs that `NameError` if a reader copies
+them. The rename PR (#23) hit this three times: a `connect()` factory
+in this CLAUDE.md surviving its 0.3.0 removal; a `client-sdk/README.md`
+quickstart still using `Client.bind()` after the API moved to
+`Agents.discover()`; a PR description claiming "Python has no
+reference agent" while one sat at `examples/_reference_agent.py`. Rule:
+for any **current-state** doc snippet touched in a sweep (READMEs,
+this file, contributor guides), grep `src/` for every symbol it uses
+and confirm each is still in `__all__` / still exported. If not,
+rewrite to current API. Historical CHANGELOG diffs are different —
+they intentionally describe removed APIs and a literal sweep there is
+fine.
+
 ## Work execution
 
 Use `TaskCreate`/`TaskUpdate` for non-trivial work. Update status as you
