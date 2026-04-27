@@ -1,13 +1,17 @@
-// Subject builders + session-id sanitizer for pi-headless.
+// Subject builders + session-id sanitizer for claude-code-headless.
 //
-// The controller lives at `agents.pi.<owner>.<name>` with three extra
+// The controller lives at `agents.cc.<owner>.<name>` with three extra
 // endpoints on `.spawn`, `.stop`, `.list`. Each spawned session lives at
-// its own subject `agents.pi.<owner>.<session_id>` (registered by a
+// its own subject `agents.cc.<owner>.<session_id>` (registered by a
 // `ReferenceAgent` from the SDK's testing subpath), which means callers
 // can discover and prompt sessions using nothing but the standard
 // protocol.
+//
+// The `cc` token is shared with `agents/claude-code/` (Claude Code as
+// MCP-driven NATS client). They co-exist because the controller name
+// and per-session ids disambiguate the 4th subject token.
 
-export const AGENT_TOKEN = "pi";
+export const AGENT_TOKEN = "cc";
 
 export function controllerPromptSubject(owner: string, name: string): string {
   return `agents.${AGENT_TOKEN}.${owner}.${name}`;

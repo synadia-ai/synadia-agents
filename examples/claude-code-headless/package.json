@@ -1,0 +1,50 @@
+{
+  "name": "@synadia-ai/nats-claude-code-headless",
+  "version": "0.1.0",
+  "description": "Headless NATS agent host that spawns, prompts, and stops Claude Code sessions as first-class NATS Agent Protocol (v0.2.0-draft) instances. Each session registers as agents.cc.<owner>.<session_id>; a small controller service adds spawn/stop/list custom endpoints.",
+  "keywords": [
+    "nats",
+    "agents",
+    "agent-protocol",
+    "claude",
+    "claude-code",
+    "anthropic",
+    "synadia-agents"
+  ],
+  "license": "Apache-2.0",
+  "author": "Synadia Communications",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "examples/claude-code-headless"
+  },
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/examples/claude-code-headless",
+  "bugs": {
+    "url": "https://github.com/synadia-ai/synadia-agents/issues"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "type": "module",
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest",
+    "@nats-io/services": "^3.3.1",
+    "@nats-io/transport-node": "^3.3.1",
+    "@synadia-ai/agents": "^0.1.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

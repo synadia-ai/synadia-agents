@@ -15,6 +15,32 @@ const bubbleRef = ref<HTMLElement | null>(null);
 const isUser = computed(() => props.message.role === "user");
 const isAgent = computed(() => props.message.role === "agent");
 const isQuery = computed(() => props.message.role === "query");
+const isTool = computed(() => props.message.role === "tool");
+
+const toolInputJson = computed(() => {
+  const t = props.message.tool;
+  if (!t) return "";
+  try {
+    return JSON.stringify(t.input, null, 2);
+  } catch {
+    return String(t.input);
+  }
+});
+
+const toolStatusGlyph = computed(() => {
+  const t = props.message.tool;
+  if (!t) return "";
+  if (t.isError) return "✗";
+  if (t.result !== undefined) return "✓";
+  return "…";
+});
+
+const formattedCost = computed(() => {
+  const c = props.message.costUsd;
+  if (c === undefined || c === null) return "";
+  if (c < 0.0001) return "<$0.0001";
+  return `$${c.toFixed(4)}`;
+});
 
 const freeText = ref("");
 
@@ -79,6 +105,8 @@ onBeforeUnmount(() => bubbleRef.value?.removeEventListener("click", handleClick)
       user: isUser,
       agent: isAgent,
       query: isQuery,
+      tool: isTool,
+      'tool-error': isTool && message.tool?.isError,
       streaming: message.streaming,
       errored: !!message.error,
     }"
@@ -95,6 +123,23 @@ onBeforeUnmount(() => bubbleRef.value?.removeEventListener("click", handleClick)
       <span class="role">agent asks</span>
       <span class="time mono">{{ time }}</span>
     </header>
+
+    <div v-if="isTool && message.tool" class="tool-card">
+      <header class="tool-header">
+        <span class="tool-glyph mono">{{ toolStatusGlyph }}</span>
+        <span class="tool-name mono">{{ message.tool.name }}</span>
+        <span class="time mono">{{ time }}</span>
+      </header>
+      <details class="tool-section" open>
+        <summary class="tool-summary mono">input</summary>
+        <pre class="tool-pre mono">{{ toolInputJson }}</pre>
+      </details>
+      <details v-if="message.tool.result !== undefined" class="tool-section" :open="message.tool.isError">
+        <summary class="tool-summary mono">{{ message.tool.isError ? "result (error)" : "result" }}</summary>
+        <pre class="tool-pre mono">{{ message.tool.result }}</pre>
+      </details>
+      <div v-else class="tool-pending mono">running…</div>
+    </div>
 
     <div v-if="isUser && message.attachments && message.attachments.length" class="attachments">
       <span v-for="a in message.attachments" :key="a.filename" class="attachment mono">📎 {{ a.filename }}</span>
@@ -131,6 +176,7 @@ onBeforeUnmount(() => bubbleRef.value?.removeEventListener("click", handleClick)
     </div>
 
     <footer v-if="message.statusNote" class="status-note mono">{{ message.statusNote }}</footer>
+    <footer v-if="formattedCost" class="cost-note mono">cost: {{ formattedCost }}</footer>
     <footer v-if="message.error" class="error mono">{{ message.error }}</footer>
 
     <footer v-if="isUser" class="user-time">
@@ -171,6 +217,74 @@ onBeforeUnmount(() => bubbleRef.value?.removeEventListener("click", handleClick)
   background: var(--accent-glow);
   border: 1px solid var(--accent-primary);
   border-radius: var(--border-radius-lg);
+}
+
+.bubble.tool {
+  align-self: flex-start;
+  max-width: 92%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-primary);
+  border: var(--border-subtle);
+  border-radius: var(--border-radius);
+}
+.bubble.tool-error {
+  border-color: var(--error);
+}
+
+.tool-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.tool-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.tool-glyph {
+  font-weight: 700;
+  color: var(--accent-primary);
+}
+.bubble.tool-error .tool-glyph { color: var(--error); }
+.tool-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tool-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tool-summary {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  user-select: none;
+}
+.tool-summary:hover { color: var(--text-secondary); }
+.tool-pre {
+  margin: 2px 0 0 0;
+  padding: 6px 8px;
+  background: var(--bg-deep);
+  border: var(--border-subtle);
+  border-radius: var(--border-radius-sm);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.tool-pending {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .query-reply {
@@ -306,6 +420,11 @@ onBeforeUnmount(() => bubbleRef.value?.removeEventListener("click", handleClick)
   font-size: var(--text-xs);
   color: var(--text-muted);
   font-style: italic;
+}
+.cost-note {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
 }
 .error {
   font-size: var(--text-xs);

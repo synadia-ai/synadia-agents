@@ -70,6 +70,58 @@ export type PiExecSpawnDescriptor = {
   instance_id: string;
 };
 
+/** Summary of a claude-code-headless session as returned by the controller's `list` endpoint. */
+export type CcExecSessionSummary = {
+  session_id: string;
+  subject: string;
+  heartbeat_subject: string;
+  cwd: string;
+  model: string;
+  allowed_tools: string[];
+  permission_mode: string;
+  max_turns: number;
+  max_lifetime_s: number;
+  remaining_lifetime_s: number;
+  active_request: boolean;
+  queued_requests: number;
+  created_at: string;
+  last_activity: string;
+  /** SDK session id, populated after the first turn finishes (used for resume). */
+  sdk_session_id?: string;
+  /** Cumulative USD cost across all completed turns. */
+  total_cost_usd: number;
+  /** Number of completed turns. */
+  turn_count: number;
+};
+
+/** Spec for spawning a claude-code-headless session; mirrors the `spawn` wire. */
+export type CcExecSpawnSpec = {
+  cwd: string;
+  session_id?: string;
+  model?: string;
+  allowed_tools?: string[];
+  permission_mode?: string;
+  max_turns?: number;
+  max_lifetime_s?: number;
+};
+
+/** Descriptor returned by a successful claude-code-headless `spawn`. */
+export type CcExecSpawnDescriptor = {
+  session_id: string;
+  subject: string;
+  heartbeat_subject: string;
+  cwd: string;
+  model: string;
+  allowed_tools: string[];
+  permission_mode: string;
+  max_turns: number;
+  max_lifetime_s: number;
+  created_at: string;
+  instance_id: string;
+  total_cost_usd: number;
+  turn_count: number;
+};
+
 // ─── Client → Server ─────────────────────────────────────────────────────────
 
 export type ClientMessage =
@@ -99,6 +151,23 @@ export type ClientMessage =
       kind: "piexec-list";
       id: string;
       controllerInstanceId: string;
+    }
+  | {
+      kind: "ccexec-spawn";
+      id: string;
+      controllerInstanceId: string;
+      spec: CcExecSpawnSpec;
+    }
+  | {
+      kind: "ccexec-stop";
+      id: string;
+      controllerInstanceId: string;
+      sessionId: string;
+    }
+  | {
+      kind: "ccexec-list";
+      id: string;
+      controllerInstanceId: string;
     };
 
 // ─── Server → Client ─────────────────────────────────────────────────────────
@@ -123,6 +192,29 @@ export type ServerMessage =
       queryId: string;
       prompt: string;
       attachments?: WireAttachment[];
+    }
+  | {
+      /** A tool call started (Claude Code etc.). The same toolUseId will appear in a later tool-result. */
+      kind: "tool-use";
+      id: string;
+      toolUseId: string;
+      toolName: string;
+      input: Record<string, unknown>;
+    }
+  | {
+      /** A previously-emitted tool call's result. */
+      kind: "tool-result";
+      id: string;
+      toolUseId: string;
+      output: string;
+      isError: boolean;
+    }
+  | {
+      /** Per-turn + cumulative cost, emitted when a turn completes. */
+      kind: "cost";
+      id: string;
+      turnCostUsd: number;
+      totalCostUsd: number;
     }
   | { kind: "done"; id: string }
   | {
@@ -163,7 +255,23 @@ export type ServerMessage =
       agent: DiscoveredAgentDTO;
     }
   | {
-      /** Pushed when an agent is removed (e.g. stopped via pi-headless). */
+      /** Pushed when an agent is removed (e.g. stopped via pi-headless or claude-code-headless). */
       kind: "agent-removed";
       instanceId: string;
+    }
+  | {
+      kind: "ccexec-spawned";
+      id: string;
+      descriptor: CcExecSpawnDescriptor;
+    }
+  | {
+      kind: "ccexec-stopped";
+      id: string;
+      sessionId: string;
+    }
+  | {
+      kind: "ccexec-listed";
+      id: string;
+      controllerInstanceId: string;
+      sessions: CcExecSessionSummary[];
     };

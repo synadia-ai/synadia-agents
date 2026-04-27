@@ -2,8 +2,9 @@
 
 A Bun + Vue 3 test client for the [`@synadia-ai/agents`](../../client-sdk/typescript) SDK.
 Discover agents over NATS, prompt them (with optional attachments),
-stream responses back, and — when a [`pi-headless`](../pi-headless) controller
-is online — spawn, prompt, and fan out PI sessions from the browser.
+stream responses back, and — when a [`pi-headless`](../pi-headless) or
+[`claude-code-headless`](../claude-code-headless) controller is online — spawn,
+prompt, and manage sessions from the browser.
 
 Primary use: manually poking at the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs)
 implementations - [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-code),
@@ -12,10 +13,12 @@ implementations - [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-c
 
 ## Features
 
-- **Chat mode** — default view. Live agent list + per-agent chat surface with streaming responses, attachments, and mid-stream query replies.
+- **Chat mode** — default view. Live agent list + per-agent chat surface with streaming responses, attachments, mid-stream query replies, tool-call cards, and per-turn cost annotations.
 - **PI Exec mode** — appears in the header as soon as a `pi-headless` controller is discovered. Spawn PI sessions (cwd, model, thinking level, max lifetime), prompt them, and fan out one prompt across N working directories in parallel.
+- **CC Exec mode** — appears in the header as soon as a `claude-code-headless` controller is discovered. Spawn Claude Code sessions (cwd, model, allowed tools, permission mode, max turns, max lifetime), watch tool calls + results render inline as collapsible cards, approve/deny permission requests with a single click, see per-turn and cumulative cost on every bubble.
 - **Auto-discovery** — new agents appear in the list as soon as they publish their first heartbeat. `ReferenceAgent` fires that synchronously on `start()`, so a fresh session shows up in ~one NATS round-trip — no need to hit Refresh after spawning.
-- **Mid-stream queries** — agents can pause a response to ask a permission or clarification question; the UI renders these inline with shortcut allow/deny buttons and a free-text reply box.
+- **Mid-stream queries** — agents can pause a response to ask a permission or clarification question; the UI renders these inline with shortcut allow/deny buttons and a free-text reply box. Both PI tooling prompts and Claude Code permission requests use this same primitive.
+- **Tool call rendering** — `tool_use` / `tool_result` chunks (emitted by claude-code-headless as prefix-tagged status payloads) are translated by the bridge into typed events and rendered as collapsible cards showing tool name, input JSON, and result output (with success/error glyph).
 - **Local validation** — oversized envelopes and unsupported attachments are caught before any wire traffic, with the SDK's typed errors surfaced in the UI.
 
 ## Shape

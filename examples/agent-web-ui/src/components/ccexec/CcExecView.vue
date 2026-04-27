@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, watch } from "vue";
 import { useBridge, fileToAttachment } from "../../composables/useBridge.ts";
-import { agentsState, piexecControllers, selectAgent } from "../../stores/agents.ts";
+import { agentsState, ccexecControllers, selectAgent } from "../../stores/agents.ts";
 import {
-  autoPickController,
-  piexecState,
-  selectedController,
-} from "../../stores/piexec.ts";
+  autoPickCcController,
+  bumpCcSessionCost,
+  ccexecState,
+  selectedCcController,
+} from "../../stores/ccexec.ts";
 import {
   appendMessage,
   findMessage,
@@ -19,7 +20,6 @@ import {
 import ControllerSelector from "./ControllerSelector.vue";
 import SpawnForm from "./SpawnForm.vue";
 import SessionList from "./SessionList.vue";
-import FanoutPanel from "./FanoutPanel.vue";
 import MessageList from "../MessageList.vue";
 import PromptArea from "../PromptArea.vue";
 import { randomUUID } from "../../uuid.ts";
@@ -35,7 +35,7 @@ const selected = computed(() => {
 const isSessionSelected = computed(() => {
   const s = selected.value;
   if (!s) return false;
-  return s.metadata?.["spawner"] === "pi-headless";
+  return s.metadata?.["spawner"] === "claude-code-headless";
 });
 
 const currentMessages = computed(() =>
@@ -55,13 +55,13 @@ const maxPayloadBytes = computed(() => selected.value?.promptEndpoint.maxPayload
 
 // Auto-pick a controller on first load or when the list changes.
 watch(
-  () => piexecControllers.value.length,
-  () => autoPickController(),
+  () => ccexecControllers.value.length,
+  () => autoPickCcController(),
   { immediate: true },
 );
 
 onMounted(() => {
-  autoPickController();
+  autoPickCcController();
 });
 
 async function onSubmit(text: string, files: File[]): Promise<void> {
@@ -74,7 +74,7 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
     try {
       attachments = await Promise.all(files.map(fileToAttachment));
     } catch (e) {
-      piexecState.lastError = `failed to read file: ${(e as Error).message}`;
+      ccexecState.lastError = `failed to read file: ${(e as Error).message}`;
       return;
     }
   }
@@ -158,9 +158,13 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
         m.tool.isError = isError;
       }
     },
-    onCost(turnCostUsd) {
+    onCost(turnCostUsd, totalCostUsd) {
       const m = findMessage(agent.instanceId, currentAgentMsgId);
       if (m) m.costUsd = turnCostUsd;
+      // The session id equals the spawned agent's `name` token (see
+      // claude-code-headless ManagedSession registration). Keep the session
+      // summary in sync so the SessionList card reflects the running total.
+      bumpCcSessionCost(agent.name, totalCostUsd);
     },
     onDone() {
       const m = findMessage(agent.instanceId, currentAgentMsgId);
@@ -204,10 +208,10 @@ function onQueryReply(message: Message, answer: string): void {
       <SessionList />
     </section>
     <section class="col-mid">
-      <div v-if="!selectedController" class="placeholder">
-        <h2>No pi-headless controller</h2>
+      <div v-if="!selectedCcController" class="placeholder">
+        <h2>No claude-code-headless controller</h2>
         <p>
-          Run <code class="mono">bun run start</code> in <code class="mono">examples/pi-headless</code> and hit Refresh.
+          Run <code class="mono">bun run start</code> in <code class="mono">examples/claude-code-headless</code> and hit Refresh.
         </p>
       </div>
       <div v-else-if="!selected || !isSessionSelected" class="placeholder">
@@ -217,7 +221,7 @@ function onQueryReply(message: Message, answer: string): void {
       <template v-else>
         <header class="chat-head">
           <div class="title">
-            <span class="agent-tag mono">pi</span>
+            <span class="agent-tag mono">cc</span>
             <span class="name">{{ selected.name }}</span>
             <span class="owner mono">@{{ selected.owner }}</span>
           </div>
@@ -234,9 +238,6 @@ function onQueryReply(message: Message, answer: string): void {
         />
       </template>
     </section>
-    <section class="col-right">
-      <FanoutPanel />
-    </section>
   </main>
 </template>
 
@@ -244,14 +245,13 @@ function onQueryReply(message: Message, answer: string): void {
 .grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 320px 1fr 440px;
+  grid-template-columns: 320px 1fr;
   gap: 0;
   min-height: 0;
   overflow: hidden;
 }
 .col-left,
-.col-mid,
-.col-right {
+.col-mid {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -266,12 +266,6 @@ function onQueryReply(message: Message, answer: string): void {
 }
 .col-mid {
   background: var(--bg-deep);
-}
-.col-right {
-  padding: var(--space-md);
-  background: var(--bg-primary);
-  border-left: var(--border-subtle);
-  overflow-y: auto;
 }
 
 .placeholder {

@@ -1,7 +1,17 @@
 import { reactive } from "vue";
 import type { WireAttachment } from "../wire.ts";
 
-export type MessageRole = "user" | "agent" | "query";
+export type MessageRole = "user" | "agent" | "query" | "tool";
+
+export type ToolCallInfo = {
+  /** Stable id assigned by the agent's SDK; same id will appear on the result. */
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  /** Result text, populated when the matching tool_result chunk arrives. */
+  result?: string;
+  isError?: boolean;
+};
 
 export type Message = {
   id: string;
@@ -17,6 +27,10 @@ export type Message = {
   promptId?: string;
   replied?: boolean;
   replyValue?: string;
+  // Populated on role === "tool" only.
+  tool?: ToolCallInfo;
+  // Optional per-turn cost annotation, set on the agent bubble that closed the turn.
+  costUsd?: number;
 };
 
 export type Session = {
@@ -48,6 +62,11 @@ export function appendMessage(instanceId: string, msg: Message): Message {
 
 export function findMessage(instanceId: string, id: string): Message | undefined {
   return getSession(instanceId).messages.find((m) => m.id === id);
+}
+
+/** Locate a tool message by its agent-assigned tool_use id (used to pair results). */
+export function findMessageByToolId(instanceId: string, toolUseId: string): Message | undefined {
+  return getSession(instanceId).messages.find((m) => m.role === "tool" && m.tool?.id === toolUseId);
 }
 
 export function clearSession(instanceId: string): void {
