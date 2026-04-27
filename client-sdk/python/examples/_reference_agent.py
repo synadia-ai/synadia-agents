@@ -41,7 +41,7 @@ from types import FrameType
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
-from natsagent import Agent, Envelope, PromptStream
+from natsagent import AgentService, Envelope, PromptStream
 
 log = logging.getLogger("natsagent.examples.reference")
 
@@ -172,7 +172,7 @@ async def main() -> None:
                     )
         await stream.send(echoed)
 
-    agent = Agent(
+    agent = AgentService(
         agent=args.agent,
         owner=args.owner,
         name=args.name,

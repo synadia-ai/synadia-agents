@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import Attachment, Client, ResponseChunk
+from natsagent import Agents, Attachment, ResponseChunk
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -127,18 +127,16 @@ async def test_reference_agent_echoes_prefix_and_saves_attachment(
     proc, save_dir = py_reference_agent
     assert proc.prompt_subject is not None
 
-    client = Client(nc=nc)
-    await client.start()
+    agents = Agents(nc=nc)
     try:
-        found = await client.discover(timeout=3.0)
-        discovered = next((d for d in found if d.inbox == proc.prompt_subject), None)
+        found = await agents.discover(timeout=3.0)
+        discovered = next((a for a in found if a.prompt_subject == proc.prompt_subject), None)
         assert discovered is not None, (
-            f"python reference agent not discovered; inboxes={[d.inbox for d in found]}"
+            f"python reference agent not discovered; subjects={[a.prompt_subject for a in found]}"
         )
-        remote = client.bind(discovered)
 
         received: list[ResponseChunk] = []
-        async for msg in remote.prompt(
+        async for msg in discovered.prompt(
             "hello", attachments=[Attachment.from_bytes("note.txt", b"ping")], timeout=10.0
         ):
             assert isinstance(msg, ResponseChunk), f"unexpected chunk type: {type(msg).__name__}"
@@ -153,4 +151,4 @@ async def test_reference_agent_echoes_prefix_and_saves_attachment(
         )
         assert saved.read_bytes() == b"ping"
     finally:
-        await client.stop()
+        await agents.close()

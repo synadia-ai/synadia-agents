@@ -10,7 +10,7 @@ These helpers are pure: they take the already-parsed capability fields and
 the candidate payload shape, and raise a :class:`ValidationError` subclass
 (``PromptEmptyError`` / ``AttachmentsNotSupportedError`` /
 ``PayloadTooLargeError``) on violation. The integration point lives in
-:meth:`RemoteAgent.prompt`.
+:meth:`Agent.prompt`.
 """
 
 from __future__ import annotations

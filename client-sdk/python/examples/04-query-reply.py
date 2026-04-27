@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
-from natsagent import Client, Query, ResponseChunk, StatusChunk
+from natsagent import Agents, Query, ResponseChunk, StatusChunk
 
 
 async def _ask(prompt: str) -> str:
@@ -52,15 +52,15 @@ async def main() -> None:
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)
-    client = Client(nc)
+    agents = Agents(nc=nc)
     try:
-        agents = await client.discover(timeout=2.0)
-        if not agents:
+        found = await agents.discover()
+        if not found:
             print("no agents found.", file=sys.stderr)
             sys.exit(2)
-        remote = client.bind(agents[0])
+        agent = found[0]
 
-        async for msg in remote.prompt(args.text, session=args.session):
+        async for msg in agent.prompt(args.text, session=args.session):
             if isinstance(msg, ResponseChunk):
                 sys.stdout.write(msg.text)
                 sys.stdout.flush()
@@ -71,7 +71,7 @@ async def main() -> None:
                     sys.stdout.write("\n[done]\n")
                     sys.stdout.flush()
     finally:
-        await client.stop()
+        await agents.close()
         await nc.close()
 
 

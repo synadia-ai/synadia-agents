@@ -7,16 +7,20 @@ comparing the two SDKs should find the same demo set on both sides.
 
 ## The scripts
 
+Client-side examples lead. The reference agent (`_reference_agent.py`)
+appears at the bottom — it is a test harness for the demos, not itself a
+demo.
+
 | File | What it does |
 | --- | --- |
-| [`_reference_agent.py`](_reference_agent.py) | Spec-compliant echo agent - run this first so the numbered demos have something to talk to. Keeps a small per-session conversation memory (capped at 20 turns) so multi-turn chats across invocations feel alive. |
-| [`01-discover.py`](01-discover.py) | Enumerate every reachable agent via `$SRV.PING.agents` and print identity + capabilities. |
+| [`01-discover.py`](01-discover.py) | Enumerate every reachable agent via `$SRV.INFO.agents` and print identity + capabilities. |
 | [`02-prompt-text.py`](02-prompt-text.py) | Send a text prompt to the first discovered agent and stream the response to stdout. Accepts `--session NAME` (see below). |
 | [`03-prompt-attachment.py`](03-prompt-attachment.py) | Prompt with a file attached; shows §5.4 pre-publish validation (`max_payload`, `attachments_ok`). Accepts `--session NAME`. |
 | [`04-query-reply.py`](04-query-reply.py) | Answer mid-stream queries the agent asks (permission prompts, clarifications). Accepts `--session NAME`. |
-| [`05-liveness.py`](05-liveness.py) | Passive wildcard subscription that prints every agent's heartbeat as it arrives. |
+| [`05-liveness.py`](05-liveness.py) | Per-instance heartbeat listener + periodic liveness snapshot. |
 | [`06-chat.py`](06-chat.py) | Interactive chat REPL with a `rich`-powered TUI. Requires `uv sync --extra examples`. |
 | [`_connect_cli.py`](_connect_cli.py) | (internal plumbing; not a demo) - shared `--context` / `--url` / `$NATS_URL` resolver. |
+| [`_reference_agent.py`](_reference_agent.py) | Test harness for the examples - a spec-compliant echo agent. Run this first so the numbered demos have something to talk to. Keeps a small per-session conversation memory (capped at 20 turns) so multi-turn chats across invocations feel alive. |
 
 ## Start here
 
@@ -85,8 +89,10 @@ Every numbered example honours the same flag resolution, in order:
 
 If none of those resolve, the demo exits with a pointed error. See
 [`CLAUDE.md`](../CLAUDE.md#connecting-to-nats) for the full
-`natsagent.connect()` contract (XDG paths, supported context fields,
-unsupported-feature failures).
+`natsagent.load_context_options()` contract (XDG paths, supported context
+fields, unsupported-feature failures). The SDK itself does not open NATS
+connections — every example builds a `nats.aio.client.Client` via
+`nats.connect(**load_context_options(...))` and hands it to `Agents`.
 
 ## Caveat on `04-query-reply.py`
 

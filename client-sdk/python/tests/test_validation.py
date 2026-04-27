@@ -2,7 +2,7 @@
 
 Pure tests — the assertions are synchronous and don't touch NATS. The e2e
 companion in ``test_validation_e2e.py`` verifies the assertions fire from
-``RemoteAgent.prompt`` before any wire traffic.
+``Agent.prompt`` before any wire traffic.
 """
 
 from __future__ import annotations

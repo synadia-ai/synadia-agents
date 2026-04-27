@@ -13,7 +13,7 @@ whose ``data`` shape depends on the discriminator (§6.2):
 §6.2 forbids the plain-text shorthand on the response side — ``decode_chunk``
 always JSON-parses and raises :class:`ProtocolError` for non-JSON. Unknown
 top-level ``type`` values are silently dropped (§6.6) — the decoder returns
-``None`` and ``Client._stream_prompt`` filters those out.
+``None`` and the prompt-stream iterator filters those out.
 """
 
 from __future__ import annotations

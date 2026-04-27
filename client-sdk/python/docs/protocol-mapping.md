@@ -9,22 +9,22 @@ for reviewers auditing this one.
 
 | SDK                                      | Wire behaviour                                                                         | Spec ref   |
 | ---------------------------------------- | -------------------------------------------------------------------------------------- | ---------- |
-| `Client.discover()`                      | Publishes `$SRV.INFO.agents`, collects multi-reply responses until `timeout`.          | §4, §4.1   |
-| `Client.ping(timeout)`                   | Publishes `$SRV.PING.agents`; `True` iff any response arrives within `timeout`. For per-instance liveness use `Client.status(inbox)`. | §8.4       |
-| Implicit subscribe-before-PING           | Heartbeat wildcard SUB established on `start()` BEFORE any discovery publish.          | §8.5       |
+| `Agents.discover()`                      | Publishes `$SRV.INFO.agents`, collects multi-reply responses (stall by default; `timeout=` switches to timer strategy). | §4, §4.1 |
+| `Agents.ping(instance_id, timeout=...)`  | Publishes `$SRV.PING.agents.{instance_id}`; `True` iff a reply arrives within `timeout`. | §8.4    |
+| Implicit subscribe-before-PING           | Heartbeat wildcard SUB established lazily on the first `discover()`/`on_heartbeat()` BEFORE any discovery publish. | §8.5 |
 | Service-name filter                      | Accepts only `"agents"`. v0.2 is wire-incompatible with v0.1 (§11.3), so no alias list. | §3.1       |
 | Non-agent services                       | Dropped - responses whose `name` isn't `"agents"` are ignored.                         | §4.3       |
 | `EndpointInfo.max_payload_bytes`         | Parsed from `metadata.max_payload` (case-insensitive; base-1024: KB=1024, MB=1024²).   | §2.1       |
 | `EndpointInfo.attachments_ok`            | Parsed from `metadata.attachments_ok` (`"true"` / `"false"`).                          | §2.1       |
-| `DiscoveredAgent.name` derivation        | 4th token of the prompt endpoint's subject when it matches `agents.{a}.{o}.{n}`; else `""`. | §4.3     |
-| `DiscoveredAgent.session`                | From `metadata.session` (absent/empty ⇒ `None`).                                       | §3.2       |
+| `AgentInfo.name` derivation              | 4th token of the prompt endpoint's subject when it matches `agents.{a}.{o}.{n}`; else `""`. | §4.3     |
+| `AgentInfo.session`                      | From `metadata.session` (absent/empty ⇒ `None`).                                       | §3.2       |
 
 ## Service registration (§3)
 
 | SDK                        | Wire behaviour                                                                                  | Spec ref   |
 | -------------------------- | ----------------------------------------------------------------------------------------------- | ---------- |
-| `Agent.start()` service    | `ServiceConfig(name="agents", ...)` - the single shared name from §3.1.                        | §3.1     |
-| Service metadata emitted   | `{agent, owner, protocol_version}` + `session` when `Agent(session=...)` is set.                | §3.2       |
+| `AgentService.start()`     | `ServiceConfig(name="agents", ...)` - the single shared name from §3.1.                        | §3.1     |
+| Service metadata emitted   | `{agent, owner, protocol_version}` + `session` when `AgentService(session=...)` is set.         | §3.2       |
 | `protocol_version` value   | `"0.2"` - MAJOR.MINOR only (§11.1).                                                             | §3.2, §11.1 |
 | Endpoint `prompt` metadata | `{max_payload, attachments_ok}`. Boolean serialised as `"true"`/`"false"` on the wire.          | §2.1       |
 | `prompt` queue group       | `"agents"` - pinned explicitly; framework defaults differ between SDKs and would break interop. | §3.3       |
@@ -34,8 +34,8 @@ for reviewers auditing this one.
 
 | SDK                                          | Wire behaviour                                                                        | Spec ref   |
 | -------------------------------------------- | ------------------------------------------------------------------------------------- | ---------- |
-| `RemoteAgent.prompt(text)`                   | Publishes JSON envelope `{"prompt":"..."}` to the prompt endpoint subject.            | §5.1       |
-| `RemoteAgent.prompt(text, attachments=[...])`| Adds `attachments: [{filename, content: <base64>}]` per RFC 4648 §4 (standard alphabet, padded). | §5.1, §5.2 |
+| `Agent.prompt(text)`                         | Publishes JSON envelope `{"prompt":"..."}` to the prompt endpoint subject.            | §5.1       |
+| `Agent.prompt(text, attachments=[...])`      | Adds `attachments: [{filename, content: <base64>}]` per RFC 4648 §4 (standard alphabet, padded). | §5.1, §5.2 |
 | Plain-text request shorthand                 | NOT emitted by this SDK; always JSON. Decoders accept it per §5.3.                    | §5.3       |
 | Pre-publish `attachments_ok` check           | `AttachmentsNotSupportedError` before any wire I/O.                                   | §5.4       |
 | Pre-publish `max_payload` check              | `PayloadTooLargeError(limit, actual)` before any wire I/O.                            | §5.4       |
@@ -84,13 +84,13 @@ for reviewers auditing this one.
 | SDK                          | Wire behaviour                                                                                   | Spec ref   |
 | ---------------------------- | ------------------------------------------------------------------------------------------------ | ---------- |
 | Subject                      | `agents.{agent}.{owner}.{name}.heartbeat`.                                                       | §8.1       |
-| Default interval             | `Agent(heartbeat_interval_s=30)` (spec recommendation).                                          | §8.2       |
+| Default interval             | `AgentService(heartbeat_interval_s=30)` (spec recommendation).                                   | §8.2       |
 | Payload fields               | `{agent, owner, session?, instance_id, ts, interval_s}` - `session` omitted when absent.         | §8.3       |
 | `HeartbeatPayload` tolerance | `extra="ignore"` - unknown fields silently accepted per §8.3.                                    | §8.3       |
 | `instance_id` source         | `service.id` assigned by nats-py's micro framework (matches `$SRV.INFO` `id`).                   | §3.4, §8.3 |
 | First heartbeat              | Published immediately after service registration so subscribe-then-discover sees liveness.       | §8.5       |
-| Tracker API                  | `Client.status(inbox)` → `AgentStatus` (indexed by subject). Multi-instance indexing is TODO.    | §8.2       |
-| Liveness threshold           | `AgentStatus.is_online(slack=3)` - configurable `slack × interval_s`.                            | §8.2       |
+| Tracker API                  | `Agents.liveness(instance_id)` → `Liveness \| None` (keyed on `payload.instance_id`).            | §8.2       |
+| Liveness threshold           | `Liveness.is_online` precomputed at read time against `DEFAULT_LIVENESS_SLACK × interval_s`.     | §8.2       |
 
 ## Versioning (§11)
 
@@ -98,21 +98,21 @@ for reviewers auditing this one.
 | --------------------- | ------------------------------------------------------------------------------------------------------------------ | -------- |
 | Protocol version      | Agent registers `metadata.protocol_version = "0.2"`. Callers compare MAJOR.MINOR only.                             | §11.1    |
 | Compatibility         | Same MAJOR.MINOR ⇒ full interop. Forward compat rides on §5.6 and §6.6 (unknown fields / chunk types tolerated).   | §11.2    |
-| SDK version (`version` service field) | `_SDK_VERSION = "0.2.0"` - harness version, distinct from protocol version.                         | §3.1, §11 |
+| SDK version (`version` service field) | `_SDK_VERSION = "0.3.0"` - harness version, distinct from protocol version.                         | §3.1, §11 |
 
 ## Security (§10)
 
 | SDK                                   | Wire behaviour                                                                                 | Spec ref |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------- | -------- |
 | Authentication                        | Delegated to NATS connection (`nats.connect(...)`); SDK adds no handshake.                     | §10.1    |
-| NATS context support (`~/.config/nats/context/`) | Not implemented today - context loading is a caller-side concern in both SDKs (callers pass explicit `servers` / creds / authenticator to the underlying NATS client). Tracked as a follow-up if we decide to add a shared helper.  | §10.2    |
+| NATS context support (`~/.config/nats/context/`) | `load_context_options(name)` translates a `nats` CLI context into kwargs for `nats.connect(...)`. Supports `url`, `creds` (with `~` expansion), `user_jwt`, `user`/`password`/`token`, `inbox_prefix`. `nkey`, TLS triple, and `nsc://...` URLs raise `NatsContextError`.  | §10.2    |
 
 ## Cancellation (§6.7)
 
 | SDK                    | Wire behaviour                                                                         | Spec ref |
 | ---------------------- | -------------------------------------------------------------------------------------- | -------- |
 | Early `break`          | Exits the async-for; `finally` unsubscribes the reply inbox; agent is not notified.    | §6.7     |
-| `Client.stop()`        | Unsubscribes the heartbeat tracker; in-flight `prompt()` iterators must be unwound by the caller. | §6.7 |
+| `Agents.close()`       | Unsubscribes the heartbeat tracker and signals in-flight `prompt()` iterators to short-circuit; the underlying `NatsConnection` is caller-owned and untouched. | §6.7 |
 | No wire-level cancel   | Not sent - spec defines none; NATS interest-based delivery handles it server-side.     | §6.7     |
 
 ## Open questions flagged upstream
@@ -174,27 +174,26 @@ the gap is, **why** it matters, and a hint at the **next step**.
 
 ### Caller-side parity confirmed but not test-covered
 
-5. **`Agents.closeSignal` analogue.**
-   TS exposes `Agents.closeSignal: AbortSignal` for callers that
-   materialize `Agent` instances outside `discover()` (e.g. lazily
-   from a heartbeat). Python's `Client` doesn't have a parallel
-   materialization path today (everything goes through `Client.discover`
-   + `Client.bind`), so there's no observable gap yet. Next step:
-   no action until/unless a lazy-materialisation path appears; revisit
-   if so.
+5. **`Agents.close_event` exposed for lazy materialisation.**
+   Python's `Agents` exposes a public `close_event: asyncio.Event`
+   (the analogue of TS's `closeSignal: AbortSignal`) so callers that
+   build `Agent` instances outside `discover()` (e.g. from a heartbeat
+   + `$SRV.INFO.agents.{id}` direct lookup) can pass it to the `Agent`
+   constructor. In-flight prompt streams on those handles then
+   short-circuit when `Agents.close()` is called. Not currently
+   exercised by an e2e test — covered by code review.
 
-6. **`NatsContextError` analogue.**
-   TS exposes a single `NatsContextError` class. Python already has
-   finer-grained types (`ContextNotFoundError`, `ContextNotSelectedError`,
-   `ContextInvalidError`, `ContextNotSupportedError`) - Python is
-   already more specific. No port needed; documented here for
-   completeness so a reader doesn't see "missing class" and assume a
-   gap.
+6. **`NatsContextError` aligned with TS.**
+   v0.3.0 collapses the previous `ContextNotFoundError` /
+   `ContextNotSelectedError` / `ContextInvalidError` /
+   `ContextNotSupportedError` classes into a single `NatsContextError`
+   matching the TS SDK's surface. Branch on the class, not on
+   sub-types; the message carries actionable detail.
 
 ### Behaviour-change risks introduced by the 2026-04-26 sweep
 
 7. **Default-on 30 s keep-alive ack.**
-   `Agent` now emits a `status="ack"` chunk every 30 s during
+   `AgentService` emits a `status="ack"` chunk every 30 s during
    long-running handlers by default (`keepalive_interval_s=30.0`).
    This is extra wire traffic vs prior Python releases - quiet
    handlers that comfortably fit under the TS SDK's 60 s stream

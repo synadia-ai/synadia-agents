@@ -1,56 +1,105 @@
 """Python SDK for the NATS Agent Protocol.
 
 See https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md
-for the wire spec. Public API enters at :class:`Client` (caller-side)
-and :class:`Agent` (agent-side). :func:`connect` is the blessed
-connection factory — direct URL, CLI context, or passthrough.
+for the wire spec.
+
+Public API entry points:
+
+* :class:`Agents` — caller-side; owns the heartbeat wildcard, hands out
+  live :class:`Agent` instances from :meth:`Agents.discover`.
+* :class:`Agent` — a discovered agent with flat ``$SRV.INFO`` metadata
+  fields and a :meth:`Agent.prompt` method.
+* :class:`AgentService` — server-side; what agent harnesses (Hermes,
+  claude-code, pi, openclaw) embed to register themselves on the bus.
+* :func:`load_context_options` — translate a ``nats`` CLI context into
+  kwargs for :func:`nats.connect`.
+
+The SDK does NOT open NATS connections — callers build a
+:class:`~nats.aio.client.Client` and hand it to :class:`Agents`. This
+matches the TS SDK's PR #7 surface and the broader ``@nats-io/*``
+convention (``jetstream(nc)``, ``Svcm(nc)``, ``Kvm(nc)``…).
 """
 
 from __future__ import annotations
 
-from .agent import Agent, PromptHandler, PromptStream
-from .client import Client, DiscoveredAgent, EndpointInfo, Query, RemoteAgent, StreamMessage
-from .connect import NatsContext, connect
+from .agent import (
+    DEFAULT_STREAM_INACTIVITY_TIMEOUT_S,
+    Agent,
+    Query,
+    StreamMessage,
+)
+from .agents import Agents
+from .context import load_context_options
+from .discovery import (
+    DEFAULT_DISCOVER_MAX_WAIT_S,
+    DEFAULT_DISCOVER_STALL_S,
+    PROMPT_ENDPOINT_NAME,
+    PROMPT_QUEUE_GROUP,
+    SERVICE_NAME,
+    AgentInfo,
+    DiscoverFilter,
+    EndpointInfo,
+    build_agent_info,
+)
 from .envelope import Attachment, Envelope, decode, encode
 from .errors import (
     AgentNotFound,
     AttachmentsNotSupportedError,
-    ContextInvalidError,
-    ContextNotFoundError,
-    ContextNotSelectedError,
-    ContextNotSupportedError,
     InvalidSubjectToken,
     NatsAgentError,
+    NatsContextError,
     PayloadTooLargeError,
     PromptEmptyError,
     ProtocolError,
     QueryTimeout,
     ValidationError,
 )
-from .heartbeat import AgentStatus, HeartbeatPayload
+from .heartbeat import (
+    DEFAULT_LIVENESS_SLACK,
+    HEARTBEAT_SUBJECT,
+    HeartbeatPayload,
+    Liveness,
+)
 from .messages import Chunk, QueryChunk, ResponseChunk, StatusChunk
+from .service import (
+    DEFAULT_ATTACHMENTS_OK,
+    DEFAULT_KEEPALIVE_INTERVAL_S,
+    DEFAULT_MAX_PAYLOAD,
+    AgentService,
+    PromptHandler,
+    PromptStream,
+)
 from .subjects import AgentSubject
 
 __all__ = [
+    "DEFAULT_ATTACHMENTS_OK",
+    "DEFAULT_DISCOVER_MAX_WAIT_S",
+    "DEFAULT_DISCOVER_STALL_S",
+    "DEFAULT_KEEPALIVE_INTERVAL_S",
+    "DEFAULT_LIVENESS_SLACK",
+    "DEFAULT_MAX_PAYLOAD",
+    "DEFAULT_STREAM_INACTIVITY_TIMEOUT_S",
+    "HEARTBEAT_SUBJECT",
+    "PROMPT_ENDPOINT_NAME",
+    "PROMPT_QUEUE_GROUP",
+    "SERVICE_NAME",
     "Agent",
+    "AgentInfo",
     "AgentNotFound",
-    "AgentStatus",
+    "AgentService",
     "AgentSubject",
+    "Agents",
     "Attachment",
     "AttachmentsNotSupportedError",
     "Chunk",
-    "Client",
-    "ContextInvalidError",
-    "ContextNotFoundError",
-    "ContextNotSelectedError",
-    "ContextNotSupportedError",
-    "DiscoveredAgent",
+    "DiscoverFilter",
     "EndpointInfo",
     "Envelope",
     "HeartbeatPayload",
     "InvalidSubjectToken",
+    "Liveness",
     "NatsAgentError",
-    "NatsContext",
+    "NatsContextError",
     "PayloadTooLargeError",
     "PromptEmptyError",
     "PromptHandler",
@@ -59,12 +108,12 @@ __all__ = [
     "Query",
     "QueryChunk",
     "QueryTimeout",
-    "RemoteAgent",
     "ResponseChunk",
     "StatusChunk",
     "StreamMessage",
     "ValidationError",
-    "connect",
+    "build_agent_info",
     "decode",
     "encode",
+    "load_context_options",
 ]

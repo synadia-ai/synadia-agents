@@ -5,9 +5,9 @@ Session-aware harnesses (Hermes, pi, ...) rely on this: the label is a
 caller-owned conversation pin, threaded through the SDK unchanged. Tests
 cover the three supported entry paths:
 
-- ``remote.prompt("text", session="s")`` — bare string + kwarg.
-- ``remote.prompt(Envelope(prompt=..., session="s"))`` — envelope carries it.
-- ``remote.prompt(Envelope(prompt=..., session="a"), session="b")`` —
+- ``agent.prompt("text", session="s")`` — bare string + kwarg.
+- ``agent.prompt(Envelope(prompt=..., session="s"))`` — envelope carries it.
+- ``agent.prompt(Envelope(prompt=..., session="a"), session="b")`` —
   explicit kwarg wins (principle of least surprise).
 
 The agent handler echoes the received session as part of its response so
@@ -26,7 +26,8 @@ import pytest_asyncio
 
 from natsagent import (
     Agent,
-    Client,
+    Agents,
+    AgentService,
     Envelope,
     PromptStream,
     ResponseChunk,
@@ -52,20 +53,20 @@ async def _echo_session(envelope: Envelope, stream: PromptStream) -> None:
 
 
 @pytest_asyncio.fixture
-async def session_agent(nc: NATSClient) -> AsyncIterator[Agent]:
-    agent = Agent(
+async def session_service(nc: NATSClient) -> AsyncIterator[AgentService]:
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name=NAME,
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
-    agent.on_prompt(_echo_session)
-    await agent.start()
+    service.on_prompt(_echo_session)
+    await service.start()
     try:
-        yield agent
+        yield service
     finally:
-        await agent.stop()
+        await service.stop()
 
 
 async def _single_response(remote_stream: AsyncIterator[object]) -> dict[str, object]:
@@ -79,58 +80,63 @@ async def _single_response(remote_stream: AsyncIterator[object]) -> dict[str, ob
     return result
 
 
+async def _agent_for(agents: Agents, service: AgentService) -> Agent:
+    found = await agents.discover(timeout=1.0)
+    return next(a for a in found if a.prompt_subject == service.subject.inbox)
+
+
 @pytest.mark.asyncio
 async def test_session_kwarg_on_bare_string(
-    nc: NATSClient, session_agent: Agent, evidence: EvidenceRecorder
+    nc: NATSClient, session_service: AgentService, evidence: EvidenceRecorder
 ) -> None:
-    client = Client(nc=nc)
-    await client.start()
+    agents = Agents(nc=nc)
     try:
-        remote = client.bind(session_agent.subject.inbox)
-        echoed = await _single_response(remote.prompt("hello", session="mychat", timeout=5.0))
+        agent = await _agent_for(agents, session_service)
+        echoed = await _single_response(agent.prompt("hello", session="mychat", timeout=5.0))
         evidence.write_json("echo.json", echoed)
         assert echoed == {"prompt": "hello", "session": "mychat"}
     finally:
-        await client.stop()
+        await agents.close()
 
 
 @pytest.mark.asyncio
-async def test_session_omitted_when_not_passed(nc: NATSClient, session_agent: Agent) -> None:
+async def test_session_omitted_when_not_passed(
+    nc: NATSClient, session_service: AgentService
+) -> None:
     """Session-less callers must see ``None`` on the agent side — the
     field is absent on the wire (``exclude_none=True``) and decodes back
     to ``None``."""
-    client = Client(nc=nc)
-    await client.start()
+    agents = Agents(nc=nc)
     try:
-        remote = client.bind(session_agent.subject.inbox)
-        echoed = await _single_response(remote.prompt("hi", timeout=5.0))
+        agent = await _agent_for(agents, session_service)
+        echoed = await _single_response(agent.prompt("hi", timeout=5.0))
         assert echoed == {"prompt": "hi", "session": None}
     finally:
-        await client.stop()
+        await agents.close()
 
 
 @pytest.mark.asyncio
-async def test_session_on_envelope_preserved(nc: NATSClient, session_agent: Agent) -> None:
-    client = Client(nc=nc)
-    await client.start()
+async def test_session_on_envelope_preserved(nc: NATSClient, session_service: AgentService) -> None:
+    agents = Agents(nc=nc)
     try:
-        remote = client.bind(session_agent.subject.inbox)
+        agent = await _agent_for(agents, session_service)
         env = Envelope(prompt="from envelope", session="envelope-session")
-        echoed = await _single_response(remote.prompt(env, timeout=5.0))
+        echoed = await _single_response(agent.prompt(env, timeout=5.0))
         assert echoed == {"prompt": "from envelope", "session": "envelope-session"}
     finally:
-        await client.stop()
+        await agents.close()
 
 
 @pytest.mark.asyncio
-async def test_kwarg_overrides_envelope_session(nc: NATSClient, session_agent: Agent) -> None:
+async def test_kwarg_overrides_envelope_session(
+    nc: NATSClient, session_service: AgentService
+) -> None:
     """Principle of least surprise — caller's kwarg is the fresher intent."""
-    client = Client(nc=nc)
-    await client.start()
+    agents = Agents(nc=nc)
     try:
-        remote = client.bind(session_agent.subject.inbox)
+        agent = await _agent_for(agents, session_service)
         env = Envelope(prompt="both set", session="from-envelope")
-        echoed = await _single_response(remote.prompt(env, session="from-kwarg", timeout=5.0))
+        echoed = await _single_response(agent.prompt(env, session="from-kwarg", timeout=5.0))
         assert echoed == {"prompt": "both set", "session": "from-kwarg"}
     finally:
-        await client.stop()
+        await agents.close()

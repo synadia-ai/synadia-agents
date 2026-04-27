@@ -25,9 +25,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from natsagent import (
-    Agent,
+    Agents,
+    AgentService,
     Attachment,
-    Client,
     Envelope,
     PromptStream,
     ResponseChunk,
@@ -68,69 +68,72 @@ async def _run_roundtrip(
     prompt_text: str,
 ) -> None:
     """Drive one round-trip: start agent, send prompt+attachment, assert bytes intact."""
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name=NAME,
         nc=nc,
         description="integration-test file-echo agent",
     )
-    agent.on_prompt(_echo_attachment)
-    await agent.start()
+    service.on_prompt(_echo_attachment)
+    await service.start()
 
     try:
-        # Build the envelope exactly as RemoteAgent.prompt would — dumping it
+        # Build the envelope exactly as Agent.prompt would — dumping it
         # for evidence BEFORE it hits the wire lets reviewers see the base64
         # `content` field without having to decode `messages.jsonl`.
         outbound = Envelope(prompt=prompt_text, attachments=[attachment])
         evidence.write_json("request-envelope.json", json.loads(outbound.model_dump_json()))
 
-        client = Client(nc=nc)
-        await client.start()
-        remote = client.bind(agent.subject.inbox)
+        agents = Agents(nc=nc)
+        try:
+            found = await agents.discover(timeout=1.0)
+            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
-        received: list[ResponseChunk] = []
-        async for msg in remote.prompt(prompt_text, attachments=[attachment], timeout=5.0):
-            assert isinstance(msg, ResponseChunk), f"unexpected chunk type: {type(msg).__name__}"
-            received.append(msg)
+            received: list[ResponseChunk] = []
+            async for msg in agent.prompt(prompt_text, attachments=[attachment], timeout=5.0):
+                assert isinstance(msg, ResponseChunk), (
+                    f"unexpected chunk type: {type(msg).__name__}"
+                )
+                received.append(msg)
 
-        evidence.write_jsonl(
-            "chunks.jsonl",
-            [json.loads(chunk.model_dump_json()) for chunk in received],
-        )
+            evidence.write_jsonl(
+                "chunks.jsonl",
+                [json.loads(chunk.model_dump_json()) for chunk in received],
+            )
 
-        # Exactly one ResponseChunk: summary text + one attachment.
-        assert len(received) == 1, f"expected 1 chunk, got {len(received)}"
-        chunk = received[0]
-        assert chunk.attachments is not None
-        assert len(chunk.attachments) == 1
-        received_att = chunk.attachments[0]
+            # Exactly one ResponseChunk: summary text + one attachment.
+            assert len(received) == 1, f"expected 1 chunk, got {len(received)}"
+            chunk = received[0]
+            assert chunk.attachments is not None
+            assert len(chunk.attachments) == 1
+            received_att = chunk.attachments[0]
 
-        raw_bytes = attachment.to_bytes()
-        assert received_att.filename == attachment.filename
-        assert chunk.text == f"received {len(raw_bytes)} bytes"
-        assert "received 1024 bytes" in chunk.text
+            raw_bytes = attachment.to_bytes()
+            assert received_att.filename == attachment.filename
+            assert chunk.text == f"received {len(raw_bytes)} bytes"
+            assert "received 1024 bytes" in chunk.text
 
-        received_bytes = received_att.to_bytes()
-        received_sha = hashlib.sha256(received_bytes).hexdigest()
-        evidence.write_json(
-            "assertions.json",
-            {
-                "sent_len": len(raw_bytes),
-                "sent_sha256": hashlib.sha256(raw_bytes).hexdigest(),
-                "received_len": len(received_bytes),
-                "received_sha256": received_sha,
-                "equal": received_bytes == raw_bytes,
-            },
-        )
-        assert received_bytes == raw_bytes, (
-            "bytes differ after round-trip (wire base64 or handler mutation)"
-        )
-        assert received_sha == PAYLOAD_SHA256
-
-        await client.stop()
+            received_bytes = received_att.to_bytes()
+            received_sha = hashlib.sha256(received_bytes).hexdigest()
+            evidence.write_json(
+                "assertions.json",
+                {
+                    "sent_len": len(raw_bytes),
+                    "sent_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                    "received_len": len(received_bytes),
+                    "received_sha256": received_sha,
+                    "equal": received_bytes == raw_bytes,
+                },
+            )
+            assert received_bytes == raw_bytes, (
+                "bytes differ after round-trip (wire base64 or handler mutation)"
+            )
+            assert received_sha == PAYLOAD_SHA256
+        finally:
+            await agents.close()
     finally:
-        await agent.stop()
+        await service.stop()
 
 
 @pytest.mark.asyncio

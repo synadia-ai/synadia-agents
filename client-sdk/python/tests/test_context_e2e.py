@@ -1,21 +1,18 @@
-"""End-to-end tests for ``natsagent.connect``: real broker, context + passthrough."""
+"""End-to-end test for ``load_context_options`` against a real broker."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import nats
 import pytest
 
-import natsagent
+from natsagent import load_context_options
 from tests.harness.nats_server import RunningServer
 
-if TYPE_CHECKING:
-    from nats.aio.client import Client as NATSClient
 
-
-async def test_connect_via_context_round_trips(
+async def test_context_options_round_trip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nats_server: RunningServer
 ) -> None:
     """A context file pointing at the session's nats-server produces a working conn."""
@@ -29,7 +26,7 @@ async def test_connect_via_context_round_trips(
         encoding="utf-8",
     )
 
-    nc = await natsagent.connect(context="e2e")
+    nc = await nats.connect(**load_context_options("e2e"))
     try:
         # Prove the conn is actually usable: subscribe, publish, receive.
         sub = await nc.subscribe("ctx.probe")
@@ -39,9 +36,3 @@ async def test_connect_via_context_round_trips(
         await sub.unsubscribe()
     finally:
         await nc.close()
-
-
-async def test_connect_nc_passthrough_returns_same_instance(nc: NATSClient) -> None:
-    """``connect(nc=existing)`` hands back the same object, no reconnect."""
-    returned = await natsagent.connect(nc=nc)
-    assert returned is nc

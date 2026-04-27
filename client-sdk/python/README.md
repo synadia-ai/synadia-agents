@@ -1,9 +1,9 @@
 # natsagent
 
 Python SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
-(v0.2). Register Python agents over NATS so they're discoverable via
-`$SRV.PING.agents`, and prompt them from callers with streamed
-typed responses.
+(v0.2). Discover protocol-compliant agents over NATS, prompt them with
+streamed typed responses, and (when you're hosting) register Python
+agents that show up on `$SRV.PING.agents`.
 
 **Cross-SDK parity with the [TypeScript SDK](https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/typescript)**
 is tracked in [`tests/test_interop_e2e.py`](tests/test_interop_e2e.py).
@@ -13,8 +13,8 @@ through it. The test `pytest.skip`s cleanly when `bun` or the sibling
 `../typescript/` checkout is missing — running the suite without TS
 interop is fine for day-to-day work.
 
-**Agent author?** → [Quickstart - host an agent](#quickstart--host-an-agent).
-**Client / UI author?** → [Quickstart - call an agent](#quickstart--call-an-agent).
+**Calling agents?** → [Quickstart - call an agent](#quickstart--call-an-agent).
+**Hosting an agent (Hermes-style)?** → [Hosting an agent](#hosting-an-agent).
 
 ## Installation
 
@@ -46,31 +46,140 @@ any hosted NATS works too - see
 [Connecting to NATS in production](#connecting-to-nats-in-production)
 below.
 
-## Quickstart - host an agent
+## Quickstart - call an agent
+
+The SDK doesn't open NATS connections — you build a
+`nats.aio.client.Client` and hand it to `Agents`. That mirrors what
+`Svcm(nc)`, `jetstream(nc)`, `Kvm(nc)` do, and lets one connection serve
+JetStream, KV, services, and agents at once.
 
 ```python
 import asyncio
-import natsagent
-from natsagent import Agent, Envelope, PromptStream
+import nats
+from natsagent import Agents, ResponseChunk, StatusChunk
+
+async def main() -> None:
+    nc = await nats.connect(servers="nats://127.0.0.1:4222")
+    agents = Agents(nc=nc)
+    try:
+        found = await agents.discover()           # list[Agent], stall by default
+        for a in found:
+            print(f"{a.agent}/{a.owner}/{a.name} @ {a.prompt_subject}")
+
+        # Each Agent is directly callable — no bind step.
+        async for msg in found[0].prompt("hello"):
+            if isinstance(msg, ResponseChunk):
+                print(msg.text, end="")
+            elif isinstance(msg, StatusChunk) and msg.status == "done":
+                print()
+    finally:
+        await agents.close()                      # SDK state only
+        await nc.close()                          # caller owns this
+
+asyncio.run(main())
+```
+
+## API matrix
+
+| Symbol | Lives in | Purpose |
+| --- | --- | --- |
+| `Agents` | [`agents.py`](src/natsagent/agents.py) | Caller-side entry point. Construct with `nc=`; owns the heartbeat wildcard sub. |
+| `Agent` | [`agent.py`](src/natsagent/agent.py) | Live handle from `Agents.discover()`. `.prompt()` is the one method that does I/O. |
+| `AgentInfo` | [`discovery.py`](src/natsagent/discovery.py) | Pure-data record (parsed `$SRV.INFO` per §4.3). What `build_agent_info()` returns. |
+| `Liveness` | [`heartbeat.py`](src/natsagent/heartbeat.py) | Frozen snapshot from `Agents.liveness(instance_id)`. |
+| `load_context_options` | [`context.py`](src/natsagent/context.py) | Resolve a `nats` CLI context into kwargs for `nats.connect(...)`. |
+| `AgentService` | [`service.py`](src/natsagent/service.py) | Server-side. Embed in a harness (Hermes / claude-code / pi) to register on the bus. |
+
+## Mid-stream queries
+
+Agent handlers can pause their response stream to ask the caller a
+question (permission prompt, clarification, menu selection):
+
+```python
+async for msg in agent.prompt("do the thing"):
+    if isinstance(msg, Query):
+        await msg.reply("yes")
+    else:
+        print(msg)     # ResponseChunk / StatusChunk
+```
+
+Server-side, the handler asks via `stream.ask(...)`:
+
+```python
+async def confirm(envelope: Envelope, stream: PromptStream) -> None:
+    await stream.send("planning...")
+    answer = await stream.ask("Proceed? (yes/no)", timeout=10.0)
+    if answer.prompt.strip().lower() == "yes":
+        await stream.send("done")
+    else:
+        await stream.send("aborted")
+```
+
+## Try the examples
+
+Six runnable demos live under [`examples/`](examples/README.md). The
+ritual to see the SDK work end-to-end:
+
+```shell
+# terminal 1 — start the reference agent
+uv run python examples/_reference_agent.py --url nats://127.0.0.1:4222
+
+# terminal 2 — discover and prompt
+uv run python examples/01-discover.py --url nats://127.0.0.1:4222
+uv run python examples/02-prompt-text.py --url nats://127.0.0.1:4222 "hello"
+```
+
+See [`examples/README.md`](examples/README.md) for the full tour.
+
+## Connecting to NATS in production
+
+For [Synadia Cloud](https://www.synadia.com/cloud/) or any self-hosted
+NATS that needs credentials, JWTs, or a non-default URL, use a `nats`
+CLI context and load its kwargs into `nats.connect`:
+
+```python
+import nats
+from natsagent import Agents, load_context_options
+
+nc = await nats.connect(**load_context_options("prod"))
+agents = Agents(nc=nc)
+```
+
+`load_context_options(...)` reads
+`~/.config/nats/context/<name>.json` — URL, creds file, token,
+user/password, inbox prefix are all honoured. See
+[`CLAUDE.md`](CLAUDE.md#connecting-to-nats) for the full field-by-field
+table (including which NATS-context fields are not yet supported and
+fail fast rather than silently).
+
+## Hosting an agent
+
+Embed `AgentService` to register a Python agent that callers can
+discover and prompt:
+
+```python
+import asyncio
+import nats
+from natsagent import AgentService, Envelope, PromptStream
 
 async def echo(envelope: Envelope, stream: PromptStream) -> None:
     await stream.send(f"echo: {envelope.prompt}")
 
 async def main() -> None:
-    nc = await natsagent.connect(servers="nats://127.0.0.1:4222")
-    agent = Agent(
+    nc = await nats.connect(servers="nats://127.0.0.1:4222")
+    service = AgentService(
         agent="demo",            # your harness identifier
         owner="alice",           # your operator / account
         name="worker-1",         # this instance's name
         nc=nc,
         description="demo echo agent",
     )
-    agent.on_prompt(echo)
-    await agent.start()
+    service.on_prompt(echo)
+    await service.start()
     try:
         await asyncio.Event().wait()   # run until Ctrl-C
     finally:
-        await agent.stop()
+        await service.stop()
         await nc.close()
 
 asyncio.run(main())
@@ -83,92 +192,6 @@ nats micro list                                     # see "agents"
 nats req agents.demo.alice.worker-1 "hello"         # prompt it
 nats sub  "agents.demo.alice.worker-1.heartbeat"    # watch heartbeats
 ```
-
-## Quickstart - call an agent
-
-```python
-import asyncio
-import natsagent
-from natsagent import Client
-
-async def main() -> None:
-    nc = await natsagent.connect(servers="nats://127.0.0.1:4222")
-    client = Client(nc=nc)
-    await client.start()
-
-    found = await client.discover(timeout=2.0)
-    for a in found:
-        print(f"{a.agent}/{a.owner}/{a.name} @ {a.inbox}")
-
-    # Bind to the first one by identity; pass the whole DiscoveredAgent
-    # so the SDK can enforce §5.4 max_payload / attachments_ok locally.
-    remote = client.bind(found[0])
-
-    async for chunk in remote.prompt("hello", timeout=5.0):
-        print(chunk)
-
-    await client.stop()
-    await nc.close()
-
-asyncio.run(main())
-```
-
-## Mid-stream queries
-
-Agent handlers can pause their response stream to ask the caller a
-question (permission prompt, clarification, menu selection):
-
-```python
-async def confirm(envelope: Envelope, stream: PromptStream) -> None:
-    await stream.send("planning...")
-    answer = await stream.ask("Proceed? (yes/no)", timeout=10.0)
-    if answer.prompt.strip().lower() == "yes":
-        await stream.send("done")
-    else:
-        await stream.send("aborted")
-```
-
-The caller replies inline - the stream stays open across the round-trip:
-
-```python
-async for msg in remote.prompt("do the thing", timeout=30.0):
-    if isinstance(msg, Query):
-        await msg.reply("yes")
-    else:
-        print(msg)     # ResponseChunk / StatusChunk
-```
-
-## Try the examples
-
-Six runnable demos live under [`examples/`](examples/README.md). The
-three-line ritual to see the SDK work end-to-end:
-
-```shell
-# terminal 1
-uv run python examples/_reference_agent.py --url nats://127.0.0.1:4222
-
-# terminal 2
-uv run python examples/01-discover.py --url nats://127.0.0.1:4222
-uv run python examples/02-prompt-text.py --url nats://127.0.0.1:4222 "hello"
-```
-
-See [`examples/README.md`](examples/README.md) for the full tour.
-
-## Connecting to NATS in production
-
-For [Synadia Cloud](https://www.synadia.com/cloud/) or any self-hosted
-NATS that needs credentials, JWTs, or a non-default URL, use a `nats`
-CLI context and pass its name to `natsagent.connect`:
-
-```python
-nc = await natsagent.connect(context="prod")
-```
-
-This loads `~/.config/nats/context/<name>.json` - URL, creds file,
-token, user/password, inbox prefix are all honoured. See
-[`CLAUDE.md`](CLAUDE.md#connecting-to-nats) for the full field-by-field
-table (including which NATS-context fields are not yet supported and
-fail fast rather than silently).
 
 ## Documentation
 

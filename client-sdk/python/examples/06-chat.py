@@ -1,7 +1,7 @@
 """Session-pinned interactive chat against the first discovered agent.
 
-A thin REPL that keeps one NATS connection and one ``RemoteAgent`` alive
-across many ``prompt()`` calls — each turn is still an independent protocol
+A thin REPL that keeps one NATS connection and one ``Agent`` alive across
+many ``prompt()`` calls — each turn is still an independent protocol
 request, mirroring what you'd get by running ``02-prompt-text.py`` repeatedly
 by hand. The point is to show multi-turn conversation flow, **not** to
 introduce any new SDK state.
@@ -40,7 +40,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
 from natsagent import (
-    Client,
+    Agent,
+    Agents,
     NatsAgentError,
     Query,
     ResponseChunk,
@@ -108,7 +109,7 @@ def _prompt_marker(session: str | None) -> str:
 
 async def _run_turn(
     console: Console,
-    remote: object,
+    agent: Agent,
     text: str,
     session: str | None,
     agent_name: str,
@@ -125,7 +126,7 @@ async def _run_turn(
     thinking.start()
     first_chunk = True
     try:
-        stream = remote.prompt(text, session=session, timeout=timeout)  # type: ignore[attr-defined]
+        stream = agent.prompt(text, session=session, timeout=timeout)
         async for msg in stream:
             if first_chunk:
                 thinking.stop()
@@ -199,15 +200,14 @@ async def main() -> None:
 
     console = Console()
     nc = await connect_from_cli(args)
-    client = Client(nc)
+    agents = Agents(nc=nc)
     try:
-        agents = await client.discover(timeout=2.0)
-        if not agents:
+        found = await agents.discover()
+        if not found:
             console.print("[red]no agents discovered — start the reference agent first.[/]")
             sys.exit(2)
-        chosen = agents[0]
+        chosen = found[0]
         identity = f"{chosen.agent}/{chosen.owner}/{chosen.name or '<custom>'}"
-        remote = client.bind(chosen)
         agent_name = chosen.agent
 
         turns = 0
@@ -250,7 +250,7 @@ async def main() -> None:
             try:
                 await _run_turn(
                     console,
-                    remote,
+                    chosen,
                     parsed.text,
                     args.session,
                     agent_name,
@@ -264,7 +264,7 @@ async def main() -> None:
         label = f"session '{args.session}'" if args.session else "chat"
         console.print(Text(f"{label} ended — {turns} turn(s).", style="dim"))
     finally:
-        await client.stop()
+        await agents.close()
         await nc.close()
 
 

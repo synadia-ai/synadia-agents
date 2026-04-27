@@ -60,53 +60,12 @@ class PayloadTooLargeError(ValidationError):
         self.actual = actual
 
 
-class ContextNotFoundError(NatsAgentError):
-    """A named NATS context file is missing under ``<nats config>/context/``."""
+class NatsContextError(NatsAgentError):
+    """Failure resolving a ``nats`` CLI context via :func:`load_context_options`.
 
-    def __init__(self, name: str, path: str) -> None:
-        super().__init__(
-            f"nats context {name!r} not found at {path} — try `nats context ls` "
-            "to see which contexts exist, or `nats context add {name} --server=...` "
-            "to create one"
-        )
-        self.name = name
-        self.path = path
-
-
-class ContextInvalidError(NatsAgentError):
-    """A NATS context file is present but malformed, unparseable, or uses an unsupported field."""
-
-    def __init__(self, name: str, reason: str) -> None:
-        super().__init__(f"nats context {name!r} is invalid: {reason}")
-        self.name = name
-        self.reason = reason
-
-
-class ContextNotSelectedError(NatsAgentError):
-    """``connect(context=True)`` was called but no context is selected.
-
-    The resolver honours ``$NATS_CONTEXT`` first, then the selection file
-    written by ``nats context select``. Neither was set, so there is nothing
-    to load.
+    Single error class for every failure mode of context loading: missing
+    file, malformed JSON, illegal context name, unsupported field
+    (``nkey`` / TLS triple / ``nsc``), missing ``creds`` file, etc. The
+    message carries actionable detail; callers branch on the class, not
+    on a more specific type.
     """
-
-    def __init__(self, selection_file: str) -> None:
-        super().__init__(
-            "no NATS context selected: neither $NATS_CONTEXT is set nor "
-            f"{selection_file} names a context — run `nats context select <name>` "
-            "or pass `context=<name>` explicitly"
-        )
-        self.selection_file = selection_file
-
-
-class ContextNotSupportedError(ContextInvalidError):
-    """A context uses a field natsagent does not yet implement (e.g. ``nkey``, TLS, ``nsc``)."""
-
-    def __init__(self, name: str, field: str) -> None:
-        super().__init__(
-            name,
-            f"`{field}` support is not yet implemented in natsagent; use `creds` / "
-            "a credentials file if possible, or open an issue at "
-            "https://github.com/synadia-ai/synadia-agents/issues",
-        )
-        self.field = field
