@@ -7,7 +7,10 @@ Spins up a real nats-server, registers an echo agent, connects an
 - ``$SRV.INFO.agents`` reports spec §3.2 metadata (``agent``,
   ``owner``, ``protocol_version``) on the shared service name
 - the ``prompt`` endpoint is registered with queue group ``"agents"`` (§3.3)
-- a heartbeat is published on ``.heartbeat`` within the agent's configured interval
+- a heartbeat is published on ``agents.heartbeat.{a}.{o}.{n}`` within the
+  agent's configured interval (§8.1, v0.3 verb-first layout)
+- the ``status`` endpoint replies with a freshly-built heartbeat-shaped
+  payload (v0.3 §-TBD)
 
 All observations are captured to ``tests/_evidence/<testname>/`` — a reviewer
 can inspect those files and verify protocol compliance by eye.
@@ -72,7 +75,7 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         # §3.2: metadata shape.
         assert srv_info_parsed["metadata"]["agent"] == AGENT
         assert srv_info_parsed["metadata"]["owner"] == OWNER
-        assert srv_info_parsed["metadata"]["protocol_version"] == "0.2"
+        assert srv_info_parsed["metadata"]["protocol_version"] == "0.3"
         # Spec §3.2 forbids echoing the instance name into metadata.
         assert "name" not in srv_info_parsed["metadata"]
         # And the removed v0.0.1-era keys MUST be gone.
@@ -83,7 +86,7 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         # §2.1: prompt endpoint declares capability metadata. On the wire it's
         # Record<string,string>, so attachments_ok is "true"/"false".
         prompt_ep = next(ep for ep in srv_info_parsed["endpoints"] if ep["name"] == "prompt")
-        assert prompt_ep["subject"] == service.subject.inbox
+        assert prompt_ep["subject"] == service.subject.prompt
         assert prompt_ep["metadata"]["max_payload"] == "1MB"
         assert prompt_ep["metadata"]["attachments_ok"] == "true"
         # §3.3: the prompt endpoint MUST register queue group "agents" so
@@ -92,16 +95,22 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         # endpoints[].queue_group.
         assert prompt_ep["queue_group"] == "agents"
 
+        # v0.3 §-TBD: the status endpoint is registered alongside `prompt`
+        # with the new verb-first subject and the same queue group.
+        status_ep = next(ep for ep in srv_info_parsed["endpoints"] if ep["name"] == "status")
+        assert status_ep["subject"] == service.subject.status
+        assert status_ep["queue_group"] == "agents"
+
         agents = Agents(nc=nc)
         try:
             found = await agents.discover(timeout=1.0)
             subjects = [a.prompt_subject for a in found]
-            assert service.subject.inbox in subjects, f"agent not discovered; saw: {subjects}"
+            assert service.subject.prompt in subjects, f"agent not discovered; saw: {subjects}"
             # §4.3 + §2.1: the discovered record MUST surface the parsed endpoint
             # capability metadata so callers can enforce §5.4 locally.
-            discovered = next(a for a in found if a.prompt_subject == service.subject.inbox)
+            discovered = next(a for a in found if a.prompt_subject == service.subject.prompt)
             assert discovered.prompt_endpoint.name == "prompt"
-            assert discovered.prompt_endpoint.subject == service.subject.inbox
+            assert discovered.prompt_endpoint.subject == service.subject.prompt
             assert discovered.prompt_endpoint.max_payload_bytes == 1024 * 1024
             assert discovered.prompt_endpoint.attachments_ok is True
 
@@ -152,5 +161,39 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
             assert await agents.ping(discovered.instance_id, timeout=1.0) is True
         finally:
             await agents.close()
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_status_endpoint_e2e(nc: NATSClient, evidence: EvidenceRecorder) -> None:
+    """v0.3 §-TBD: status endpoint replies with a freshly-built §8.3 payload.
+
+    Captures the wire trace under ``tests/_evidence/`` so a reviewer can verify
+    the request/response by eye.
+    """
+    service = AgentService(
+        agent=AGENT,
+        owner=OWNER,
+        name=NAME,
+        nc=nc,
+        description="integration-test echo agent",
+        heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
+    )
+    service.on_prompt(_echo)
+    await service.start()
+
+    try:
+        reply = await nc.request(service.subject.status, b"", timeout=2.0)
+        evidence.write_json("status-request.json", {"subject": service.subject.status})
+        evidence.write_json("status-response.json", json.loads(reply.data))
+
+        payload = HeartbeatPayload.model_validate_json(reply.data)
+        assert payload.agent == AGENT
+        assert payload.owner == OWNER
+        assert payload.interval_s == HEARTBEAT_INTERVAL_S
+        assert payload.instance_id, "status payload MUST carry instance_id (§8.3 shape)"
+        # `ts` is freshly built per request — non-empty ISO 8601 string is enough.
+        assert payload.ts.endswith("Z")
     finally:
         await service.stop()

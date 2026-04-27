@@ -52,6 +52,13 @@ PROMPT_QUEUE_GROUP = "agents"
 # §2.1 / §12: the endpoint name reserved for the prompt entry point.
 PROMPT_ENDPOINT_NAME = "prompt"
 
+# v0.3 §-TBD: the request/response endpoint that returns a fresh heartbeat-
+# shaped payload. Same queue group as `prompt` — instances of the same
+# logical agent share `agents.status.{a}.{o}.{n}`, so callers load-balance to
+# one responder.
+STATUS_ENDPOINT_NAME = "status"
+STATUS_QUEUE_GROUP = "agents"
+
 
 # --- discovery defaults --------------------------------------------------
 
@@ -66,10 +73,10 @@ DEFAULT_DISCOVER_MAX_WAIT_S: float = 2.0
 
 # --- subject-name shapes -------------------------------------------------
 
-# `agents.{agent}.{owner}.{name}` — 4 dot tokens (§2). Custom prompt-endpoint
-# subjects break this pattern, in which case the instance name is opaque to
-# the caller (§4.3).
-_DEFAULT_INBOX_TOKEN_COUNT = 4
+# `agents.prompt.{agent}.{owner}.{name}` — 5 dot tokens (§2 v0.3). Custom
+# prompt-endpoint subjects break this pattern, in which case the instance
+# name is opaque to the caller (§4.3).
+_DEFAULT_PROMPT_TOKEN_COUNT = 5
 
 
 # --- typed records -------------------------------------------------------
@@ -162,12 +169,17 @@ def build_agent_info(info: dict[str, object]) -> AgentInfo | None:  # noqa: PLR0
         log.warning("agents service lacks a `prompt` endpoint: %r", info)
         return None
 
-    # §4.3: derive the instance name from the 4th token of the prompt endpoint's
-    # subject when it follows the default `agents.{agent}.{owner}.{name}` layout.
-    # Custom subjects leave the instance name opaque to the caller (empty string).
+    # §4.3: derive the instance name from the 5th token of the prompt endpoint's
+    # subject when it follows the default `agents.prompt.{agent}.{owner}.{name}`
+    # layout (v0.3). Custom subjects leave the instance name opaque to the
+    # caller (empty string).
     parts = prompt_endpoint.subject.split(".")
     instance_name = (
-        parts[3] if len(parts) == _DEFAULT_INBOX_TOKEN_COUNT and parts[0] == "agents" else ""
+        parts[4]
+        if len(parts) == _DEFAULT_PROMPT_TOKEN_COUNT
+        and parts[0] == "agents"
+        and parts[1] == "prompt"
+        else ""
     )
 
     session_raw = metadata.get("session")
@@ -414,6 +426,8 @@ __all__ = [
     "PROMPT_ENDPOINT_NAME",
     "PROMPT_QUEUE_GROUP",
     "SERVICE_NAME",
+    "STATUS_ENDPOINT_NAME",
+    "STATUS_QUEUE_GROUP",
     "AgentInfo",
     "DiscoverFilter",
     "EndpointInfo",

@@ -28,10 +28,16 @@ from nats.micro.service import EndpointConfig
 
 from ._bytes import parse_human_bytes
 from ._logging import get_logger
-from .discovery import PROMPT_ENDPOINT_NAME, PROMPT_QUEUE_GROUP, SERVICE_NAME
+from .discovery import (
+    PROMPT_ENDPOINT_NAME,
+    PROMPT_QUEUE_GROUP,
+    SERVICE_NAME,
+    STATUS_ENDPOINT_NAME,
+    STATUS_QUEUE_GROUP,
+)
 from .envelope import Attachment, Envelope, decode
 from .errors import ProtocolError, QueryTimeout
-from .heartbeat import run_publisher
+from .heartbeat import build_heartbeat_payload, run_publisher
 from .messages import (
     Chunk,
     QueryChunk,
@@ -51,7 +57,7 @@ log = get_logger(__name__)
 PromptHandler = Callable[["Envelope", "PromptStream"], Awaitable[None]]
 
 # §3.2 + §11.1: metadata.protocol_version is MAJOR.MINOR only.
-_PROTOCOL_VERSION = "0.2"
+_PROTOCOL_VERSION = "0.3"
 
 
 def _resolve_sdk_version() -> str:
@@ -208,7 +214,7 @@ class AgentService:
         keepalive_interval_s: float | None = DEFAULT_KEEPALIVE_INTERVAL_S,
     ) -> None:
         if heartbeat_interval_s <= 0:
-            raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.2)")
+            raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.3)")
         if keepalive_interval_s is not None and keepalive_interval_s <= 0:
             raise ValueError("keepalive_interval_s must be > 0 or None (None disables keep-alive)")
         # Validate max_payload eagerly so misconfiguration fails at construction
@@ -254,7 +260,7 @@ class AgentService:
         await self._service.add_endpoint(
             EndpointConfig(
                 name=PROMPT_ENDPOINT_NAME,
-                subject=self.subject.inbox,
+                subject=self.subject.prompt,
                 handler=self._on_prompt_request,
                 # §3.3: the `prompt` endpoint MUST use queue group `"agents"`
                 # so multiple instances of the same logical agent load-balance
@@ -267,6 +273,17 @@ class AgentService:
                     "max_payload": self._max_payload,
                     "attachments_ok": "true" if self._attachments_ok else "false",
                 },
+            )
+        )
+        # v0.3 §-TBD: the status endpoint returns a freshly-built heartbeat-
+        # shaped payload. Same queue group as `prompt` so callers load-balance
+        # to one responder per logical agent.
+        await self._service.add_endpoint(
+            EndpointConfig(
+                name=STATUS_ENDPOINT_NAME,
+                subject=self.subject.status,
+                handler=self._on_status_request,
+                queue_group=STATUS_QUEUE_GROUP,
             )
         )
 
@@ -296,6 +313,25 @@ class AgentService:
             await self._service.stop()
             self._service = None
         log.info("agent stopped on %s", self.subject.inbox)
+
+    async def _on_status_request(self, request: Request) -> None:
+        """Reply with a freshly-built §8.3 heartbeat payload (v0.3 §-TBD).
+
+        Request body is ignored — there is no request schema yet; future
+        PRs will extend the response with richer metadata and may add a
+        request shape at that time. ``self._service`` is set in
+        :meth:`start` before the endpoint is registered, so we know the
+        instance id is non-None here.
+        """
+        assert self._service is not None  # endpoint only registered after start()
+        payload = build_heartbeat_payload(
+            self.subject,
+            self._heartbeat_interval_s,
+            self._service.id,
+            self._session,
+        )
+        data = payload.model_dump_json(exclude_none=True).encode("utf-8")
+        await request.respond(data)
 
     async def _on_prompt_request(self, request: Request) -> None:
         keepalive_task: asyncio.Task[None] | None = None

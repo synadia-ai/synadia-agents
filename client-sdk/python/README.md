@@ -185,12 +185,13 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Probe it with the `nats` CLI:
+Probe it with the `nats` CLI (subjects are verb-first per protocol v0.3):
 
 ```bash
-nats micro list                                     # see "agents"
-nats req agents.demo.alice.worker-1 "hello"         # prompt it
-nats sub  "agents.demo.alice.worker-1.heartbeat"    # watch heartbeats
+nats micro list                                          # see "agents"
+nats req  agents.prompt.demo.alice.worker-1 "hello"      # prompt it
+nats req  agents.status.demo.alice.worker-1 ""           # heartbeat-shaped status reply
+nats sub  "agents.heartbeat.demo.alice.worker-1"         # watch heartbeats
 ```
 
 ## Documentation

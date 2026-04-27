@@ -36,6 +36,16 @@ import pytest
 
 from synadia_ai.agents import Agents, ResponseChunk
 
+# TODO(v0.3-wire): remove this skip once the TS SDK lands the verb-first wire
+# (`agents.{verb}.{a}.{o}.{n}`) and bumps `protocol_version` to "0.3". The
+# Python SDK ships ahead of TS per the cross-SDK release ladder in the root
+# CLAUDE.md; until then, exercising the TS reference agent (still on v0.2)
+# against a v0.3 Python client only proves a known incompatibility.
+pytest.skip(
+    "awaiting TS SDK v0.3 wire catch-up — see CHANGELOG.md [Unreleased]",
+    allow_module_level=True,
+)
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
