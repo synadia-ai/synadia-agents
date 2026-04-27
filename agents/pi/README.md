@@ -54,8 +54,11 @@ Config lives at `~/.pi/agent/nats-channel.json`:
 | `sessionName` | no | sanitized basename of CWD | Overrides the 4th subject token |
 
 Environment variables take precedence over the file:
-- `NATS_CONTEXT` - select a NATS CLI context
-- `NATS_SESSION_NAME` - override the session name
+
+| Variable | Overrides | Default |
+| --- | --- | --- |
+| `NATS_CONTEXT` | NATS CLI context name | `demo.nats.io` |
+| `NATS_SESSION_NAME` | Session name (4th token in `agents.pi.<owner>.<session>`) | sanitized basename of CWD |
 
 ### In-PI commands
 

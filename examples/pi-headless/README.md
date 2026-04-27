@@ -51,7 +51,17 @@ Optional defaults live in `~/.pi-headless/config.json`:
 }
 ```
 
-Env overrides: `PI_HEADLESS_OWNER`, `PI_HEADLESS_NAME`, `PI_HEADLESS_DEFAULT_MODEL`, `PI_HEADLESS_DEFAULT_THINKING_LEVEL`, `PI_HEADLESS_DEFAULT_MAX_LIFETIME`.
+Env overrides:
+
+| Variable | Overrides | Default |
+| --- | --- | --- |
+| `PI_HEADLESS_OWNER` | Owner subject token (3rd segment) | `$USER` |
+| `PI_HEADLESS_NAME` | Controller instance name (4th token) | `exec` |
+| `PI_HEADLESS_DEFAULT_MODEL` | Default model spec for spawns | (none — caller must set, or PI picks) |
+| `PI_HEADLESS_DEFAULT_THINKING_LEVEL` | Default thinking level for spawns | (none) |
+| `PI_HEADLESS_DEFAULT_MAX_LIFETIME` | Default session lifetime, in seconds | `1800` |
+
+Precedence (high → low): CLI flags → env vars → `~/.pi-headless/config.json` → built-in defaults.
 
 PI auth / model registry comes from `~/.pi/agent/auth.json` (the same location `pi` uses).
 

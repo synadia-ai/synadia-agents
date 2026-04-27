@@ -85,14 +85,16 @@ openclaw gateway restart
 
 All fields can be overridden via env vars:
 
-| Env Var | Overrides | Example |
-|---------|-----------|---------|
+| Variable | Overrides | Example |
+|----------|-----------|---------|
 | `NATS_URL` | `url` | `nats://prod.example.com:4222` |
 | `NATS_AGENT_NAME` | `agentName` | `my-agent` |
 | `NATS_DESCRIPTION` | `description` | `Production agent` |
 | `NATS_OWNER` | `owner` | `acme` |
 | `NATS_ORG` | `owner` (legacy alias) | `acme` |
 | `NATS_CREDENTIALS` | `credentials` | `/run/secrets/nats.creds` |
+
+Each env var overrides the corresponding [config field](#config-fields) above; defaults live there.
 
 ```yaml
 # docker-compose.yml

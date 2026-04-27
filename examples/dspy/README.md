@@ -34,13 +34,15 @@ bun run start
 
 Environment variables:
 
-| var                | default                                    | meaning                                 |
-| ------------------ | ------------------------------------------ | --------------------------------------- |
-| `NVIDIA_API_KEY`   | (required)                                 | API key for the NVIDIA endpoint         |
-| `NVIDIA_API_URL`   | `https://integrate.api.nvidia.com/v1`      | OpenAI-compatible base URL              |
-| `DSPY_MODEL`       | `openai/gpt-oss-20b`                       | model ID to send on every request       |
-| `DSPY_SANDBOX`     | `./sandbox`                                | root directory for fs tools             |
-| `NATS_URL`         | `nats://127.0.0.1:4222`                    | NATS server                             |
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NVIDIA_API_KEY` | (required) | API key for the NVIDIA endpoint |
+| `NVIDIA_API_URL` | `https://integrate.api.nvidia.com/v1` | OpenAI-compatible base URL |
+| `DSPY_MODEL` | `openai/gpt-oss-20b` | Model ID to send on every request |
+| `DSPY_SANDBOX` | `./sandbox` | Root directory for the sandboxed `list_files` / `read_file` / `write_file` / `bash` tools |
+| `DSPY_DEBUG` | (off) | Set to `1` to log every ReAct trace step to stderr |
+| `NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
+| `USER` | system username | Owner subject token (3rd segment, fallback to `anon`) |
 
 ## Try it
 

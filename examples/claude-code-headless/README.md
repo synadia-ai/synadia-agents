@@ -62,14 +62,19 @@ Optional defaults live in `~/.claude-code-headless/config.json`:
 ```
 
 Env overrides:
-- `CLAUDE_CODE_HEADLESS_OWNER`
-- `CLAUDE_CODE_HEADLESS_NAME`
-- `CLAUDE_CODE_HEADLESS_DEFAULT_MODEL`
-- `CLAUDE_CODE_HEADLESS_DEFAULT_PERMISSION_MODE`
-- `CLAUDE_CODE_HEADLESS_DEFAULT_ALLOWED_TOOLS` (comma-separated)
-- `CLAUDE_CODE_HEADLESS_DEFAULT_MAX_TURNS`
-- `CLAUDE_CODE_HEADLESS_DEFAULT_MAX_LIFETIME`
-- `CLAUDE_CODE_HEADLESS_CLAUDE_PATH`
+
+| Variable | Overrides | Default |
+| --- | --- | --- |
+| `CLAUDE_CODE_HEADLESS_OWNER` | Owner subject token (3rd segment) | `$USER` |
+| `CLAUDE_CODE_HEADLESS_NAME` | Controller instance name (4th token) | `exec` |
+| `CLAUDE_CODE_HEADLESS_DEFAULT_MODEL` | Default Claude model id for spawns | `claude-sonnet-4-6` |
+| `CLAUDE_CODE_HEADLESS_DEFAULT_PERMISSION_MODE` | Default permission mode for spawns | `dontAsk` |
+| `CLAUDE_CODE_HEADLESS_DEFAULT_ALLOWED_TOOLS` | Default tool allowlist (comma-separated) | `Read,Glob,Grep` |
+| `CLAUDE_CODE_HEADLESS_DEFAULT_MAX_TURNS` | Safety cap on turns per prompt | `50` |
+| `CLAUDE_CODE_HEADLESS_DEFAULT_MAX_LIFETIME` | Default session lifetime, in seconds | `1800` |
+| `CLAUDE_CODE_HEADLESS_CLAUDE_PATH` | Path to the `claude` executable | (auto-detected via `which claude`) |
+
+Precedence (high → low): CLI flags → env vars → `~/.claude-code-headless/config.json` → built-in defaults.
 
 CLI flag: `--claude-code-path /abs/path/to/claude` (alias `--claude-path`).
 

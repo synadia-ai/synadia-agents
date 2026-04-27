@@ -269,7 +269,7 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 
 ### Environment variables
 
-| Variable | Purpose |
-| --- | --- |
-| `NATS_SESSION_NAME` | Override the session name (fourth token in `agents.cc.<user>.<name>`) |
-| `NATS_STATE_DIR` | Override the state directory (default: `~/.claude/channels/nats`) |
+| Variable | Overrides | Default |
+| --- | --- | --- |
+| `NATS_SESSION_NAME` | Session name (4th token in `agents.cc.<user>.<name>`) | sanitized basename of `$CLAUDE_CWD` |
+| `NATS_STATE_DIR` | State directory location | `~/.claude/channels/nats` |

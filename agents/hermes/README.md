@@ -174,13 +174,15 @@ All fields live under `platforms.nats.extra` in `~/.hermes/config.yaml`.
 
 Any `NATS_*` / `HERMES_NATS_*` env var flips `platforms.nats.enabled=true` automatically, so you can skip the YAML edit for a quick smoke test:
 
-| Env var | Overrides |
-|---------|-----------|
+| Variable | Overrides |
+|----------|-----------|
 | `NATS_URL` | `extra.servers` (single URL) |
 | `NATS_CONTEXT` | `extra.context` |
 | `HERMES_NATS_OWNER` | `extra.owner` |
 | `HERMES_NATS_NAME` | `extra.name` |
 | `HERMES_NATS_AGENT` | `extra.agent` |
+
+Each env var overrides the corresponding [config field](#config-fields) above; defaults live there.
 
 ## Verify
 
