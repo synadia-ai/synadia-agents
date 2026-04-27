@@ -36,20 +36,18 @@ await nc.close();
 
 ```python
 import asyncio, nats
-from synadia_ai.agents import Agents
+from synadia_ai.agents import Agents, ResponseChunk
 
 async def main():
     nc = await nats.connect("nats://127.0.0.1:4222")
-    client = Client(nc=nc)
-    await client.start()
+    agents = Agents(nc=nc)
 
-    agents = await client.discover(timeout=2.0)
-    remote = client.bind(agents[0])
+    [agent] = await agents.discover()
+    async for msg in agent.prompt("hello"):
+        if isinstance(msg, ResponseChunk):
+            print(msg.text, end="")
 
-    async for chunk in remote.prompt("hello"):
-        print(chunk)
-
-    await client.stop()
+    await agents.close()
     await nc.close()
 
 asyncio.run(main())
