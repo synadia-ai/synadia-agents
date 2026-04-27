@@ -51,8 +51,14 @@ class Attachment(BaseModel):
         return cls.from_bytes(p.name, p.read_bytes())
 
     def to_bytes(self) -> bytes:
-        """Decode the base64 content back to raw bytes."""
-        return base64.b64decode(self.content)
+        """Decode the base64 content back to raw bytes.
+
+        ``validate=True`` rejects non-RFC-4648 §4 input (URL-safe ``-``/``_``,
+        embedded whitespace, other non-alphabet bytes) instead of silently
+        discarding them — a non-compliant peer that sends URL-safe base64
+        surfaces as :class:`binascii.Error` rather than corrupted bytes.
+        """
+        return base64.b64decode(self.content, validate=True)
 
 
 class Envelope(BaseModel):

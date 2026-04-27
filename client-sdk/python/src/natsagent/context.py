@@ -107,7 +107,7 @@ def load_context_options(selector: str) -> dict[str, Any]:
 
     inbox_prefix = parsed.get("inbox_prefix")
     if isinstance(inbox_prefix, str) and inbox_prefix:
-        out["inbox_prefix"] = inbox_prefix.encode("utf-8")
+        out["inbox_prefix"] = inbox_prefix
 
     return out
 

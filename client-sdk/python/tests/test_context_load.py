@@ -71,7 +71,7 @@ def test_load_context_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     )
     opts = load_context_options("dev")
     assert opts["servers"] == ["nats://127.0.0.1:4222"]
-    assert opts["inbox_prefix"] == b"_MY_INBOX"
+    assert opts["inbox_prefix"] == "_MY_INBOX"
 
 
 def test_load_context_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -145,7 +145,7 @@ def test_field_mapping_full_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert "user" not in opts
     assert "password" not in opts
     assert "token" not in opts
-    assert opts["inbox_prefix"] == b"_X"
+    assert opts["inbox_prefix"] == "_X"
 
 
 def test_field_mapping_empty_strings_treated_as_unset(

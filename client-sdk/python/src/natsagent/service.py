@@ -19,6 +19,8 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import Awaitable, Callable
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import TYPE_CHECKING
 
 from nats.micro import ServiceConfig, add_service
@@ -50,7 +52,22 @@ PromptHandler = Callable[["Envelope", "PromptStream"], Awaitable[None]]
 
 # §3.2 + §11.1: metadata.protocol_version is MAJOR.MINOR only.
 _PROTOCOL_VERSION = "0.2"
-_SDK_VERSION = "0.3.0"
+
+
+def _resolve_sdk_version() -> str:
+    """Read the installed package version so pyproject.toml is the single source.
+
+    Falls back to ``"0.0.0+unknown"`` when the package is not installed
+    (e.g. running from a source tree without ``uv sync``) — `$SRV.INFO`
+    still emits a syntactically valid version field.
+    """
+    try:
+        return _pkg_version("natsagent")
+    except PackageNotFoundError:
+        return "0.0.0+unknown"
+
+
+_SDK_VERSION = _resolve_sdk_version()
 
 # §2.1: prompt endpoint metadata defaults. Spec's own example uses 1MB;
 # attachments_ok defaults to True so envelopes with `attachments` just work

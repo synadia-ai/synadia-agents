@@ -147,7 +147,7 @@ def build_agent_info(info: dict[str, object]) -> AgentInfo | None:  # noqa: PLR0
     agent_id = metadata.get("agent")
     owner = metadata.get("owner")
     protocol_version = metadata.get("protocol_version")
-    if not agent_id or owner is None or protocol_version is None:
+    if not agent_id or not owner or not protocol_version:
         log.warning("agents service missing required metadata fields: %r", info)
         return None
 
@@ -305,7 +305,7 @@ async def request_many_stall(
     inbox = nc.new_inbox()
     sub = await nc.subscribe(inbox)
     responses: list[bytes] = []
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         await nc.publish(subject, payload, reply=inbox)
         if timeout_s is not None:

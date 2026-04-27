@@ -142,7 +142,7 @@ class HeartbeatTracker:
     def __init__(self, nc: NATSClient) -> None:
         self._nc = nc
         self._entries: dict[str, _Entry] = {}
-        self._listeners: dict[str, set[HeartbeatListener]] = {}
+        self._listeners: dict[str, list[HeartbeatListener]] = {}
         # nats Subscription — typed as object to keep this module free of runtime nats-py imports.
         self._sub: object | None = None
 
@@ -185,7 +185,7 @@ class HeartbeatTracker:
             return None
         as_of = now if now is not None else datetime.now(UTC)
         elapsed = (as_of - entry.last_seen).total_seconds()
-        is_online = elapsed < DEFAULT_LIVENESS_SLACK * entry.payload.interval_s
+        is_online = elapsed <= DEFAULT_LIVENESS_SLACK * entry.payload.interval_s
         return Liveness(
             instance_id=instance_id,
             last_seen=entry.last_seen,
@@ -202,16 +202,25 @@ class HeartbeatTracker:
 
         Returns an unsubscribe function — call it to drop the listener.
         Multiple listeners per instance are supported; each is invoked
-        once per matching beat in registration order.
+        once per matching beat in registration order. Registering the
+        same callable twice produces two independent registrations
+        (mirrors the TS SDK's array semantics) — each unsubscribe call
+        removes one occurrence and is idempotent thereafter.
         """
-        bucket = self._listeners.setdefault(instance_id, set())
-        bucket.add(listener)
+        bucket = self._listeners.setdefault(instance_id, [])
+        bucket.append(listener)
+        unsubscribed = False
 
         def _unsubscribe() -> None:
+            nonlocal unsubscribed
+            if unsubscribed:
+                return
+            unsubscribed = True
             existing = self._listeners.get(instance_id)
             if existing is None:
                 return
-            existing.discard(listener)
+            with contextlib.suppress(ValueError):
+                existing.remove(listener)
             if not existing:
                 self._listeners.pop(instance_id, None)
 

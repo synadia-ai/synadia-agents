@@ -261,18 +261,33 @@ class Agent:
         reply = self._nc.new_inbox()
         sub = await self._nc.subscribe(reply)
         subject = self._info.prompt_endpoint.subject
+        # §6.6: per-chunk inactivity timeout. Honor the owning Agents.close()
+        # mid-wait — racing next_msg against close_event so teardown is
+        # observed promptly instead of after the full inactivity window.
+        close_task: asyncio.Task[bool] | None = (
+            asyncio.ensure_future(self._close_event.wait())
+            if self._close_event is not None
+            else None
+        )
         try:
             await self._nc.publish(subject, encoded, reply=reply)
             while True:
-                # §6.6: per-chunk inactivity timeout. Honor the owning
-                # Agents.close() — short-circuit instead of waiting out
-                # the full timeout against a torn-down broker.
-                if self._close_event is not None and self._close_event.is_set():
+                if close_task is not None and close_task.done():
+                    raise ProtocolError(
+                        f"prompt stream cancelled: owning Agents is closed (reply={reply})"
+                    )
+                next_task = asyncio.ensure_future(sub.next_msg(timeout=timeout))
+                wait_set = {next_task, close_task} if close_task is not None else {next_task}
+                done, _pending = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
+                if close_task is not None and close_task in done:
+                    next_task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await next_task
                     raise ProtocolError(
                         f"prompt stream cancelled: owning Agents is closed (reply={reply})"
                     )
                 try:
-                    msg = await sub.next_msg(timeout=timeout)
+                    msg = await next_task
                 except TimeoutError as exc:
                     log.warning("stream stalled on %s: no chunk within %.1fs", reply, timeout)
                     raise ProtocolError(
@@ -308,6 +323,10 @@ class Agent:
                 else:
                     yield chunk
         finally:
+            if close_task is not None and not close_task.done():
+                close_task.cancel()
+                with contextlib.suppress(BaseException):
+                    await close_task
             with contextlib.suppress(Exception):
                 await sub.unsubscribe()
 

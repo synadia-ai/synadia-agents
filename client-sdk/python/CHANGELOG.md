@@ -8,6 +8,41 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`build_agent_info` now rejects empty `metadata.owner` /
+  `metadata.protocol_version`** in addition to missing keys (§3.2). The
+  previous `is None` checks let `""` through; tightened to the same
+  falsy check already used for `metadata.agent`.
+- **`Agent.prompt()` observes `Agents.close()` mid-stream.** The close
+  event is now raced against `next_msg(timeout=...)` via
+  `asyncio.wait(..., FIRST_COMPLETED)`, so `Agents.close()` interrupts
+  an in-flight stream within one event-loop tick instead of waiting up
+  to the per-chunk inactivity timeout (default 60 s).
+- **`Liveness.is_online` boundary restored to inclusive (`<=`).** A
+  heartbeat that arrived exactly `slack * interval_s` seconds ago is
+  considered online again — matches the docstring's "within" wording
+  and the pre-0.3 behaviour.
+- **`Attachment.to_bytes()` now passes `validate=True`.** A non-
+  compliant peer sending URL-safe base64 (`-` / `_`) or other non-
+  alphabet bytes surfaces as `binascii.Error` instead of silently
+  decoding to corrupted bytes.
+- **`AgentService` reads its `version` from package metadata.**
+  `service.py` no longer hardcodes `_SDK_VERSION`; it reads
+  `importlib.metadata.version("natsagent")` so `pyproject.toml` is the
+  single source of truth across releases.
+- **`HeartbeatTracker` listener storage switched from `set` to `list`.**
+  Mirrors the TS SDK's array semantics: registering the same callable
+  twice produces two independent registrations, and each unsubscribe
+  removes one occurrence (idempotent thereafter). Previously the second
+  registration was silently deduplicated.
+- **`asyncio.get_event_loop()` → `asyncio.get_running_loop()`** inside
+  `discovery.request_many_stall` — avoids the `DeprecationWarning`
+  emitted in Python 3.12+ when the lookup runs from a coroutine.
+- **`load_context_options(...)["inbox_prefix"]` is now `str`** to match
+  what `nats.connect()` documents (`Union[str, bytes]`, default
+  `b"_INBOX"`); the manual `.encode("utf-8")` is gone.
+
 ## [0.3.0] - 2026-04-27
 
 Aligns the Python caller surface with the TypeScript SDK's
