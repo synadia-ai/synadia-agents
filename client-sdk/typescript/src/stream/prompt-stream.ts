@@ -13,9 +13,10 @@
 //   - Throws `StreamStalledError` on inactivity timeout (§6.6).
 //   - `cancel()` and early break from `for await` both unsubscribe cleanly.
 
-import { createInbox, type Msg, type NatsConnection, type Subscription } from "@nats-io/nats-core";
+import type { Msg, NatsConnection, Subscription } from "@nats-io/nats-core";
 import { ServiceError, StreamStalledError, type ServiceErrorBody } from "../errors.js";
 import { abortError } from "../internal/abort.js";
+import { newInbox } from "../internal/inbox.js";
 import { encodeEnvelope, type RequestEnvelope } from "../prompt/envelope.js";
 import { buildQueryEvent, type QueryEvent } from "../query/query-event.js";
 import { decodeChunk, type DecodedAttachment, type DecodedChunk } from "./chunk-decoder.js";
@@ -54,7 +55,7 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
     this.#nc = nc;
     this.#requestSubject = requestSubject;
     this.#envelope = envelope;
-    this.#replySubject = createInbox();
+    this.#replySubject = newInbox();
     this.#inactivityTimeoutMs = inactivityTimeoutMs;
     this.#signal = signal;
   }

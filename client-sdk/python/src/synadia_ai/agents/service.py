@@ -27,6 +27,7 @@ from nats.micro import ServiceConfig, add_service
 from nats.micro.service import EndpointConfig
 
 from ._bytes import parse_human_bytes
+from ._inbox import new_inbox
 from ._logging import get_logger
 from .discovery import PROMPT_ENDPOINT_NAME, PROMPT_QUEUE_GROUP, SERVICE_NAME
 from .envelope import Attachment, Envelope, decode
@@ -149,7 +150,7 @@ class PromptStream:
         else:
             raise TypeError(f"unsupported prompt type: {type(prompt).__name__}")
 
-        reply_subject = self._nc.new_inbox()
+        reply_subject = new_inbox()
         sub = await self._nc.subscribe(reply_subject)
         query = QueryChunk(
             id=uuid.uuid4().hex,

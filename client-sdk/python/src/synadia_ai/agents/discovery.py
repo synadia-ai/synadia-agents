@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 from nats.errors import NoRespondersError
 
 from ._bytes import InvalidSizeError, parse_human_bytes
+from ._inbox import new_inbox as _new_inbox
 from ._logging import get_logger
 
 if TYPE_CHECKING:
@@ -302,7 +303,7 @@ async def request_many_stall(
     raised here — discover() treats "no responders" as "empty result"
     and translates it before this function returns.
     """
-    inbox = nc.new_inbox()
+    inbox = _new_inbox()
     sub = await nc.subscribe(inbox)
     responses: list[bytes] = []
     loop = asyncio.get_running_loop()
