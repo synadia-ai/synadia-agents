@@ -22,7 +22,7 @@ a link to a full repo.
 
 ## Environment
 
-- `natsagent` version: (e.g. `0.1.0`, or `git rev-parse HEAD` for a source checkout)
+- `synadia-ai-agents` version: (e.g. `0.1.0`, or `git rev-parse HEAD` for a source checkout)
 - Python version: (`python --version`)
 - `nats-server` version: (`nats-server --version`)
 - OS / arch: (e.g. `Linux 6.8 x86_64`, `macOS 14 arm64`)

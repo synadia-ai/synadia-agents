@@ -23,7 +23,7 @@ from types import FrameType
 
 import nats
 
-from natsagent import AgentService, Envelope, PromptStream
+from synadia_ai.agents import AgentService, Envelope, PromptStream
 
 
 async def echo_handler(envelope: Envelope, stream: PromptStream) -> None:

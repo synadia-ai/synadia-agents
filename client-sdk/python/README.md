@@ -1,4 +1,4 @@
-# natsagent
+# synadia-ai-agents
 
 Python SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
 (v0.2). Discover protocol-compliant agents over NATS, prompt them with
@@ -27,7 +27,7 @@ uv pip install -e .
 Once released on PyPI:
 
 ```bash
-pip install natsagent
+pip install synadia-ai-agents
 ```
 
 You also need a reachable `nats-server`. Pick whichever fits:
@@ -56,7 +56,7 @@ JetStream, KV, services, and agents at once.
 ```python
 import asyncio
 import nats
-from natsagent import Agents, ResponseChunk, StatusChunk
+from synadia_ai.agents import Agents, ResponseChunk, StatusChunk
 
 async def main() -> None:
     nc = await nats.connect(servers="nats://127.0.0.1:4222")
@@ -83,12 +83,12 @@ asyncio.run(main())
 
 | Symbol | Lives in | Purpose |
 | --- | --- | --- |
-| `Agents` | [`agents.py`](src/natsagent/agents.py) | Caller-side entry point. Construct with `nc=`; owns the heartbeat wildcard sub. |
-| `Agent` | [`agent.py`](src/natsagent/agent.py) | Live handle from `Agents.discover()`. `.prompt()` is the one method that does I/O. |
-| `AgentInfo` | [`discovery.py`](src/natsagent/discovery.py) | Pure-data record (parsed `$SRV.INFO` per §4.3). What `build_agent_info()` returns. |
-| `Liveness` | [`heartbeat.py`](src/natsagent/heartbeat.py) | Frozen snapshot from `Agents.liveness(instance_id)`. |
-| `load_context_options` | [`context.py`](src/natsagent/context.py) | Resolve a `nats` CLI context into kwargs for `nats.connect(...)`. |
-| `AgentService` | [`service.py`](src/natsagent/service.py) | Server-side. Embed in a harness (Hermes / claude-code / pi) to register on the bus. |
+| `Agents` | [`agents.py`](src/synadia_ai/agents/agents.py) | Caller-side entry point. Construct with `nc=`; owns the heartbeat wildcard sub. |
+| `Agent` | [`agent.py`](src/synadia_ai/agents/agent.py) | Live handle from `Agents.discover()`. `.prompt()` is the one method that does I/O. |
+| `AgentInfo` | [`discovery.py`](src/synadia_ai/agents/discovery.py) | Pure-data record (parsed `$SRV.INFO` per §4.3). What `build_agent_info()` returns. |
+| `Liveness` | [`heartbeat.py`](src/synadia_ai/agents/heartbeat.py) | Frozen snapshot from `Agents.liveness(instance_id)`. |
+| `load_context_options` | [`context.py`](src/synadia_ai/agents/context.py) | Resolve a `nats` CLI context into kwargs for `nats.connect(...)`. |
+| `AgentService` | [`service.py`](src/synadia_ai/agents/service.py) | Server-side. Embed in a harness (Hermes / claude-code / pi) to register on the bus. |
 
 ## Mid-stream queries
 
@@ -139,7 +139,7 @@ CLI context and load its kwargs into `nats.connect`:
 
 ```python
 import nats
-from natsagent import Agents, load_context_options
+from synadia_ai.agents import Agents, load_context_options
 
 nc = await nats.connect(**load_context_options("prod"))
 agents = Agents(nc=nc)
@@ -160,7 +160,7 @@ discover and prompt:
 ```python
 import asyncio
 import nats
-from natsagent import AgentService, Envelope, PromptStream
+from synadia_ai.agents import AgentService, Envelope, PromptStream
 
 async def echo(envelope: Envelope, stream: PromptStream) -> None:
     await stream.send(f"echo: {envelope.prompt}")

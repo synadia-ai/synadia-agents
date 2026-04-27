@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import Agents, AgentService, Envelope, PromptStream
-from natsagent.errors import ProtocolError
+from synadia_ai.agents import Agents, AgentService, Envelope, PromptStream
+from synadia_ai.agents.errors import ProtocolError
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient

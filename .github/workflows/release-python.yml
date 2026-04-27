@@ -1,6 +1,6 @@
 name: Release — client-sdk/python
 
-# Publishes a new natsagent release to PyPI when a tag matching
+# Publishes a new synadia-ai-agents release to PyPI when a tag matching
 # `python-v*` is pushed. Tag prefix disambiguates releases in the
 # monorepo (alongside e.g. `ts-v*` for the TypeScript SDK). Runs the
 # full test matrix first and fails shut if anything is red — so

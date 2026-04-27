@@ -14,7 +14,7 @@ synadia-agents/
 ├── client-sdk/            ← language SDKs (callers)
 │   ├── README.md
 │   ├── typescript/        ← @synadia-ai/agents (TypeScript/Node/Bun)
-│   └── python/            ← natsagent (Python ≥ 3.11)
+│   └── python/            ← synadia-ai-agents (Python ≥ 3.11)
 ├── agents/                ← plugins that put existing AI harnesses on NATS
 │   ├── README.md
 │   ├── hermes/            ← Hermes Agent NATS gateway 

@@ -8,7 +8,7 @@ from pathlib import Path
 import nats
 import pytest
 
-from natsagent import load_context_options
+from synadia_ai.agents import load_context_options
 from tests.harness.nats_server import RunningServer
 
 

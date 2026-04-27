@@ -1,11 +1,11 @@
 """Client-side ``Agent`` — a live handle returned by :meth:`Agents.discover`.
 
-Wraps a parsed :class:`~natsagent.discovery.AgentInfo` with the
+Wraps a parsed :class:`~synadia_ai.agents.discovery.AgentInfo` with the
 :class:`~nats.aio.client.Client` needed to prompt it. Mirrors the TS
 SDK's ``Agent`` class (PR #7): every field flat / read-only, ``prompt()``
 is the one method that actually does I/O.
 
-The server-side counterpart is :class:`~natsagent.service.AgentService`.
+The server-side counterpart is :class:`~synadia_ai.agents.service.AgentService`.
 """
 
 from __future__ import annotations

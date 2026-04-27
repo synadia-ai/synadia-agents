@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import Agents, ResponseChunk
+from synadia_ai.agents import Agents, ResponseChunk
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

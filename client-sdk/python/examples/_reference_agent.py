@@ -41,11 +41,11 @@ from types import FrameType
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
-from natsagent import AgentService, Envelope, PromptStream
+from synadia_ai.agents import AgentService, Envelope, PromptStream
 
-log = logging.getLogger("natsagent.examples.reference")
+log = logging.getLogger("synadia_ai.agents.examples.reference")
 
-DEFAULT_SAVE_DIR = "/tmp/natsagent-ref/attachments"
+DEFAULT_SAVE_DIR = "/tmp/synadia-ai-agents-ref/attachments"
 
 # Per-session turn cap — keeps long-running demos honest about memory. In-process,
 # dies with the agent; persistence is a real harness's concern.
@@ -54,7 +54,7 @@ HISTORY_CAP = 20
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Spec-compliant reference agent for the natsagent example scripts."
+        description="Spec-compliant reference agent for the synadia-ai-agents example scripts."
     )
     parser.add_argument(
         "--prefix",

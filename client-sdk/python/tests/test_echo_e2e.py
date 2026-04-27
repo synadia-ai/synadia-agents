@@ -21,14 +21,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import (
+from synadia_ai.agents import (
     Agents,
     AgentService,
     Envelope,
     PromptStream,
     ResponseChunk,
 )
-from natsagent.heartbeat import HeartbeatPayload
+from synadia_ai.agents.heartbeat import HeartbeatPayload
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient

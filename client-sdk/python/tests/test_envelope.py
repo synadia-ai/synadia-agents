@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from natsagent import Attachment, Envelope, decode, encode
-from natsagent.envelope import looks_like_json
-from natsagent.errors import ProtocolError
+from synadia_ai.agents import Attachment, Envelope, decode, encode
+from synadia_ai.agents.envelope import looks_like_json
+from synadia_ai.agents.errors import ProtocolError
 
 
 class TestDiscrimination:

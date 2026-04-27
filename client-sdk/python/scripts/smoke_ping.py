@@ -23,7 +23,7 @@ import sys
 
 import nats
 
-from natsagent import Agents
+from synadia_ai.agents import Agents
 
 
 class _ListHandler(logging.Handler):
@@ -39,7 +39,7 @@ async def _run(mode: str) -> int:
     expect_agent = mode == "up"
     level = logging.INFO if expect_agent else logging.DEBUG
 
-    root = logging.getLogger("natsagent")
+    root = logging.getLogger("synadia_ai.agents")
     captured = _ListHandler()
     captured.setLevel(logging.DEBUG)
     root.addHandler(captured)
@@ -61,9 +61,9 @@ async def _run(mode: str) -> int:
     finally:
         await nc.close()
 
-    discovery_records = [r for r in captured.records if r.name == "natsagent.discovery"]
+    discovery_records = [r for r in captured.records if r.name == "synadia_ai.agents.discovery"]
     print(
-        f"[smoke:{mode}] natsagent.discovery records: "
+        f"[smoke:{mode}] synadia_ai.agents.discovery records: "
         f"{[(r.levelname, r.getMessage()) for r in discovery_records]}"
     )
 

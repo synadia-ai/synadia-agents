@@ -6,7 +6,7 @@ add`` / ``nats context select`` under ``~/.config/nats`` (or
 into kwargs ready to splat into :func:`nats.connect`::
 
     import nats
-    from natsagent import Agents, load_context_options
+    from synadia_ai.agents import Agents, load_context_options
 
     nc = await nats.connect(**load_context_options("prod"))
     agents = Agents(nc=nc)
@@ -22,7 +22,7 @@ Supports: ``url``, ``token``, ``user``/``password``, ``creds`` (with
 Auth precedence: ``creds`` > ``user_jwt`` > inline ``token`` /
 ``user``+``password``.
 
-Unsupported fields raise :class:`~natsagent.errors.NatsContextError`
+Unsupported fields raise :class:`~synadia_ai.agents.errors.NatsContextError`
 with an actionable message: ``nkey``, TLS triple (``cert`` / ``key`` /
 ``ca``), ``nsc://...`` URLs.
 
@@ -57,7 +57,7 @@ def load_context_options(selector: str) -> dict[str, Any]:
     ``user``, ``password``, ``user_credentials``, ``user_jwt_cb``) and
     ``inbox_prefix`` are added when the context declared them.
 
-    Raises :class:`~natsagent.errors.NatsContextError` on any failure:
+    Raises :class:`~synadia_ai.agents.errors.NatsContextError` on any failure:
     missing file, malformed JSON, illegal name, missing ``url``,
     unsupported field, missing ``creds`` file, no context selected.
     """
@@ -98,7 +98,7 @@ def load_context_options(selector: str) -> dict[str, Any]:
         if parsed.get(unsupported):
             raise NatsContextError(
                 f"NATS context {name!r}: `{unsupported}` is not yet supported in "
-                "natsagent; use `creds` / a credentials file if possible, or open "
+                "synadia-ai-agents; use `creds` / a credentials file if possible, or open "
                 "an issue at https://github.com/synadia-ai/synadia-agents/issues"
             )
 

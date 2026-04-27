@@ -1,4 +1,4 @@
-"""Pytest fixtures for the natsagent test suite."""
+"""Pytest fixtures for the synadia-ai-agents test suite."""
 
 from __future__ import annotations
 

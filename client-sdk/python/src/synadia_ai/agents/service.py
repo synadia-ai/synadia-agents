@@ -8,9 +8,9 @@ decoded envelope and a :class:`PromptStream` on which to emit response
 chunks.
 
 This file hosts the **server side** (what Hermes / claude-code / pi
-embed). The **client side** lives in :mod:`natsagent.agent` as a
-:class:`~natsagent.agent.Agent` returned from
-:meth:`~natsagent.agents.Agents.discover`.
+embed). The **client side** lives in :mod:`synadia_ai.agents.agent` as a
+:class:`~synadia_ai.agents.agent.Agent` returned from
+:meth:`~synadia_ai.agents.agents.Agents.discover`.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def _resolve_sdk_version() -> str:
     still emits a syntactically valid version field.
     """
     try:
-        return _pkg_version("natsagent")
+        return _pkg_version("synadia-ai-agents")
     except PackageNotFoundError:
         return "0.0.0+unknown"
 

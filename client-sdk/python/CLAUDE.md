@@ -40,7 +40,7 @@ v0.2 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
   `.heartbeat` sub-subject. `.attachments` is reserved for a future §5.5
   endpoint. Tokens with non-NATS-safe characters are base64-url-no-padding
   escaped internally - an SDK implementation detail, not a protocol
-  contract (see `src/natsagent/subjects.py::_sanitize`).
+  contract (see `src/synadia_ai/agents/subjects.py::_sanitize`).
 - **Service registration** (§3): every agent registers as a NATS micro
   service named `agents` with `metadata = {agent, owner,
   protocol_version = "0.2", session?}`. The `prompt` endpoint MUST be
@@ -97,30 +97,42 @@ v0.2 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
 
 ### Connecting to NATS
 
-Agent authors and callers open a connection via `natsagent.connect()`
-rather than calling `nats.connect()` directly. Three variants, mutually
-exclusive on `nc=`:
+The SDK does NOT open NATS connections — callers build a
+`nats.aio.client.Client` and hand it to `Agents(nc=nc)` /
+`AgentService(nc=nc)`. This mirrors the broader `@nats-io/*` convention
+(`jetstream(nc)`, `Svcm(nc)`, `Kvm(nc)`…) and lets one connection serve
+JetStream, KV, services, and agents at once. `Agents.close()` /
+`AgentService.stop()` tear down SDK-owned state only; the caller is
+responsible for `nc.close()`.
 
 ```python
-# 1. Direct URL(s)
-nc = await natsagent.connect(servers="nats://127.0.0.1:4222")
+import nats
+from synadia_ai.agents import Agents, load_context_options
 
-# 2. Load a `nats` CLI context (~/.config/nats/context/<name>.json).
-#    `context=True` or `context="current"` honours $NATS_CONTEXT →
-#    `context.txt` pointer written by `nats context select`.
-nc = await natsagent.connect(context="prod")
-nc = await natsagent.connect(context=True)
+# 1. Direct URL(s) — caller drives nats-py directly.
+nc = await nats.connect(servers="nats://127.0.0.1:4222")
 
-# 3. Passthrough: return a caller-owned NATSClient as-is.
-nc = await natsagent.connect(nc=existing_nc)
+# 2. Load a `nats` CLI context (~/.config/nats/context/<name>.json) and
+#    splat its kwargs into nats.connect. Pass `"current"` to honour
+#    $NATS_CONTEXT → the `context.txt` pointer written by
+#    `nats context select`.
+nc = await nats.connect(**load_context_options("prod"))
+nc = await nats.connect(**load_context_options("current"))
+
+# Then in either case:
+agents = Agents(nc=nc)
 ```
 
-Context-field support matches the TS SDK v0.1.0: `url`, `token`,
-`user`/`password`, `creds` (with `~` expansion), `user_jwt`,
-`inbox_prefix`, `description`. `nkey`, TLS triple, and `nsc://...` URLs
-raise `ContextNotSupportedError` with an actionable message - they are
-not silently ignored. The SDK itself does NOT read `NATS_URL`; that
-stays a convenience default inside `examples/`.
+`load_context_options` returns a dict ready to splat into
+`nats.connect(...)`. Supported context fields: `url` → `servers`,
+`token`, `user`/`password`, `creds` (with `~` expansion, mapped to
+`user_credentials`), `user_jwt` (mapped to `user_jwt_cb`),
+`inbox_prefix`. Auth precedence: `creds` > `user_jwt` > inline `token`
+/ `user`+`password`. Unsupported fields (`nkey`, TLS triple
+`cert`/`key`/`ca`, `nsc://...` URLs) raise `NatsContextError` with an
+actionable message — they are not silently ignored. The SDK itself
+does NOT read `NATS_URL`; that stays a convenience default inside
+`examples/`.
 
 ### Examples vs scripts
 

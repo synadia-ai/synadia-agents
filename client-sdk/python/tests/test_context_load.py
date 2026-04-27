@@ -1,4 +1,4 @@
-"""Unit tests for ``natsagent.load_context_options``.
+"""Unit tests for ``synadia_ai.agents.load_context_options``.
 
 Pure-functional: no live NATS, no real ``~/.config/nats``. Each test
 redirects the resolver's view of the config dir via ``monkeypatch`` so
@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from natsagent import NatsContextError, load_context_options
+from synadia_ai.agents import NatsContextError, load_context_options
 
 
 def _point_env_at(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

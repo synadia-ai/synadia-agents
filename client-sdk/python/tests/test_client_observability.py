@@ -2,7 +2,7 @@
 
 Each test exercises a real NATS server (same fixture setup as the other
 e2e tests) and asserts that the expected log record appears on the
-``natsagent.*`` loggers. Wire traces land in
+``synadia_ai.agents.*`` loggers. Wire traces land in
 ``tests/_evidence/<nodeid>/messages.jsonl`` via the session-scoped
 ``EvidenceRecorder`` for eyeball review.
 """
@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import Agents, AgentService, Envelope, PromptStream
-from natsagent.errors import ProtocolError
+from synadia_ai.agents import Agents, AgentService, Envelope, PromptStream
+from synadia_ai.agents.errors import ProtocolError
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
@@ -31,7 +31,7 @@ HEARTBEAT_INTERVAL_S = 30
 
 def _has_record(caplog: pytest.LogCaptureFixture, level: int, needle: str) -> bool:
     return any(
-        r.name.startswith("natsagent") and r.levelno == level and needle in r.getMessage()
+        r.name.startswith("synadia_ai.agents") and r.levelno == level and needle in r.getMessage()
         for r in caplog.records
     )
 
@@ -41,7 +41,7 @@ async def test_ping_unknown_instance_returns_false(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """``Agents.ping`` for an unknown instance_id returns ``False`` and logs at debug."""
-    caplog.set_level(logging.DEBUG, logger="natsagent.discovery")
+    caplog.set_level(logging.DEBUG, logger="synadia_ai.agents.discovery")
     agents = Agents(nc=nc)
     try:
         assert await agents.ping("nonexistent-instance", timeout=0.5) is False
@@ -81,7 +81,7 @@ async def test_stream_stall_logs_warning(
     service.on_prompt(_noop)
     await service.start()
 
-    caplog.set_level(logging.WARNING, logger="natsagent.agent")
+    caplog.set_level(logging.WARNING, logger="synadia_ai.agents.agent")
     agents = Agents(nc=nc)
     try:
         found = await agents.discover(timeout=1.0)
@@ -126,7 +126,7 @@ async def test_service_error_logs_warning(
     await service.start()
 
     try:
-        caplog.set_level(logging.WARNING, logger="natsagent.agent")
+        caplog.set_level(logging.WARNING, logger="synadia_ai.agents.agent")
         agents = Agents(nc=nc)
         try:
             found = await agents.discover(timeout=1.0)

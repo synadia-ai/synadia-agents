@@ -89,7 +89,7 @@ Every numbered example honours the same flag resolution, in order:
 
 If none of those resolve, the demo exits with a pointed error. See
 [`CLAUDE.md`](../CLAUDE.md#connecting-to-nats) for the full
-`natsagent.load_context_options()` contract (XDG paths, supported context
+`synadia_ai.agents.load_context_options()` contract (XDG paths, supported context
 fields, unsupported-feature failures). The SDK itself does not open NATS
 connections — every example builds a `nats.aio.client.Client` via
 `nats.connect(**load_context_options(...))` and hands it to `Agents`.

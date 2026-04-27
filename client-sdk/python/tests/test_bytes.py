@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`natsagent._bytes` (size parsing + UTF-8 length).
+"""Unit tests for :mod:`synadia_ai.agents._bytes` (size parsing + UTF-8 length).
 
 Spec §2.1 fixes the `max_payload` grammar but leaves base (1000 vs 1024)
 and case sensitivity unspecified. We pin the interpretation here so the
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from natsagent._bytes import InvalidSizeError, parse_human_bytes, utf8_byte_length
+from synadia_ai.agents._bytes import InvalidSizeError, parse_human_bytes, utf8_byte_length
 
 
 class TestParseHumanBytes:

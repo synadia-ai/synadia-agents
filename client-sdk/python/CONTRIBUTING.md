@@ -1,4 +1,4 @@
-# Contributing to natsagent
+# Contributing to synadia-ai-agents
 
 Thanks for wanting to contribute! This project is the Python SDK for the
 NATS Agent Protocol; the wire spec at

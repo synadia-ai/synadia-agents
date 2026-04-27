@@ -14,7 +14,7 @@ Report them privately via one of:
 
 When reporting, please include (as much as applies):
 
-- The natsagent version (or git SHA) affected.
+- The synadia-ai-agents version (or git SHA) affected.
 - A minimal reproduction or proof-of-concept.
 - The impact you believe the issue has (data exposure, auth bypass,
   remote exec, etc.).
@@ -25,8 +25,8 @@ When reporting, please include (as much as applies):
 
 In-scope:
 
-- Any code shipped in the `natsagent` PyPI package (the contents of
-  `src/natsagent/`).
+- Any code shipped in the `synadia-ai-agents` PyPI package (the contents of
+  `src/synadia_ai/agents/`).
 - SDK behaviour that violates the spec in a way that allows an agent to
   impersonate another, leak credentials, or bypass a documented
   safeguard (e.g. `attachments_ok` / `max_payload` enforcement).
@@ -36,7 +36,7 @@ Out of scope:
 - Vulnerabilities in `nats-server` itself - those belong at
   [nats-io/nats-server](https://github.com/nats-io/nats-server).
 - Vulnerabilities in transitive dependencies that do not affect users of
-  natsagent at default settings - report them upstream; we'll bump when
+  synadia-ai-agents at default settings - report them upstream; we'll bump when
   a fixed version is available.
 - Theoretical issues without a concrete attack path.
 

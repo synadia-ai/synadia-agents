@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import Agents, Attachment, ResponseChunk
+from synadia_ai.agents import Agents, Attachment, ResponseChunk
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

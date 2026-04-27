@@ -39,7 +39,7 @@ from typing import Literal
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
-from natsagent import (
+from synadia_ai.agents import (
     Agent,
     Agents,
     NatsAgentError,
