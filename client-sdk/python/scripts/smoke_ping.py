@@ -1,15 +1,14 @@
-"""Manual smoke for `Client.ping()` against a live or absent demo agent.
+"""Manual smoke for :meth:`Agents.discover` against a live or absent demo agent.
 
 Two scenarios — pass the mode as the first positional argument:
 
   up      Expects a protocol-compliant agent to be on the bus (e.g.
-          `scripts/demo_echo.py` running). At INFO level, asserts ping
-          returns True and NO log records are emitted on the client side
-          — the success path is silent.
+          `scripts/demo_echo.py` running). At INFO level, asserts
+          discover() returns ≥ 1 entry and NO log records are emitted
+          on the client side — the success path is silent.
 
-  down    Expects no compliant agent. At DEBUG level, asserts ping
-          returns False and the `natsagent.client` logger emitted the
-          "no compliant agent responded" record.
+  down    Expects no compliant agent. At DEBUG level, asserts discover()
+          returns [] and emits a discovery debug record.
 
 Requires `nats-server` reachable at `$NATS_URL` (default
 `nats://127.0.0.1:4222`). Does not spawn the server itself.
@@ -24,7 +23,7 @@ import sys
 
 import nats
 
-from natsagent import Client
+from natsagent import Agents
 
 
 class _ListHandler(logging.Handler):
@@ -52,45 +51,34 @@ async def _run(mode: str) -> int:
     url = os.environ.get("NATS_URL", "nats://127.0.0.1:4222")
     nc = await nats.connect(url)
     try:
-        client = Client(nc=nc)
-        await client.start()
+        agents = Agents(nc=nc)
         try:
             timeout = 1.0 if expect_agent else 0.3
-            result = await client.ping(timeout=timeout)
-            print(f"[smoke:{mode}] ping(timeout={timeout}) -> {result}")
+            found = await agents.discover(timeout=timeout)
+            print(f"[smoke:{mode}] discover(timeout={timeout}) -> {len(found)} agent(s)")
         finally:
-            await client.stop()
+            await agents.close()
     finally:
         await nc.close()
 
-    client_records = [r for r in captured.records if r.name == "natsagent.client"]
+    discovery_records = [r for r in captured.records if r.name == "natsagent.discovery"]
     print(
-        f"[smoke:{mode}] natsagent.client records: "
-        f"{[(r.levelname, r.getMessage()) for r in client_records]}"
+        f"[smoke:{mode}] natsagent.discovery records: "
+        f"{[(r.levelname, r.getMessage()) for r in discovery_records]}"
     )
 
     if expect_agent:
-        if result is not True:
-            print(f"[smoke:{mode}] FAIL: expected True, got {result!r}")
+        if not found:
+            print(f"[smoke:{mode}] FAIL: expected ≥1 agent, got 0")
             return 1
-        if any(r.levelno >= logging.INFO for r in client_records):
+        if any(r.levelno >= logging.INFO for r in discovery_records):
             print(f"[smoke:{mode}] FAIL: success path emitted >=INFO records")
             return 1
         print(f"[smoke:{mode}] OK")
         return 0
 
-    if result is not False:
-        print(f"[smoke:{mode}] FAIL: expected False, got {result!r}")
-        return 1
-    # Two shapes are valid: TimeoutError ("no compliant agent responded")
-    # and NoRespondersError ("broker reports no responders"). Both mean
-    # the same thing from a caller's perspective — no agent reachable.
-    if not any(
-        r.levelno == logging.DEBUG
-        and ("no compliant agent responded" in r.getMessage() or "no responders" in r.getMessage())
-        for r in client_records
-    ):
-        print(f"[smoke:{mode}] FAIL: missing expected DEBUG record")
+    if found:
+        print(f"[smoke:{mode}] FAIL: expected 0 agents, got {len(found)}")
         return 1
     print(f"[smoke:{mode}] OK")
     return 0

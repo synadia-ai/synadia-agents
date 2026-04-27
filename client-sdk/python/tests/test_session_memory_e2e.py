@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import Client, ResponseChunk
+from natsagent import Agents, ResponseChunk
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -110,9 +110,9 @@ async def ref_agent(nats_server: RunningServer) -> AsyncIterator[_RefAgentProc]:
         await proc.stop()
 
 
-async def _collect_text(remote: object, text: str, *, session: str | None = None) -> str:
+async def _collect_text(agent: object, text: str, *, session: str | None = None) -> str:
     chunks: list[ResponseChunk] = []
-    async for msg in remote.prompt(text, session=session, timeout=10.0):  # type: ignore[attr-defined]
+    async for msg in agent.prompt(text, session=session, timeout=10.0):  # type: ignore[attr-defined]
         assert isinstance(msg, ResponseChunk), f"unexpected chunk: {type(msg).__name__}"
         chunks.append(msg)
     assert len(chunks) == 1
@@ -128,24 +128,22 @@ async def test_subject_level_chat_remembers_prior_turn(
     ``02-prompt-text.py "hi" && 02-prompt-text.py "what did I say?"``
     demo, asserted automatically."""
     assert ref_agent.prompt_subject is not None
-    client = Client(nc=nc)
-    await client.start()
+    agents = Agents(nc=nc)
     try:
-        found = await client.discover(timeout=3.0)
-        discovered = next(d for d in found if d.inbox == ref_agent.prompt_subject)
-        remote = client.bind(discovered)
+        found = await agents.discover(timeout=3.0)
+        discovered = next(a for a in found if a.prompt_subject == ref_agent.prompt_subject)
 
-        first = await _collect_text(remote, "hi, I'm rene")
+        first = await _collect_text(discovered, "hi, I'm rene")
         # First turn has no prior history.
         assert "previously said" not in first
 
-        second = await _collect_text(remote, "what did I say?")
+        second = await _collect_text(discovered, "what did I say?")
         # Second turn must recap the first.
         assert "previously said" in second
         assert '"hi, I\'m rene"' in second
         assert "this subject" in second  # session-less marker
     finally:
-        await client.stop()
+        await agents.close()
 
 
 @pytest.mark.asyncio
@@ -156,25 +154,23 @@ async def test_envelope_level_sessions_are_independent(
     sessions — their histories MUST NOT bleed. A follow-up to alice
     recaps her prior turn; it MUST NOT mention bob's."""
     assert ref_agent.prompt_subject is not None
-    client = Client(nc=nc)
-    await client.start()
+    agents = Agents(nc=nc)
     try:
-        found = await client.discover(timeout=3.0)
-        discovered = next(d for d in found if d.inbox == ref_agent.prompt_subject)
-        remote = client.bind(discovered)
+        found = await agents.discover(timeout=3.0)
+        discovered = next(a for a in found if a.prompt_subject == ref_agent.prompt_subject)
 
-        alice_1 = await _collect_text(remote, "I am alice", session="alice")
+        alice_1 = await _collect_text(discovered, "I am alice", session="alice")
         assert "previously said" not in alice_1
 
-        bob_1 = await _collect_text(remote, "I am bob", session="bob")
+        bob_1 = await _collect_text(discovered, "I am bob", session="bob")
         # Bob's first turn sees no history — his bucket is empty.
         assert "previously said" not in bob_1
 
-        alice_2 = await _collect_text(remote, "who am I?", session="alice")
+        alice_2 = await _collect_text(discovered, "who am I?", session="alice")
         # Alice's second turn recaps alice's first — and ONLY alice's.
         assert "previously said" in alice_2
         assert '"I am alice"' in alice_2
         assert '"I am bob"' not in alice_2
         assert "session 'alice'" in alice_2
     finally:
-        await client.stop()
+        await agents.close()

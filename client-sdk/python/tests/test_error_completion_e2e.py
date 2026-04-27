@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import Agent, Client, Envelope, PromptStream
+from natsagent import Agents, AgentService, Envelope, PromptStream
 from natsagent.errors import ProtocolError
 
 if TYPE_CHECKING:
@@ -66,18 +66,18 @@ async def test_handler_exception_emits_error_then_terminator(
     async def _boom(envelope: Envelope, stream: PromptStream) -> None:
         raise RuntimeError("kaboom")
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="raises",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
-    agent.on_prompt(_boom)
-    await agent.start()
+    service.on_prompt(_boom)
+    await service.start()
 
     try:
-        messages = await _collect_replies(nc, agent.subject.inbox, nc.new_inbox())
+        messages = await _collect_replies(nc, service.subject.inbox, nc.new_inbox())
         evidence.write_jsonl(
             "wire.jsonl",
             [
@@ -108,15 +108,17 @@ async def test_handler_exception_emits_error_then_terminator(
         )
 
         # Client-facing surface raises ProtocolError on the error frame.
-        client = Client(nc=nc)
-        await client.start()
-        remote = client.bind(agent.subject.inbox)
-        with pytest.raises(ProtocolError, match="500"):
-            async for _ in remote.prompt("trigger", timeout=5.0):
-                pass
-        await client.stop()
+        agents = Agents(nc=nc)
+        try:
+            found = await agents.discover(timeout=1.0)
+            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
+            with pytest.raises(ProtocolError, match="500"):
+                async for _ in agent.prompt("trigger", timeout=5.0):
+                    pass
+        finally:
+            await agents.close()
     finally:
-        await agent.stop()
+        await service.stop()
 
 
 @pytest.mark.asyncio
@@ -128,15 +130,15 @@ async def test_malformed_envelope_emits_400_then_terminator(
     async def _never_called(envelope: Envelope, stream: PromptStream) -> None:
         raise AssertionError("handler MUST NOT run on malformed envelope")
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="strict",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
-    agent.on_prompt(_never_called)
-    await agent.start()
+    service.on_prompt(_never_called)
+    await service.start()
 
     try:
         inbox = nc.new_inbox()
@@ -144,7 +146,7 @@ async def test_malformed_envelope_emits_400_then_terminator(
         try:
             # Send JSON that passes the §5.3 "starts with {" test but lacks the
             # required `prompt` field — the agent MUST reject with 400.
-            await nc.publish(agent.subject.inbox, b'{"no_prompt":true}', reply=inbox)
+            await nc.publish(service.subject.inbox, b'{"no_prompt":true}', reply=inbox)
             collected = []
             deadline = asyncio.get_event_loop().time() + 1.0
             while asyncio.get_event_loop().time() < deadline:
@@ -175,4 +177,4 @@ async def test_malformed_envelope_emits_400_then_terminator(
         assert terminator.data == b""
         assert not terminator.headers
     finally:
-        await agent.stop()
+        await service.stop()

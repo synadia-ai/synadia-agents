@@ -1,9 +1,9 @@
 """Live view of every reachable agent's heartbeat.
 
-Mirrors ``examples/05-liveness.ts``. The Python :class:`Client` has a
-passive heartbeat tracker (wildcard subscription) — we also attach our
-own subscription to the heartbeat wildcard so we can log each beat as
-it arrives. A snapshot is printed every 5 seconds.
+Mirrors ``examples/05-liveness.ts``. The Python :class:`Agents` keeps a
+passive heartbeat tracker keyed on ``instance_id`` (§8.3). We register a
+per-instance listener for each discovered agent so beats are logged as
+they arrive, and print a tracker snapshot every 5 seconds.
 """
 
 from __future__ import annotations
@@ -13,14 +13,21 @@ import asyncio
 import contextlib
 import signal
 import sys
-from datetime import UTC, datetime
+from collections.abc import Callable
 from pathlib import Path
 from types import FrameType
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
-from natsagent import Client, HeartbeatPayload
+from natsagent import Agents, HeartbeatPayload
+
+
+def _make_listener(identity: str) -> Callable[[HeartbeatPayload], None]:
+    def _listener(payload: HeartbeatPayload) -> None:
+        print(f"[{payload.ts}] {identity}: interval={payload.interval_s}s")
+
+    return _listener
 
 
 async def main() -> None:
@@ -29,7 +36,7 @@ async def main() -> None:
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)
-    client = Client(nc)
+    agents = Agents(nc=nc)
     stop = asyncio.Event()
 
     def _on_signal(_sig: int, _frame: FrameType | None) -> None:
@@ -38,51 +45,38 @@ async def main() -> None:
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 
-    async def _on_heartbeat(msg: object) -> None:
-        subject: str = msg.subject  # type: ignore[attr-defined]
-        data: bytes = msg.data  # type: ignore[attr-defined]
-        try:
-            hb = HeartbeatPayload.model_validate_json(data)
-        except Exception as exc:
-            print(f"[{_now_iso()}] malformed heartbeat on {subject}: {exc}")
-            return
-        inbox = subject.removesuffix(".heartbeat")
-        status = client.status(inbox)
-        print(
-            f"[{hb.ts}] {hb.agent}/{hb.owner}: interval={hb.interval_s}s, "
-            f"online={status.is_online()}"
-        )
-
     # Heartbeat wildcard sub BEFORE discover() per §8.5.
-    await client.start()
-    hb_sub = await nc.subscribe("agents.*.*.*.heartbeat", cb=_on_heartbeat)
-
+    await agents.start_tracking()
+    unsubscribers: list[Callable[[], None]] = []
     try:
-        agents = await client.discover(timeout=2.0)
-        print(f"tracking {len(agents)} agent(s). Press Ctrl+C to stop.\n")
+        found = await agents.discover()
+        print(f"tracking {len(found)} agent(s). Press Ctrl+C to stop.\n")
+
+        for a in found:
+            identity = f"{a.agent}/{a.owner}/{a.name or '<custom>'}"
+            unsubscribers.append(agents.on_heartbeat(a.instance_id, _make_listener(identity)))
 
         while not stop.is_set():
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=5.0)
-            print("\n--- status snapshot ---")
-            for a in agents:
-                status = client.status(a.inbox)
-                if status.last_seen is None:
-                    print(f"  {a.agent}/{a.name}: no heartbeat yet")
+            print("\n--- liveness snapshot ---")
+            for a in found:
+                liveness = agents.liveness(a.instance_id)
+                identity = f"{a.agent}/{a.owner}/{a.name or '<custom>'}"
+                if liveness is None:
+                    print(f"  {identity}: no heartbeat yet")
                 else:
                     print(
-                        f"  {a.agent}/{a.name}: last_seen={status.last_seen.isoformat()}, "
-                        f"online={status.is_online()}"
+                        f"  {identity}: last_seen={liveness.last_seen.isoformat()}, "
+                        f"online={liveness.is_online}"
                     )
-            print("-----------------------\n")
+            print("-------------------------\n")
     finally:
-        await hb_sub.unsubscribe()
-        await client.stop()
+        for unsub in unsubscribers:
+            with contextlib.suppress(Exception):
+                unsub()
+        await agents.close()
         await nc.close()
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 if __name__ == "__main__":

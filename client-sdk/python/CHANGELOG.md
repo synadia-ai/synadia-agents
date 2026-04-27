@@ -8,6 +8,181 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-27
+
+Aligns the Python caller surface with the TypeScript SDK's
+[PR #7](https://github.com/synadia-ai/synadia-agents/pull/7) reshape: a
+single `Agents` class that takes a caller-owned `NatsConnection`,
+discovery returns directly-callable `Agent[]` (no `bind()` step), and
+the `connect()`/`attach()` factories are gone in favor of a thin
+`load_context_options()` helper. The Python SDK package version skips
+straight from 0.2.x to 0.3.0; the wire protocol is unchanged at `0.2`.
+
+This is an API-only break — every wire byte stays the same, so v0.3
+agents and v0.2 callers (and vice versa) interoperate. The interop
+test (`tests/test_interop_e2e.py`) round-trips a prompt through the TS
+reference agent on the same wire.
+
+### Changed (breaking)
+
+- **`Client` → `Agents`.** Construct with kw-only `nc=`; the SDK no
+  longer opens NATS connections — callers build a
+  `nats.aio.client.Client` via `nats.connect(...)` and hand it to
+  `Agents(nc=nc)`. `Agents.close()` tears down SDK-owned state only
+  (heartbeat wildcard sub, in-flight stream cancellation); the
+  underlying connection is the caller's responsibility. Mirrors what
+  every other `@nats-io/*` library does (`jetstream(nc)`, `Svcm(nc)`,
+  `Kvm(nc)`…).
+- **`agents.discover()` returns a live `list[Agent]`.** Each `Agent`
+  is directly callable — no `bind()` step. `DiscoveredAgent` and
+  `RemoteAgent` are merged into a single `Agent` class that carries
+  both the parsed `$SRV.INFO` metadata (flat fields: `instance_id`,
+  `agent`, `owner`, `name`, `session`, `protocol_version`,
+  `description`, `version`, `metadata`, `endpoints`, `prompt_endpoint`,
+  `prompt_subject`) and the `.prompt()` method.
+- **Server-side `Agent` → `AgentService`.** Full rename — file moves
+  from `src/natsagent/agent.py` to `src/natsagent/service.py`,
+  exported as `AgentService` from the package root. **Hermes is the
+  affected downstream consumer**; behaviour, signature, and
+  constructor kwargs are unchanged.
+- **`Agents.discover()` defaults to the stall strategy.** Returns
+  ~200 ms after the most recent reply, with a 2 s absolute safety cap,
+  so interactive paths feel snappy instead of always blocking the
+  full window. Pass `timeout=...` to switch back to the timer
+  strategy for deterministic scans. New constants exported:
+  `DEFAULT_DISCOVER_STALL_S = 0.2`, `DEFAULT_DISCOVER_MAX_WAIT_S = 2.0`.
+- **`Agents.liveness(instance_id)` replaces `Client.status(inbox)`.**
+  Returns a frozen `Liveness` snapshot or `None`; `is_online` is
+  precomputed at read time against `DEFAULT_LIVENESS_SLACK *
+  interval_s`. Heartbeat tracker storage is keyed on
+  `payload.instance_id` (§8.3), not the heartbeat subject — multiple
+  instances of the same logical agent are now distinguishable.
+- **`Agents.ping(instance_id)` is per-instance (§8.4).** The previous
+  `Client.ping()` was a global PING that said nothing about a
+  specific instance; the per-instance `$SRV.PING.agents.{id}` form is
+  the spec-supported reachability check. Use
+  `len(agents.discover(timeout=...))` for "is anyone there".
+- **Heartbeat wildcard fixed.** The tracker subscribes to
+  `agents.*.*.*.heartbeat` (exported as `HEARTBEAT_SUBJECT`).
+- **Single `NatsContextError` class.** Replaces
+  `ContextNotFoundError`, `ContextInvalidError`, `ContextNotSelectedError`,
+  and `ContextNotSupportedError`. Branch on the class, not on
+  more-specific subtypes; the message carries actionable detail.
+
+### Added
+
+- **`load_context_options(selector)`** — translate a `nats` CLI context
+  into kwargs for `nats.connect(...)`. Returns a dict with `servers`,
+  plus `token` / `user` / `password` / `user_credentials` /
+  `user_jwt_cb` / `inbox_prefix` when the context declared them. Pass
+  `"current"` to honour `$NATS_CONTEXT` → the `context.txt` selection
+  pointer. Auth precedence: `creds` > `user_jwt` > `token` /
+  `user`+`password`. `nkey`, TLS triple, and `nsc://...` URLs raise
+  `NatsContextError` with an actionable message.
+- **`AgentInfo`** — pure data record returned by `build_agent_info()`;
+  what `Agent` wraps. Carries flat identity fields plus `metadata`,
+  `endpoints`, and `prompt_endpoint`. Mirrors the TS `AgentInfo`
+  interface.
+- **`build_agent_info(info: dict) -> AgentInfo | None`** — public
+  helper for materialising an `AgentInfo` from a parsed `$SRV.INFO`
+  dict (e.g. obtained via a heartbeat + `$SRV.INFO.agents.{id}`
+  direct lookup).
+- **`DiscoverFilter`** — AND-matched identity filter for
+  `Agents.discover(filter=...)`: `agent`, `owner`, `name`, `session`,
+  `protocol_version`.
+- **`Liveness`** — frozen-snapshot dataclass with
+  `instance_id`, `last_seen`, `interval_s`, `is_online`.
+- **Constants exported from the package root**: `SERVICE_NAME`,
+  `PROMPT_QUEUE_GROUP`, `PROMPT_ENDPOINT_NAME`, `HEARTBEAT_SUBJECT`,
+  `DEFAULT_LIVENESS_SLACK`, `DEFAULT_DISCOVER_STALL_S`,
+  `DEFAULT_DISCOVER_MAX_WAIT_S`, `DEFAULT_STREAM_INACTIVITY_TIMEOUT_S`.
+- **Per-instance heartbeat listeners.** `agents.on_heartbeat(instance_id,
+  listener)` returns an unsubscribe function; the listener fires once
+  per matching beat in registration order.
+
+### Removed
+
+- **`Client`, `RemoteAgent`, `DiscoveredAgent`, `Agent`** (old
+  server-side class). The first three merge into `Agent` (client-side)
+  + `AgentInfo`; the old server-side `Agent` is now `AgentService`.
+- **`Client.bind()`** — discovery returns live handles directly.
+  Callers with a config-driven set of target agents discover once and
+  match by metadata via `DiscoverFilter` or a list comprehension.
+- **`natsagent.connect()` and `NatsContext`.** Replaced by
+  `nats.connect(**load_context_options(...))`. The SDK does not own a
+  connection factory; callers do.
+- **`AgentStatus`** — replaced by `Liveness` (frozen, snapshot-style).
+- **`ContextNotFoundError`, `ContextInvalidError`,
+  `ContextNotSelectedError`, `ContextNotSupportedError`** — collapsed
+  into `NatsContextError`.
+
+### Migration
+
+Caller — connect, discover, prompt:
+
+```diff
+- import natsagent
+- from natsagent import Client
+-
+- nc = await natsagent.connect(servers="nats://127.0.0.1:4222")
+- client = Client(nc)
+- await client.start()
+- found = await client.discover(timeout=2.0)
+- remote = client.bind(found[0])
+- async for msg in remote.prompt("hi"):
+-     ...
+- await client.stop()
+- await nc.close()
++ import nats
++ from natsagent import Agents
++
++ nc = await nats.connect(servers="nats://127.0.0.1:4222")
++ agents = Agents(nc=nc)
++ found = await agents.discover()              # stall by default
++ async for msg in found[0].prompt("hi"):
++     ...
++ await agents.close()                         # SDK state only
++ await nc.close()                             # caller owns this
+```
+
+Caller — context resolution:
+
+```diff
+- nc = await natsagent.connect(context="prod")
++ import nats
++ from natsagent import load_context_options
++ nc = await nats.connect(**load_context_options("prod"))
+```
+
+Server (Hermes-style harness):
+
+```diff
+- from natsagent import Agent
+- service = Agent(agent="hermes", owner="alice", name="alice-1", nc=nc)
++ from natsagent import AgentService
++ service = AgentService(agent="hermes", owner="alice", name="alice-1", nc=nc)
+  service.on_prompt(handler)
+  await service.start()
+```
+
+Liveness / heartbeat:
+
+```diff
+- status = client.status(agent.inbox)
+- if status.is_online():
++ liveness = agents.liveness(agent.instance_id)
++ if liveness is not None and liveness.is_online:
+      ...
+```
+
+Per-instance ping:
+
+```diff
+- # `Client.ping()` was global — said nothing about a specific instance.
+- ok = await client.ping(timeout=2.0)
++ ok = await agents.ping(agent.instance_id, timeout=2.0)
+```
+
 ### Deferred for follow-up
 
 - The 2026-04-26 TS-parity sweep deliberately deferred a handful of
@@ -334,7 +509,8 @@ Initial scaffold. Released ahead of the finalised v0.1 spec; most wire
 shapes in this version no longer match the spec and are corrected in
 0.1.0.
 
-[Unreleased]: https://github.com/synadia-ai/synadia-agents/compare/python-v0.2.0...HEAD
+[Unreleased]: https://github.com/synadia-ai/synadia-agents/compare/python-v0.3.0...HEAD
+[0.3.0]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.3.0
 [0.2.0]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.2.0
 [0.1.0]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.1.0
 [0.0.1]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.0.1

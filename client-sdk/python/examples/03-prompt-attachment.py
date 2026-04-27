@@ -18,9 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
 from natsagent import (
+    Agents,
     Attachment,
     AttachmentsNotSupportedError,
-    Client,
     NatsAgentError,
     PayloadTooLargeError,
     Query,
@@ -60,14 +60,14 @@ async def main() -> None:
         sys.exit(1)
 
     nc = await connect_from_cli(args)
-    client = Client(nc)
+    agents = Agents(nc=nc)
     try:
-        agents = await client.discover(timeout=2.0)
-        if not agents:
+        found = await agents.discover()
+        if not found:
             print("no agents reachable — start the reference agent first", file=sys.stderr)
             sys.exit(2)
 
-        chosen = agents[0]
+        chosen = found[0]
         ep = chosen.prompt_endpoint
         mp = ep.max_payload_bytes if ep.max_payload_bytes is not None else "unspecified"
         ao = ep.attachments_ok if ep.attachments_ok is not None else "unspecified"
@@ -76,10 +76,9 @@ async def main() -> None:
             f"(max_payload={mp}, attachments_ok={ao})"
         )
 
-        remote = client.bind(chosen)
         attachment = Attachment.from_path(attachment_path)
         try:
-            stream = remote.prompt(args.prompt, attachments=[attachment], session=args.session)
+            stream = chosen.prompt(args.prompt, attachments=[attachment], session=args.session)
             async for msg in stream:
                 if isinstance(msg, ResponseChunk):
                     sys.stdout.write(msg.text)
@@ -109,7 +108,7 @@ async def main() -> None:
         print(f"demo failed: {type(err).__name__}: {err}", file=sys.stderr)
         sys.exit(99)
     finally:
-        await client.stop()
+        await agents.close()
         await nc.close()
 
 

@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import Client, ResponseChunk
+from natsagent import Agents, ResponseChunk
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -158,19 +158,18 @@ async def ts_reference_agent(
 async def test_python_client_discovers_ts_reference_agent(
     nc: NATSClient, ts_reference_agent: _ReferenceAgentProcess
 ) -> None:
-    """Python `Client.discover()` sees the TS agent with spec-compliant metadata."""
+    """Python `Agents.discover()` sees the TS agent with spec-compliant metadata."""
     assert ts_reference_agent.prompt_subject is not None
 
-    client = Client(nc=nc)
-    await client.start()
+    agents = Agents(nc=nc)
     try:
-        found = await client.discover(timeout=3.0)
-        inboxes = [d.inbox for d in found]
-        assert ts_reference_agent.prompt_subject in inboxes, (
+        found = await agents.discover(timeout=3.0)
+        subjects = [a.prompt_subject for a in found]
+        assert ts_reference_agent.prompt_subject in subjects, (
             f"TS agent not discovered by Python client. "
-            f"Expected {ts_reference_agent.prompt_subject!r} in {inboxes!r}"
+            f"Expected {ts_reference_agent.prompt_subject!r} in {subjects!r}"
         )
-        discovered = next(d for d in found if d.inbox == ts_reference_agent.prompt_subject)
+        discovered = next(a for a in found if a.prompt_subject == ts_reference_agent.prompt_subject)
 
         # §3.2 — the agent publishes these via service metadata.
         assert discovered.agent == "demo-agent"
@@ -181,7 +180,7 @@ async def test_python_client_discovers_ts_reference_agent(
         assert discovered.prompt_endpoint.max_payload_bytes == 1024 * 1024
         assert discovered.prompt_endpoint.attachments_ok is True
     finally:
-        await client.stop()
+        await agents.close()
 
 
 @pytest.mark.asyncio
@@ -201,15 +200,13 @@ async def test_python_client_prompts_ts_reference_agent(
     """
     assert ts_reference_agent.prompt_subject is not None
 
-    client = Client(nc=nc)
-    await client.start()
+    agents = Agents(nc=nc)
     try:
-        found = await client.discover(timeout=3.0)
-        discovered = next(d for d in found if d.inbox == ts_reference_agent.prompt_subject)
-        remote = client.bind(discovered)
+        found = await agents.discover(timeout=3.0)
+        discovered = next(a for a in found if a.prompt_subject == ts_reference_agent.prompt_subject)
 
         received: list[ResponseChunk] = []
-        async for msg in remote.prompt("hello from python", timeout=10.0):
+        async for msg in discovered.prompt("hello from python", timeout=10.0):
             assert isinstance(msg, ResponseChunk), (
                 f"TS agent emitted unexpected chunk type: {type(msg).__name__}"
             )
@@ -219,4 +216,4 @@ async def test_python_client_prompts_ts_reference_agent(
         assert len(received) == 1
         assert received[0].text == "demo agent received your prompt."
     finally:
-        await client.stop()
+        await agents.close()

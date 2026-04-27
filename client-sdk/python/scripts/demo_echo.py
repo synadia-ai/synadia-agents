@@ -23,7 +23,7 @@ from types import FrameType
 
 import nats
 
-from natsagent import Agent, Envelope, PromptStream
+from natsagent import AgentService, Envelope, PromptStream
 
 
 async def echo_handler(envelope: Envelope, stream: PromptStream) -> None:
@@ -40,7 +40,7 @@ async def main() -> None:
     owner = os.environ.get("USER", "anon")
     nc = await nats.connect(url)
 
-    agent = Agent(
+    agent = AgentService(
         agent="demo",
         owner=owner,
         name="echo",

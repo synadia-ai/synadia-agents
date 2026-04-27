@@ -1,7 +1,7 @@
 """End-to-end echo test — the "proof of harness" integration test.
 
-Spins up a real nats-server, registers an echo agent, connects a client,
-prompts the agent, and verifies:
+Spins up a real nats-server, registers an echo agent, connects an
+:class:`Agents` client, prompts the agent, and verifies:
 
 - the streamed response arrives in typed chunks and terminates with an empty payload
 - ``$SRV.INFO.agents`` reports spec §3.2 metadata (``agent``,
@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from natsagent import (
-    Agent,
-    Client,
+    Agents,
+    AgentService,
     Envelope,
     PromptStream,
     ResponseChunk,
@@ -51,7 +51,7 @@ async def _echo(envelope: Envelope, stream: PromptStream) -> None:
 async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test intentionally covers §3, §4, §6, §8 end-to-end
     nc: NATSClient, evidence: EvidenceRecorder
 ) -> None:
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name=NAME,
@@ -59,8 +59,8 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         description="integration-test echo agent",
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
-    agent.on_prompt(_echo)
-    await agent.start()
+    service.on_prompt(_echo)
+    await service.start()
 
     try:
         # Capture an $SRV.INFO response for evidence and verify registration metadata.
@@ -83,7 +83,7 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         # §2.1: prompt endpoint declares capability metadata. On the wire it's
         # Record<string,string>, so attachments_ok is "true"/"false".
         prompt_ep = next(ep for ep in srv_info_parsed["endpoints"] if ep["name"] == "prompt")
-        assert prompt_ep["subject"] == agent.subject.inbox
+        assert prompt_ep["subject"] == service.subject.inbox
         assert prompt_ep["metadata"]["max_payload"] == "1MB"
         assert prompt_ep["metadata"]["attachments_ok"] == "true"
         # §3.3: the prompt endpoint MUST register queue group "agents" so
@@ -92,64 +92,65 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         # endpoints[].queue_group.
         assert prompt_ep["queue_group"] == "agents"
 
-        client = Client(nc=nc)
-        await client.start()
-
-        found = await client.discover(timeout=1.0)
-        inboxes = [d.inbox for d in found]
-        assert agent.subject.inbox in inboxes, f"agent not discovered; saw: {inboxes}"
-        # §4.3 + §2.1: the discovered record MUST surface the parsed endpoint
-        # capability metadata so callers can enforce §5.4 locally.
-        discovered = next(d for d in found if d.inbox == agent.subject.inbox)
-        assert discovered.prompt_endpoint.name == "prompt"
-        assert discovered.prompt_endpoint.subject == agent.subject.inbox
-        assert discovered.prompt_endpoint.max_payload_bytes == 1024 * 1024
-        assert discovered.prompt_endpoint.attachments_ok is True
-
-        remote = client.bind(agent.subject.inbox)
-        received: list[ResponseChunk] = []
-        async for msg in remote.prompt("hello world", timeout=5.0):
-            assert isinstance(msg, ResponseChunk), f"unexpected chunk type: {type(msg).__name__}"
-            received.append(msg)
-
-        # The iterator returning normally means the empty-payload terminator arrived (§6.5).
-        assert len(received) == 1, f"expected 1 chunk, got {len(received)}"
-        assert received[0].text == "hello world"
-        assert received[0].attachments is None
-        evidence.write_jsonl(
-            "chunks.jsonl",
-            [json.loads(chunk.model_dump_json()) for chunk in received],
-        )
-
-        # Wait up to 3x interval for a heartbeat to show up in the tracker.
-        deadline = asyncio.get_event_loop().time() + 3 * HEARTBEAT_INTERVAL_S
-        status = client.status(agent.subject.inbox)
-        while status.last_seen is None and asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(0.1)
-            status = client.status(agent.subject.inbox)
-        assert status.last_seen is not None, "no heartbeat observed within 3x interval"
-        assert status.interval_s == HEARTBEAT_INTERVAL_S
-
-        # Capture the literal heartbeat off the wire so the evidence file
-        # reflects what the agent actually published — including the §8.3
-        # fields (`agent`, `owner`, `instance_id`). A subscribe-then-wait is
-        # simpler than reconstructing the payload from tracker state; the
-        # first beacon has already landed, so the next one arrives within
-        # one `HEARTBEAT_INTERVAL_S` window.
-        hb_sub = await nc.subscribe(agent.subject.heartbeat)
+        agents = Agents(nc=nc)
         try:
-            hb_msg = await hb_sub.next_msg(timeout=HEARTBEAT_INTERVAL_S * 2)
+            found = await agents.discover(timeout=1.0)
+            subjects = [a.prompt_subject for a in found]
+            assert service.subject.inbox in subjects, f"agent not discovered; saw: {subjects}"
+            # §4.3 + §2.1: the discovered record MUST surface the parsed endpoint
+            # capability metadata so callers can enforce §5.4 locally.
+            discovered = next(a for a in found if a.prompt_subject == service.subject.inbox)
+            assert discovered.prompt_endpoint.name == "prompt"
+            assert discovered.prompt_endpoint.subject == service.subject.inbox
+            assert discovered.prompt_endpoint.max_payload_bytes == 1024 * 1024
+            assert discovered.prompt_endpoint.attachments_ok is True
+
+            received: list[ResponseChunk] = []
+            async for msg in discovered.prompt("hello world", timeout=5.0):
+                assert isinstance(msg, ResponseChunk), (
+                    f"unexpected chunk type: {type(msg).__name__}"
+                )
+                received.append(msg)
+
+            # The iterator returning normally means the empty-payload terminator arrived (§6.5).
+            assert len(received) == 1, f"expected 1 chunk, got {len(received)}"
+            assert received[0].text == "hello world"
+            assert received[0].attachments is None
+            evidence.write_jsonl(
+                "chunks.jsonl",
+                [json.loads(chunk.model_dump_json()) for chunk in received],
+            )
+
+            # Wait up to 3x interval for a heartbeat to show up in the tracker.
+            deadline = asyncio.get_event_loop().time() + 3 * HEARTBEAT_INTERVAL_S
+            liveness = agents.liveness(discovered.instance_id)
+            while liveness is None and asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(0.1)
+                liveness = agents.liveness(discovered.instance_id)
+            assert liveness is not None, "no heartbeat observed within 3x interval"
+            assert liveness.interval_s == HEARTBEAT_INTERVAL_S
+
+            # Capture the literal heartbeat off the wire so the evidence file
+            # reflects what the agent actually published — including the §8.3
+            # fields (`agent`, `owner`, `instance_id`). A subscribe-then-wait is
+            # simpler than reconstructing the payload from tracker state; the
+            # first beacon has already landed, so the next one arrives within
+            # one `HEARTBEAT_INTERVAL_S` window.
+            hb_sub = await nc.subscribe(service.subject.heartbeat)
+            try:
+                hb_msg = await hb_sub.next_msg(timeout=HEARTBEAT_INTERVAL_S * 2)
+            finally:
+                await hb_sub.unsubscribe()
+            hb_payload = HeartbeatPayload.model_validate_json(hb_msg.data)
+            evidence.write_json("heartbeat.json", json.loads(hb_payload.model_dump_json()))
+            assert hb_payload.agent == AGENT
+            assert hb_payload.owner == OWNER
+            assert hb_payload.instance_id, "heartbeat MUST carry instance_id (§8.3)"
+            assert hb_payload.interval_s == HEARTBEAT_INTERVAL_S
+
+            # §8.4 per-instance ping returns True for the live instance.
+            assert await agents.ping(discovered.instance_id, timeout=1.0) is True
         finally:
-            await hb_sub.unsubscribe()
-        hb_payload = HeartbeatPayload.model_validate_json(hb_msg.data)
-        evidence.write_json("heartbeat.json", json.loads(hb_payload.model_dump_json()))
-        assert hb_payload.agent == AGENT
-        assert hb_payload.owner == OWNER
-        assert hb_payload.instance_id, "heartbeat MUST carry instance_id (§8.3)"
-        assert hb_payload.interval_s == HEARTBEAT_INTERVAL_S
-
-        assert await client.ping(timeout=1.0) is True
-
-        await client.stop()
+            await agents.close()
     finally:
-        await agent.stop()
+        await service.stop()

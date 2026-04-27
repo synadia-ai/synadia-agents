@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from natsagent import (
-    Agent,
-    Client,
+    Agents,
+    AgentService,
     Envelope,
     PromptStream,
     Query,
@@ -73,7 +73,7 @@ async def test_query_happy_path(nc: NATSClient, evidence: EvidenceRecorder) -> N
         else:
             await stream.send("aborted")
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="confirm",
@@ -81,40 +81,41 @@ async def test_query_happy_path(nc: NATSClient, evidence: EvidenceRecorder) -> N
         description="confirmation agent",
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
-    agent.on_prompt(_confirm)
-    await agent.start()
+    service.on_prompt(_confirm)
+    await service.start()
 
     try:
-        client = Client(nc=nc)
-        await client.start()
-        remote = client.bind(agent.subject.inbox)
+        agents = Agents(nc=nc)
+        try:
+            found = await agents.discover(timeout=1.0)
+            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
-        messages: list[ResponseChunk | Query | object] = []
-        async for msg in remote.prompt("run it", timeout=5.0):
-            messages.append(msg)
-            if isinstance(msg, Query):
-                await msg.reply("yes")
+            messages: list[ResponseChunk | Query | object] = []
+            async for msg in agent.prompt("run it", timeout=5.0):
+                messages.append(msg)
+                if isinstance(msg, Query):
+                    await msg.reply("yes")
 
-        evidence.write_jsonl("chunks.jsonl", [_snapshot(m) for m in messages])
+            evidence.write_jsonl("chunks.jsonl", [_snapshot(m) for m in messages])
 
-        assert len(messages) == 3, f"expected 3 yielded items, got {len(messages)}"
-        first, second, third = messages
-        assert isinstance(first, ResponseChunk)
-        assert first.text == "thinking…"
+            assert len(messages) == 3, f"expected 3 yielded items, got {len(messages)}"
+            first, second, third = messages
+            assert isinstance(first, ResponseChunk)
+            assert first.text == "thinking…"
 
-        assert isinstance(second, Query)
-        assert second.id, "query id must be non-empty"
-        assert second.reply_subject.startswith("_INBOX."), (
-            f"reply_subject should be a NATS inbox; got {second.reply_subject!r}"
-        )
-        assert second.prompt == "Proceed? (yes/no)"
+            assert isinstance(second, Query)
+            assert second.id, "query id must be non-empty"
+            assert second.reply_subject.startswith("_INBOX."), (
+                f"reply_subject should be a NATS inbox; got {second.reply_subject!r}"
+            )
+            assert second.prompt == "Proceed? (yes/no)"
 
-        assert isinstance(third, ResponseChunk)
-        assert third.text == "done"
-
-        await client.stop()
+            assert isinstance(third, ResponseChunk)
+            assert third.text == "done"
+        finally:
+            await agents.close()
     finally:
-        await agent.stop()
+        await service.stop()
 
 
 @pytest.mark.asyncio
@@ -128,7 +129,7 @@ async def test_query_concurrent_asks(nc: NATSClient, evidence: EvidenceRecorder)
         )
         await stream.send(f"{a.prompt}|{b.prompt}")
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="pair",
@@ -136,43 +137,44 @@ async def test_query_concurrent_asks(nc: NATSClient, evidence: EvidenceRecorder)
         description="concurrent-query agent",
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
-    agent.on_prompt(_two_at_once)
-    await agent.start()
+    service.on_prompt(_two_at_once)
+    await service.start()
 
     replies = {"A?": "answer-a", "B?": "answer-b"}
 
     try:
-        client = Client(nc=nc)
-        await client.start()
-        remote = client.bind(agent.subject.inbox)
+        agents = Agents(nc=nc)
+        try:
+            found = await agents.discover(timeout=1.0)
+            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
-        messages: list[ResponseChunk | Query | object] = []
-        queries: list[Query] = []
-        async for msg in remote.prompt("kick off", timeout=5.0):
-            messages.append(msg)
-            if isinstance(msg, Query):
-                queries.append(msg)
-                await msg.reply(replies[msg.prompt])
+            messages: list[ResponseChunk | Query | object] = []
+            queries: list[Query] = []
+            async for msg in agent.prompt("kick off", timeout=5.0):
+                messages.append(msg)
+                if isinstance(msg, Query):
+                    queries.append(msg)
+                    await msg.reply(replies[msg.prompt])
 
-        evidence.write_jsonl("chunks.jsonl", [_snapshot(m) for m in messages])
+            evidence.write_jsonl("chunks.jsonl", [_snapshot(m) for m in messages])
 
-        assert len(queries) == 2, f"expected 2 queries, got {len(queries)}"
-        assert queries[0].id != queries[1].id, "query ids must differ"
-        assert queries[0].reply_subject != queries[1].reply_subject, (
-            "reply_subjects must differ per §7.3"
-        )
+            assert len(queries) == 2, f"expected 2 queries, got {len(queries)}"
+            assert queries[0].id != queries[1].id, "query ids must differ"
+            assert queries[0].reply_subject != queries[1].reply_subject, (
+                "reply_subjects must differ per §7.3"
+            )
 
-        response_chunks = [m for m in messages if isinstance(m, ResponseChunk)]
-        assert len(response_chunks) == 1
-        # gather() order is non-deterministic — accept either permutation.
-        assert response_chunks[0].text in {
-            "answer-a|answer-b",
-            "answer-b|answer-a",
-        }, f"unexpected composed answer: {response_chunks[0].text!r}"
-
-        await client.stop()
+            response_chunks = [m for m in messages if isinstance(m, ResponseChunk)]
+            assert len(response_chunks) == 1
+            # gather() order is non-deterministic — accept either permutation.
+            assert response_chunks[0].text in {
+                "answer-a|answer-b",
+                "answer-b|answer-a",
+            }, f"unexpected composed answer: {response_chunks[0].text!r}"
+        finally:
+            await agents.close()
     finally:
-        await agent.stop()
+        await service.stop()
 
 
 @pytest.mark.asyncio
@@ -187,7 +189,7 @@ async def test_query_timeout(nc: NATSClient, evidence: EvidenceRecorder) -> None
             return
         await stream.send("unexpected-reply")
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="stalls",
@@ -195,35 +197,36 @@ async def test_query_timeout(nc: NATSClient, evidence: EvidenceRecorder) -> None
         description="timeout-tolerant agent",
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
-    agent.on_prompt(_times_out)
-    await agent.start()
+    service.on_prompt(_times_out)
+    await service.start()
 
     try:
-        client = Client(nc=nc)
-        await client.start()
-        remote = client.bind(agent.subject.inbox)
+        agents = Agents(nc=nc)
+        try:
+            found = await agents.discover(timeout=1.0)
+            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
-        messages: list[ResponseChunk | Query | object] = []
-        async for msg in remote.prompt("ping", timeout=5.0):
-            messages.append(msg)
-            # Deliberately do NOT reply — let the agent-side timeout fire.
+            messages: list[ResponseChunk | Query | object] = []
+            async for msg in agent.prompt("ping", timeout=5.0):
+                messages.append(msg)
+                # Deliberately do NOT reply — let the agent-side timeout fire.
 
-        evidence.write_jsonl("chunks.jsonl", [_snapshot(m) for m in messages])
+            evidence.write_jsonl("chunks.jsonl", [_snapshot(m) for m in messages])
 
-        queries = [m for m in messages if isinstance(m, Query)]
-        responses = [m for m in messages if isinstance(m, ResponseChunk)]
-        assert len(queries) == 1
-        assert len(responses) == 1
+            queries = [m for m in messages if isinstance(m, Query)]
+            responses = [m for m in messages if isinstance(m, ResponseChunk)]
+            assert len(queries) == 1
+            assert len(responses) == 1
 
-        reply_subject = queries[0].reply_subject
-        query_id = queries[0].id
-        assert responses[0].text.startswith("timed out:"), (
-            f"unexpected final chunk: {responses[0].text!r}"
-        )
-        assert reply_subject in responses[0].text or query_id in responses[0].text, (
-            "timeout message should mention the reply_subject or query id for debuggability"
-        )
-
-        await client.stop()
+            reply_subject = queries[0].reply_subject
+            query_id = queries[0].id
+            assert responses[0].text.startswith("timed out:"), (
+                f"unexpected final chunk: {responses[0].text!r}"
+            )
+            assert reply_subject in responses[0].text or query_id in responses[0].text, (
+                "timeout message should mention the reply_subject or query id for debuggability"
+            )
+        finally:
+            await agents.close()
     finally:
-        await agent.stop()
+        await service.stop()

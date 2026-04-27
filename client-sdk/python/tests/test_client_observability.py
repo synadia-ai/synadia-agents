@@ -1,8 +1,8 @@
-"""Log-record coverage for the three silent I/O paths in ``Client``.
+"""Log-record coverage for the silent I/O paths in the caller surface.
 
 Each test exercises a real NATS server (same fixture setup as the other
 e2e tests) and asserts that the expected log record appears on the
-``natsagent.client`` logger. Wire traces land in
+``natsagent.*`` loggers. Wire traces land in
 ``tests/_evidence/<nodeid>/messages.jsonl`` via the session-scoped
 ``EvidenceRecorder`` for eyeball review.
 """
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from natsagent import Agent, Client, Envelope, PromptStream
+from natsagent import Agents, AgentService, Envelope, PromptStream
 from natsagent.errors import ProtocolError
 
 if TYPE_CHECKING:
@@ -36,56 +36,20 @@ def _has_record(caplog: pytest.LogCaptureFixture, level: int, needle: str) -> bo
     )
 
 
-async def test_ping_no_agent_logs_debug_and_returns_false(
-    nc: NATSClient,
-    evidence: EvidenceRecorder,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """``Client.ping`` with subscribers present but no responder returns
-    ``False`` and logs the timeout path. The ``evidence`` fixture's
-    wildcard subscription on ``$SRV.>`` is itself a subscriber, so the
-    broker does NOT report ``no_responders`` — the request waits until
-    the configured timeout and hits the ``TimeoutError`` branch.
-    """
-    del evidence  # subscription captures wire trace via the fixture side-effect
-
-    caplog.set_level(logging.DEBUG, logger="natsagent.client")
-    client = Client(nc=nc)
-    await client.start()
-    try:
-        assert await client.ping(timeout=0.2) is False
-    finally:
-        await client.stop()
-
-    assert _has_record(caplog, logging.DEBUG, "no compliant agent responded"), (
-        f"expected debug log on ping timeout; saw: "
-        f"{[(r.levelname, r.name, r.getMessage()) for r in caplog.records]}"
-    )
-
-
-async def test_ping_no_responders_logs_debug_and_returns_false(
+async def test_ping_unknown_instance_returns_false(
     nc: NATSClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Same outcome as above (``False`` + debug record), but via the
-    ``NoRespondersError`` path — the broker advertises ``no_responders``
-    to nats-py when zero subscribers match a request. This test does NOT
-    request the ``evidence`` fixture so the ping actually hits that
-    header-driven fast-fail instead of waiting out the timeout.
-    """
-    caplog.set_level(logging.DEBUG, logger="natsagent.client")
-    client = Client(nc=nc)
+    """``Agents.ping`` for an unknown instance_id returns ``False`` and logs at debug."""
+    caplog.set_level(logging.DEBUG, logger="natsagent.discovery")
+    agents = Agents(nc=nc)
     try:
-        # NOTE: do not call `client.start()` — the heartbeat wildcard sub
-        # would also count as interest on a different subject tree, but the
-        # ping target `$SRV.PING.agents` still has zero subscribers
-        # so this is belt-and-braces for a deterministic no-responders path.
-        assert await client.ping(timeout=2.0) is False
+        assert await agents.ping("nonexistent-instance", timeout=0.5) is False
     finally:
-        await client.stop()
-
-    assert _has_record(caplog, logging.DEBUG, "no responders"), (
-        f"expected no-responders debug log; saw: "
+        await agents.close()
+    # Either path (timeout or no-responders) logs at debug.
+    assert _has_record(caplog, logging.DEBUG, "ping("), (
+        f"expected debug log on ping; saw: "
         f"{[(r.levelname, r.name, r.getMessage()) for r in caplog.records]}"
     )
 
@@ -101,12 +65,35 @@ async def test_stream_stall_logs_warning(
     """
     del evidence
 
-    caplog.set_level(logging.WARNING, logger="natsagent.client")
-    client = Client(nc=nc)
-    remote = client.bind(f"agents.{AGENT}.{OWNER}.noreply")
-    with pytest.raises(ProtocolError, match="stream stalled"):
-        async for _ in remote.prompt("hi", timeout=0.2):
-            pass
+    # Stand up an agent so discovery succeeds, then stop it so the
+    # subject has no subscribers — prompting the stale handle stalls.
+    service = AgentService(
+        agent=AGENT,
+        owner=OWNER,
+        name="observability-stall",
+        nc=nc,
+        heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
+    )
+
+    async def _noop(envelope: Envelope, stream: PromptStream) -> None:
+        del envelope, stream
+
+    service.on_prompt(_noop)
+    await service.start()
+
+    caplog.set_level(logging.WARNING, logger="natsagent.agent")
+    agents = Agents(nc=nc)
+    try:
+        found = await agents.discover(timeout=1.0)
+        agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
+        # Stop the service so the prompt has no responder.
+        await service.stop()
+
+        with pytest.raises(ProtocolError, match="stream stalled"):
+            async for _ in agent.prompt("hi", timeout=0.2):
+                pass
+    finally:
+        await agents.close()
 
     assert _has_record(caplog, logging.WARNING, "stream stalled on"), (
         f"expected warning log on stream stall; saw: "
@@ -128,25 +115,29 @@ async def test_service_error_logs_warning(
     async def _boom(envelope: Envelope, stream: PromptStream) -> None:
         raise RuntimeError("kaboom")
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="observability-raises",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
-    agent.on_prompt(_boom)
-    await agent.start()
+    service.on_prompt(_boom)
+    await service.start()
 
     try:
-        caplog.set_level(logging.WARNING, logger="natsagent.client")
-        client = Client(nc=nc)
-        remote = client.bind(agent.subject.inbox)
-        with pytest.raises(ProtocolError, match="500"):
-            async for _ in remote.prompt("trigger", timeout=5.0):
-                pass
+        caplog.set_level(logging.WARNING, logger="natsagent.agent")
+        agents = Agents(nc=nc)
+        try:
+            found = await agents.discover(timeout=1.0)
+            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
+            with pytest.raises(ProtocolError, match="500"):
+                async for _ in agent.prompt("trigger", timeout=5.0):
+                    pass
+        finally:
+            await agents.close()
     finally:
-        await agent.stop()
+        await service.stop()
 
     assert _has_record(caplog, logging.WARNING, "service error on"), (
         f"expected warning log on service error; saw: "

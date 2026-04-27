@@ -1,9 +1,16 @@
-"""Heartbeat per protocol §8: payload schema + publisher loop + subscriber tracker."""
+"""Heartbeat per protocol §8: payload schema + publisher loop + subscriber tracker.
+
+Tracker storage is keyed on ``payload.instance_id`` (§8.3) — NOT on the
+heartbeat subject — so multiple instances of the same logical agent
+(spec §3.3) stay distinguishable. Mirrors the TS SDK's
+``heartbeat/tracker.ts`` (PR #7).
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -18,6 +25,15 @@ if TYPE_CHECKING:
     from .subjects import AgentSubject
 
 log = get_logger(__name__)
+
+
+# §8.1: heartbeat wildcard subject. Subscribed to by :class:`HeartbeatTracker`.
+HEARTBEAT_SUBJECT = "agents.*.*.*.heartbeat"
+
+# §8.2 default: a tracked instance is online iff its last heartbeat is
+# within ``slack * interval_s`` seconds of "now". Mirrors TS
+# DEFAULT_LIVENESS_SLACK.
+DEFAULT_LIVENESS_SLACK = 3
 
 
 class HeartbeatPayload(BaseModel):
@@ -39,8 +55,27 @@ class HeartbeatPayload(BaseModel):
     interval_s: int
 
 
+@dataclass(frozen=True, slots=True)
+class Liveness:
+    """Frozen snapshot of an instance's liveness (§8.2).
+
+    Returned by :meth:`HeartbeatTracker.liveness` / :meth:`Agents.liveness`.
+    ``is_online`` is precomputed at read time against
+    ``DEFAULT_LIVENESS_SLACK * interval_s``; the snapshot does not update
+    in place — callers should re-query the tracker for fresh state.
+    """
+
+    instance_id: str
+    last_seen: datetime
+    interval_s: int
+    is_online: bool
+
+
+HeartbeatListener = Callable[[HeartbeatPayload], None]
+
+
 def now_iso() -> str:
-    """UTC ISO 8601 with seconds precision and `Z` suffix."""
+    """UTC ISO 8601 with seconds precision and ``Z`` suffix."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -88,44 +123,99 @@ async def run_publisher(
 
 
 @dataclass(slots=True)
-class AgentStatus:
-    """Client-side view of an agent's liveness (§5.2, §5.3)."""
+class _Entry:
+    """Per-instance tracker state — mutable so updates are O(1)."""
 
-    subject: str
-    last_seen: datetime | None = None
-    interval_s: int | None = None
-
-    def is_online(self, *, as_of: datetime | None = None, slack: int = 3) -> bool:
-        """True if the last heartbeat is within `slack * interval_s` seconds of now."""
-        if self.last_seen is None or self.interval_s is None:
-            return False
-        now = as_of if as_of is not None else datetime.now(UTC)
-        elapsed = (now - self.last_seen).total_seconds()
-        return elapsed <= slack * self.interval_s
+    payload: HeartbeatPayload
+    last_seen: datetime
 
 
 class HeartbeatTracker:
-    """Subscribes to the heartbeat wildcard and tracks per-agent last-seen state."""
+    """Subscribes to the heartbeat wildcard and tracks per-instance state.
+
+    Storage is keyed on ``payload.instance_id`` (§8.3) so multiple
+    instances of the same logical agent stay distinguishable. Listener
+    registration is per-instance: callers that want every beat fan out
+    via the public :meth:`Agents.on_heartbeat`.
+    """
 
     def __init__(self, nc: NATSClient) -> None:
         self._nc = nc
-        self._statuses: dict[str, AgentStatus] = {}
+        self._entries: dict[str, _Entry] = {}
+        self._listeners: dict[str, set[HeartbeatListener]] = {}
         # nats Subscription — typed as object to keep this module free of runtime nats-py imports.
         self._sub: object | None = None
 
+    @property
+    def is_started(self) -> bool:
+        return self._sub is not None
+
     async def start(self) -> None:
-        """Subscribe to `agents.*.*.*.heartbeat` per §5.5 before any discovery happens."""
-        self._sub = await self._nc.subscribe("agents.*.*.*.heartbeat", cb=self._on_heartbeat)
-        log.debug("heartbeat tracker subscribed to agents.*.*.*.heartbeat")
+        """Subscribe to the heartbeat wildcard (§8.5: subscribe-before-discover).
+
+        Idempotent; calling more than once is a no-op. Flushes the
+        connection so the SUB is registered at the server before this
+        method returns.
+        """
+        if self._sub is not None:
+            return
+        self._sub = await self._nc.subscribe(HEARTBEAT_SUBJECT, cb=self._on_heartbeat)
+        log.debug("heartbeat tracker subscribed to %s", HEARTBEAT_SUBJECT)
+        # Best-effort flush so the SUB is visible at the server before
+        # the caller starts publishing $SRV.PING / $SRV.INFO. nats-py
+        # flush is async; we await it explicitly so subscribe-before-
+        # discover (§8.5) is enforced rather than racy.
+        with contextlib.suppress(Exception):
+            await self._nc.flush()
 
     async def stop(self) -> None:
         if self._sub is not None:
             await self._sub.unsubscribe()  # type: ignore[attr-defined]
             self._sub = None
 
-    def status(self, inbox: str) -> AgentStatus:
-        """Return the tracked status for an agent inbox, creating an empty record if unseen."""
-        return self._statuses.get(inbox, AgentStatus(subject=inbox))
+    def liveness(self, instance_id: str, *, now: datetime | None = None) -> Liveness | None:
+        """Return a frozen snapshot of the tracked instance, or ``None`` if unseen.
+
+        ``is_online`` is computed at call time against
+        ``DEFAULT_LIVENESS_SLACK * interval_s``. The returned snapshot
+        does not update in place; re-query for fresh state.
+        """
+        entry = self._entries.get(instance_id)
+        if entry is None:
+            return None
+        as_of = now if now is not None else datetime.now(UTC)
+        elapsed = (as_of - entry.last_seen).total_seconds()
+        is_online = elapsed < DEFAULT_LIVENESS_SLACK * entry.payload.interval_s
+        return Liveness(
+            instance_id=instance_id,
+            last_seen=entry.last_seen,
+            interval_s=entry.payload.interval_s,
+            is_online=is_online,
+        )
+
+    def on_heartbeat(
+        self,
+        instance_id: str,
+        listener: HeartbeatListener,
+    ) -> Callable[[], None]:
+        """Subscribe to heartbeats for a single instance.
+
+        Returns an unsubscribe function — call it to drop the listener.
+        Multiple listeners per instance are supported; each is invoked
+        once per matching beat in registration order.
+        """
+        bucket = self._listeners.setdefault(instance_id, set())
+        bucket.add(listener)
+
+        def _unsubscribe() -> None:
+            existing = self._listeners.get(instance_id)
+            if existing is None:
+                return
+            existing.discard(listener)
+            if not existing:
+                self._listeners.pop(instance_id, None)
+
+        return _unsubscribe
 
     async def _on_heartbeat(self, msg: object) -> None:
         subject: str = msg.subject  # type: ignore[attr-defined]
@@ -135,9 +225,31 @@ class HeartbeatTracker:
         except Exception as exc:
             log.warning("ignoring malformed heartbeat on %s: %s", subject, exc)
             return
-        inbox = subject.removesuffix(".heartbeat")
-        self._statuses[inbox] = AgentStatus(
-            subject=inbox,
+        # §8.3: track by instance_id, NOT by subject — two instances of the
+        # same (agent, owner, name) tuple share a heartbeat subject and must
+        # remain distinguishable in tracker state.
+        self._entries[payload.instance_id] = _Entry(
+            payload=payload,
             last_seen=datetime.now(UTC),
-            interval_s=payload.interval_s,
         )
+        listeners = self._listeners.get(payload.instance_id)
+        if listeners:
+            # Iterate over a snapshot — listeners may unsubscribe themselves.
+            for listener in tuple(listeners):
+                try:
+                    listener(payload)
+                except Exception:
+                    log.exception("heartbeat listener raised for %s", payload.instance_id)
+
+
+__all__ = [
+    "DEFAULT_LIVENESS_SLACK",
+    "HEARTBEAT_SUBJECT",
+    "HeartbeatListener",
+    "HeartbeatPayload",
+    "HeartbeatTracker",
+    "Liveness",
+    "now_iso",
+    "publish_one",
+    "run_publisher",
+]

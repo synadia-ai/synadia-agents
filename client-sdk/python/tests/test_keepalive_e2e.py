@@ -27,8 +27,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from natsagent import (
-    Agent,
-    Client,
+    Agents,
+    AgentService,
     Envelope,
     PromptHandler,
     PromptStream,
@@ -61,7 +61,7 @@ def test_constructor_rejects_non_positive_keepalive(bad_value: float) -> None:
     # Pass a sentinel for ``nc`` — construction-time validation runs before
     # any I/O, so the live client fixture isn't needed here.
     with pytest.raises(ValueError, match="keepalive_interval_s"):
-        Agent(
+        AgentService(
             agent=AGENT,
             owner=OWNER,
             name="cfg",
@@ -78,32 +78,30 @@ async def test_keepalive_emits_ack_during_slow_handler(
     interval = 0.1
     handler_duration = 0.45  # ~4 intervals — comfortably more than one tick
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="slow-default",
         nc=nc,
         keepalive_interval_s=interval,
     )
-    agent.on_prompt(_make_slow_handler(handler_duration))
-    await agent.start()
+    service.on_prompt(_make_slow_handler(handler_duration))
+    await service.start()
 
     try:
-        client = Client(nc=nc)
-        await client.start()
+        agents = Agents(nc=nc)
         try:
-            found = await client.discover(timeout=1.0)
-            discovered = next(d for d in found if d.inbox == agent.subject.inbox)
-            remote = client.bind(discovered)
+            found = await agents.discover(timeout=1.0)
+            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
             received: list[ResponseChunk | StatusChunk] = []
-            async for msg in remote.prompt("hi", timeout=5.0):
+            async for msg in agent.prompt("hi", timeout=5.0):
                 assert isinstance(msg, ResponseChunk | StatusChunk), (
                     f"unexpected chunk type: {type(msg).__name__}"
                 )
                 received.append(msg)
         finally:
-            await client.stop()
+            await agents.close()
 
         evidence.write_jsonl(
             "chunks.jsonl",
@@ -117,7 +115,7 @@ async def test_keepalive_emits_ack_during_slow_handler(
             f"expected the handler's final 'done' response, saw: {received!r}"
         )
     finally:
-        await agent.stop()
+        await service.stop()
 
 
 @pytest.mark.asyncio
@@ -125,32 +123,30 @@ async def test_keepalive_disabled_emits_no_ack(nc: NATSClient, evidence: Evidenc
     """`keepalive_interval_s=None` suppresses keep-alive even on slow handlers."""
     handler_duration = 0.3
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="slow-disabled",
         nc=nc,
         keepalive_interval_s=None,
     )
-    agent.on_prompt(_make_slow_handler(handler_duration))
-    await agent.start()
+    service.on_prompt(_make_slow_handler(handler_duration))
+    await service.start()
 
     try:
-        client = Client(nc=nc)
-        await client.start()
+        agents = Agents(nc=nc)
         try:
-            found = await client.discover(timeout=1.0)
-            discovered = next(d for d in found if d.inbox == agent.subject.inbox)
-            remote = client.bind(discovered)
+            found = await agents.discover(timeout=1.0)
+            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
             received: list[ResponseChunk | StatusChunk] = []
-            async for msg in remote.prompt("hi", timeout=5.0):
+            async for msg in agent.prompt("hi", timeout=5.0):
                 assert isinstance(msg, ResponseChunk | StatusChunk), (
                     f"unexpected chunk type: {type(msg).__name__}"
                 )
                 received.append(msg)
         finally:
-            await client.stop()
+            await agents.close()
 
         evidence.write_jsonl(
             "chunks.jsonl",
@@ -159,7 +155,7 @@ async def test_keepalive_disabled_emits_no_ack(nc: NATSClient, evidence: Evidenc
         acks = [c for c in received if isinstance(c, StatusChunk) and c.status == "ack"]
         assert acks == [], f"expected no keep-alive acks when disabled, got: {acks!r}"
     finally:
-        await agent.stop()
+        await service.stop()
 
 
 @pytest.mark.asyncio
@@ -175,8 +171,8 @@ async def test_keepalive_no_ack_between_error_frame_and_terminator(
     Spec-compliant (terminator is still last) but undesirable. The fix
     cancels keep-alive *before* calling ``respond_error``; this test
     asserts that on the wire by subscribing to the reply inbox directly
-    rather than going through ``Client._stream_prompt`` (which raises on
-    the error frame and so can't observe what comes after).
+    rather than going through the iterator (which raises on the error
+    frame and so can't observe what comes after).
     """
     interval = 0.05  # very short, so multiple ticks fire during the handler
     handler_duration = 0.25  # ~5 intervals of opportunity to race
@@ -186,15 +182,15 @@ async def test_keepalive_no_ack_between_error_frame_and_terminator(
         await asyncio.sleep(handler_duration)
         raise RuntimeError("intentional")
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="raises",
         nc=nc,
         keepalive_interval_s=interval,
     )
-    agent.on_prompt(raising_handler)
-    await agent.start()
+    service.on_prompt(raising_handler)
+    await service.start()
 
     try:
         # Subscribe to a fresh inbox before publishing so we don't miss any frames.
@@ -203,7 +199,7 @@ async def test_keepalive_no_ack_between_error_frame_and_terminator(
         try:
             # The agent's prompt endpoint expects an envelope; a bare-string
             # request is promoted to {"prompt": "..."} per §5.3.
-            await nc.publish(agent.subject.inbox, b"hi", reply=reply_inbox)
+            await nc.publish(service.subject.inbox, b"hi", reply=reply_inbox)
 
             # Drain frames until we see the empty-body, headerless §6.5 terminator.
             frames: list[tuple[bytes, dict[str, str]]] = []
@@ -223,7 +219,7 @@ async def test_keepalive_no_ack_between_error_frame_and_terminator(
         finally:
             await sub.unsubscribe()
     finally:
-        await agent.stop()
+        await service.stop()
 
     evidence.write_jsonl(
         "frames.jsonl",
@@ -259,32 +255,30 @@ async def test_keepalive_skips_ack_for_fast_handler(
         del envelope
         await stream.send("instant")
 
-    agent = Agent(
+    service = AgentService(
         agent=AGENT,
         owner=OWNER,
         name="fast",
         nc=nc,
         keepalive_interval_s=interval,
     )
-    agent.on_prompt(fast_handler)
-    await agent.start()
+    service.on_prompt(fast_handler)
+    await service.start()
 
     try:
-        client = Client(nc=nc)
-        await client.start()
+        agents = Agents(nc=nc)
         try:
-            found = await client.discover(timeout=1.0)
-            discovered = next(d for d in found if d.inbox == agent.subject.inbox)
-            remote = client.bind(discovered)
+            found = await agents.discover(timeout=1.0)
+            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
             received: list[ResponseChunk | StatusChunk] = []
-            async for msg in remote.prompt("hi", timeout=5.0):
+            async for msg in agent.prompt("hi", timeout=5.0):
                 assert isinstance(msg, ResponseChunk | StatusChunk)
                 received.append(msg)
         finally:
-            await client.stop()
+            await agents.close()
 
         acks = [c for c in received if isinstance(c, StatusChunk) and c.status == "ack"]
         assert acks == [], f"fast handler must not emit any keep-alive acks, got: {acks!r}"
     finally:
-        await agent.stop()
+        await service.stop()

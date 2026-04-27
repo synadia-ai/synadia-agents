@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
-from natsagent import Client
+from natsagent import Agents
 
 
 async def main() -> None:
@@ -25,17 +25,17 @@ async def main() -> None:
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)
-    client = Client(nc)
+    agents = Agents(nc=nc)
     try:
-        agents = await client.discover(timeout=2.0)
-        if not agents:
+        found = await agents.discover()
+        if not found:
             print("no agents found.")
             return
-        print(f"found {len(agents)} agent(s):\n")
-        for a in agents:
+        print(f"found {len(found)} agent(s):\n")
+        for a in found:
             ep = a.prompt_endpoint
             print(f"  {a.agent}/{a.owner}/{a.name}")
-            print(f"    instance_id:      {a.service_id}")
+            print(f"    instance_id:      {a.instance_id}")
             print(f"    protocol_version: {a.protocol_version or 'unspecified'}")
             print(f"    version:          {a.version or 'unspecified'}")
             print(f"    description:      {a.description}")
@@ -50,7 +50,7 @@ async def main() -> None:
             )
             print()
     finally:
-        await client.stop()
+        await agents.close()
         await nc.close()
 
 
