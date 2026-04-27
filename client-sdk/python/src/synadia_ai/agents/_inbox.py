@@ -17,6 +17,12 @@ SDK_INBOX_PREFIX = "_INBOX.agents"
 
 _nuid = NUID()
 
+try:
+    import os as _os
+    _os.register_at_fork(after_in_child=_nuid.randomize)
+except AttributeError:
+    pass  # register_at_fork not available on Windows
+
 
 def new_inbox() -> str:
     return f"{SDK_INBOX_PREFIX}.{_nuid.next().decode()}"
