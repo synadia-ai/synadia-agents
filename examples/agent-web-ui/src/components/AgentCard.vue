@@ -228,23 +228,26 @@ async function onStop(): Promise<void> {
 
 .stop-btn {
   position: absolute;
-  bottom: var(--space-sm);
+  /* Sit on the same baseline as the last stat row of content (lifetime for
+     pi, cost for cc). `bottom` matches the card's bottom padding so the
+     button is flush with the inner-content edge; `right` is slightly tighter
+     than the inner padding so the ✕ visually anchors to the card's edge. */
+  bottom: var(--space-md);
   right: var(--space-sm);
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border-radius: 50%;
   background: rgba(248, 113, 113, 0.08);
   border: 1px solid rgba(248, 113, 113, 0.25);
   color: var(--error);
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   transition: all var(--transition-fast);
-  /* show through the card hover transform so it stays in place */
   z-index: 1;
 }
 .stop-btn:hover:not(:disabled) {
@@ -286,10 +289,6 @@ async function onStop(): Promise<void> {
   border-color: var(--accent-primary);
   background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary));
   box-shadow: var(--shadow-glow);
-}
-.card.is-session {
-  /* leave space at the bottom for the absolute-positioned stop button */
-  padding-bottom: var(--space-2xl);
 }
 .card.is-controller {
   background: linear-gradient(
