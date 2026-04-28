@@ -45,7 +45,7 @@ import type { Service, ServiceMsg } from "@nats-io/services";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Protocol constants (mirror @synadia-ai/agents spec 0.1.0-draft)
+// Protocol constants (mirror @synadia-ai/agents spec)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Spec §3.1: the service name is the bare token `agents`. Subject-safe as-is,
