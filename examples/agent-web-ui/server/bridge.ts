@@ -402,7 +402,24 @@ export class Bridge {
       );
       return null;
     }
-    return `${agent.promptEndpoint.subject}.${endpoint}`;
+    // The controller's custom endpoints (`spawn` / `stop` / `list`) live on the
+    // pre-v0.3-shape subject `agents.<token>.<owner>.<name>.<endpoint>`, NOT
+    // on the v0.3 verb-first prompt subject. Strip the `prompt` verb token
+    // out before appending the custom-endpoint suffix.
+    //
+    // prompt subject: `agents.prompt.<subjectToken>.<owner>.<name>` (5 tokens)
+    // custom subject: `agents.<subjectToken>.<owner>.<name>.<endpoint>` (5 tokens)
+    const tokens = agent.promptEndpoint.subject.split(".");
+    if (tokens.length !== 5 || tokens[0] !== "agents" || tokens[1] !== "prompt") {
+      this.sendError(
+        id,
+        "bad_prompt_subject",
+        `controller's prompt subject doesn't match v0.3 verb-first shape: ${agent.promptEndpoint.subject}`,
+      );
+      return null;
+    }
+    const customRoot = `${tokens[0]}.${tokens[2]}.${tokens[3]}.${tokens[4]}`;
+    return `${customRoot}.${endpoint}`;
   }
 
   // ─── claude-code-headless control plane ───────────────────────────────────
