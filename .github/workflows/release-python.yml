@@ -55,12 +55,13 @@ jobs:
     name: Publish to PyPI
     needs: verify
     runs-on: ubuntu-latest
-    # Bind to the "pypi" environment so the PYPI_API_TOKEN secret is
-    # only available here — and only after `verify` goes green.
+    # Bind to the "pypi" environment — gates this job behind the env's
+    # `python-v*` tag protection rule, and scopes the OIDC token issued
+    # to GitHub for the trusted-publishing exchange with PyPI.
     environment: pypi
     permissions:
       contents: read
-      id-token: write  # for trusted publishing if we switch later
+      id-token: write  # mints the OIDC token PyPI exchanges for a credential
     steps:
       - uses: actions/checkout@v4
 
@@ -87,9 +88,14 @@ jobs:
           echo "Tag and pyproject.toml both at $PKG_VERSION."
 
       - name: Publish to PyPI
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-        run: uv publish dist/*
+        # OIDC trusted publishing — no long-lived token. The pending
+        # publisher on PyPI must reference owner=synadia-ai,
+        # repo=synadia-agents, workflow=release-python.yml, env=pypi.
+        # `packages-dir` resolves from $GITHUB_WORKSPACE; the job-level
+        # `defaults.run.working-directory` does not apply to action inputs.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: client-sdk/python/dist/
 
       - name: Attach artifacts to GitHub release
         if: ${{ !cancelled() }}
