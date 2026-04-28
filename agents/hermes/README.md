@@ -144,7 +144,7 @@ platforms:
       session_name: local
       attachments_ok: true
       # Optional tuning (defaults shown):
-      # agent: hermes                # 2nd subject token
+      # agent: hermes                # 3rd subject token; rarely changed
       # max_payload: "1MB"           # pattern \d+(B|KB|MB|GB)
       # heartbeat_interval_s: 30
 ```
