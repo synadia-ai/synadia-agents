@@ -1,14 +1,16 @@
 // Reactive state for the PI-Exec workspace.
 //
-// - `selectedControllerId` is the user-picked pi-headless controller.
-// - `summaries` is the last `list` snapshot, keyed by session_id. We merge
-//   this with the live `agentsState.list` so the UI can show both
-//   controller-side bookkeeping (lifetime, queue depth) and protocol-side
-//   liveness (heartbeats).
-// - `fanoutRuns` tracks in-progress fan-out cards.
+// `selectedController` derives from the top-level `agentsState.selectedInstanceId`:
+// clicking a controller card in the agent grid selects it for the right panel
+// _and_ makes spawn / fan-out target it. There is no separate controller picker.
+//
+// `summaries` is the last `list` snapshot keyed by session_id; it merges with
+// the live agent records in `agentsState.list` so session cards can show both
+// controller-side bookkeeping (lifetime, queue depth) and protocol-side
+// liveness (heartbeats).
 
 import { computed, reactive } from "vue";
-import { piexecControllers, piexecSessions } from "./agents.ts";
+import { agentsState, piexecSessions } from "./agents.ts";
 import type {
   PiExecSessionSummary,
   PiExecSpawnDescriptor,
@@ -28,43 +30,39 @@ export type FanoutRun = {
 };
 
 export const piexecState = reactive<{
-  selectedControllerId: string | null;
   summaries: Map<string, PiExecSessionSummary>; // keyed by session_id
   refreshing: boolean;
   lastError: string | null;
   fanoutRuns: FanoutRun[];
   fanoutRunning: boolean;
+  rightPanelTab: "spawn" | "fanout";
 }>({
-  selectedControllerId: null,
   summaries: new Map(),
   refreshing: false,
   lastError: null,
   fanoutRuns: [],
   fanoutRunning: false,
+  rightPanelTab: "spawn",
 });
-
-export const selectedController = computed(() => {
-  const id = piexecState.selectedControllerId;
-  if (!id) return null;
-  return piexecControllers.value.find((a) => a.instanceId === id) ?? null;
-});
-
-/** Auto-select the first controller if none is picked yet. */
-export function autoPickController(): void {
-  if (piexecState.selectedControllerId) {
-    const still = piexecControllers.value.some(
-      (a) => a.instanceId === piexecState.selectedControllerId,
-    );
-    if (still) return;
-  }
-  const first = piexecControllers.value[0];
-  piexecState.selectedControllerId = first?.instanceId ?? null;
-}
 
 /**
- * Sessions that belong to the selected controller's owner+agent tuple. Derived
- * live from `agentsState` so heartbeat liveness stays accurate even between
- * explicit `list` refreshes.
+ * The currently selected pi-headless controller, or null when the selected
+ * agent isn't a pi-headless-controller (or nothing is selected).
+ */
+export const selectedController = computed(() => {
+  const id = agentsState.selectedInstanceId;
+  if (!id) return null;
+  const agent = agentsState.list.find((a) => a.instanceId === id);
+  if (!agent) return null;
+  if (agent.metadata?.["role"] !== "pi-headless-controller") return null;
+  return agent;
+});
+
+/**
+ * Sessions belonging to the selected controller's owner. Kept as a derived
+ * list so liveness updates from heartbeats stay accurate between explicit
+ * `list` refreshes. (Currently only used as a polling indicator — sessions
+ * render in the main agent grid, not inside the right panel.)
  */
 export const visibleSessions = computed(() => {
   const controller = selectedController.value;

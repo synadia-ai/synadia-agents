@@ -2,6 +2,9 @@
 import { computed } from "vue";
 import AgentStatusDot from "./AgentStatusDot.vue";
 import type { DiscoveredAgentDTO } from "../wire.ts";
+import { bucketOf, BUCKETS, type Bucket } from "../stores/agents.ts";
+import { piexecState } from "../stores/piexec.ts";
+import { ccexecState } from "../stores/ccexec.ts";
 
 const props = defineProps<{
   agent: DiscoveredAgentDTO;
@@ -9,6 +12,23 @@ const props = defineProps<{
 }>();
 
 defineEmits<{ select: [instanceId: string] }>();
+
+const bucket = computed<Bucket>(() => bucketOf(props.agent));
+
+const isPiSession = computed(() => bucket.value === BUCKETS.PI_EXEC_SESSION);
+const isCcSession = computed(() => bucket.value === BUCKETS.CC_EXEC_SESSION);
+const isController = computed(
+  () =>
+    bucket.value === BUCKETS.PI_EXEC_CONTROL ||
+    bucket.value === BUCKETS.CC_EXEC_CONTROL,
+);
+
+const piSummary = computed(() =>
+  isPiSession.value ? piexecState.summaries.get(props.agent.name) : undefined,
+);
+const ccSummary = computed(() =>
+  isCcSession.value ? ccexecState.summaries.get(props.agent.name) : undefined,
+);
 
 const subtitle = computed(() => props.agent.session ?? props.agent.name);
 
@@ -19,26 +39,108 @@ const humanPayload = computed(() => {
   if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
   return `${n} B`;
 });
+
+function fmtRemaining(maxS: number, remainingS: number): string {
+  if (maxS === 0) return "∞";
+  if (remainingS <= 0) return "expired";
+  if (remainingS >= 3600)
+    return `${Math.floor(remainingS / 3600)}h ${Math.floor((remainingS % 3600) / 60)}m`;
+  if (remainingS >= 60) return `${Math.floor(remainingS / 60)}m ${remainingS % 60}s`;
+  return `${remainingS}s`;
+}
+
+const lifetimeText = computed(() => {
+  const s = piSummary.value ?? ccSummary.value;
+  if (!s) return null;
+  return fmtRemaining(s.max_lifetime_s, s.remaining_lifetime_s);
+});
+
+const lifetimePercent = computed(() => {
+  const s = piSummary.value ?? ccSummary.value;
+  if (!s || s.max_lifetime_s === 0) return null;
+  const used = s.max_lifetime_s - s.remaining_lifetime_s;
+  return Math.max(0, Math.min(100, (used / s.max_lifetime_s) * 100));
+});
+
+const cwd = computed(() => {
+  const s = piSummary.value ?? ccSummary.value;
+  return s?.cwd ?? props.agent.metadata?.["cwd"] ?? null;
+});
+
+const model = computed(() => {
+  const s = piSummary.value ?? ccSummary.value;
+  return s?.model ?? props.agent.metadata?.["model"] ?? null;
+});
+
+const ccCost = computed(() => {
+  const s = ccSummary.value;
+  if (!s || s.total_cost_usd <= 0) return null;
+  if (s.total_cost_usd < 0.0001) return "<$0.0001";
+  return `$${s.total_cost_usd.toFixed(4)}`;
+});
+
+const running = computed(() => {
+  const s = piSummary.value ?? ccSummary.value;
+  return s?.active_request === true;
+});
+
+const queued = computed(() => {
+  const s = piSummary.value ?? ccSummary.value;
+  return s && s.queued_requests > 0 ? s.queued_requests : null;
+});
 </script>
 
 <template>
   <button
     class="card"
-    :class="{ selected }"
+    :class="{
+      selected,
+      'is-controller': isController,
+      'is-session': isPiSession || isCcSession,
+    }"
     type="button"
     @click="$emit('select', agent.instanceId)"
   >
-    <AgentStatusDot class="status-led" :instance-id="agent.instanceId" />
-    <div class="head">
+    <header class="card-head">
       <span class="agent-tag mono">{{ agent.agent }}</span>
-      <span class="name">{{ subtitle }}</span>
-    </div>
+      <AgentStatusDot class="status-led" :instance-id="agent.instanceId" />
+    </header>
+
+    <h3 class="card-title">{{ subtitle }}</h3>
+
     <div class="meta">
-      <span class="owner mono">{{ agent.owner }}</span>
-      <span v-if="agent.session && agent.session !== agent.name" class="sep">·</span>
-      <span v-if="agent.session && agent.session !== agent.name" class="subtle mono">{{ agent.name }}</span>
+      <span class="owner mono">@{{ agent.owner }}</span>
+      <span v-if="running" class="running-tag">running</span>
+      <span v-if="queued" class="queued-tag mono">+{{ queued }} queued</span>
     </div>
-    <div class="badges">
+
+    <p v-if="cwd" class="cwd mono" :title="cwd">{{ cwd }}</p>
+
+    <p
+      v-if="agent.promptEndpoint.subject && !cwd"
+      class="subject mono"
+      :title="agent.promptEndpoint.subject"
+    ><span class="dim">›</span>{{ agent.promptEndpoint.subject }}</p>
+
+    <dl v-if="isPiSession || isCcSession" class="stats">
+      <div v-if="model" class="stat">
+        <dt>model</dt><dd class="mono">{{ model }}</dd>
+      </div>
+      <div v-if="lifetimeText" class="stat">
+        <dt>lifetime</dt>
+        <dd>
+          <span class="mono">{{ lifetimeText }}</span>
+          <span v-if="lifetimePercent !== null" class="lifetime-bar">
+            <span class="lifetime-fill" :style="{ width: 100 - lifetimePercent + '%' }" />
+          </span>
+        </dd>
+      </div>
+      <div v-if="ccCost" class="stat">
+        <dt>cost</dt><dd class="mono">{{ ccCost }}</dd>
+      </div>
+    </dl>
+
+    <div v-if="!isPiSession && !isCcSession" class="badges">
       <span v-if="humanPayload" class="badge">{{ humanPayload }}</span>
       <span
         v-if="agent.promptEndpoint.attachmentsOk"
@@ -47,7 +149,8 @@ const humanPayload = computed(() => {
       >📎 attachments</span>
       <span v-if="agent.protocolVersion" class="badge subtle-badge">v{{ agent.protocolVersion }}</span>
     </div>
-    <p v-if="agent.description" class="desc">{{ agent.description }}</p>
+
+    <p v-if="isController" class="hint">click to spawn or fan out</p>
   </button>
 </template>
 
@@ -65,11 +168,7 @@ const humanPayload = computed(() => {
   transition: all var(--transition-normal);
   cursor: pointer;
   width: 100%;
-}
-.status-led {
-  position: absolute;
-  top: var(--space-sm);
-  right: var(--space-sm);
+  overflow: hidden;
 }
 .card:hover {
   background: var(--bg-tertiary);
@@ -81,12 +180,32 @@ const humanPayload = computed(() => {
   background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary));
   box-shadow: var(--shadow-glow);
 }
+.card.is-controller {
+  background: linear-gradient(
+    180deg,
+    var(--bg-secondary) 0%,
+    rgba(167, 139, 250, 0.05) 100%
+  );
+  border-color: rgba(167, 139, 250, 0.18);
+}
+.card.is-controller:hover {
+  border-color: rgba(167, 139, 250, 0.5);
+}
+.card.is-controller.selected {
+  border-color: var(--memory-preference);
+  box-shadow:
+    0 0 0 1px var(--memory-preference),
+    0 0 18px rgba(167, 139, 250, 0.25);
+}
 
-.head {
+.card-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-sm);
 }
+.status-led { flex-shrink: 0; }
+
 .agent-tag {
   font-size: var(--text-xs);
   text-transform: uppercase;
@@ -96,10 +215,19 @@ const humanPayload = computed(() => {
   padding: 1px 6px;
   border-radius: var(--border-radius-sm);
 }
-.name {
+.is-controller .agent-tag {
+  color: var(--memory-preference);
+  background: rgba(167, 139, 250, 0.12);
+}
+
+.card-title {
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-primary);
-  font-size: var(--text-base);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .meta {
@@ -108,10 +236,90 @@ const humanPayload = computed(() => {
   gap: var(--space-xs);
   font-size: var(--text-xs);
   color: var(--text-muted);
+  flex-wrap: wrap;
 }
 .owner { color: var(--text-secondary); }
-.sep { color: var(--text-dim); }
-.subtle { color: var(--text-muted); }
+
+.running-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: var(--border-radius-sm);
+  background: var(--accent-glow);
+  color: var(--accent-primary);
+}
+.queued-tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: var(--border-radius-sm);
+  background: var(--warning-dim);
+  color: var(--warning);
+}
+
+.cwd {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subject {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subject .dim {
+  color: var(--accent-primary);
+  opacity: 0.6;
+  margin-right: 4px;
+}
+
+.stats {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: var(--text-xs);
+  margin: var(--space-xs) 0 0;
+}
+.stat {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.stat dt {
+  width: 56px;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.stat dd {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-secondary);
+  margin: 0;
+  min-width: 0;
+}
+.lifetime-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  overflow: hidden;
+  max-width: 80px;
+}
+.lifetime-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent-gradient);
+  transition: width var(--transition-normal);
+}
 
 .badges {
   display: flex;
@@ -136,10 +344,14 @@ const humanPayload = computed(() => {
   color: var(--text-dim);
 }
 
-.desc {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-  line-height: var(--leading-normal);
-  margin-top: var(--space-xs);
+.hint {
+  margin: var(--space-xs) 0 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
 }
+.is-controller.selected .hint { color: var(--memory-preference); }
+
+.dim { color: var(--text-dim); }
 </style>
