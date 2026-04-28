@@ -27,8 +27,9 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-# §8.1: heartbeat wildcard subject. Subscribed to by :class:`HeartbeatTracker`.
-HEARTBEAT_SUBJECT = "agents.*.*.*.heartbeat"
+# §8.1 (v0.3): heartbeat wildcard subject (verb is the abbreviation `hb`).
+# Subscribed to by :class:`HeartbeatTracker`.
+HEARTBEAT_SUBJECT = "agents.hb.*.*.*"
 
 # §8.2 default: a tracked instance is online iff its last heartbeat is
 # within ``slack * interval_s`` seconds of "now". Mirrors TS
@@ -40,9 +41,13 @@ class HeartbeatPayload(BaseModel):
     """Heartbeat wire payload per §8.3.
 
     The instance name is deliberately absent: §8.3 directs receivers to
-    extract it from the 4th token of the heartbeat subject. ``extra="ignore"``
-    because §8.3 requires callers to tolerate unknown fields for forward
-    compat; pydantic will silently drop them during decode.
+    extract it from the heartbeat subject (the 5th token under v0.3's
+    ``agents.hb.{agent}.{owner}.{name}`` layout). The tracker keys on
+    ``payload.instance_id`` per §8.3, not on the subject — the subject
+    note is only relevant when callers want a human-readable instance
+    name. ``extra="ignore"`` because §8.3 requires callers to tolerate
+    unknown fields for forward compat; pydantic will silently drop them
+    during decode.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
@@ -79,6 +84,29 @@ def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def build_heartbeat_payload(
+    subject: AgentSubject,
+    interval_s: int,
+    instance_id: str,
+    session: str | None = None,
+) -> HeartbeatPayload:
+    """Construct a §8.3 heartbeat payload for ``subject``.
+
+    Pure helper shared between the heartbeat publisher and the v0.3
+    ``status`` request/response endpoint — both emit the same payload
+    shape, and richer agent metadata added in future PRs lands here in
+    one place.
+    """
+    return HeartbeatPayload(
+        agent=subject.agent,
+        owner=subject.owner,
+        session=session,
+        instance_id=instance_id,
+        ts=now_iso(),
+        interval_s=interval_s,
+    )
+
+
 async def publish_one(
     nc: NATSClient,
     subject: AgentSubject,
@@ -87,14 +115,7 @@ async def publish_one(
     session: str | None = None,
 ) -> None:
     """Publish a single heartbeat frame to the agent's heartbeat subject."""
-    payload = HeartbeatPayload(
-        agent=subject.agent,
-        owner=subject.owner,
-        session=session,
-        instance_id=instance_id,
-        ts=now_iso(),
-        interval_s=interval_s,
-    )
+    payload = build_heartbeat_payload(subject, interval_s, instance_id, session)
     # exclude_none keeps `session` off the wire when session-less (§8.3).
     data = payload.model_dump_json(exclude_none=True).encode("utf-8")
     await nc.publish(subject.heartbeat, data)
@@ -258,6 +279,7 @@ __all__ = [
     "HeartbeatPayload",
     "HeartbeatTracker",
     "Liveness",
+    "build_heartbeat_payload",
     "now_iso",
     "publish_one",
     "run_publisher",

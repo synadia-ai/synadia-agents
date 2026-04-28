@@ -16,9 +16,9 @@ Flags::
 
     --prefix TEXT                   prepended to echoed prompt text
     --save-attachments-to-dir[=DIR] absent → don't save; bare flag → default tmp dir
-    --agent NAME                    2nd subject token (default: demo-agent)
-    --owner NAME                    3rd token  (default: $USER)
-    --name NAME                     4th token  (default: example)
+    --agent NAME                    3rd subject token (default: demo-agent)
+    --owner NAME                    4th token  (default: $USER)
+    --name NAME                     5th token  (default: example)
     --heartbeat-interval SECONDS    default 5 (matches TS ref agent)
     --description TEXT              service description
     --context NAME / --url URL      shared connection flags
@@ -183,7 +183,7 @@ async def main() -> None:
     agent.on_prompt(handler)
     await agent.start()
 
-    print(f"reference agent listening on {agent.subject.inbox}")
+    print(f"reference agent listening on {agent.subject.prompt}")
     print("press Ctrl+C to stop")
 
     stop = asyncio.Event()

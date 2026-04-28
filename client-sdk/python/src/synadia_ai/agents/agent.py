@@ -124,7 +124,7 @@ class Agent:
 
     @property
     def name(self) -> str:
-        """4th token of the prompt endpoint subject; ``""`` for custom subjects (§4.3)."""
+        """5th token of `agents.prompt.{a}.{o}.{n}` (v0.3); ``""`` for custom subjects (§4.3)."""
         return self._info.name
 
     @property

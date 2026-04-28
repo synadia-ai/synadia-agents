@@ -8,7 +8,73 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
-### Changed (breaking)
+### Changed (wire-breaking)
+
+- **Wire moves to verb-first subjects (protocol v0.3).** The agent
+  subject hierarchy gains a verb token directly after the root so each
+  endpoint owns its own positional slot, leaving room for new endpoints
+  without sub-subject suffixes:
+
+  | endpoint  | v0.2 wire                         | v0.3 wire (this release) |
+  | --------- | --------------------------------- | ------------------------ |
+  | prompt    | `agents.{a}.{o}.{n}`              | `agents.prompt.{a}.{o}.{n}` |
+  | heartbeat | `agents.{a}.{o}.{n}.heartbeat`    | `agents.hb.{a}.{o}.{n}` (verb abbreviated; heartbeats dominate per-account subject volume) |
+  | status    | —                                 | `agents.status.{a}.{o}.{n}` (new) |
+
+  `AgentSubject` exposes `prompt`, `heartbeat`, and `status` properties
+  that build the new shapes. The legacy `inbox` property survives as a
+  backwards-name-compat alias of `prompt` to keep the diff small for
+  examples and tests; expect it to retire in a future cleanup PR.
+- **`metadata.protocol_version` `"0.2"` → `"0.3"`.** Old v0.2 callers
+  advertise `"0.2"` and therefore won't match a v0.3 agent's subjects;
+  discovery filters via metadata make the mismatch a hard refusal
+  rather than a silent talk-past. There is no back-compat shim — 0.x
+  permits breaking changes per protocol §11.2.
+- **Heartbeat tracker subscribes to `agents.hb.*.*.*`** (the exported
+  `HEARTBEAT_SUBJECT` constant). The tracker still keys on
+  `payload.instance_id` per §8.3, so observable behaviour is identical
+  once both sides speak v0.3.
+
+### Added
+
+- **`status` request/response endpoint (v0.3 §-TBD).** Every
+  `AgentService` registers an additional NATS micro endpoint named
+  `status` on `agents.status.{a}.{o}.{n}` (queue group `"agents"`).
+  Replies with the same JSON payload shape as a heartbeat
+  (`HeartbeatPayload`, §8.3) constructed fresh on each request — future
+  PRs extend the response with richer agent metadata in one place,
+  shared with the heartbeat publisher via the new
+  `build_heartbeat_payload(...)` helper. Request body is currently
+  ignored (no request schema yet). Exported sibling constants:
+  `STATUS_ENDPOINT_NAME`, `STATUS_QUEUE_GROUP`.
+- **`AgentSubject.prompt` / `.status` properties.** Sit alongside the
+  existing `.heartbeat`. `parse_agent_subject(subject, verb=...)` gains
+  a verb filter (default `VERB_PROMPT`) so callers can parse heartbeat
+  / status subjects through the same helper.
+
+### Anticipated companion work (not in this release)
+
+This SDK ships **ahead** of the protocol spec and the TypeScript SDK,
+mirroring the same shape the v0.2 alignment took. The following land
+separately:
+
+- **TS SDK at `client-sdk/typescript/`** picks up the same wire change
+  + `protocol_version = "0.3"` + `status` endpoint registration. Until
+  it does, `tests/test_interop_e2e.py` skips at module level with a
+  pointed reason — removing the skip is the only action needed once TS
+  catches up.
+- **All agent harnesses under `agents/*`** (`agents/pi/`,
+  `agents/openclaw/`, `agents/claude-code/`) hard-code the protocol
+  version string and use raw `@nats-io/*` to publish heartbeats / serve
+  prompts; each picks up the new subject layout independently.
+- **The protocol spec** at
+  [`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs)
+  gains the v0.3 verb-first subject hierarchy (§2), the `status`
+  endpoint section, and the bumped `metadata.protocol_version`.
+- **Root-level `README.md`** and any monorepo-wide docs that show the
+  old subject layout move in lockstep with the spec change.
+
+### Changed (breaking, package-rename, prior entry)
 
 - **PyPI distribution renamed `natsagent` → `synadia-ai-agents`.**
   Mirrors the TypeScript sibling on npm (`@synadia-ai/agents`) so users

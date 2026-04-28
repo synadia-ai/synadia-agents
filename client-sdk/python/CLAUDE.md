@@ -34,20 +34,25 @@ pick a default, they MUST pick the same default - drift is tracked in
 
 ## Protocol surface at a glance
 
-v0.2 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
+v0.3 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
 
-- **Subject hierarchy**: `agents.{agent}.{owner}.{name}` plus
-  `.heartbeat` sub-subject. `.attachments` is reserved for a future §5.5
-  endpoint. Tokens with non-NATS-safe characters are base64-url-no-padding
-  escaped internally - an SDK implementation detail, not a protocol
-  contract (see `src/synadia_ai/agents/subjects.py::_sanitize`).
+- **Subject hierarchy** (§2 v0.3): verb-first —
+  `agents.{verb}.{agent}.{owner}.{name}` where `verb` is one of `prompt`
+  / `hb` (heartbeat, abbreviated for wire economy) / `status` (plus
+  `attachments` reserved for the future §5.5 endpoint). Verbs and
+  instance names live in different positions, so an instance literally
+  named `hb` or `heartbeat` no longer collides with §8.
+  Tokens with non-NATS-safe characters are base64-url-no-padding escaped
+  internally - an SDK implementation detail, not a protocol contract
+  (see `src/synadia_ai/agents/subjects.py::_sanitize`).
 - **Service registration** (§3): every agent registers as a NATS micro
   service named `agents` with `metadata = {agent, owner,
-  protocol_version = "0.2", session?}`. The `prompt` endpoint MUST be
+  protocol_version = "0.3", session?}`. The `prompt` endpoint MUST be
   registered with queue group `"agents"` (§3.3) - the framework default
   differs between SDKs, so we pin the spec value explicitly. The service
   name is shared across all compliant agents - callers filter by this
-  single value.
+  single value. The `status` endpoint (v0.3 §-TBD) registers alongside
+  with the same queue group.
 - **Request envelope** (§5.1): `{prompt: str, attachments?: [{filename,
   content: <base64>}]}`. Plain-text request payloads are promoted to
   `{"prompt": <text>}` (§5.3).
@@ -56,7 +61,13 @@ v0.2 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
 - **Mid-stream queries** (§7): agent-initiated questions via
   `PromptStream.ask`; caller replies via `Query.reply`.
 - **Heartbeat** (§8.3): `{agent, owner, session?, instance_id, ts,
-  interval_s}` on `agents.{a}.{o}.{n}.heartbeat`.
+  interval_s}` on `agents.hb.{a}.{o}.{n}` (v0.3; verb is the
+  abbreviation `hb`).
+- **Status** (v0.3 §-TBD): request/response on `agents.status.{a}.{o}.{n}`
+  returns the same payload shape as a heartbeat, freshly built per
+  request. Future PRs extend the response with richer agent metadata
+  in one place — `heartbeat.publish_one` and the status handler share
+  the `build_heartbeat_payload` helper.
 - **Errors** (§9): `Nats-Service-Error-Code` header + optional JSON body;
   error-completed streams end with error frame THEN empty terminator.
 
@@ -304,6 +315,23 @@ either guides them to success or frustrates them.
 
 ## Alignment milestones
 
+- **2026-04-27 - v0.3.0 wire bump (Python-only, ahead of spec).** Moves
+  the agent subject hierarchy to verb-first
+  (`agents.{verb}.{agent}.{owner}.{name}`) so each endpoint owns its
+  own positional slot, and adds a request/response `status` endpoint at
+  `agents.status.{a}.{o}.{n}` that replies with a freshly-built
+  heartbeat-shaped payload (`HeartbeatPayload`, §8.3). Heartbeat moves
+  to `agents.hb.{a}.{o}.{n}` (verb is the abbreviation `hb` —
+  heartbeats dominate per-account subject volume so the short form
+  earns its keep); `HEARTBEAT_SUBJECT` wildcard is now
+  `agents.hb.*.*.*`. `metadata.protocol_version` bumps
+  `"0.2"` → `"0.3"`; old v0.2 callers fail to discovery-match a v0.3
+  agent rather than silently talking past it. Ships ahead of the
+  protocol spec, the TypeScript SDK, and the agent harnesses
+  (`agents/*`); the cross-SDK interop test
+  `tests/test_interop_e2e.py` is `pytest.skip`d at module level until
+  TS catches up. See `CHANGELOG.md` [Unreleased] for full migration
+  notes.
 - **2026-04-22 - v0.2.0 wire bump.** Aligns with NATS Agent Protocol
   v0.2: service name `SynadiaAgents` → `agents` (§3.1); discovery
   subjects rebased to `$SRV.{PING,INFO}.agents` (§4.1/§4.2); `prompt`
