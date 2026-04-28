@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import AgentStatusDot from "./AgentStatusDot.vue";
 import type { DiscoveredAgentDTO } from "../wire.ts";
-import { bucketOf, BUCKETS, type Bucket } from "../stores/agents.ts";
-import { piexecState } from "../stores/piexec.ts";
-import { ccexecState } from "../stores/ccexec.ts";
+import { agentsState, bucketOf, BUCKETS, type Bucket } from "../stores/agents.ts";
+import { onStopped, piexecState } from "../stores/piexec.ts";
+import { ccexecState, onCcStopped } from "../stores/ccexec.ts";
+import { useBridge } from "../composables/useBridge.ts";
 
 const props = defineProps<{
   agent: DiscoveredAgentDTO;
@@ -12,6 +13,8 @@ const props = defineProps<{
 }>();
 
 defineEmits<{ select: [instanceId: string] }>();
+
+const bridge = useBridge();
 
 const bucket = computed<Bucket>(() => bucketOf(props.agent));
 
@@ -88,73 +91,177 @@ const queued = computed(() => {
   const s = piSummary.value ?? ccSummary.value;
   return s && s.queued_requests > 0 ? s.queued_requests : null;
 });
+
+// Find the controller that spawned this session (matched by spawner role +
+// owner). Returns null if the controller has vanished — in which case the
+// stop button is shown disabled with a tooltip.
+const parentController = computed(() => {
+  if (!isPiSession.value && !isCcSession.value) return null;
+  const role = isPiSession.value
+    ? "pi-headless-controller"
+    : "claude-code-headless-controller";
+  return (
+    agentsState.list.find(
+      (a) => a.metadata?.["role"] === role && a.owner === props.agent.owner,
+    ) ?? null
+  );
+});
+
+const stopping = ref(false);
+const stopError = ref<string | null>(null);
+
+async function onStop(): Promise<void> {
+  if (stopping.value) return;
+  const controller = parentController.value;
+  if (!controller) {
+    stopError.value = "no controller";
+    return;
+  }
+  if (!confirm(`Stop session ${props.agent.name}? In-flight prompts will be cut off.`)) return;
+  stopping.value = true;
+  stopError.value = null;
+  try {
+    if (isPiSession.value) {
+      await bridge.piexecStop(controller.instanceId, props.agent.name);
+      onStopped(props.agent.name);
+    } else {
+      await bridge.ccexecStop(controller.instanceId, props.agent.name);
+      onCcStopped(props.agent.name);
+    }
+    // The agent record will disappear from the grid on the next discover /
+    // agent-removed push; nothing to do locally.
+  } catch (e) {
+    stopError.value = (e as Error).message;
+  } finally {
+    stopping.value = false;
+  }
+}
 </script>
 
 <template>
-  <button
-    class="card"
-    :class="{
-      selected,
-      'is-controller': isController,
-      'is-session': isPiSession || isCcSession,
-    }"
-    type="button"
-    @click="$emit('select', agent.instanceId)"
-  >
-    <header class="card-head">
-      <span class="agent-tag mono">{{ agent.agent }}</span>
-      <AgentStatusDot class="status-led" :instance-id="agent.instanceId" />
-    </header>
+  <div class="card-wrap">
+    <button
+      class="card"
+      :class="{
+        selected,
+        'is-controller': isController,
+        'is-session': isPiSession || isCcSession,
+      }"
+      type="button"
+      @click="$emit('select', agent.instanceId)"
+    >
+      <header class="card-head">
+        <span class="agent-tag mono">{{ agent.agent }}</span>
+        <AgentStatusDot class="status-led" :instance-id="agent.instanceId" />
+      </header>
 
-    <h3 class="card-title">{{ subtitle }}</h3>
+      <h3 class="card-title">{{ subtitle }}</h3>
 
-    <div class="meta">
-      <span class="owner mono">@{{ agent.owner }}</span>
-      <span v-if="running" class="running-tag">running</span>
-      <span v-if="queued" class="queued-tag mono">+{{ queued }} queued</span>
-    </div>
-
-    <p v-if="cwd" class="cwd mono" :title="cwd">{{ cwd }}</p>
-
-    <p
-      v-if="agent.promptEndpoint.subject && !cwd"
-      class="subject mono"
-      :title="agent.promptEndpoint.subject"
-    ><span class="dim">›</span>{{ agent.promptEndpoint.subject }}</p>
-
-    <dl v-if="isPiSession || isCcSession" class="stats">
-      <div v-if="model" class="stat">
-        <dt>model</dt><dd class="mono">{{ model }}</dd>
+      <div class="meta">
+        <span class="owner mono">@{{ agent.owner }}</span>
+        <span v-if="running" class="running-tag">running</span>
+        <span v-if="queued" class="queued-tag mono">+{{ queued }} queued</span>
       </div>
-      <div v-if="lifetimeText" class="stat">
-        <dt>lifetime</dt>
-        <dd>
-          <span class="mono">{{ lifetimeText }}</span>
-          <span v-if="lifetimePercent !== null" class="lifetime-bar">
-            <span class="lifetime-fill" :style="{ width: 100 - lifetimePercent + '%' }" />
-          </span>
-        </dd>
-      </div>
-      <div v-if="ccCost" class="stat">
-        <dt>cost</dt><dd class="mono">{{ ccCost }}</dd>
-      </div>
-    </dl>
 
-    <div v-if="!isPiSession && !isCcSession" class="badges">
-      <span v-if="humanPayload" class="badge">{{ humanPayload }}</span>
-      <span
-        v-if="agent.promptEndpoint.attachmentsOk"
-        class="badge attachments-ok"
-        title="attachments_ok = true"
-      >📎 attachments</span>
-      <span v-if="agent.protocolVersion" class="badge subtle-badge">v{{ agent.protocolVersion }}</span>
-    </div>
+      <p v-if="cwd" class="cwd mono" :title="cwd">{{ cwd }}</p>
 
-    <p v-if="isController" class="hint">click to spawn or fan out</p>
-  </button>
+      <p
+        v-if="agent.promptEndpoint.subject && !cwd"
+        class="subject mono"
+        :title="agent.promptEndpoint.subject"
+      ><span class="dim">›</span>{{ agent.promptEndpoint.subject }}</p>
+
+      <dl v-if="isPiSession || isCcSession" class="stats">
+        <div v-if="model" class="stat">
+          <dt>model</dt><dd class="mono">{{ model }}</dd>
+        </div>
+        <div v-if="lifetimeText" class="stat">
+          <dt>lifetime</dt>
+          <dd>
+            <span class="mono">{{ lifetimeText }}</span>
+            <span v-if="lifetimePercent !== null" class="lifetime-bar">
+              <span class="lifetime-fill" :style="{ width: 100 - lifetimePercent + '%' }" />
+            </span>
+          </dd>
+        </div>
+        <div v-if="ccCost" class="stat">
+          <dt>cost</dt><dd class="mono">{{ ccCost }}</dd>
+        </div>
+      </dl>
+
+      <div v-if="!isPiSession && !isCcSession" class="badges">
+        <span v-if="humanPayload" class="badge">{{ humanPayload }}</span>
+        <span
+          v-if="agent.promptEndpoint.attachmentsOk"
+          class="badge attachments-ok"
+          title="attachments_ok = true"
+        >📎 attachments</span>
+        <span v-if="agent.protocolVersion" class="badge subtle-badge">v{{ agent.protocolVersion }}</span>
+      </div>
+
+      <p v-if="isController" class="hint">click to spawn or fan out</p>
+    </button>
+
+    <button
+      v-if="isPiSession || isCcSession"
+      type="button"
+      class="stop-btn"
+      :disabled="stopping || !parentController"
+      :title="
+        stopError
+          ? `stop failed: ${stopError}`
+          : !parentController
+            ? 'no controller online — cannot stop from UI'
+            : 'stop session'
+      "
+      @click.stop="onStop"
+    >×</button>
+  </div>
 </template>
 
 <style scoped>
+.card-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.stop-btn {
+  position: absolute;
+  bottom: var(--space-sm);
+  right: var(--space-sm);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(248, 113, 113, 0.08);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  color: var(--error);
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  /* show through the card hover transform so it stays in place */
+  z-index: 1;
+}
+.stop-btn:hover:not(:disabled) {
+  background: var(--error-dim);
+  border-color: var(--error);
+  transform: scale(1.08);
+}
+.stop-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+/* Keep the stop button aligned with the card while the card is hover-lifted. */
+.card-wrap:hover .stop-btn { transform: translateY(-1px); }
+.card-wrap:hover .stop-btn:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.08);
+}
+
 .card {
   position: relative;
   display: flex;
@@ -179,6 +286,10 @@ const queued = computed(() => {
   border-color: var(--accent-primary);
   background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary));
   box-shadow: var(--shadow-glow);
+}
+.card.is-session {
+  /* leave space at the bottom for the absolute-positioned stop button */
+  padding-bottom: var(--space-2xl);
 }
 .card.is-controller {
   background: linear-gradient(
