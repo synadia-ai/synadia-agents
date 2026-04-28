@@ -7,9 +7,9 @@
 > is planned but not yet filed (needs a catch-up rebase first), so the
 > install below clones the fork directly.
 
-NATS gateway for [Hermes Agent](https://github.com/NousResearch/hermes-agent), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0**.
+NATS gateway for [Hermes Agent](https://github.com/NousResearch/hermes-agent), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.3**.
 
-Hermes is a self-improving coding agent with a CLI, a TUI, and a messaging gateway sharing one agent core. With the NATS gateway enabled, each running Hermes instance becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`natsagent`](../../client-sdk/python) (Python) or [`@synadia-ai/agents`](../../client-sdk/typescript) (TypeScript) - can enumerate running Hermes instances, prompt them (with attachments), and stream responses back.
+Hermes is a self-improving coding agent with a CLI, a TUI, and a messaging gateway sharing one agent core. With the NATS gateway enabled, each running Hermes instance becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol — e.g. [`synadia-ai-agents`](../../client-sdk/python) (Python; import root `synadia_ai.agents`) or [`@synadia-ai/agents`](../../client-sdk/typescript) (TypeScript) — can enumerate running Hermes instances, prompt them (with attachments), and stream responses back.
 
 Sibling implementations sharing the same wire protocol: [`pi`](../pi) (PI), [`openclaw`](../openclaw) (OpenClaw), [`claude-code`](../claude-code) (Claude Code).
 
@@ -18,14 +18,14 @@ Sibling implementations sharing the same wire protocol: [`pi`](../pi) (PI), [`op
 When `hermes gateway run` starts with `platforms.nats.enabled = true`:
 
 1. Connects to NATS using a configured context (or `demo.nats.io` by default via `$NATS_URL`).
-2. Registers a NATS micro service named `agents` with spec metadata (`agent`, `owner`, `session`, `protocol_version`).
-3. Adds a `prompt` endpoint at `agents.hermes.<owner>.<name>` advertising `max_payload: 1MB` and `attachments_ok: true`.
-4. Publishes heartbeats on `agents.hermes.<owner>.<name>.heartbeat` every 30 s.
+2. Registers a NATS micro service named `agents` with v0.3 spec metadata (`agent`, `owner`, `protocol_version`).
+3. Adds a `prompt` endpoint at `agents.prompt.hermes.<owner>.<session_name>` advertising `max_payload: 1MB` and `attachments_ok: true`, and a `status` endpoint at `agents.status.hermes.<owner>.<session_name>` for on-demand liveness.
+4. Publishes heartbeats on `agents.hb.hermes.<owner>.<session_name>` every 30 s.
 5. On each inbound prompt: decodes any attached files to the gateway's attachment staging area, routes images through Hermes's `vision_analyze` tool so the agent actually sees them, emits a `status: ack` chunk, runs the full Hermes agent loop (tools, memory, skills, approvals) to completion, and streams model output back as typed `{type:"response","data":…}` chunks, terminating with the spec-mandated empty-body no-headers terminator.
 6. Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Internal failures return `500`.
 7. Mid-stream approval prompts (dangerous tool calls) are surfaced as spec §7 `query` chunks when a caller drives a prompt; see `examples/04-query-reply.py` in the SDK.
 
-Unlike pi/openclaw/claude-code, **one Hermes gateway instance registers one identity**; multiple conversations over that single identity are distinguished by the envelope's optional `session` field (§5.1). So `agents.hermes.rene.local` handles everyone talking to your laptop; callers set `session="bob"` / `session="alice"` to keep histories separate.
+**Single-session-per-service (v0.3 §-PR #26).** One Hermes gateway = one `AgentService` = one `session_name` (the 5th subject token). For multiple isolated sessions on one host, run multiple **Hermes profiles** — each profile registers its own service with its own `session_name`. This matches the way pi/openclaw/claude-code already work; the v0.2 `envelope.session` demux is gone.
 
 ## Install
 
@@ -33,13 +33,13 @@ The install has three parts: (1) clone the fork and bootstrap Hermes, (2) instal
 
 ### Directory layout
 
-You're reading this README inside a clone of `synadia-agents`. The commands below clone `hermes-agent` as a **sibling** of that clone, so the `natsagent` SDK (which lives inside this monorepo) is reachable via the relative path `../synadia-agents/client-sdk/python` from the hermes-agent root:
+You're reading this README inside a clone of `synadia-agents`. The commands below clone `hermes-agent` as a **sibling** of that clone, so the SDK (which lives inside this monorepo) is reachable via the relative path `../synadia-agents/client-sdk/python` from the hermes-agent root:
 
 ```
 parent/
 ├── synadia-agents/                    ← you're reading this inside here
 │   ├── agents/hermes/README.md
-│   └── client-sdk/python/             ← the natsagent SDK
+│   └── client-sdk/python/             ← the synadia-ai-agents SDK
 └── hermes-agent/                      ← you'll clone the fork here
     └── venv/                          ← created by ./setup-hermes.sh
 ```
@@ -48,7 +48,7 @@ If you prefer a different layout, substitute an absolute path (e.g. `/home/you/p
 
 ### 1. Clone and bootstrap Hermes
 
-Run this from the **root of your `synadia-agents` clone** (`cd` there first if you opened this file deeper in the tree - e.g. from `agents/hermes/` do `cd ../..`):
+Run this from the **root of your `synadia-agents` clone** (`cd` there first if you opened this file deeper in the tree — e.g. from `agents/hermes/` do `cd ../..`):
 
 ```bash
 # Clone hermes-agent as a sibling of synadia-agents.
@@ -65,11 +65,11 @@ After this you can run `hermes --help` from anywhere. User state lives in `~/.he
 
 > You'll see a yellow warning during `setup-hermes.sh`:
 > `⚠ Lockfile install failed (may be outdated), falling back to pip install...`
-> That's **expected** until `natsagent` publishes to PyPI - the `[nats]` extra pins an unpublished package, which breaks the primary `uv sync --all-extras --locked` path, so the script falls back to `uv pip install -e ".[all]"` (which excludes `[nats]` by design). Step 2 below installs the SDK manually.
+> That's **expected** until `synadia-ai-agents` publishes to PyPI — the `[nats]` extra pins an unpublished package, which breaks the primary `uv sync --all-extras --locked` path, so the script falls back to `uv pip install -e ".[all]"` (which excludes `[nats]` by design). Step 2 below installs the SDK manually.
 
-### 2. Install the `natsagent` Python SDK
+### 2. Install the `synadia-ai-agents` Python SDK
 
-The SDK is in this monorepo at [`../../client-sdk/python`](../../client-sdk/python). It's **not yet on PyPI** (publishing will follow the upstream Hermes PR merge), so install it editable from the sibling `synadia-agents` checkout - this is how you point hermes at the SDK:
+The SDK is in this monorepo at [`../../client-sdk/python`](../../client-sdk/python). It's **not yet on PyPI** (publishing will follow the upstream Hermes PR merge), so install it editable from the sibling `synadia-agents` checkout — this is how you point hermes at the SDK:
 
 ```bash
 # From the hermes-agent clone (the sibling of synadia-agents), venv active:
@@ -79,15 +79,15 @@ uv pip install --python venv/bin/python -e ../synadia-agents/client-sdk/python
 
 (If you didn't clone synadia-agents as a sibling, replace `../synadia-agents/client-sdk/python` with the absolute path to this monorepo's `client-sdk/python` directory.)
 
-Verify: `venv/bin/python -c "import natsagent; print(natsagent.__file__)"` should print a path inside this monorepo.
+Verify: `venv/bin/python -c "import synadia_ai.agents; print(synadia_ai.agents.__file__)"` should print a path inside this monorepo.
 
-Without this, Hermes logs `NATS: natsagent SDK not installed` at startup and skips registering the NATS adapter.
+Without this, Hermes logs `NATS: synadia-ai-agents not installed` at startup and skips registering the NATS adapter.
 
 ### 3. Configure the gateway
 
-Edit `~/.hermes/config.yaml` and add the `platforms.nats` block. The `owner` and `name` fields determine your subject - `agents.hermes.<owner>.<name>`.
+Edit `~/.hermes/config.yaml` and add the `platforms.nats` block. The `owner` and `session_name` fields determine your subject — `agents.prompt.hermes.<owner>.<session_name>`.
 
-Minimal `demo.nats.io` setup (no credentials, ephemeral public server - perfect for a first smoke test, not for anything sensitive):
+Minimal `demo.nats.io` setup (no credentials, ephemeral public server — perfect for a first smoke test, not for anything sensitive):
 
 ```yaml
 platforms:
@@ -96,7 +96,7 @@ platforms:
     extra:
       servers: ["nats://demo.nats.io"]
       owner: yourname             # e.g. your github handle
-      name: demo                  # instance label (dev, prod, laptop, …)
+      session_name: demo          # 5th subject token; pick one per profile
       attachments_ok: true
 ```
 
@@ -104,7 +104,7 @@ Start the gateway and confirm registration:
 
 ```bash
 hermes gateway run
-# expect: "NATS: registered as agents.hermes.yourname.demo (heartbeat=30s, max_payload=1MB)"
+# expect: "[Nats] Connected — subscribed at agents.prompt.hermes.yourname.demo (heartbeat=30s, max_payload=1MB, attachments_ok=True)"
 ```
 
 ## Configure
@@ -113,11 +113,11 @@ hermes gateway run
 
 If you already manage NATS credentials via `nats context`, reference the context by name. This keeps URLs and creds out of `config.yaml` and lets you flip between local, Synadia Cloud, and production by changing one field.
 
-Create a context (example: a local `nats-server` on 4222 with no auth):
+Create a context (example: a local `nats-server` on 4223 with no auth):
 
 ```bash
 nats context add hermes-local \
-  --server nats://127.0.0.1:4222 \
+  --server nats://127.0.0.1:4223 \
   --description "Hermes local dev"
 nats context select hermes-local
 nats --context hermes-local rtt       # sanity check the connection
@@ -128,7 +128,7 @@ This writes `~/.config/nats/context/hermes-local.json`:
 ```json
 {
   "description": "Hermes local dev",
-  "url": "nats://127.0.0.1:4222"
+  "url": "nats://127.0.0.1:4223"
 }
 ```
 
@@ -141,18 +141,17 @@ platforms:
     extra:
       context: hermes-local       # reads ~/.config/nats/context/hermes-local.json
       owner: rene
-      name: local
+      session_name: local
       attachments_ok: true
       # Optional tuning (defaults shown):
-      # agent: hermes                # 2nd subject token
+      # agent: hermes                # 3rd subject token; rarely changed
       # max_payload: "1MB"           # pattern \d+(B|KB|MB|GB)
       # heartbeat_interval_s: 30
-      # session_default: "default"   # fallback session label
 ```
 
-With the example above, Hermes registers as `agents.hermes.rene.local` and publishes heartbeats on `agents.hermes.rene.local.heartbeat`.
+With the example above, Hermes registers at `agents.prompt.hermes.rene.local` and publishes heartbeats on `agents.hb.hermes.rene.local`.
 
-For Synadia Cloud or a secured self-hosted server, add the relevant fields when creating the context (`--creds`, `--nkey`, `--user`/`--password`, `--tls*`) - see `nats context add --help`.
+For Synadia Cloud or a secured self-hosted server, add the relevant fields when creating the context (`--creds`, `--nkey`, `--user`/`--password`, `--tls*`) — see `nats context add --help`.
 
 ### Config fields
 
@@ -160,15 +159,14 @@ All fields live under `platforms.nats.extra` in `~/.hermes/config.yaml`.
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `context` | one of `context`/`servers` | - | NATS CLI context name in `~/.config/nats/context/` |
-| `servers` | one of `context`/`servers` | - | List of NATS URLs, e.g. `["nats://demo.nats.io"]` |
-| `owner` | yes | - | 3rd subject token - your operator / account namespace |
-| `name` | yes | - | 4th subject token - instance label |
-| `agent` | no | `hermes` | 2nd subject token; rarely changed |
+| `context` | one of `context`/`servers` | — | NATS CLI context name in `~/.config/nats/context/` |
+| `servers` | one of `context`/`servers` | — | List of NATS URLs, e.g. `["nats://demo.nats.io"]` |
+| `owner` | yes | — | 4th subject token — your operator / account namespace |
+| `session_name` | yes | — | 5th subject token — fixed per service (multi-session = multi-profile) |
+| `agent` | no | `hermes` | 3rd subject token; rarely changed |
 | `attachments_ok` | no | `true` | Accept inline base64 attachments |
 | `max_payload` | no | `"1MB"` | Per-request limit; must match `\d+(B\|KB\|MB\|GB)` |
 | `heartbeat_interval_s` | no | `30` | Liveness beacon interval |
-| `session_default` | no | `"default"` | Fallback session when envelope omits the field |
 
 ### Environment variables (optional)
 
@@ -179,7 +177,7 @@ Any `NATS_*` / `HERMES_NATS_*` env var flips `platforms.nats.enabled=true` autom
 | `NATS_URL` | `extra.servers` (single URL) |
 | `NATS_CONTEXT` | `extra.context` |
 | `HERMES_NATS_OWNER` | `extra.owner` |
-| `HERMES_NATS_NAME` | `extra.name` |
+| `HERMES_NATS_SESSION_NAME` | `extra.session_name` |
 | `HERMES_NATS_AGENT` | `extra.agent` |
 
 Each env var overrides the corresponding [config field](#config-fields) above; defaults live there.
@@ -187,15 +185,15 @@ Each env var overrides the corresponding [config field](#config-fields) above; d
 ## Verify
 
 ```bash
-# Protocol-level discovery - Hermes should appear in the list
-nats --context hermes-local req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
-
-# Micro service listing
+# Micro service listing — Hermes should appear
 nats --context hermes-local micro list
 nats --context hermes-local micro info agents
 
-# Watch heartbeats - one frame every heartbeat_interval_s seconds
-nats --context hermes-local sub 'agents.hermes.*.*.heartbeat'
+# On-demand liveness via the v0.3 status endpoint (returns the current heartbeat-shaped JSON)
+nats --context hermes-local req agents.status.hermes.rene.local '' --timeout=2s
+
+# Watch heartbeats — one frame every heartbeat_interval_s seconds
+nats --context hermes-local sub 'agents.hb.>'
 ```
 
 Omit `--context hermes-local` if you're using the default/`demo.nats.io` path.
@@ -211,58 +209,68 @@ With the Python SDK's shipped examples (from this monorepo):
 cd client-sdk/python
 uv run python examples/02-prompt-text.py \
     --context hermes-local \
-    "what is 2+2? answer in one short sentence."
+    --session local \
+    "what is 2+2? answer in exactly one short sentence."
 ```
 
-You'll see the response stream chunk-by-chunk, terminated by an empty frame.
+`--session local` selects the agent whose `session_name` matches; omit it to take the first discovered agent. You'll see the response stream chunk-by-chunk, terminated by an empty frame.
 
 Or with the `nats` CLI directly (plain-text shorthand per spec §5.1):
 
 ```bash
-nats --context hermes-local req agents.hermes.rene.local \
+nats --context hermes-local req agents.prompt.hermes.rene.local \
     "what is 2+2? answer in one short sentence." \
-    --wait-for-empty --timeout 120s
+    --timeout 30s
 ```
 
-### With an attachment - "describe this image"
+The CLI prints only the first response chunk — for the full streamed body, use the SDK example.
 
-Hermes routes images through its `vision_analyze` tool, so the model actually sees the picture. The Hermes repo ships a small banner (`website/static/img/hermes-agent-banner.png`, ~12 KB - well under the 1 MB payload limit):
+### With an attachment — "describe this image"
+
+Hermes routes images through its `vision_analyze` tool, so the model actually sees the picture. The Hermes repo ships a small banner (`website/static/img/hermes-agent-banner.png`, ~12 KB — well under the 1 MB payload limit):
 
 ```bash
 # from synadia-agents/client-sdk/python; the ../../../hermes-agent/... path
 # assumes the sibling layout from the Directory-layout section above.
 uv run python examples/03-prompt-attachment.py \
     --context hermes-local \
+    --session local \
     --prompt "describe this image in one sentence" \
     ../../../hermes-agent/website/static/img/hermes-agent-banner.png
 ```
 
-Expected: a short description of the banner - what it depicts, colors, text - streamed back as `response` chunks.
+Expected: a short description of the banner — what it depicts, colors, text — streamed back as `response` chunks.
 
 ### With the Python SDK (programmatic)
 
 ```python
 import asyncio
-import natsagent
+import nats
+from synadia_ai.agents import Agents, DiscoverFilter, ResponseChunk, load_context_options
 
 async def main():
-    nc = await natsagent.connect(context="hermes-local")
-    client = natsagent.Client(nc)
-    agents = await client.discover(timeout=2.0)
-    hermes = next(a for a in agents if a.agent == "hermes")
+    nc = await nats.connect(**load_context_options("hermes-local"))
+    agents = Agents(nc=nc)
 
-    remote = client.bind(hermes)
-    async for msg in remote.prompt("list three interesting CLI tools", session="alice"):
-        if isinstance(msg, natsagent.ResponseChunk):
+    # Discover Hermes by its session_name (the 5th subject token).
+    found = await agents.discover(filter=DiscoverFilter(session_name="local"))
+    if not found:
+        print("no hermes agent registered for session_name=local")
+        return
+    hermes = found[0]
+
+    async for msg in hermes.prompt("list three interesting CLI tools"):
+        if isinstance(msg, ResponseChunk):
             print(msg.text, end="", flush=True)
+    print()
 
-    await client.stop()
+    await agents.close()
     await nc.close()
 
 asyncio.run(main())
 ```
 
-`session="alice"` keeps this conversation isolated from other callers hitting the same subject - see the `natsagent` SDK README for the full API.
+To talk to a *different* conversation, point `DiscoverFilter(session_name=...)` at a different value — and run a separate Hermes profile registering that `session_name`. See "Multiple sessions" below.
 
 ### Other example scripts
 
@@ -273,44 +281,57 @@ asyncio.run(main())
 | `examples/03-prompt-attachment.py` | Attachment upload (the demo above) |
 | `examples/04-query-reply.py` | Handle a mid-stream approval `query` chunk (Hermes asks before running dangerous tools) |
 | `examples/05-liveness.py` | Watch heartbeats, detect the agent going offline |
-| `examples/06-chat.py` | Multi-turn chat over a single `session` label |
+| `examples/06-chat.py` | Multi-turn chat against one selected agent |
 
-All honor `--context`, `--url`, `$NATS_URL`, or `nats context select` (in that order).
+All honor `--context`, `--url`, `$NATS_URL`, or `nats context select` (in that order). Examples that take a target agent honor `--session NAME` to filter by `session_name`.
 
-## Subject hierarchy
+## Subject hierarchy (v0.3 verb-first)
 
 ```
-agents.hermes.<owner>.<name>             # prompt endpoint (spec §2, §5)
-agents.hermes.<owner>.<name>.heartbeat   # liveness beacon (spec §8)
+agents.prompt.hermes.<owner>.<session_name>     # prompt endpoint (spec §2, §5)
+agents.status.hermes.<owner>.<session_name>     # on-demand liveness request/reply
+agents.hb.hermes.<owner>.<session_name>         # heartbeat beacon (spec §8)
 ```
 
-- `hermes` is both `metadata.agent` and its subject abbreviation (Appendix C).
-- `owner`: from `platforms.nats.extra.owner` - operator/account namespace.
-- `name`: from `platforms.nats.extra.name` - instance label. A single Hermes gateway registers **one** identity; multiple conversations share it and are distinguished by the envelope's `session` field.
+- `hermes` is `metadata.agent` and the 3rd subject token.
+- `owner` (4th token): from `platforms.nats.extra.owner` — operator/account namespace.
+- `session_name` (5th token): from `platforms.nats.extra.session_name` — fixed per `AgentService`. Each Hermes profile registers exactly one service with one `session_name`.
 
-## Sessions (Hermes-specific)
+Caller-side replies use the pinned `_INBOX.agents` prefix (v0.3 §-PR #25); for tight NATS account permissions, grant `_INBOX.agents.>` to caller principals.
 
-Pi, OpenClaw, and Claude Code each register one NATS identity **per conversation**. Hermes multiplexes: one gateway, one identity, many conversations via the `session` field.
+## Multiple sessions (Hermes profiles)
 
-- In the Python SDK: `remote.prompt(text, session="alice")`.
-- In the examples: `--session alice`.
-- On the wire: JSON envelope with `{"prompt": "...", "session": "alice"}`.
-- Omitted: falls back to `session_default` (configurable, default `"default"`).
+Pi, OpenClaw, Claude Code, and now (under v0.3) Hermes all follow the same model: **one NATS identity per process**. To run multiple isolated conversations from one host, use Hermes's profile mechanism — each profile gets its own `HERMES_HOME` (config, sessions, memory, skills, gateway) and registers its own `AgentService` at a distinct `session_name`:
 
-Sessions are isolated - one caller's history doesn't leak to another. Under the hood, `session=alice` produces a gateway session key of `agent:main:nats:dm:alice`.
+```bash
+hermes -p alice profile create
+hermes -p alice setup            # configure HERMES_NATS_SESSION_NAME=alice (or set in config.yaml)
+hermes -p alice gateway run
+
+hermes -p bob profile create
+hermes -p bob setup              # configure HERMES_NATS_SESSION_NAME=bob
+hermes -p bob gateway run
+```
+
+Each profile registers a distinct subject:
+
+- alice: `agents.prompt.hermes.<owner>.alice`
+- bob:   `agents.prompt.hermes.<owner>.bob`
+
+A caller picks a session by either filtering discovery (`DiscoverFilter(session_name="alice")`) or addressing the subject directly. Histories are fully isolated because they live in separate `HERMES_HOME` directories.
 
 ## Tenant isolation
 
-The spec reserves the four-token subject structure; there is no additional namespace slot. For multi-tenant isolation, use NATS accounts and subject permissions (spec §10.1). Within an account, Hermes's scoped lock prevents two gateway instances from registering the same `(agent, owner, name)` triple on one machine - the second fails fast with an actionable error.
+The spec reserves the five-token subject structure; there is no additional namespace slot. For multi-tenant isolation, use NATS accounts and subject permissions (spec §10.1). Within an account, Hermes's scoped lock prevents two gateway instances from registering the same `(agent, owner, session_name)` triple on one machine — the second fails fast with an actionable error.
 
-Cross-machine collisions are deliberately allowed - the protocol permits multiple instances per identity (§3.3) for high availability.
+Cross-machine collisions are deliberately allowed — the protocol permits multiple instances per identity (§3.3) for high availability.
 
 ## Wire protocol (summary)
 
 Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>. Quick reference:
 
-- **Request**: plain UTF-8 text OR JSON `{"prompt":"…","session":"…","attachments":[{"filename":"…","content":"<base64>"},…]}`. Attachment `content` must be RFC 4648 §4 base64 (standard alphabet, padded, no URL-safe variant, no whitespace).
-- **Response**: typed chunks on the reply subject - `{"type":"status","data":"ack"}` (accepted / keep-alive), `{"type":"response","data":"<text>"}` (content), `{"type":"query","data":{…}}` (mid-stream approval).
+- **Request**: plain UTF-8 text OR JSON `{"prompt":"…","attachments":[{"filename":"…","content":"<base64>"},…]}`. Attachment `content` must be RFC 4648 §4 base64 (standard alphabet, padded, no URL-safe variant, no whitespace). Under v0.3 the envelope no longer carries a `session` field — the session IS the subject's 5th token.
+- **Response**: typed chunks on the reply subject — `{"type":"status","data":"ack"}` (accepted / keep-alive), `{"type":"response","data":"<text>"}` (content), `{"type":"query","data":{…}}` (mid-stream approval).
 - **Terminator**: empty body **and no headers** (§6.5).
 - **Errors**: `Nats-Service-Error-Code` header with `400`/`500`, followed by the terminator.
 
@@ -322,22 +343,24 @@ Current deferrals (candidates for future phases, not bugs):
 - **No `send_message` tool routing to NATS.** Same reason.
 - **No chunked `attachments` endpoint** (spec §5.5). Inline base64 only for now.
 - **No JetStream at-least-once delivery.**
-- **No E2E encryption** - delegated to NATS server TLS.
+- **No E2E encryption** — delegated to NATS server TLS.
 - **`/stop` doesn't interrupt a running NATS turn.** The adapter-owned agent pattern bypasses the gateway's `_active_sessions` tracking; callers drop their subscription to abandon a run.
+- **No multi-session multiplexing within one process.** v0.3 fixed: one `AgentService` = one `session_name`. Use Hermes profiles for multiple sessions.
 
 ## Troubleshooting
 
-- **`NATS: natsagent SDK not installed` at gateway startup.** Install step 2 was skipped. Re-run `uv pip install --python venv/bin/python -e ../synadia-agents/client-sdk/python` from the hermes-agent clone with the venv active.
-- **`$SRV.INFO.agents` returns nothing / Hermes not discovered.** Gateway didn't register. Check `platforms.nats.enabled: true`, that the NATS URL/context resolves, and look for `NATS: registered as …` in the gateway log. If another Hermes instance already holds the same `(agent, owner, name)`, the log shows `already registered`.
-- **`nats req` returns nothing or hangs.** Pass `--wait-for-empty`; the protocol signals end-of-stream with an empty-body message, not a single response.
-- **Caller hangs after the first chunk; `is_online()` returns False.** Gateway probably crashed or lost NATS connectivity. The protocol marks an agent offline after ~3 missed heartbeats (~90 s at the 30 s default). Check the gateway log.
-- **Dangerous command hangs for 5 minutes then fails.** The caller didn't handle the `query` chunk. Drain `query` in your SDK loop (see `examples/04-query-reply.py`) - after `gateway_timeout` (default 300 s) the command is auto-denied.
+- **`NATS: synadia-ai-agents not installed` at gateway startup.** Install step 2 was skipped. Re-run `uv pip install --python venv/bin/python -e ../synadia-agents/client-sdk/python` from the hermes-agent clone with the venv active. **`./setup-hermes.sh` does NOT install the SDK** — it isn't on PyPI yet — so re-run the editable install after every bootstrap.
+- **Gateway not discovered / `nats micro list` returns nothing.** Gateway didn't register. Check `platforms.nats.enabled: true`, that the NATS URL/context resolves, and look for `[Nats] Connected — subscribed at …` in the gateway log. If another Hermes instance already holds the same `(agent, owner, session_name)` on this host, the log shows `NATS agent identity hermes:<owner>:<session_name> already in use (PID …)`.
+- **Stale platform lock blocks restart.** Lives at `~/.local/state/hermes/gateway-locks/nats-<hash>.lock`. Verify the recorded PID is dead (`ps -p <PID>`), then `rm` the file.
+- **`nats req` returns only one chunk.** That's expected — `nats request` shows the first reply. For the full streamed body use `examples/02-prompt-text.py` (or any caller iterating the SDK's async iterator).
+- **Caller hangs after the first chunk; `is_online()` returns False.** Gateway probably crashed or lost NATS connectivity. The protocol marks an agent offline after ~3 missed heartbeats (~90 s at the 30 s default). Check the gateway log, or query `agents.status.hermes.<owner>.<session_name>` directly.
+- **Dangerous command hangs for 5 minutes then fails.** The caller didn't handle the `query` chunk. Drain `query` in your SDK loop (see `examples/04-query-reply.py`) — after `gateway_timeout` (default 300 s) the command is auto-denied.
 - **`400 attachment[N] has invalid base64 content`.** The caller emitted URL-safe base64 or unpadded output. Switch to RFC 4648 §4 (standard alphabet, padded).
-- **`ValueError: could not parse max_payload '…'`.** `max_payload` must match `\d+(B|KB|MB|GB)` - e.g. `"1MB"`, `"512KB"`, `"104857600B"`.
+- **`ValueError: could not parse max_payload '…'`.** `max_payload` must match `\d+(B|KB|MB|GB)` — e.g. `"1MB"`, `"512KB"`, `"104857600B"`.
 
 ## Further reading
 
-- **Hermes user guide for the NATS channel:** [`website/docs/user-guide/messaging/nats.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/website/docs/user-guide/messaging/nats.md) in the fork - deep dive on configuration, subject layout, sessions, attachments, profiles, full troubleshooting table.
-- **Architecture & design:** [`docs/nats-gateway-design.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/docs/nats-gateway-design.md) - protocol↔adapter mapping, streaming model, approval hook, failure modes, and §17 retrospective lessons.
+- **Hermes user guide for the NATS channel:** [`website/docs/user-guide/messaging/nats.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/website/docs/user-guide/messaging/nats.md) in the fork — deep dive on configuration, subject layout, multiple sessions via profiles, attachments, full troubleshooting table.
+- **Architecture & design:** [`docs/nats-gateway-design.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/docs/nats-gateway-design.md) — protocol↔adapter mapping, streaming model, approval hook, failure modes, and §17 retrospective lessons (including the v0.3 migration addenda).
 - **Adapter source:** [`gateway/platforms/nats.py`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/gateway/platforms/nats.py).
 - **Protocol spec:** <https://github.com/synadia-ai/nats-agent-sdk-docs>
