@@ -53,6 +53,13 @@ PROMPT_QUEUE_GROUP = "agents"
 # §2.1 / §12: the endpoint name reserved for the prompt entry point.
 PROMPT_ENDPOINT_NAME = "prompt"
 
+# v0.3 §-TBD: the request/response endpoint that returns a fresh heartbeat-
+# shaped payload. Same queue group as `prompt` — instances of the same
+# logical agent share `agents.status.{a}.{o}.{n}`, so callers load-balance to
+# one responder.
+STATUS_ENDPOINT_NAME = "status"
+STATUS_QUEUE_GROUP = "agents"
+
 
 # --- discovery defaults --------------------------------------------------
 
@@ -67,10 +74,10 @@ DEFAULT_DISCOVER_MAX_WAIT_S: float = 2.0
 
 # --- subject-name shapes -------------------------------------------------
 
-# `agents.{agent}.{owner}.{name}` — 4 dot tokens (§2). Custom prompt-endpoint
-# subjects break this pattern, in which case the instance name is opaque to
-# the caller (§4.3).
-_DEFAULT_INBOX_TOKEN_COUNT = 4
+# `agents.prompt.{agent}.{owner}.{session_name}` — 5 dot tokens (§2 v0.3).
+# Custom prompt-endpoint subjects break this pattern, in which case the
+# session name is opaque to the caller (§4.3).
+_DEFAULT_PROMPT_TOKEN_COUNT = 5
 
 
 # --- typed records -------------------------------------------------------
@@ -102,19 +109,20 @@ class AgentInfo:
     :class:`~nats.aio.client.Client` needed to prompt it. ``instance_id`` is
     the NATS micro service id; matches ``heartbeat.instance_id`` (§8.3) and
     is the addressing key for ``$SRV.INFO.agents.{id}`` direct lookup (§4.2).
+    ``session_name`` is the 5th token of the prompt subject (v0.3) — the
+    session this agent serves.
     """
 
     instance_id: str
     agent: str
     owner: str
-    name: str
+    session_name: str
     protocol_version: str
     description: str
     version: str
     metadata: Mapping[str, str]
     endpoints: tuple[EndpointInfo, ...]
     prompt_endpoint: EndpointInfo
-    session: str | None = None
 
 
 # --- $SRV.INFO parsing ---------------------------------------------------
@@ -163,16 +171,18 @@ def build_agent_info(info: dict[str, object]) -> AgentInfo | None:  # noqa: PLR0
         log.warning("agents service lacks a `prompt` endpoint: %r", info)
         return None
 
-    # §4.3: derive the instance name from the 4th token of the prompt endpoint's
-    # subject when it follows the default `agents.{agent}.{owner}.{name}` layout.
-    # Custom subjects leave the instance name opaque to the caller (empty string).
+    # §4.3: derive the session name from the 5th token of the prompt endpoint's
+    # subject when it follows the default
+    # `agents.prompt.{agent}.{owner}.{session_name}` layout (v0.3). Custom
+    # subjects leave the session name opaque to the caller (empty string).
     parts = prompt_endpoint.subject.split(".")
-    instance_name = (
-        parts[3] if len(parts) == _DEFAULT_INBOX_TOKEN_COUNT and parts[0] == "agents" else ""
+    session_name = (
+        parts[4]
+        if len(parts) == _DEFAULT_PROMPT_TOKEN_COUNT
+        and parts[0] == "agents"
+        and parts[1] == "prompt"
+        else ""
     )
-
-    session_raw = metadata.get("session")
-    session = session_raw if isinstance(session_raw, str) and session_raw else None
 
     raw_id = info.get("id")
     instance_id = raw_id if isinstance(raw_id, str) else ""
@@ -185,14 +195,13 @@ def build_agent_info(info: dict[str, object]) -> AgentInfo | None:  # noqa: PLR0
         instance_id=instance_id,
         agent=str(agent_id),
         owner=str(owner),
-        name=instance_name,
+        session_name=session_name,
         protocol_version=str(protocol_version),
         description=description,
         version=version,
         metadata=metadata,
         endpoints=endpoints,
         prompt_endpoint=prompt_endpoint,
-        session=session,
     )
 
 
@@ -257,8 +266,7 @@ class DiscoverFilter:
 
     agent: str | None = None
     owner: str | None = None
-    name: str | None = None
-    session: str | None = None
+    session_name: str | None = None
     protocol_version: str | None = None
 
 
@@ -269,8 +277,7 @@ def matches_filter(info: AgentInfo, filt: DiscoverFilter | None) -> bool:
     checks = (
         (filt.agent, info.agent),
         (filt.owner, info.owner),
-        (filt.name, info.name),
-        (filt.session, info.session),
+        (filt.session_name, info.session_name),
         (filt.protocol_version, info.protocol_version),
     )
     return all(want is None or got == want for want, got in checks)
@@ -415,6 +422,8 @@ __all__ = [
     "PROMPT_ENDPOINT_NAME",
     "PROMPT_QUEUE_GROUP",
     "SERVICE_NAME",
+    "STATUS_ENDPOINT_NAME",
+    "STATUS_QUEUE_GROUP",
     "AgentInfo",
     "DiscoverFilter",
     "EndpointInfo",

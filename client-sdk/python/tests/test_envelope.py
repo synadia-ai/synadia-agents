@@ -98,7 +98,22 @@ class TestJsonEnvelope:
         env = decode(b'{"prompt":"hi","future_field":42,"another":"ok"}')
         assert env.prompt == "hi"
         assert env.attachments is None
-        assert env.session is None
+
+    def test_inbound_session_field_rides_unknown_field_bag(self) -> None:
+        """A stray ``session`` from a non-compliant peer decodes as a
+        normal envelope: under v0.3 the subject IS the session, so
+        ``Envelope.session`` is no longer a first-class field — the key
+        rides §5.6's ``extra="allow"`` bag instead.
+        """
+        env = decode(b'{"prompt":"hi","session":"foo"}')
+        assert env.prompt == "hi"
+        # Not a declared field on the model.
+        assert "session" not in Envelope.model_fields
+        # Did land in the extras bag.
+        assert env.model_extra == {"session": "foo"}
+        # decode → encode round-trips the stray field via §5.6.
+        parsed = json.loads(encode(env))
+        assert parsed["session"] == "foo"
 
     def test_empty_prompt_allowed_at_decode(self) -> None:
         """An empty string for ``prompt`` is decodable - client-side validation
@@ -150,44 +165,6 @@ class TestRoundTrip:
         assert "attachments" not in parsed
 
 
-class TestSession:
-    """§5.1 - optional ``session`` label carried on the request envelope."""
-
-    def test_decode_populates_session(self) -> None:
-        env = decode(b'{"prompt":"hi","session":"mychat"}')
-        assert env.prompt == "hi"
-        assert env.session == "mychat"
-
-    def test_roundtrip(self) -> None:
-        original = Envelope(prompt="what did we discuss?", session="mychat")
-        round_tripped = decode(encode(original))
-        assert round_tripped == original
-        assert round_tripped.session == "mychat"
-
-    def test_session_on_wire_when_set(self) -> None:
-        env = Envelope(prompt="x", session="mychat")
-        parsed = json.loads(encode(env))
-        assert parsed == {"prompt": "x", "session": "mychat"}
-
-    def test_session_omitted_on_wire_when_none(self) -> None:
-        """``exclude_none=True`` - no ``"session":null`` leakage for session-less callers."""
-        env = Envelope(prompt="x")
-        parsed = json.loads(encode(env))
-        assert "session" not in parsed
-        assert parsed == {"prompt": "x"}
-
-    def test_session_with_attachments_roundtrip(self) -> None:
-        original = Envelope(
-            prompt="describe",
-            attachments=[Attachment.from_bytes("f.bin", b"ab")],
-            session="mychat",
-        )
-        round_tripped = decode(encode(original))
-        assert round_tripped == original
-        assert round_tripped.session == "mychat"
-        assert round_tripped.attachments is not None
-
-
 class TestUnknownFieldPreservation:
     """§5.6 - unknown top-level fields MUST be preserved on decode → encode.
 
@@ -207,9 +184,10 @@ class TestUnknownFieldPreservation:
         assert parsed["x-trace-id"] == "abc"
         assert parsed["x-tenant"] == "acme"
 
-    def test_unknown_field_alongside_session(self) -> None:
+    def test_unknown_field_alongside_stray_session(self) -> None:
+        # An inbound stray `session` rides the §5.6 unknown-field bag —
+        # round-trips losslessly without surfacing as a first-class field.
         env = decode(b'{"prompt":"hi","session":"s","x-trace-id":"t"}')
-        assert env.session == "s"
         parsed = json.loads(encode(env))
         assert parsed["session"] == "s"
         assert parsed["x-trace-id"] == "t"

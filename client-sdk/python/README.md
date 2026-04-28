@@ -170,7 +170,7 @@ async def main() -> None:
     service = AgentService(
         agent="demo",            # your harness identifier
         owner="alice",           # your operator / account
-        name="worker-1",         # this instance's name
+        session_name="worker-1", # 5th subject token / session this instance serves
         nc=nc,
         description="demo echo agent",
     )
@@ -185,12 +185,13 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Probe it with the `nats` CLI:
+Probe it with the `nats` CLI (subjects are verb-first per protocol v0.3):
 
 ```bash
-nats micro list                                     # see "agents"
-nats req agents.demo.alice.worker-1 "hello"         # prompt it
-nats sub  "agents.demo.alice.worker-1.heartbeat"    # watch heartbeats
+nats micro list                                          # see "agents"
+nats req  agents.prompt.demo.alice.worker-1 "hello"      # prompt it
+nats req  agents.status.demo.alice.worker-1 ""           # heartbeat-shaped status reply
+nats sub  "agents.hb.demo.alice.worker-1"                # watch heartbeats
 ```
 
 ## Documentation

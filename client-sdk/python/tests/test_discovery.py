@@ -45,11 +45,11 @@ async def _noop(envelope: Envelope, stream: PromptStream) -> None:
     del envelope, stream
 
 
-async def _start_service(nc: NATSClient, name: str, **kwargs: object) -> AgentService:
+async def _start_service(nc: NATSClient, session_name: str, **kwargs: object) -> AgentService:
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name=name,
+        session_name=session_name,
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
         **kwargs,  # type: ignore[arg-type]
@@ -89,8 +89,17 @@ async def test_discover_stall_default_returns_within_max_wait(
             f"stall took longer than safety cap: {elapsed}s"
         )
         subjects = {x.prompt_subject for x in found}
-        assert a.subject.inbox in subjects
-        assert b.subject.inbox in subjects
+        assert a.subject.prompt in subjects
+        assert b.subject.prompt in subjects
+        # v0.3 §-TBD: every discovered agent now exposes both `prompt` and
+        # `status` endpoints with the new verb-first subjects.
+        for info in found:
+            endpoint_names = {ep.name for ep in info.endpoints}
+            assert {"prompt", "status"} <= endpoint_names, (
+                f"endpoints missing prompt/status: {endpoint_names}"
+            )
+            status_ep = next(ep for ep in info.endpoints if ep.name == "status")
+            assert status_ep.subject.startswith("agents.status.")
     finally:
         await agents.close()
 
@@ -110,8 +119,8 @@ async def test_discover_with_timeout_uses_timer_strategy(
         # Timer strategy waits the full window (we tolerate a generous slack).
         assert 0.5 <= elapsed <= 2.5, f"timer strategy out of window: {elapsed}s"
         subjects = {x.prompt_subject for x in found}
-        assert a.subject.inbox in subjects
-        assert b.subject.inbox in subjects
+        assert a.subject.prompt in subjects
+        assert b.subject.prompt in subjects
     finally:
         await agents.close()
 
@@ -126,13 +135,13 @@ async def test_discover_filter_excludes_non_matches(
     try:
         found = await agents.discover(
             timeout=1.0,
-            filter=DiscoverFilter(name="discover-a"),
+            filter=DiscoverFilter(session_name="discover-a"),
         )
-        names = [x.name for x in found]
+        session_names = [x.session_name for x in found]
         # Only the matching service makes it through.
-        assert "discover-a" in names
-        assert "discover-b" not in names
-        assert any(x.prompt_subject == a.subject.inbox for x in found)
+        assert "discover-a" in session_names
+        assert "discover-b" not in session_names
+        assert any(x.prompt_subject == a.subject.prompt for x in found)
     finally:
         await agents.close()
 

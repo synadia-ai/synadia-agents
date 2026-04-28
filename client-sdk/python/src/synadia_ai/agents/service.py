@@ -29,10 +29,16 @@ from nats.micro.service import EndpointConfig
 from ._bytes import parse_human_bytes
 from ._inbox import new_inbox
 from ._logging import get_logger
-from .discovery import PROMPT_ENDPOINT_NAME, PROMPT_QUEUE_GROUP, SERVICE_NAME
+from .discovery import (
+    PROMPT_ENDPOINT_NAME,
+    PROMPT_QUEUE_GROUP,
+    SERVICE_NAME,
+    STATUS_ENDPOINT_NAME,
+    STATUS_QUEUE_GROUP,
+)
 from .envelope import Attachment, Envelope, decode
 from .errors import ProtocolError, QueryTimeout
-from .heartbeat import run_publisher
+from .heartbeat import build_heartbeat_payload, run_publisher
 from .messages import (
     Chunk,
     QueryChunk,
@@ -52,7 +58,7 @@ log = get_logger(__name__)
 PromptHandler = Callable[["Envelope", "PromptStream"], Awaitable[None]]
 
 # §3.2 + §11.1: metadata.protocol_version is MAJOR.MINOR only.
-_PROTOCOL_VERSION = "0.2"
+_PROTOCOL_VERSION = "0.3"
 
 
 def _resolve_sdk_version() -> str:
@@ -175,15 +181,14 @@ class PromptStream:
 class AgentService:
     """A protocol-compliant agent (§12 implementation checklist).
 
-    Construct with ``agent``/``owner``/``name`` plus a live NATS client,
-    register a prompt handler via :meth:`on_prompt`, then call
+    Construct with ``agent``/``owner``/``session_name`` plus a live NATS
+    client, register a prompt handler via :meth:`on_prompt`, then call
     :meth:`start`. The agent keeps a background heartbeat task running
     until :meth:`stop` is awaited.
 
-    ``heartbeat_interval_s`` defaults to 30 s per §8.2. ``session`` is
-    carried in both service metadata (§3.2) and the heartbeat payload
-    (§8.3) when set; session-aware harnesses (``claude-code``, ``pi``,
-    ``hermes``) MUST supply it.
+    ``heartbeat_interval_s`` defaults to 30 s per §8.2. Under v0.3 the
+    session lives in the subject (token 5 — the ``session_name``); a
+    worker that wants to serve N sessions registers N services.
 
     ``keepalive_interval_s`` controls per-request keep-alive: while a
     handler is running, the agent emits ``{"type":"status","data":"ack"}``
@@ -199,26 +204,24 @@ class AgentService:
         *,
         agent: str,
         owner: str,
-        name: str,
+        session_name: str,
         nc: NATSClient,
         description: str = "",
         heartbeat_interval_s: int = 30,
         max_payload: str = DEFAULT_MAX_PAYLOAD,
         attachments_ok: bool = DEFAULT_ATTACHMENTS_OK,
-        session: str | None = None,
         keepalive_interval_s: float | None = DEFAULT_KEEPALIVE_INTERVAL_S,
     ) -> None:
         if heartbeat_interval_s <= 0:
-            raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.2)")
+            raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.3)")
         if keepalive_interval_s is not None and keepalive_interval_s <= 0:
             raise ValueError("keepalive_interval_s must be > 0 or None (None disables keep-alive)")
         # Validate max_payload eagerly so misconfiguration fails at construction
         # rather than surfacing later via caller-side validation (§5.4).
         parse_human_bytes(max_payload)
-        self.subject = AgentSubject.new(agent=agent, owner=owner, name=name)
+        self.subject = AgentSubject.new(agent=agent, owner=owner, session_name=session_name)
         self._nc = nc
-        self._description = description or f"{agent} agent {self.subject.name}"
-        self._session = session
+        self._description = description or f"{agent} agent {self.subject.session_name}"
         self._heartbeat_interval_s = heartbeat_interval_s
         self._max_payload = max_payload
         self._attachments_ok = attachments_ok
@@ -243,8 +246,6 @@ class AgentService:
             "owner": self.subject.owner,
             "protocol_version": _PROTOCOL_VERSION,
         }
-        if self._session is not None:
-            metadata["session"] = self._session
         config = ServiceConfig(
             name=SERVICE_NAME,
             version=_SDK_VERSION,
@@ -255,7 +256,7 @@ class AgentService:
         await self._service.add_endpoint(
             EndpointConfig(
                 name=PROMPT_ENDPOINT_NAME,
-                subject=self.subject.inbox,
+                subject=self.subject.prompt,
                 handler=self._on_prompt_request,
                 # §3.3: the `prompt` endpoint MUST use queue group `"agents"`
                 # so multiple instances of the same logical agent load-balance
@@ -270,6 +271,17 @@ class AgentService:
                 },
             )
         )
+        # v0.3 §-TBD: the status endpoint returns a freshly-built heartbeat-
+        # shaped payload. Same queue group as `prompt` so callers load-balance
+        # to one responder per logical agent.
+        await self._service.add_endpoint(
+            EndpointConfig(
+                name=STATUS_ENDPOINT_NAME,
+                subject=self.subject.status,
+                handler=self._on_status_request,
+                queue_group=STATUS_QUEUE_GROUP,
+            )
+        )
 
         self._heartbeat_stop.clear()
         # §8.3 instance_id matches the micro-service instance id assigned by
@@ -281,7 +293,6 @@ class AgentService:
                 self._heartbeat_interval_s,
                 self._service.id,
                 self._heartbeat_stop,
-                session=self._session,
             ),
             name=f"heartbeat-{self.subject.inbox}",
         )
@@ -298,6 +309,39 @@ class AgentService:
             self._service = None
         log.info("agent stopped on %s", self.subject.inbox)
 
+    async def _on_status_request(self, request: Request) -> None:
+        """Reply with a freshly-built §8.3 heartbeat payload (v0.3 §-TBD).
+
+        Request body is ignored — there is no request schema yet; future
+        PRs will extend the response with richer metadata and may add a
+        request shape at that time. ``self._service`` is set in
+        :meth:`start` before the endpoint is registered, so the
+        ``RuntimeError`` guard below should be unreachable in normal
+        operation; it survives ``python -O`` (which strips ``assert``)
+        and gives a clearer signal than ``AttributeError`` from the
+        following ``.id`` access if invariants ever drift.
+        """
+        if self._service is None:  # pragma: no cover — defensive
+            raise RuntimeError("status handler invoked before start()")
+        try:
+            payload = build_heartbeat_payload(
+                self.subject,
+                self._heartbeat_interval_s,
+                self._service.id,
+            )
+            data = payload.model_dump_json().encode("utf-8")
+            await request.respond(data)
+        except Exception as exc:
+            # A respond() failure (broker dropped, request torn down, encode
+            # error in a future richer payload) MUST surface as a §9.1 error
+            # to the caller, not silently propagate into nats-py's framework
+            # — mirroring _on_prompt_request's explicit error path.
+            log.exception("status handler failed on %s", request.subject)
+            with contextlib.suppress(Exception):
+                await request.respond_error(
+                    "500", _sanitize_error_desc(f"status handler error: {exc}")
+                )
+
     async def _on_prompt_request(self, request: Request) -> None:
         keepalive_task: asyncio.Task[None] | None = None
         try:
@@ -310,7 +354,8 @@ class AgentService:
 
             stream = PromptStream(request, self._nc)
             handler = self._prompt_handler
-            assert handler is not None  # enforced in start()
+            if handler is None:  # pragma: no cover — start() rejects this path
+                raise RuntimeError("prompt handler invoked before on_prompt() registered one")
 
             if self._keepalive_interval_s is not None:
                 keepalive_task = asyncio.create_task(

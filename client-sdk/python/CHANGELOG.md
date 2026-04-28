@@ -18,7 +18,117 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   language. The connection's `inbox_prefix` is no longer consulted for
   agents-SDK reply subjects; not user-overridable.
 
-### Changed (breaking)
+### Changed (breaking, public API)
+
+- **Token 5 of every agent subject is the *session name*; no more
+  separate "instance name" + envelope/metadata `session` field.** The
+  SDK collapses the previous `name` + `session` pair into one
+  positional concept: `agents.{verb}.{agent}.{owner}.{session_name}`.
+  A worker that wants to host N sessions registers N services (one
+  per session-named subject); the §3.3 queue group `"agents"` keeps
+  load-balancing across instances of the same logical session. The
+  envelope-level multiplexing pattern (Hermes-style: one subject,
+  many envelope.session labels) is dropped.
+- **Renames** (every site mirrors the same identifier):
+  - `AgentSubject.name` → `AgentSubject.session_name`
+  - `AgentSubject.new(..., name=...)` → `AgentSubject.new(..., session_name=...)`
+  - `AgentService(..., name=..., session=...)` → `AgentService(..., session_name=...)`
+  - `AgentInfo.name` → `AgentInfo.session_name`
+  - `Agent.name` → `Agent.session_name`
+  - `DiscoverFilter(name=..., session=...)` → `DiscoverFilter(session_name=...)`
+- **Removals**:
+  - `metadata.session` (§3.2) — agents no longer advertise it.
+  - `HeartbeatPayload.session` (§8.3) — the publishing subject IS the
+    session.
+  - `Envelope.session` (§5.1) — the request subject IS the session.
+    A stray inbound `session` from a non-compliant peer rides the
+    §5.6 `extra="allow"` unknown-field bag instead of surfacing as a
+    first-class field.
+  - `AgentService(session=...)` and `Agent.prompt(session=...)`
+    kwargs — both lost their feed once the metadata/envelope/payload
+    fields above went away.
+  - `DiscoverFilter.session` — subsumed by `DiscoverFilter.session_name`.
+  - `AgentInfo.session` and `Agent.session` properties.
+
+  Migration:
+
+  ```diff
+  - service = AgentService(agent="hermes", owner="rene", name="default", session="alice", nc=nc)
+  + service = AgentService(agent="hermes", owner="rene", session_name="alice", nc=nc)
+
+  - async for msg in agent.prompt("hi", session="alice"):
+  + filt = DiscoverFilter(session_name="alice")
+  + [agent] = await agents.discover(filter=filt)
+  + async for msg in agent.prompt("hi"):
+  ```
+
+### Changed (wire-breaking)
+
+- **Wire moves to verb-first subjects (protocol v0.3).** The agent
+  subject hierarchy gains a verb token directly after the root so each
+  endpoint owns its own positional slot, leaving room for new endpoints
+  without sub-subject suffixes:
+
+  | endpoint  | v0.2 wire                         | v0.3 wire (this release) |
+  | --------- | --------------------------------- | ------------------------ |
+  | prompt    | `agents.{a}.{o}.{n}`              | `agents.prompt.{a}.{o}.{n}` |
+  | heartbeat | `agents.{a}.{o}.{n}.heartbeat`    | `agents.hb.{a}.{o}.{n}` (verb abbreviated; heartbeats dominate per-account subject volume) |
+  | status    | —                                 | `agents.status.{a}.{o}.{n}` (new) |
+
+  `AgentSubject` exposes `prompt`, `heartbeat`, and `status` properties
+  that build the new shapes. The legacy `inbox` property survives as a
+  backwards-name-compat alias of `prompt` to keep the diff small for
+  examples and tests; expect it to retire in a future cleanup PR.
+- **`metadata.protocol_version` `"0.2"` → `"0.3"`.** Old v0.2 callers
+  advertise `"0.2"` and therefore won't match a v0.3 agent's subjects;
+  discovery filters via metadata make the mismatch a hard refusal
+  rather than a silent talk-past. There is no back-compat shim — 0.x
+  permits breaking changes per protocol §11.2.
+- **Heartbeat tracker subscribes to `agents.hb.*.*.*`** (the exported
+  `HEARTBEAT_SUBJECT` constant). The tracker still keys on
+  `payload.instance_id` per §8.3, so observable behaviour is identical
+  once both sides speak v0.3.
+
+### Added
+
+- **`status` request/response endpoint (v0.3 §-TBD).** Every
+  `AgentService` registers an additional NATS micro endpoint named
+  `status` on `agents.status.{a}.{o}.{n}` (queue group `"agents"`).
+  Replies with the same JSON payload shape as a heartbeat
+  (`HeartbeatPayload`, §8.3) constructed fresh on each request — future
+  PRs extend the response with richer agent metadata in one place,
+  shared with the heartbeat publisher via the new
+  `build_heartbeat_payload(...)` helper. Request body is currently
+  ignored (no request schema yet). Exported sibling constants:
+  `STATUS_ENDPOINT_NAME`, `STATUS_QUEUE_GROUP`.
+- **`AgentSubject.prompt` / `.status` properties.** Sit alongside the
+  existing `.heartbeat`. `parse_agent_subject(subject, verb=...)` gains
+  a verb filter (default `VERB_PROMPT`) so callers can parse heartbeat
+  / status subjects through the same helper.
+
+### Anticipated companion work (not in this release)
+
+This SDK ships **ahead** of the protocol spec and the TypeScript SDK,
+mirroring the same shape the v0.2 alignment took. The following land
+separately:
+
+- **TS SDK at `client-sdk/typescript/`** picks up the same wire change
+  + `protocol_version = "0.3"` + `status` endpoint registration. Until
+  it does, `tests/test_interop_e2e.py` skips at module level with a
+  pointed reason — removing the skip is the only action needed once TS
+  catches up.
+- **All agent harnesses under `agents/*`** (`agents/pi/`,
+  `agents/openclaw/`, `agents/claude-code/`) hard-code the protocol
+  version string and use raw `@nats-io/*` to publish heartbeats / serve
+  prompts; each picks up the new subject layout independently.
+- **The protocol spec** at
+  [`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs)
+  gains the v0.3 verb-first subject hierarchy (§2), the `status`
+  endpoint section, and the bumped `metadata.protocol_version`.
+- **Root-level `README.md`** and any monorepo-wide docs that show the
+  old subject layout move in lockstep with the spec change.
+
+### Changed (breaking, package-rename, prior entry)
 
 - **PyPI distribution renamed `natsagent` → `synadia-ai-agents`.**
   Mirrors the TypeScript sibling on npm (`@synadia-ai/agents`) so users

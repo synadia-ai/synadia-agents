@@ -2,7 +2,9 @@
 
 Run this in one terminal, point the numbered example scripts at it from
 another. The agent simply echoes the received prompt back (prefixed) and
-optionally saves any inbound attachments to a local directory.
+optionally saves any inbound attachments to a local directory. Under v0.3
+the subject IS the session — this agent serves whichever session the
+caller specifies via ``--session-name``.
 
 Usage::
 
@@ -16,9 +18,9 @@ Flags::
 
     --prefix TEXT                   prepended to echoed prompt text
     --save-attachments-to-dir[=DIR] absent → don't save; bare flag → default tmp dir
-    --agent NAME                    2nd subject token (default: demo-agent)
-    --owner NAME                    3rd token  (default: $USER)
-    --name NAME                     4th token  (default: example)
+    --agent NAME                    3rd subject token (default: demo-agent)
+    --owner NAME                    4th token  (default: $USER)
+    --session-name NAME             5th token / session this agent serves (default: example)
     --heartbeat-interval SECONDS    default 5 (matches TS ref agent)
     --description TEXT              service description
     --context NAME / --url URL      shared connection flags
@@ -82,7 +84,11 @@ def _parse_args() -> argparse.Namespace:
         default=os.environ.get("USER", "anon"),
         help="§2 `owner` token (default: $USER)",
     )
-    parser.add_argument("--name", default="example", help="§2 `name` token (default: example)")
+    parser.add_argument(
+        "--session-name",
+        default="example",
+        help="§2 5th token / session this agent serves (default: example)",
+    )
     parser.add_argument(
         "--heartbeat-interval",
         type=int,
@@ -124,39 +130,18 @@ async def main() -> None:
 
     nc = await connect_from_cli(args)
 
-    # Per-session conversation memory. Keyed on envelope.session; the None
-    # bucket is the shared "no session label given" bucket — callers hitting
-    # this agent subject without --session share one chat, which is the
-    # subject-level session pattern (protocol §2 + §3.2: session-aware
-    # harnesses like claude-code/pi register one agent per session, so the
-    # subject IS the session boundary).
-    #
-    # Callers using --session NAME get their own bucket on the SAME subject —
-    # that's the envelope-level multiplexing pattern (§5.1) for harnesses
-    # that run one registration for many conversations (Hermes-style).
-    history: dict[str | None, deque[str]] = {}
+    # Single conversation memory — under v0.3 this service registration
+    # serves a single session (the 5th subject token), so one bucket suffices.
+    history: deque[str] = deque(maxlen=HISTORY_CAP)
 
     async def handler(envelope: Envelope, stream: PromptStream) -> None:
-        bucket_key = envelope.session  # may be None
-        bucket = history.setdefault(bucket_key, deque(maxlen=HISTORY_CAP))
-        prior_turns = list(bucket)
-        bucket.append(envelope.prompt)
-
-        if envelope.session is not None:
-            log.info(
-                "received session=%r (turn %d, %d in memory)",
-                envelope.session,
-                len(bucket),
-                len(prior_turns),
-            )
+        prior_turns = list(history)
+        history.append(envelope.prompt)
 
         echoed = f"{args.prefix}{envelope.prompt}"
-        if envelope.session is not None:
-            echoed += f" [session: {envelope.session}]"
         if prior_turns:
-            label = f"session '{envelope.session}'" if envelope.session else "this subject"
             recap = "; ".join(f'"{t}"' for t in prior_turns)
-            echoed += f" (turn {len(bucket)} in {label}; you previously said: {recap})"
+            echoed += f" (turn {len(history)}; you previously said: {recap})"
         if envelope.attachments:
             names = ", ".join(a.filename for a in envelope.attachments)
             echoed += f" [received {len(envelope.attachments)} attachment(s): {names}]"
@@ -175,7 +160,7 @@ async def main() -> None:
     agent = AgentService(
         agent=args.agent,
         owner=args.owner,
-        name=args.name,
+        session_name=args.session_name,
         nc=nc,
         description=args.description,
         heartbeat_interval_s=args.heartbeat_interval,
@@ -183,7 +168,7 @@ async def main() -> None:
     agent.on_prompt(handler)
     await agent.start()
 
-    print(f"reference agent listening on {agent.subject.inbox}")
+    print(f"reference agent listening on {agent.subject.prompt}")
     print("press Ctrl+C to stop")
 
     stop = asyncio.Event()

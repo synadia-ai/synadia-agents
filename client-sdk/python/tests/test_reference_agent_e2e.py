@@ -66,7 +66,7 @@ class _PyReferenceAgent:
                 self._prefix,
                 "--heartbeat-interval",
                 "1",
-                "--name",
+                "--session-name",
                 "pyref-e2e",
             ],
             stdout=subprocess.PIPE,

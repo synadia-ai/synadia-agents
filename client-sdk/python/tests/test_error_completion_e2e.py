@@ -69,7 +69,7 @@ async def test_handler_exception_emits_error_then_terminator(
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="raises",
+        session_name="raises",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
@@ -133,7 +133,7 @@ async def test_malformed_envelope_emits_400_then_terminator(
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="strict",
+        session_name="strict",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )

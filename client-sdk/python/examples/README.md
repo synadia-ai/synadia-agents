@@ -14,13 +14,13 @@ demo.
 | File | What it does |
 | --- | --- |
 | [`01-discover.py`](01-discover.py) | Enumerate every reachable agent via `$SRV.INFO.agents` and print identity + capabilities. |
-| [`02-prompt-text.py`](02-prompt-text.py) | Send a text prompt to the first discovered agent and stream the response to stdout. Accepts `--session NAME` (see below). |
+| [`02-prompt-text.py`](02-prompt-text.py) | Send a text prompt to the first discovered agent and stream the response to stdout. Accepts `--session NAME` to filter discovery by `session_name`. |
 | [`03-prompt-attachment.py`](03-prompt-attachment.py) | Prompt with a file attached; shows §5.4 pre-publish validation (`max_payload`, `attachments_ok`). Accepts `--session NAME`. |
 | [`04-query-reply.py`](04-query-reply.py) | Answer mid-stream queries the agent asks (permission prompts, clarifications). Accepts `--session NAME`. |
 | [`05-liveness.py`](05-liveness.py) | Per-instance heartbeat listener + periodic liveness snapshot. |
 | [`06-chat.py`](06-chat.py) | Interactive chat REPL with a `rich`-powered TUI. Requires `uv sync --extra examples`. |
 | [`_connect_cli.py`](_connect_cli.py) | (internal plumbing; not a demo) - shared `--context` / `--url` / `$NATS_URL` resolver. |
-| [`_reference_agent.py`](_reference_agent.py) | Test harness for the examples - a spec-compliant echo agent. Run this first so the numbered demos have something to talk to. Keeps a small per-session conversation memory (capped at 20 turns) so multi-turn chats across invocations feel alive. |
+| [`_reference_agent.py`](_reference_agent.py) | Test harness for the examples - a spec-compliant echo agent. Run this first so the numbered demos have something to talk to. Keeps a small conversation memory (capped at 20 turns) so multi-turn chats across invocations feel alive. |
 
 ## Start here
 
@@ -35,15 +35,17 @@ uv run python examples/02-prompt-text.py --url nats://127.0.0.1:4222 "hello"
 
 ## Multi-turn chat
 
-The protocol has a **two-layer session model**. Both work, and the
-reference agent (and any well-behaved agent) supports both.
+Under v0.3 the protocol has **one** session model: the 5th NATS subject
+token (the `session_name`) IS the session. Each registered service
+serves one logical session; a worker that wants to host two
+conversations registers two services with different `session_name`
+values. The previous envelope-level multiplexing pattern (Hermes-style)
+is gone.
 
-### Layer 1 - subject-level session (default, no flag needed)
+### One chat = one subject = one session
 
-Session-aware harnesses like `claude-code` and `pi` register each session
-as its own NATS subject (§2 + §3.2) - the 4th subject token IS the session
-label. Two prompts to the same subject = same conversation, no envelope
-field required:
+Two prompts hitting the same agent's subject = same conversation, no
+envelope field required:
 
 ```shell
 uv run python examples/02-prompt-text.py "hi, I'm rene"
@@ -51,30 +53,31 @@ uv run python examples/02-prompt-text.py "what did I just say?"
 # → agent recaps your first turn
 ```
 
-### Layer 2 - envelope-level session (`--session NAME`)
+### Selecting between sessions
 
-Some harnesses (Hermes-style) run one registration that multiplexes many
-conversations over a single subject. `--session NAME` is the caller's
-per-request discriminator (§5.1). Independent labels yield independent
-histories on the **same** subject:
+`--session NAME` filters discovery to the agent whose `session_name`
+matches. Run two reference agents under different session names to host
+two independent conversations:
 
 ```shell
+# terminal 1 - alice's session
+uv run python examples/_reference_agent.py --session-name alice
+# terminal 2 - bob's session
+uv run python examples/_reference_agent.py --session-name bob
+# terminal 3 - drive each via discovery filter
 uv run python examples/02-prompt-text.py --session alice "hi from alice"
 uv run python examples/02-prompt-text.py --session bob   "hi from bob"
-uv run python examples/02-prompt-text.py --session alice "who am I?"
-# → agent recaps alice's turn, not bob's
 ```
 
 ### Interactive REPL
 
-`06-chat.py` wraps the same two modes in a `rich`-powered TUI. Without
-`--session` it drives a subject-level chat; with `--session NAME` it
-drives one of many multiplexed conversations. Install `rich` first:
+`06-chat.py` wraps the same single-session model in a `rich`-powered
+TUI. The REPL talks to the first discovered agent, and one chat = one
+session = one subject. Install `rich` first:
 
 ```shell
 uv sync --extra examples
-uv run python examples/06-chat.py                    # subject-level
-uv run python examples/06-chat.py --session mychat   # envelope-level
+uv run python examples/06-chat.py
 ```
 
 

@@ -53,7 +53,7 @@ async def main() -> None:
         print(f"tracking {len(found)} agent(s). Press Ctrl+C to stop.\n")
 
         for a in found:
-            identity = f"{a.agent}/{a.owner}/{a.name or '<custom>'}"
+            identity = f"{a.agent}/{a.owner}/{a.session_name or '<custom>'}"
             unsubscribers.append(agents.on_heartbeat(a.instance_id, _make_listener(identity)))
 
         while not stop.is_set():
@@ -62,7 +62,7 @@ async def main() -> None:
             print("\n--- liveness snapshot ---")
             for a in found:
                 liveness = agents.liveness(a.instance_id)
-                identity = f"{a.agent}/{a.owner}/{a.name or '<custom>'}"
+                identity = f"{a.agent}/{a.owner}/{a.session_name or '<custom>'}"
                 if liveness is None:
                     print(f"  {identity}: no heartbeat yet")
                 else:

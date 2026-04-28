@@ -27,8 +27,9 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-# §8.1: heartbeat wildcard subject. Subscribed to by :class:`HeartbeatTracker`.
-HEARTBEAT_SUBJECT = "agents.*.*.*.heartbeat"
+# §8.1 (v0.3): heartbeat wildcard subject (verb is the abbreviation `hb`).
+# Subscribed to by :class:`HeartbeatTracker`.
+HEARTBEAT_SUBJECT = "agents.hb.*.*.*"
 
 # §8.2 default: a tracked instance is online iff its last heartbeat is
 # within ``slack * interval_s`` seconds of "now". Mirrors TS
@@ -39,17 +40,21 @@ DEFAULT_LIVENESS_SLACK = 3
 class HeartbeatPayload(BaseModel):
     """Heartbeat wire payload per §8.3.
 
-    The instance name is deliberately absent: §8.3 directs receivers to
-    extract it from the 4th token of the heartbeat subject. ``extra="ignore"``
+    The payload no longer carries a session field — under v0.3 the
+    publishing subject IS the session
+    (``agents.hb.{agent}.{owner}.{session_name}``). Receivers that want
+    the session name read it from the 5th subject token. The tracker
+    keys on ``payload.instance_id`` per §8.3 so multiple instances of
+    the same logical session stay distinguishable. ``extra="ignore"``
     because §8.3 requires callers to tolerate unknown fields for forward
-    compat; pydantic will silently drop them during decode.
+    compat; pydantic will silently drop them during decode (a stray
+    ``session`` from a non-compliant v0.2 peer is dropped here).
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
     agent: str
     owner: str
-    session: str | None = None
     instance_id: str
     ts: str  # UTC ISO 8601
     interval_s: int
@@ -79,24 +84,36 @@ def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def build_heartbeat_payload(
+    subject: AgentSubject,
+    interval_s: int,
+    instance_id: str,
+) -> HeartbeatPayload:
+    """Construct a §8.3 heartbeat payload for ``subject``.
+
+    Pure helper shared between the heartbeat publisher and the v0.3
+    ``status`` request/response endpoint — both emit the same payload
+    shape, and richer agent metadata added in future PRs lands here in
+    one place.
+    """
+    return HeartbeatPayload(
+        agent=subject.agent,
+        owner=subject.owner,
+        instance_id=instance_id,
+        ts=now_iso(),
+        interval_s=interval_s,
+    )
+
+
 async def publish_one(
     nc: NATSClient,
     subject: AgentSubject,
     interval_s: int,
     instance_id: str,
-    session: str | None = None,
 ) -> None:
     """Publish a single heartbeat frame to the agent's heartbeat subject."""
-    payload = HeartbeatPayload(
-        agent=subject.agent,
-        owner=subject.owner,
-        session=session,
-        instance_id=instance_id,
-        ts=now_iso(),
-        interval_s=interval_s,
-    )
-    # exclude_none keeps `session` off the wire when session-less (§8.3).
-    data = payload.model_dump_json(exclude_none=True).encode("utf-8")
+    payload = build_heartbeat_payload(subject, interval_s, instance_id)
+    data = payload.model_dump_json().encode("utf-8")
     await nc.publish(subject.heartbeat, data)
 
 
@@ -106,19 +123,18 @@ async def run_publisher(
     interval_s: int,
     instance_id: str,
     stop: asyncio.Event,
-    session: str | None = None,
 ) -> None:
     """Periodically publish heartbeats until `stop` is set."""
     log.debug("heartbeat publisher starting for %s (interval=%ss)", subject.inbox, interval_s)
     # Emit one heartbeat immediately so callers that subscribe-then-discover
     # observe liveness without waiting a full interval (§8.5).
-    await publish_one(nc, subject, interval_s, instance_id, session)
+    await publish_one(nc, subject, interval_s, instance_id)
     while not stop.is_set():
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=interval_s)
         if stop.is_set():
             break
-        await publish_one(nc, subject, interval_s, instance_id, session)
+        await publish_one(nc, subject, interval_s, instance_id)
     log.debug("heartbeat publisher stopped for %s", subject.inbox)
 
 
@@ -235,8 +251,8 @@ class HeartbeatTracker:
             log.warning("ignoring malformed heartbeat on %s: %s", subject, exc)
             return
         # §8.3: track by instance_id, NOT by subject — two instances of the
-        # same (agent, owner, name) tuple share a heartbeat subject and must
-        # remain distinguishable in tracker state.
+        # same (agent, owner, session_name) tuple share a heartbeat subject
+        # and must remain distinguishable in tracker state.
         self._entries[payload.instance_id] = _Entry(
             payload=payload,
             last_seen=datetime.now(UTC),
@@ -258,6 +274,7 @@ __all__ = [
     "HeartbeatPayload",
     "HeartbeatTracker",
     "Liveness",
+    "build_heartbeat_payload",
     "now_iso",
     "publish_one",
     "run_publisher",

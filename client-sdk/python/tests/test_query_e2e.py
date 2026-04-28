@@ -76,7 +76,7 @@ async def test_query_happy_path(nc: NATSClient, evidence: EvidenceRecorder) -> N
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="confirm",
+        session_name="confirm",
         nc=nc,
         description="confirmation agent",
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
@@ -132,7 +132,7 @@ async def test_query_concurrent_asks(nc: NATSClient, evidence: EvidenceRecorder)
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="pair",
+        session_name="pair",
         nc=nc,
         description="concurrent-query agent",
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
@@ -192,7 +192,7 @@ async def test_query_timeout(nc: NATSClient, evidence: EvidenceRecorder) -> None
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="stalls",
+        session_name="stalls",
         nc=nc,
         description="timeout-tolerant agent",
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,

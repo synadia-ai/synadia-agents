@@ -1,4 +1,4 @@
-"""Unit tests for subject construction and validation per protocol §2."""
+"""Unit tests for subject construction and validation per protocol §2 (v0.3)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import pytest
 from synadia_ai.agents import AgentSubject
 from synadia_ai.agents.errors import InvalidSubjectToken
 from synadia_ai.agents.subjects import (
+    VERB_HEARTBEAT,
+    VERB_STATUS,
     is_heartbeat_subject,
     parse_agent_subject,
 )
@@ -16,84 +18,96 @@ from synadia_ai.agents.subjects import (
 
 class TestConstruction:
     def test_valid_simple_tokens(self) -> None:
-        subj = AgentSubject.new(agent="oc", owner="derek", name="summarizer")
-        assert subj.inbox == "agents.oc.derek.summarizer"
-        assert subj.heartbeat == "agents.oc.derek.summarizer.heartbeat"
+        subj = AgentSubject.new(agent="oc", owner="derek", session_name="summarizer")
+        assert subj.prompt == "agents.prompt.oc.derek.summarizer"
+        assert subj.heartbeat == "agents.hb.oc.derek.summarizer"
+        assert subj.status == "agents.status.oc.derek.summarizer"
+        # `inbox` stays as a backwards-name-compat alias of `prompt`.
+        assert subj.inbox == subj.prompt
 
-    def test_hyphens_and_underscores_in_name(self) -> None:
-        subj = AgentSubject.new(agent="hermes", owner="rene", name="default_worker-1")
-        assert subj.inbox == "agents.hermes.rene.default_worker-1"
+    def test_hyphens_and_underscores_in_session_name(self) -> None:
+        subj = AgentSubject.new(agent="hermes", owner="rene", session_name="default_worker-1")
+        assert subj.prompt == "agents.prompt.hermes.rene.default_worker-1"
 
     def test_empty_agent_rejected(self) -> None:
         with pytest.raises(InvalidSubjectToken):
-            AgentSubject.new(agent="", owner="o", name="n")
+            AgentSubject.new(agent="", owner="o", session_name="n")
 
     def test_uppercase_agent_rejected(self) -> None:
         with pytest.raises(InvalidSubjectToken):
-            AgentSubject.new(agent="Hermes", owner="o", name="n")
+            AgentSubject.new(agent="Hermes", owner="o", session_name="n")
 
     def test_agent_with_underscore_rejected(self) -> None:
         # §2: agent token is hyphens only (no underscore).
         with pytest.raises(InvalidSubjectToken):
-            AgentSubject.new(agent="my_agent", owner="o", name="n")
+            AgentSubject.new(agent="my_agent", owner="o", session_name="n")
 
 
 class TestBase64Sanitization:
     """SDK-internal escape — invalid token chars get base64-url-no-padding encoded."""
 
     def test_owner_with_space_encoded(self) -> None:
-        subj = AgentSubject.new(agent="hermes", owner="Rene S", name="default")
+        subj = AgentSubject.new(agent="hermes", owner="Rene S", session_name="default")
         expected_owner = base64.urlsafe_b64encode(b"Rene S").rstrip(b"=").decode("ascii")
         assert subj.owner == expected_owner
-        assert subj.inbox.startswith(f"agents.hermes.{expected_owner}.")
+        assert subj.prompt.startswith(f"agents.prompt.hermes.{expected_owner}.")
 
-    def test_name_with_special_chars_encoded(self) -> None:
-        subj = AgentSubject.new(agent="hermes", owner="rene", name="path/to/worker")
+    def test_session_name_with_special_chars_encoded(self) -> None:
+        subj = AgentSubject.new(agent="hermes", owner="rene", session_name="path/to/worker")
         expected_name = base64.urlsafe_b64encode(b"path/to/worker").rstrip(b"=").decode("ascii")
-        assert subj.name == expected_name
+        assert subj.session_name == expected_name
 
     def test_already_valid_token_passes_through(self) -> None:
-        subj = AgentSubject.new(agent="hermes", owner="rene", name="worker_1-a")
+        subj = AgentSubject.new(agent="hermes", owner="rene", session_name="worker_1-a")
         assert subj.owner == "rene"
-        assert subj.name == "worker_1-a"
+        assert subj.session_name == "worker_1-a"
 
 
 class TestSubjectClassification:
     def test_is_heartbeat_subject_true(self) -> None:
-        assert is_heartbeat_subject("agents.hermes.rene.default.heartbeat") is True
+        assert is_heartbeat_subject("agents.hb.hermes.rene.default") is True
 
-    def test_is_heartbeat_subject_wrong_suffix(self) -> None:
-        assert is_heartbeat_subject("agents.hermes.rene.default.attachments") is False
+    def test_is_heartbeat_subject_wrong_verb(self) -> None:
+        assert is_heartbeat_subject("agents.prompt.hermes.rene.default") is False
+        assert is_heartbeat_subject("agents.status.hermes.rene.default") is False
 
     def test_is_heartbeat_subject_wrong_length(self) -> None:
-        assert is_heartbeat_subject("agents.hermes.rene.default") is False
-        assert is_heartbeat_subject("agents.hermes.rene.default.heartbeat.extra") is False
+        assert is_heartbeat_subject("agents.hb.hermes.rene") is False
+        assert is_heartbeat_subject("agents.hb.hermes.rene.default.extra") is False
 
     def test_is_heartbeat_subject_wrong_root(self) -> None:
-        assert is_heartbeat_subject("other.hermes.rene.default.heartbeat") is False
+        assert is_heartbeat_subject("other.hb.hermes.rene.default") is False
 
 
 class TestParseAgentSubject:
-    def test_valid_inbox(self) -> None:
-        subj = parse_agent_subject("agents.hermes.rene.default")
+    def test_valid_prompt_subject(self) -> None:
+        subj = parse_agent_subject("agents.prompt.hermes.rene.default")
         assert subj is not None
         assert subj.agent == "hermes"
         assert subj.owner == "rene"
-        assert subj.name == "default"
+        assert subj.session_name == "default"
 
-    def test_sub_subject_not_parsed_as_inbox(self) -> None:
-        assert parse_agent_subject("agents.hermes.rene.default.heartbeat") is None
+    def test_wrong_verb_returns_none(self) -> None:
+        # Default `verb=VERB_PROMPT` filter rejects non-prompt subjects.
+        assert parse_agent_subject("agents.hb.hermes.rene.default") is None
+        assert parse_agent_subject("agents.status.hermes.rene.default") is None
 
-    def test_name_equal_to_reserved_subject_rejected(self) -> None:
-        # Both `.heartbeat` (§8, protocol-fixed) and `.attachments`
-        # (§2 + §5.5, reserved default) MUST NOT be accepted as instance
-        # names — otherwise `agents.{a}.{o}.attachments` would parse as a
-        # valid inbox and shadow the reserved §5.5 subject.
-        assert parse_agent_subject("agents.hermes.rene.heartbeat") is None
-        assert parse_agent_subject("agents.hermes.rene.attachments") is None
+    def test_verb_filter_overrideable(self) -> None:
+        subj = parse_agent_subject("agents.hb.hermes.rene.default", verb=VERB_HEARTBEAT)
+        assert subj is not None and subj.session_name == "default"
+        subj_status = parse_agent_subject("agents.status.hermes.rene.default", verb=VERB_STATUS)
+        assert subj_status is not None and subj_status.session_name == "default"
+
+    def test_session_named_after_a_verb_is_fine(self) -> None:
+        # Verbs and session names live in different positions now, so a
+        # session literally named `hb` or `heartbeat` no longer collides
+        # with the §8 heartbeat subject.
+        for session in ("hb", "heartbeat"):
+            subj = parse_agent_subject(f"agents.prompt.hermes.rene.{session}")
+            assert subj is not None and subj.session_name == session
 
     def test_wrong_root(self) -> None:
-        assert parse_agent_subject("services.hermes.rene.default") is None
+        assert parse_agent_subject("services.prompt.hermes.rene.default") is None
 
     def test_too_few_tokens(self) -> None:
-        assert parse_agent_subject("agents.hermes.rene") is None
+        assert parse_agent_subject("agents.prompt.hermes.rene") is None

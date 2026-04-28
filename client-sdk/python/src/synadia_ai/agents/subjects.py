@@ -1,15 +1,25 @@
 """Subject construction and validation per protocol §2.
 
-The subject hierarchy is ``agents.{agent}.{owner}.{name}`` with well-known
-sub-subjects ``.heartbeat`` and ``.attachments`` (future endpoint, §5.5).
-``agent``, ``owner``, and ``name`` are constrained to lowercase alphanumeric
-plus hyphens (``agent``) or hyphens and underscores (``owner``, ``name``).
-Tokens that would otherwise be invalid NATS subject characters are escaped
-internally as base64-url-no-padding — the SDK's "sanitize sensibly"
-implementation detail, not a protocol contract.
+Wire layout (v0.3): ``agents.{verb}.{agent}.{owner}.{session_name}`` where
+``verb`` is one of the protocol-reserved verbs ``prompt``, ``hb``
+(heartbeat), ``status`` (plus ``attachments`` reserved for the future
+§5.5 endpoint). The 5th token is the **session name** — token 5 IS the
+session, so a worker that wants to serve N sessions registers N
+services. Verbs and session names live in different positions, so a
+session literally named ``hb`` or ``heartbeat`` no longer collides with
+the §8 heartbeat subject.
+
+``agent``, ``owner``, and ``session_name`` are constrained to lowercase
+alphanumeric plus hyphens (``agent``) or hyphens and underscores
+(``owner``, ``session_name``). Tokens that would otherwise be invalid
+NATS subject characters are escaped internally as base64-url-no-padding
+— the SDK's "sanitize sensibly" implementation detail, not a protocol
+contract.
 
 §2 uses ``agent`` where v0.0.1 of this SDK used ``platform``; the rename
-is tracked in CHANGELOG.md under 0.1.0.
+is tracked in CHANGELOG.md under 0.1.0. The verb-first move landed in
+0.4.0 (protocol v0.3), and the same release collapsed ``name`` +
+``session`` into a single ``session_name`` token.
 """
 
 from __future__ import annotations
@@ -27,19 +37,19 @@ _AGENT_RE = re.compile(r"^[a-z0-9-]+$")
 _OWNER_RE = re.compile(r"^[a-z0-9_-]+$")
 _NAME_RE = _OWNER_RE
 
-# Sub-subjects reserved by the protocol (§2). `.heartbeat` is protocol-fixed
-# (§8); `.attachments` is the reserved default subject for the future §5.5
-# endpoint — no code publishes or subscribes to it today, but the token is
-# kept out of instance-name slots so `agents.{a}.{o}.attachments` can't be
-# registered as an inbox and shadow the reserved subject.
-SUB_HEARTBEAT = "heartbeat"
-SUB_ATTACHMENTS = "attachments"
+# §2 (v0.3) reserved verbs. ``prompt``/``hb``/``status`` are wired up by
+# this SDK; ``attachments`` is reserved for the future §5.5 endpoint. The
+# heartbeat verb is the abbreviation ``hb`` on the wire (§8.1) — kept short
+# because heartbeat traffic dominates per-account subject volume.
+VERB_PROMPT = "prompt"
+VERB_HEARTBEAT = "hb"
+VERB_STATUS = "status"
+VERB_ATTACHMENTS = "attachments"
 
-RESERVED_SUB_SUBJECTS = frozenset({SUB_HEARTBEAT, SUB_ATTACHMENTS})
+RESERVED_VERBS = frozenset({VERB_PROMPT, VERB_HEARTBEAT, VERB_STATUS, VERB_ATTACHMENTS})
 
-# `agents.{agent}.{owner}.{name}` — 4 tokens. Add one for a sub-subject like `.heartbeat`.
-_INBOX_TOKEN_COUNT = 4
-_INBOX_WITH_SUB_TOKEN_COUNT = 5
+# `agents.{verb}.{agent}.{owner}.{session_name}` — 5 tokens (§2 v0.3).
+_SUBJECT_TOKEN_COUNT = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,16 +57,16 @@ class AgentSubject:
     """The three identifying tokens of an agent, already validated/sanitized.
 
     Construct via :meth:`new` — it enforces §1 constraints and falls back to
-    SDK-internal base64 escaping for owner/name tokens that contain characters
-    NATS subjects can't carry directly.
+    SDK-internal base64 escaping for owner/session_name tokens that contain
+    characters NATS subjects can't carry directly.
     """
 
     agent: str
     owner: str
-    name: str
+    session_name: str
 
     @classmethod
-    def new(cls, agent: str, owner: str, name: str) -> AgentSubject:
+    def new(cls, agent: str, owner: str, session_name: str) -> AgentSubject:
         if not agent:
             raise InvalidSubjectToken("agent must be non-empty")
         if not _AGENT_RE.fullmatch(agent):
@@ -66,17 +76,28 @@ class AgentSubject:
         return cls(
             agent=agent,
             owner=_sanitize(owner, "owner", _OWNER_RE),
-            name=_sanitize(name, "name", _NAME_RE),
+            session_name=_sanitize(session_name, "session_name", _NAME_RE),
         )
 
     @property
     def inbox(self) -> str:
-        """The agent's prompt inbox subject."""
-        return f"{ROOT}.{self.agent}.{self.owner}.{self.name}"
+        """Backwards-name-compat alias of :attr:`prompt`."""
+        return self.prompt
+
+    @property
+    def prompt(self) -> str:
+        """The agent's prompt subject (§2)."""
+        return f"{ROOT}.{VERB_PROMPT}.{self.agent}.{self.owner}.{self.session_name}"
 
     @property
     def heartbeat(self) -> str:
-        return f"{self.inbox}.{SUB_HEARTBEAT}"
+        """The agent's heartbeat subject (§8.1)."""
+        return f"{ROOT}.{VERB_HEARTBEAT}.{self.agent}.{self.owner}.{self.session_name}"
+
+    @property
+    def status(self) -> str:
+        """The agent's status request/response subject (v0.3 §-TBD)."""
+        return f"{ROOT}.{VERB_STATUS}.{self.agent}.{self.owner}.{self.session_name}"
 
 
 def _sanitize(token: str, field: str, pattern: re.Pattern[str]) -> str:
@@ -98,29 +119,24 @@ def _sanitize(token: str, field: str, pattern: re.Pattern[str]) -> str:
 
 
 def is_heartbeat_subject(subject: str) -> bool:
-    """True iff the subject is of the form `agents.{p}.{o}.{n}.heartbeat`."""
+    """True iff the subject is of the form `agents.hb.{a}.{o}.{n}` (§8.1, v0.3)."""
     parts = subject.split(".")
-    return (
-        len(parts) == _INBOX_WITH_SUB_TOKEN_COUNT
-        and parts[0] == ROOT
-        and parts[-1] == SUB_HEARTBEAT
-    )
+    return len(parts) == _SUBJECT_TOKEN_COUNT and parts[0] == ROOT and parts[1] == VERB_HEARTBEAT
 
 
-def parse_agent_subject(subject: str) -> AgentSubject | None:
-    """Parse an `agents.{agent}.{owner}.{name}` inbox subject.
+def parse_agent_subject(subject: str, *, verb: str = VERB_PROMPT) -> AgentSubject | None:
+    """Parse an `agents.{verb}.{agent}.{owner}.{session_name}` subject.
 
-    Returns `None` if the subject is not an inbox (wrong length, wrong root,
-    or points at a sub-subject like `.heartbeat`). Strict parsing: callers
-    that want to route heartbeat subjects should use the dedicated helpers.
+    Returns ``None`` when the subject is not the expected verb (default
+    ``prompt``), has the wrong root, or fails token validation. Pass a
+    different ``verb`` to parse heartbeat / status subjects through the
+    same helper.
     """
     parts = subject.split(".")
-    if len(parts) != _INBOX_TOKEN_COUNT or parts[0] != ROOT:
+    if len(parts) != _SUBJECT_TOKEN_COUNT or parts[0] != ROOT or parts[1] != verb:
         return None
-    _, agent, owner, name = parts
-    if name in RESERVED_SUB_SUBJECTS:
-        return None
+    _, _, agent, owner, session_name = parts
     try:
-        return AgentSubject.new(agent=agent, owner=owner, name=name)
+        return AgentSubject.new(agent=agent, owner=owner, session_name=session_name)
     except InvalidSubjectToken:
         return None

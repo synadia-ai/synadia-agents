@@ -1,4 +1,4 @@
-"""Session-pinned interactive chat against the first discovered agent.
+"""Interactive multi-turn chat against the first discovered agent.
 
 A thin REPL that keeps one NATS connection and one ``Agent`` alive across
 many ``prompt()`` calls — each turn is still an independent protocol
@@ -6,19 +6,12 @@ request, mirroring what you'd get by running ``02-prompt-text.py`` repeatedly
 by hand. The point is to show multi-turn conversation flow, **not** to
 introduce any new SDK state.
 
-Two session modes:
-
-1. **Subject-level session (default).** Without ``--session``, the agent's
-   NATS subject IS the session boundary (§2 + §3.2). Session-aware harnesses
-   like claude-code / pi register each session as its own subject, so
-   repeated prompts to the same discovered subject just work as a chat.
-2. **Envelope-level session (``--session NAME``).** For agents that
-   multiplex multiple conversations over one subject (Hermes-style), the
-   caller tags each request with the conversation label (§5.1).
-
-The reference agent supports both — running ``--session alice`` and
-``--session bob`` in separate REPLs yields two independent conversations
-hitting the same subject.
+One chat = one session = one subject. Under v0.3 the 5th subject token
+IS the session (``agents.prompt.{a}.{o}.{session_name}``), so repeated
+prompts to the same discovered agent just work as a chat. To run two
+independent conversations against the same agent, register two services
+with different ``session_name`` values and select between them via
+discovery.
 
 Requires ``rich``::
 
@@ -97,28 +90,27 @@ def parse_input(line: str) -> ParsedInput:
     return ParsedInput(action="send", text=stripped)
 
 
-def _banner(session: str | None, agent_identity: str, turns: int) -> Panel:
-    label = f"session: [bold cyan]{session}[/]" if session else "[dim]subject-level session[/]"
-    body = Text.from_markup(f"  agent: [bold]{agent_identity}[/]  ·  protocol 0.1  ·  turn {turns}")
+def _banner(session_name: str, agent_identity: str, turns: int) -> Panel:
+    label = f"session: [bold cyan]{session_name}[/]"
+    body = Text.from_markup(f"  agent: [bold]{agent_identity}[/]  ·  turn {turns}")
     return Panel(body, title=label, title_align="left", border_style="cyan")
 
 
-def _prompt_marker(session: str | None) -> str:
-    return f"[{session}] ❯ " if session else "❯ "  # noqa: RUF001 — prompt glyph by intent
+def _prompt_marker() -> str:
+    return "❯ "  # noqa: RUF001 — prompt glyph by intent
 
 
 async def _run_turn(
     console: Console,
     agent: Agent,
     text: str,
-    session: str | None,
     agent_name: str,
     timeout: float,
 ) -> None:
     """Publish one prompt and stream the response to the console.
 
     Ctrl-C cancels the in-flight stream (drops the subscription per §6.7) and
-    returns control to the REPL — the session stays live. Mid-stream
+    returns control to the REPL — the chat stays live. Mid-stream
     protocol errors surface red and the loop continues.
     """
     console.print(Text(f"  {agent_name}  ", style="bold green"), end="")
@@ -126,7 +118,7 @@ async def _run_turn(
     thinking.start()
     first_chunk = True
     try:
-        stream = agent.prompt(text, session=session, timeout=timeout)
+        stream = agent.prompt(text, timeout=timeout)
         async for msg in stream:
             if first_chunk:
                 thinking.stop()
@@ -144,9 +136,9 @@ async def _run_turn(
             elif isinstance(msg, StatusChunk):
                 pass  # status chunks are informational; nothing to render
             elif isinstance(msg, Query):
-                # A session chat REPL is not the right place for interactive
-                # query handling — send a safe default so the agent's stream
-                # can finish. Users wanting query interaction should use
+                # A chat REPL is not the right place for interactive query
+                # handling — send a safe default so the agent's stream can
+                # finish. Users wanting query interaction should use
                 # `04-query-reply.py` instead.
                 console.print(
                     Text(f"\n  [agent asked: {msg.prompt}; replying 'ok']", style="yellow")
@@ -172,21 +164,11 @@ async def _run_turn(
 async def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Interactive session-pinned chat. Without --session you get a "
-            "subject-level chat (the agent subject IS the session); with "
-            "--session NAME you drive one of many envelope-level conversations "
-            "multiplexed over the same subject."
+            "Interactive chat against the first discovered agent. Under v0.3 "
+            "the 5th subject token IS the session — one chat = one session "
+            "= one subject. Pick a different session by registering an agent "
+            "with a different `session_name`."
         )
-    )
-    parser.add_argument(
-        "--session",
-        default=None,
-        metavar="NAME",
-        help=(
-            "Optional conversation label on the request envelope (§5.1). "
-            "Only needed for agents that multiplex multiple conversations over "
-            "one NATS subject (Hermes-style). Omit it for subject-level chat."
-        ),
     )
     parser.add_argument(
         "--timeout",
@@ -207,17 +189,17 @@ async def main() -> None:
             console.print("[red]no agents discovered — start the reference agent first.[/]")
             sys.exit(2)
         chosen = found[0]
-        identity = f"{chosen.agent}/{chosen.owner}/{chosen.name or '<custom>'}"
+        identity = f"{chosen.agent}/{chosen.owner}/{chosen.session_name or '<custom>'}"
         agent_name = chosen.agent
 
         turns = 0
-        console.print(_banner(args.session, identity, turns))
+        console.print(_banner(chosen.session_name or "<custom>", identity, turns))
         console.print(Text("  type /help for commands, /quit to exit.", style="dim"))
         console.print()
 
         while True:
             try:
-                raw = await asyncio.to_thread(input, _prompt_marker(args.session))
+                raw = await asyncio.to_thread(input, _prompt_marker())
             except EOFError:
                 console.print()
                 break
@@ -234,7 +216,7 @@ async def main() -> None:
                 break
             if parsed.action == "clear":
                 console.clear()
-                console.print(_banner(args.session, identity, turns))
+                console.print(_banner(chosen.session_name or "<custom>", identity, turns))
                 continue
             if parsed.action == "help":
                 console.print(
@@ -252,7 +234,6 @@ async def main() -> None:
                     console,
                     chosen,
                     parsed.text,
-                    args.session,
                     agent_name,
                     args.timeout,
                 )
@@ -261,8 +242,7 @@ async def main() -> None:
                 continue
             turns += 1
 
-        label = f"session '{args.session}'" if args.session else "chat"
-        console.print(Text(f"{label} ended — {turns} turn(s).", style="dim"))
+        console.print(Text(f"chat ended — {turns} turn(s).", style="dim"))
     finally:
         await agents.close()
         await nc.close()
