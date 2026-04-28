@@ -1,16 +1,18 @@
 #!/usr/bin/env bun
 /**
  * NATS channel for Claude Code — spec-compliant agent for the
- * NATS Agent Protocol v0.1 (see https://github.com/synadia-ai/nats-agent-sdk-docs).
+ * NATS Agent Protocol v0.3 (see https://github.com/synadia-ai/nats-agent-sdk-docs).
  *
  * Self-contained MCP server that registers as an `agents` micro service,
- * exposes a `prompt` endpoint on agents.cc.<owner>.<name>, publishes
- * heartbeats on <subject>.heartbeat, and bridges prompt requests into the
- * Claude Code session via MCP <channel> notifications. Claude responds via
- * the `reply` tool; each response is emitted as typed JSON chunks
- * ({type:"response", data:<text>}) terminated by an empty headerless message.
- * Permission prompts from the harness are relayed as query chunks (§7) on
- * the active stream's reply subject.
+ * exposes a `prompt` endpoint on agents.prompt.cc.<owner>.<name>, publishes
+ * heartbeats on agents.hb.cc.<owner>.<name> (§8.1 v0.3 verb-first), and
+ * answers status requests on agents.status.cc.<owner>.<name> (v0.3 §-TBD).
+ *
+ * Bridges prompt requests into the Claude Code session via MCP <channel>
+ * notifications. Claude responds via the `reply` tool; each response is
+ * emitted as typed JSON chunks ({type:"response", data:<text>}) terminated
+ * by an empty headerless message. Permission prompts from the harness are
+ * relayed as query chunks (§7) on the active stream's reply subject.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
@@ -39,11 +41,12 @@ import { join, basename, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
 // ── Constants ──────────────────────────────────────────────────────────
-const PROTOCOL_VERSION = '0.2'
+const PROTOCOL_VERSION = '0.3'
 const AGENT_ID = 'claude-code'          // metadata.agent (canonical per Appendix C)
-const AGENT_SUBJECT_TOKEN = 'cc'        // 2nd subject token (abbreviation per Appendix C)
+const AGENT_SUBJECT_TOKEN = 'cc'        // 3rd subject token (abbreviation per Appendix C)
 const SERVICE_NAME = 'agents'           // §3.1 — the bare token, subject-safe as-is
 const PROMPT_QUEUE_GROUP = 'agents'     // §3.3 — queue group on the prompt endpoint
+const STATUS_QUEUE_GROUP = 'agents'     // v0.3 §-TBD — same as prompt
 const MAX_PAYLOAD_STRING = '1MB'        // advertised in endpoint metadata
 const MAX_PAYLOAD_BYTES = 1024 * 1024   // enforcement value (base-1024, matches SDK)
 const ATTACHMENTS_OK = true
@@ -402,8 +405,10 @@ const rawSessionName = (process.env.NATS_SESSION_NAME
   || 'default'
 
 const sessionName = await resolveSessionName(nc, rawSessionName, owner)
-const subject = `agents.${AGENT_SUBJECT_TOKEN}.${owner}.${sessionName}`
-const heartbeatSubject = `${subject}.heartbeat`
+// v0.3 verb-first subjects (§2): `agents.{verb}.{agent}.{owner}.{name}`.
+const subject = `agents.prompt.${AGENT_SUBJECT_TOKEN}.${owner}.${sessionName}`
+const heartbeatSubject = `agents.hb.${AGENT_SUBJECT_TOKEN}.${owner}.${sessionName}`
+const statusSubject = `agents.status.${AGENT_SUBJECT_TOKEN}.${owner}.${sessionName}`
 
 const svcm = new Svcm(nc)
 const service = await svcm.add({
@@ -430,19 +435,44 @@ service.addEndpoint('prompt', {
 })
 
 const instanceId = service.info().id
-process.stderr.write(`nats channel: micro service registered (id=${instanceId}) on ${subject}\n`)
 
-// ── Heartbeat loop (§8) ────────────────────────────────────────────────
-
-function publishHeartbeat(): void {
-  nc.publish(heartbeatSubject, JSON.stringify({
+// v0.3 §-TBD: status request/response endpoint replies with a freshly-built
+// §8.3 heartbeat payload. Same shape as the periodic heartbeat, different
+// transport (request/response instead of pub/sub).
+function buildHeartbeatPayloadObject(): Record<string, unknown> {
+  return {
     agent: AGENT_ID,
     owner,
     session: sessionName,
     instance_id: instanceId,
     ts: new Date().toISOString(),
     interval_s: HEARTBEAT_INTERVAL_S,
-  }))
+  }
+}
+
+service.addEndpoint('status', {
+  subject: statusSubject,
+  queue: STATUS_QUEUE_GROUP,
+  handler: (err, msg: ServiceMsg) => {
+    if (err) return
+    try {
+      msg.respond(JSON.stringify(buildHeartbeatPayloadObject()))
+    } catch (e) {
+      try {
+        msg.respondError(500, `status handler error: ${(e as Error).message}`)
+      } catch {
+        // connection may already be gone
+      }
+    }
+  },
+})
+
+process.stderr.write(`nats channel: micro service registered (id=${instanceId}) on ${subject}\n`)
+
+// ── Heartbeat loop (§8) ────────────────────────────────────────────────
+
+function publishHeartbeat(): void {
+  nc.publish(heartbeatSubject, JSON.stringify(buildHeartbeatPayloadObject()))
 }
 publishHeartbeat()
 const heartbeatTimer = setInterval(publishHeartbeat, HEARTBEAT_INTERVAL_S * 1000)

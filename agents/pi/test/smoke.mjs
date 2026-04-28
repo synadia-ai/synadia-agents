@@ -1,15 +1,18 @@
 // Spec-compliance smoke test for extensions/nats-channel.ts.
 //
 // Drives the extension with a minimal mock of PI's ExtensionAPI, connects
-// to a local nats-server, and asserts protocol 0.1 behaviour:
+// to a local nats-server, and asserts protocol v0.3 behaviour:
 //
 //   1. Service registers under `agents` with spec metadata.
-//   2. The `prompt` endpoint has `max_payload` / `attachments_ok` metadata.
-//   3. Heartbeats arrive on `agents.pi.{owner}.{name}.heartbeat`.
-//   4. Empty payload → 400 + terminator.
-//   5. Plain-text prompt yields a `status: ack` chunk, text chunks via the
+//   2. The `prompt` endpoint has `max_payload` / `attachments_ok` metadata
+//      and lives at `agents.prompt.pi.{owner}.{name}` (verb-first §2 v0.3).
+//   3. Heartbeats arrive on `agents.hb.pi.{owner}.{name}` (§8.1 v0.3).
+//   4. The `status` endpoint at `agents.status.pi.{owner}.{name}` replies
+//      with a heartbeat-shaped payload (v0.3 §-TBD).
+//   5. Empty payload → 400 + terminator.
+//   6. Plain-text prompt yields a `status: ack` chunk, text chunks via the
 //      mock emitter, and an empty-body no-headers terminator.
-//   6. Request with attachments → 400 + terminator.
+//   7. Request with attachments → 400 + terminator.
 //
 // Run with:
 //   bun test/smoke.mjs
@@ -78,7 +81,8 @@ function emit(event, ...args) {
 const obs = await connect({ servers: "nats://127.0.0.1:4222" });
 
 // Subscribe to heartbeats BEFORE the extension registers — §8.5.
-const hbSub = obs.subscribe("agents.*.*.*.heartbeat");
+// v0.3 wildcard: `agents.hb.<agent>.<owner>.<name>`.
+const hbSub = obs.subscribe("agents.hb.*.*.*");
 const heartbeats = [];
 (async () => {
 	for await (const m of hbSub) {
@@ -100,7 +104,8 @@ const owner = (process.env.USER ?? "smoke")
 	.toLowerCase()
 	.replace(/^-+|-+$/g, "");
 const session = process.env.NATS_SESSION_NAME;
-const expectedSubject = `agents.pi.${owner}.${session}`;
+const expectedSubject = `agents.prompt.pi.${owner}.${session}`;
+const expectedStatusSubject = `agents.status.pi.${owner}.${session}`;
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -116,7 +121,7 @@ await step("$SRV.INFO returns spec-shaped service info", async () => {
 	assert.ok(mine, `no agents-service instance with session=${session} found`);
 	assert.equal(mine.metadata.agent, "pi");
 	assert.equal(mine.metadata.owner, owner);
-	assert.equal(mine.metadata.protocol_version, "0.2");
+	assert.equal(mine.metadata.protocol_version, "0.3");
 	assert.ok(mine.metadata.session.length > 0);
 
 	const ep = mine.endpoints?.find((e) => e.name === "prompt");
@@ -127,7 +132,7 @@ await step("$SRV.INFO returns spec-shaped service info", async () => {
 	assert.equal(ep.metadata?.attachments_ok, "true");
 })();
 
-await step("heartbeat published on agents.pi.{owner}.{session}.heartbeat", async () => {
+await step("heartbeat published on agents.hb.pi.{owner}.{session}", async () => {
 	const mine = heartbeats.find(
 		(hb) => hb.agent === "pi" && hb.session === session && hb.owner === owner,
 	);
@@ -135,6 +140,17 @@ await step("heartbeat published on agents.pi.{owner}.{session}.heartbeat", async
 	assert.equal(typeof mine.instance_id, "string");
 	assert.equal(typeof mine.ts, "string");
 	assert.equal(mine.interval_s, 30);
+})();
+
+await step("status endpoint replies with a heartbeat-shaped payload", async () => {
+	const reply = await obs.request(expectedStatusSubject, "", { timeout: 2000 });
+	const body = JSON.parse(new TextDecoder().decode(reply.data));
+	assert.equal(body.agent, "pi");
+	assert.equal(body.owner, owner);
+	assert.equal(body.session, session);
+	assert.equal(typeof body.instance_id, "string");
+	assert.equal(typeof body.ts, "string");
+	assert.equal(body.interval_s, 30);
 })();
 
 // Helper — consume a stream until terminator, capturing chunks + error.

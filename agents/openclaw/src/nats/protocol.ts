@@ -1,6 +1,6 @@
-// Wire protocol for the NATS Agent Protocol 0.2.0-draft — the subject
-// conventions, the request envelope shape, the typed response chunks, the
-// heartbeat payload, and the validation that keeps strict inputs strict.
+// Wire protocol for the NATS Agent Protocol v0.3 — the subject conventions,
+// the request envelope shape, the typed response chunks, the heartbeat
+// payload, and the validation that keeps strict inputs strict.
 //
 // Pure module (no NATS, no fs). Staging to disk and timers live in
 // `../attachments.ts` and `../gateway.ts`.
@@ -11,15 +11,17 @@ import type { MsgHdrs } from "@nats-io/nats-core";
 import type { DecodedAttachment, HeartbeatPayload, ParsedEnvelope } from "./types.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Spec constants (mirror `@synadia-ai/agents` 0.2.0-draft)
+// Spec constants (mirror `@synadia-ai/agents` v0.3)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Spec §3.1: the service name is the bare token `agents`. Subject-safe as-is. */
 export const SERVICE_NAME = "agents";
 /** Spec §3.3: queue group that the `prompt` endpoint MUST register with. */
 export const PROMPT_QUEUE_GROUP = "agents";
-export const SERVICE_VERSION = "0.4.0";
-export const PROTOCOL_VERSION = "0.2";
+/** v0.3 §-TBD: the `status` endpoint shares the prompt's queue group. */
+export const STATUS_QUEUE_GROUP = "agents";
+export const SERVICE_VERSION = "0.5.0";
+export const PROTOCOL_VERSION = "0.3";
 
 /** Spec §2, Appendix C: canonical agent id is `openclaw`, subject abbreviation
  *  is `oc`. The protocol doesn't cross-match full-form and abbreviated tokens
@@ -47,19 +49,24 @@ export const ACK_KEEPALIVE_MS = 20_000;
 // Subject builders
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Subject builders (§2 v0.3 — verb-first: `agents.{verb}.{a}.{o}.{n}`).
 export function promptSubject(owner: string, name: string): string {
-  return `agents.${SUBJECT_AGENT_TOKEN}.${owner}.${name}`;
+  return `agents.prompt.${SUBJECT_AGENT_TOKEN}.${owner}.${name}`;
 }
 
 export function heartbeatSubject(owner: string, name: string): string {
-  return `${promptSubject(owner, name)}.heartbeat`;
+  return `agents.hb.${SUBJECT_AGENT_TOKEN}.${owner}.${name}`;
+}
+
+export function statusSubject(owner: string, name: string): string {
+  return `agents.status.${SUBJECT_AGENT_TOKEN}.${owner}.${name}`;
 }
 
 /** OpenClaw-specific extension — agent-initiated messages (pub/sub, not part
- *  of the spec). Placed under the agent root so callers who want to subscribe
- *  can find it relative to the prompt subject. */
+ *  of the spec). Sits one level deeper than the verb-first subjects so it
+ *  doesn't collide with reserved verbs. */
 export function outboundSubject(owner: string, name: string): string {
-  return `${promptSubject(owner, name)}.outbound`;
+  return `agents.${SUBJECT_AGENT_TOKEN}.${owner}.${name}.outbound`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

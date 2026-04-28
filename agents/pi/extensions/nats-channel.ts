@@ -1,25 +1,21 @@
 /**
  * NATS Agent Protocol channel for PI Agent.
  *
- * Implements the NATS Agent Protocol v0.2.0-draft (see
+ * Implements the NATS Agent Protocol v0.3 (see
  * `https://github.com/synadia-ai/nats-agent-sdk-docs`). Every PI session becomes a
  * spec-compliant agent instance: discoverable via `$SRV.PING/INFO`,
- * addressable at `agents.pi.{owner}.{name}`, emitting typed response
- * chunks and a periodic heartbeat.
+ * addressable at `agents.prompt.pi.{owner}.{name}`, emitting typed response
+ * chunks and a periodic heartbeat on `agents.hb.pi.{owner}.{name}`.
  *
- * v0.2 breaking changes from v0.1 (proprietary wire):
- *   - Service name: `pi-channel` → `agents` (the spec's discovery filter).
- *   - Endpoint name: per-session → fixed `"prompt"` with `{max_payload, attachments_ok}` metadata.
- *   - Subject: strict 4 tokens. The optional `<org>` prefix was removed.
- *   - Request envelope: `{from, body}` → `{prompt, attachments?}`.
- *   - Response stream: raw text → typed `{type, data}` chunks.
- *   - Terminator: empty payload → empty body AND no headers (stricter).
- *   - Heartbeat: added (required by spec §8).
- *   - Custom `.inspect` subscription removed — `$SRV.INFO.agents` replaces it.
- *   - Errors: ad-hoc → `respondError` per spec §9 taxonomy.
+ * v0.3 breaking changes from v0.2 (this release):
+ *   - Subjects move to verb-first: `agents.{verb}.{a}.{o}.{n}` (5 tokens).
+ *     prompt → `agents.prompt.pi.{o}.{n}`, heartbeat → `agents.hb.pi.{o}.{n}`.
+ *   - New request/response `status` endpoint at `agents.status.pi.{o}.{n}`,
+ *     replies with the same payload shape as a heartbeat (§8.3).
+ *   - `metadata.protocol_version` `"0.2"` → `"0.3"`.
  *
- * Attachments (v0.3+): inline per spec §5.1/§5.2. Each `{filename, content}`
- * is base64-decoded (strict RFC 4648 §4 — standard alphabet, padded, no
+ * Attachments: inline per spec §5.1/§5.2. Each `{filename, content}` is
+ * base64-decoded (strict RFC 4648 §4 — standard alphabet, padded, no
  * whitespace, no URL-safe), the filename is sanitized, bytes are staged on
  * disk at `<STATE_DIR>/attachments/<session>/<uuid>-<filename>`, and their
  * absolute paths are prepended to the prompt text handed to PI. The staging
@@ -57,8 +53,11 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 const SERVICE_NAME = "agents";
 // Spec §3.3: the `prompt` endpoint MUST be registered with this queue group.
 const PROMPT_QUEUE_GROUP = "agents";
-const SERVICE_VERSION = "0.4.0";
-const PROTOCOL_VERSION = "0.2";
+// v0.3 §-TBD: the `status` endpoint shares the prompt's queue group so callers
+// load-balance to one responder per logical agent.
+const STATUS_QUEUE_GROUP = "agents";
+const SERVICE_VERSION = "0.5.0";
+const PROTOCOL_VERSION = "0.3";
 
 // Spec §2, Appendix C: `pi` is both the canonical agent identifier and its
 // conventional subject abbreviation.
@@ -331,12 +330,19 @@ function parseEnvelope(data: Uint8Array): ParsedEnvelope {
 // Subject helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Subject helpers (§2 v0.3 — verb-first). Mirrors the SDK's `AgentSubject`
+// helper but inlined here per the agents/* convention of staying on raw
+// `@nats-io/*` rather than depending on `@synadia-ai/agents`.
 function buildPromptSubject(owner: string, name: string): string {
-	return `agents.${AGENT_ID}.${owner}.${name}`;
+	return `agents.prompt.${AGENT_ID}.${owner}.${name}`;
 }
 
 function buildHeartbeatSubject(owner: string, name: string): string {
-	return `${buildPromptSubject(owner, name)}.heartbeat`;
+	return `agents.hb.${AGENT_ID}.${owner}.${name}`;
+}
+
+function buildStatusSubject(owner: string, name: string): string {
+	return `agents.status.${AGENT_ID}.${owner}.${name}`;
 }
 
 /**
@@ -385,6 +391,7 @@ export default function (pi: ExtensionAPI) {
 	let service: Service | undefined;
 	let promptSubject: string | undefined;
 	let heartbeatSubject: string | undefined;
+	let statusSubject: string | undefined;
 	let sessionName: string | undefined;
 	let owner: string | undefined;
 	let instanceId: string | undefined;
@@ -635,6 +642,27 @@ export default function (pi: ExtensionAPI) {
 		});
 	}
 
+	/**
+	 * v0.3 §-TBD status endpoint handler. Replies with the same JSON payload
+	 * shape as a heartbeat (§8.3), freshly built per request — future PRs can
+	 * extend the response with richer agent metadata in one place.
+	 */
+	function handleStatusRequest(err: Error | null, msg: ServiceMsg): void {
+		if (err) {
+			piCtx?.ui.notify(`NATS status handler error: ${err.message}`, "error");
+			return;
+		}
+		try {
+			msg.respond(heartbeatPayload());
+		} catch (e) {
+			try {
+				msg.respondError(500, `status handler error: ${(e as Error).message}`);
+			} catch {
+				// connection may already be gone
+			}
+		}
+	}
+
 	function startHeartbeat(): void {
 		stopHeartbeat();
 		if (!nc || !heartbeatSubject) return;
@@ -766,6 +794,7 @@ export default function (pi: ExtensionAPI) {
 		}
 		promptSubject = buildPromptSubject(owner, sessionName);
 		heartbeatSubject = buildHeartbeatSubject(owner, sessionName);
+		statusSubject = buildStatusSubject(owner, sessionName);
 
 		// 5. Register the microservice instance (§3)
 		try {
@@ -792,6 +821,15 @@ export default function (pi: ExtensionAPI) {
 					max_payload: MAX_PAYLOAD_STR,
 					attachments_ok: ATTACHMENTS_OK ? "true" : "false",
 				},
+			});
+			// v0.3 §-TBD: status request/response endpoint. Replies with a
+			// freshly-built §8.3 heartbeat payload on every request — same shape
+			// as the periodic heartbeat, different transport (request/response
+			// instead of pub/sub).
+			service.addEndpoint("status", {
+				subject: statusSubject,
+				queue: STATUS_QUEUE_GROUP,
+				handler: handleStatusRequest,
 			});
 			instanceId = service.info().id;
 		} catch (e) {
