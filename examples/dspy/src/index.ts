@@ -103,7 +103,7 @@ const service = new AgentService({
   owner: process.env["USER"] ?? "anon",
   name: "react",
   description: "DSPy ReAct agent with sandboxed fs tools",
-  version: "0.1.0",
+  version: "0.3.0",
   maxPayload: "1MB",
   attachmentsOk: false,
   heartbeatIntervalS: 10,

@@ -8,8 +8,9 @@ An example of **building a new agent from scratch** using the `@synadia-ai/agent
 ## Subject
 
 ```
-agents.dspy.<owner>.react             # prompt endpoint
-agents.dspy.<owner>.react.heartbeat   # 10 s heartbeat
+agents.prompt.dspy.<owner>.react       # prompt endpoint (v0.3 verb-first)
+agents.hb.dspy.<owner>.react           # 10 s heartbeat (§8.1 v0.3)
+agents.status.dspy.<owner>.react       # status request/response (v0.3 §-TBD)
 ```
 
 ## Streamed chunks

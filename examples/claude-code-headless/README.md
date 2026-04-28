@@ -1,8 +1,8 @@
 # claude-code-headless
 
-A headless NATS agent host that spawns [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions on demand via the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and exposes each one as a first-class NATS Agent Protocol v0.2.0-draft instance.
+A headless NATS agent host that spawns [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions on demand via the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and exposes each one as a first-class NATS Agent Protocol **v0.3** instance (verb-first subjects + `status` endpoint).
 
-Each spawned session registers as its own NATS agent under `agents.cc.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.cc.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text).
+Each spawned session registers as its own NATS agent under `agents.prompt.cc.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.cc.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
 
 In short: one process, many Claude Code sessions, all first-class NATS agents.
 
@@ -23,7 +23,7 @@ cd ../../examples/claude-code-headless
 bun install
 export ANTHROPIC_API_KEY=sk-...
 bun run start                                    # connects via $NATS_CONTEXT or NATS_URL
-# claude-code-headless: controller listening on agents.cc.<you>.exec
+# claude-code-headless: controller listening on agents.prompt.cc.<you>.exec
 # claude-code-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
 
 # 3. Spawn a session + prompt + stop, from another shell.
@@ -113,14 +113,16 @@ The out-of-the-box defaults are deliberately conservative for a public reference
 ## Subject layout
 
 ```
-agents.cc.<owner>.<name>                    ← controller prompt endpoint (help text)
-agents.cc.<owner>.<name>.spawn              ← POST JSON → session descriptor
-agents.cc.<owner>.<name>.stop               ← POST { session_id } → { ok: true }
-agents.cc.<owner>.<name>.list               ← (empty) → { sessions: [...] }
-agents.cc.<owner>.<name>.heartbeat          ← §8 heartbeat (30s)
+agents.prompt.cc.<owner>.<name>             ← controller prompt endpoint (help text)
+agents.status.cc.<owner>.<name>             ← controller status (v0.3 §-TBD; replies with heartbeat-shaped payload)
+agents.hb.cc.<owner>.<name>                 ← controller heartbeat (§8.1 v0.3, 30 s)
+agents.cc.<owner>.<name>.spawn              ← POST JSON → session descriptor (custom; non-verb-first)
+agents.cc.<owner>.<name>.stop               ← POST { session_id } → { ok: true }    (custom)
+agents.cc.<owner>.<name>.list               ← (empty) → { sessions: [...] }          (custom)
 
-agents.cc.<owner>.<session_id>              ← spawned session prompt (§5/§6)
-agents.cc.<owner>.<session_id>.heartbeat    ← §8 heartbeat (30s)
+agents.prompt.cc.<owner>.<session_id>       ← spawned session prompt (§5/§6, v0.3)
+agents.status.cc.<owner>.<session_id>       ← spawned session status (v0.3 §-TBD)
+agents.hb.cc.<owner>.<session_id>           ← spawned session heartbeat (§8.1 v0.3, 30 s)
 ```
 
 The `cc` token is shared with [`agents/claude-code/`](../../agents/claude-code), which speaks the inverse direction (Claude Code as MCP-driven NATS *client*). They co-exist because the controller name and per-session ids disambiguate the 4th subject token.
@@ -133,13 +135,13 @@ The `cc` token is shared with [`agents/claude-code/`](../../agents/claude-code),
 nats req agents.cc.$USER.exec.spawn \
   '{"cwd":"/tmp/cc-sandbox","model":"claude-sonnet-4-6","allowed_tools":["Read","Glob","Grep","Edit"],"permission_mode":"acceptEdits","max_lifetime_s":900}' \
   --timeout=15s
-# → { "session_id":"sess-a1b2c3d4", "subject":"agents.cc.$USER.sess-a1b2c3d4", ... }
+# → { "session_id":"sess-a1b2c3d4", "subject":"agents.prompt.cc.$USER.sess-a1b2c3d4", "status_subject":"agents.status.cc.$USER.sess-a1b2c3d4", ... }
 ```
 
 ### Prompt (protocol-standard — no custom format)
 
 ```bash
-nats req agents.cc.$USER.sess-a1b2c3d4 \
+nats req agents.prompt.cc.$USER.sess-a1b2c3d4 \
   'list the files here and summarise what you see' --replies=0 --timeout=120s
 # → {"type":"status","data":"ack"}
 # → {"type":"response","data":"There are three files: …"}

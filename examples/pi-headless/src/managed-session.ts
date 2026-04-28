@@ -106,7 +106,7 @@ export class ManagedSession {
       name: this.sessionId,
       session: this.sessionId,
       description: `pi-headless session ${this.sessionId} (${this.cwd})`,
-      version: "0.1.0",
+      version: "0.3.0",
       maxPayload: "1MB",
       attachmentsOk: true,
       heartbeatIntervalS: HEARTBEAT_INTERVAL_S,

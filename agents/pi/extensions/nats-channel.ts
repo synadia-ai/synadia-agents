@@ -56,7 +56,7 @@ const PROMPT_QUEUE_GROUP = "agents";
 // v0.3 §-TBD: the `status` endpoint shares the prompt's queue group so callers
 // load-balance to one responder per logical agent.
 const STATUS_QUEUE_GROUP = "agents";
-const SERVICE_VERSION = "0.5.0";
+const SERVICE_VERSION = "0.3.0";
 const PROTOCOL_VERSION = "0.3";
 
 // Spec §2, Appendix C: `pi` is both the canonical agent identifier and its

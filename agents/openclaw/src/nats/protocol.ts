@@ -20,7 +20,7 @@ export const SERVICE_NAME = "agents";
 export const PROMPT_QUEUE_GROUP = "agents";
 /** v0.3 §-TBD: the `status` endpoint shares the prompt's queue group. */
 export const STATUS_QUEUE_GROUP = "agents";
-export const SERVICE_VERSION = "0.5.0";
+export const SERVICE_VERSION = "0.3.0";
 export const PROTOCOL_VERSION = "0.3";
 
 /** Spec §2, Appendix C: canonical agent id is `openclaw`, subject abbreviation

@@ -1,7 +1,7 @@
 {
   "name": "@synadia-ai/nats-claude-code-headless",
-  "version": "0.1.0",
-  "description": "Headless NATS agent host that spawns, prompts, and stops Claude Code sessions as first-class NATS Agent Protocol (v0.2.0-draft) instances. Each session registers as agents.cc.<owner>.<session_id>; a small controller service adds spawn/stop/list custom endpoints.",
+  "version": "0.3.0",
+  "description": "Headless NATS agent host that spawns, prompts, and stops Claude Code sessions as first-class NATS Agent Protocol v0.3 instances. Each session registers as agents.prompt.cc.<owner>.<session_id>; a small controller service adds spawn/stop/list custom endpoints.",
   "keywords": [
     "nats",
     "agents",

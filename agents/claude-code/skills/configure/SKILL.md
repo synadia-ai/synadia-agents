@@ -70,8 +70,8 @@ Two separate steps - do NOT combine into one Bash call:
 
 ### `session <name>` - set session name override
 
-1. The session name is the fourth token in the subject
-   `agents.cc.<user>.<name>`. It defaults to the working directory
+1. The session name is the 5th token in the v0.3 verb-first subject
+   `agents.prompt.cc.<user>.<name>`. It defaults to the working directory
    basename. This command overrides it.
 2. Read existing `config.json` (or start fresh). Set `sessionName` field.
    Write back.

@@ -6,18 +6,18 @@ For an example of *building* a fresh agent from scratch using the TypeScript SDK
 
 ## Harness plugins
 
-| Path                | Type token | Underlying harness                          | Subject pattern                                        | `max_payload` | `attachments_ok` |
-| ------------------- | ---------- | ------------------------------------------- | ------------------------------------------------------ | ------------- | ---------------- |
-| `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.pi.<owner>.<session>`                      | 1 MB          | true             |
-| `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.oc.<owner>.<agentName>`                        | 1 MB          | true             |
-| `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.cc.<owner>.<name>`                          | 1 MB          | true             |
-| `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.hermes.<owner>.<name>`          | 1 MB (configurable) | true        |
+| Path                | Type token | Underlying harness                          | Prompt subject (v0.3 verb-first)                              | `max_payload` | `attachments_ok` |
+| ------------------- | ---------- | ------------------------------------------- | ------------------------------------------------------------- | ------------- | ---------------- |
+| `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.prompt.pi.<owner>.<session>`                      | 1 MB          | true             |
+| `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.prompt.oc.<owner>.<agentName>`                        | 1 MB          | true             |
+| `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | 1 MB          | true             |
+| `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | 1 MB (configurable) | true        |
 
-Every agent also publishes `<subject>.heartbeat` every 30 s.
+Every agent also publishes heartbeats on `agents.hb.<type-token>.<owner>.<session>` every 30 s and answers `agents.status.<type-token>.<owner>.<session>` requests with the same payload (v0.3 §-TBD).
 
 ## How it works
 
-Every agent registers a NATS micro service called `agents` with an endpoint named `prompt`. The protocol only fixes the endpoint name - the subject is the agent's to choose. For the agents in this repo we've picked `agents.<type-token>.<owner>.<session>`. The endpoint accepts either plain UTF-8 text or a JSON envelope (optionally with inline base64 attachments), then streams typed JSON chunks back on the reply subject - `status` for keep-alive, `response` for content deltas, optional `query` for mid-stream questions - and ends the stream with an empty body. Each agent also publishes a heartbeat on `<subject>.heartbeat` and advertises its `max_payload` and `attachments_ok` in the endpoint metadata. That's the entire contract; everything else below is per-agent variation.
+Every agent registers a NATS micro service called `agents` with an endpoint named `prompt`. The protocol only fixes the endpoint name - the subject is the agent's to choose. For the agents in this repo we've picked the v0.3 verb-first pattern `agents.prompt.<type-token>.<owner>.<session>`. The endpoint accepts either plain UTF-8 text or a JSON envelope (optionally with inline base64 attachments), then streams typed JSON chunks back on the reply subject - `status` for keep-alive, `response` for content deltas, optional `query` for mid-stream questions - and ends the stream with an empty body. Each agent also publishes heartbeats on `agents.hb.<type-token>.<owner>.<session>` (the verb is the abbreviation `hb` because heartbeats dominate per-account subject volume) and answers `agents.status.<type-token>.<owner>.<session>` requests with a freshly-built heartbeat-shaped payload. The prompt endpoint advertises its `max_payload` and `attachments_ok` in the endpoint metadata. That's the entire contract; everything else below is per-agent variation.
 
 ## Per-agent notes
 
@@ -46,8 +46,9 @@ When an agent accepts attachments, it decodes them to disk and prepends the abso
 <summary>Conformance checklist</summary>
 
 1. Register as a NATS micro service named `agents` with metadata `{agent, owner, session, protocol_version}`.
-2. Expose an endpoint named `prompt` that advertises `max_payload` and `attachments_ok`. The subject is your choice; the agents in this repo serve it at `agents.<type-token>.<owner>.<session>`.
-3. Publish heartbeats on `<subject>.heartbeat`.
+2. Expose an endpoint named `prompt` that advertises `max_payload` and `attachments_ok`. The subject is your choice; the agents in this repo serve it at `agents.prompt.<type-token>.<owner>.<session>` (v0.3 verb-first).
+3. Publish heartbeats on `agents.hb.<type-token>.<owner>.<session>` (verb `hb`, §8.1 v0.3).
+3b. Optionally expose a `status` endpoint on `agents.status.<type-token>.<owner>.<session>` that returns the same payload shape as a heartbeat — useful for callers that want one-shot liveness without subscribing.
 4. Accept plain-text OR JSON envelopes. Decode inline attachments to a per-session staging dir and prepend their absolute paths to the prompt.
 5. Stream typed chunks on the reply subject: `status` (ack / keep-alive), `response` (content deltas), `query` (mid-stream questions, when supported).
 6. Terminate with an empty body and no headers.
