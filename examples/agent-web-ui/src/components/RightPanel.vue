@@ -161,8 +161,11 @@ function focusSpawnedSession(d: PiExecSpawnDescriptor | CcExecSpawnDescriptor): 
   letter-spacing: 0.08em;
 }
 .agent-tag.ctrl {
-  color: var(--memory-preference);
-  background: rgba(167, 139, 250, 0.12);
+  /* Matches the per-bucket palette used by AgentCard's tag pill — both
+     pi-headless and claude-code-headless controllers share the violet
+     "headless" hue. */
+  color: var(--bucket-headless);
+  background: color-mix(in srgb, var(--bucket-headless) 14%, transparent);
 }
 .head-name {
   color: var(--text-primary);

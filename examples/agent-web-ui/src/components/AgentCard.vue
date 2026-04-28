@@ -26,6 +26,27 @@ const isController = computed(
     bucket.value === BUCKETS.CC_EXEC_CONTROL,
 );
 
+// Per-bucket agent-tag color, mirroring the old nats-agent-dashboard's
+// AgentBadge palette. Only the agent-tag pill tints — no other shape /
+// layout changes per family.
+const tagColor = computed<string>(() => {
+  switch (bucket.value) {
+    case BUCKETS.PI_AGENT:
+    case BUCKETS.PI_EXEC_SESSION:
+      return "var(--bucket-pi)";
+    case BUCKETS.CC_AGENT:
+    case BUCKETS.CC_EXEC_SESSION:
+      return "var(--bucket-cc)";
+    case BUCKETS.PI_EXEC_CONTROL:
+    case BUCKETS.CC_EXEC_CONTROL:
+      return "var(--bucket-headless)";
+    case BUCKETS.OPENCLAW:
+      return "var(--bucket-openclaw)";
+    default:
+      return "var(--bucket-other)";
+  }
+});
+
 const piSummary = computed(() =>
   isPiSession.value ? piexecState.summaries.get(props.agent.name) : undefined,
 );
@@ -139,7 +160,7 @@ async function onStop(): Promise<void> {
 </script>
 
 <template>
-  <div class="card-wrap">
+  <div class="card-wrap" :style="{ '--tag-color': tagColor }">
     <button
       class="card"
       :class="{
@@ -320,14 +341,14 @@ async function onStop(): Promise<void> {
   font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--accent-primary);
-  background: var(--accent-glow);
+  /* `--tag-color` is set per-card on `.card-wrap` (see script). The
+     fallback keeps the pill legible if a future bucket forgets to map
+     a colour. `color-mix()` produces a soft tinted background that
+     reads cleanly on the dark theme. */
+  color: var(--tag-color, var(--accent-primary));
+  background: color-mix(in srgb, var(--tag-color, var(--accent-primary)) 14%, transparent);
   padding: 1px 6px;
   border-radius: var(--border-radius-sm);
-}
-.is-controller .agent-tag {
-  color: var(--memory-preference);
-  background: rgba(167, 139, 250, 0.12);
 }
 
 .card-title {

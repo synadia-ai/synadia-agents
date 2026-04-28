@@ -36,6 +36,16 @@
   --memory-preference: #a78bfa;
   --memory-note: #67e8f9;
 
+  /* Bucket / agent-family palette — per-runtime hues used by the agent-tag
+     pill on each card. Mirrors the old nats-agent-dashboard's AgentBadge
+     scheme so the visual language stays consistent. Aliases of the memory
+     palette where a hue already existed; one new red for openclaw. */
+  --bucket-pi: var(--memory-fact);          /* indigo */
+  --bucket-cc: var(--memory-note);          /* cyan */
+  --bucket-headless: var(--memory-preference); /* violet — controllers */
+  --bucket-openclaw: #ef4444;               /* red */
+  --bucket-other: var(--text-muted);        /* muted gray */
+
   /* Typography */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
                system-ui, sans-serif;

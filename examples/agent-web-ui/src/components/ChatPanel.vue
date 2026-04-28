@@ -12,6 +12,7 @@ import {
   type Message,
 } from "../stores/chat.ts";
 import { bumpCcSessionCost } from "../stores/ccexec.ts";
+import { bucketOf, BUCKETS } from "../stores/agents.ts";
 import { randomUUID } from "../uuid.ts";
 import type { DiscoveredAgentDTO } from "../wire.ts";
 
@@ -23,6 +24,26 @@ const error = ref<string | null>(null);
 const isCcSession = computed(
   () => props.agent.metadata?.["spawner"] === "claude-code-headless",
 );
+
+// Per-bucket color for the chat-header pill — keeps the visual language
+// consistent with the per-card AgentCard tag.
+const tagColor = computed<string>(() => {
+  switch (bucketOf(props.agent)) {
+    case BUCKETS.PI_AGENT:
+    case BUCKETS.PI_EXEC_SESSION:
+      return "var(--bucket-pi)";
+    case BUCKETS.CC_AGENT:
+    case BUCKETS.CC_EXEC_SESSION:
+      return "var(--bucket-cc)";
+    case BUCKETS.PI_EXEC_CONTROL:
+    case BUCKETS.CC_EXEC_CONTROL:
+      return "var(--bucket-headless)";
+    case BUCKETS.OPENCLAW:
+      return "var(--bucket-openclaw)";
+    default:
+      return "var(--bucket-other)";
+  }
+});
 
 const currentMessages = computed(() => messagesFor(props.agent.instanceId));
 
@@ -172,7 +193,7 @@ function onStop(): void {
 </script>
 
 <template>
-  <section class="chat-pane">
+  <section class="chat-pane" :style="{ '--tag-color': tagColor }">
     <header class="chat-head">
       <div class="chat-title">
         <span class="chat-agent mono">{{ agent.agent }}</span>
@@ -218,8 +239,10 @@ function onStop(): void {
 }
 .chat-agent {
   font-size: var(--text-xs);
-  color: var(--accent-primary);
-  background: var(--accent-glow);
+  /* `--tag-color` is set on the .chat-pane wrapper (see template). Keeps
+     the chat-header pill in lockstep with the AgentCard pill in the grid. */
+  color: var(--tag-color, var(--accent-primary));
+  background: color-mix(in srgb, var(--tag-color, var(--accent-primary)) 14%, transparent);
   padding: 1px 6px;
   border-radius: var(--border-radius-sm);
   text-transform: uppercase;
