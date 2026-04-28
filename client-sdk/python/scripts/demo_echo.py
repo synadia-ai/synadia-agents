@@ -6,11 +6,12 @@ Usage:
 Prereq: `nats-server` running locally (default `nats://127.0.0.1:4222`).
 Override with NATS_URL in the environment.
 
-Once running, try from another shell:
+Once running, try from another shell (subjects are verb-first per v0.3):
 
     nats micro list
-    nats req agents.demo.$USER.echo "hello"
-    nats sub "agents.demo.$USER.echo.heartbeat"
+    nats req  agents.prompt.demo.$USER.echo "hello"
+    nats req  agents.status.demo.$USER.echo ""
+    nats sub  "agents.heartbeat.demo.$USER.echo"
 """
 
 from __future__ import annotations
@@ -51,8 +52,9 @@ async def main() -> None:
     agent.on_prompt(echo_handler)
     await agent.start()
 
-    print(f"Echo agent ready on {agent.subject.inbox}")
-    print(f"Try: nats req {agent.subject.inbox} 'hello'")
+    print(f"Echo agent ready on {agent.subject.prompt}")
+    print(f"Try: nats req {agent.subject.prompt} 'hello'")
+    print(f"     nats req {agent.subject.status} ''")
     print("Ctrl-C to stop.")
 
     stop = asyncio.Event()
