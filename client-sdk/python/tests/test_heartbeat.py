@@ -94,8 +94,8 @@ def test_encoded_form_carries_no_session_key() -> None:
 
 
 async def test_tracker_keys_on_instance_id_not_subject(nc: NATSClient) -> None:
-    """Two instances of the same (agent, owner, name) on the same subject
-    MUST stay distinguishable in tracker state — the key is
+    """Two instances of the same (agent, owner, session_name) on the same
+    subject MUST stay distinguishable in tracker state — the key is
     ``payload.instance_id``, not the subject."""
     tracker = HeartbeatTracker(nc)
     await tracker.start()

@@ -251,8 +251,8 @@ class HeartbeatTracker:
             log.warning("ignoring malformed heartbeat on %s: %s", subject, exc)
             return
         # §8.3: track by instance_id, NOT by subject — two instances of the
-        # same (agent, owner, name) tuple share a heartbeat subject and must
-        # remain distinguishable in tracker state.
+        # same (agent, owner, session_name) tuple share a heartbeat subject
+        # and must remain distinguishable in tracker state.
         self._entries[payload.instance_id] = _Entry(
             payload=payload,
             last_seen=datetime.now(UTC),
