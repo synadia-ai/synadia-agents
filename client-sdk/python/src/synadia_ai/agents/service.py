@@ -320,18 +320,33 @@ class AgentService:
         Request body is ignored — there is no request schema yet; future
         PRs will extend the response with richer metadata and may add a
         request shape at that time. ``self._service`` is set in
-        :meth:`start` before the endpoint is registered, so we know the
-        instance id is non-None here.
+        :meth:`start` before the endpoint is registered, so the
+        ``RuntimeError`` guard below should be unreachable in normal
+        operation; it survives ``python -O`` (which strips ``assert``)
+        and gives a clearer signal than ``AttributeError`` from the
+        following ``.id`` access if invariants ever drift.
         """
-        assert self._service is not None  # endpoint only registered after start()
-        payload = build_heartbeat_payload(
-            self.subject,
-            self._heartbeat_interval_s,
-            self._service.id,
-            self._session,
-        )
-        data = payload.model_dump_json(exclude_none=True).encode("utf-8")
-        await request.respond(data)
+        if self._service is None:  # pragma: no cover — defensive
+            raise RuntimeError("status handler invoked before start()")
+        try:
+            payload = build_heartbeat_payload(
+                self.subject,
+                self._heartbeat_interval_s,
+                self._service.id,
+                self._session,
+            )
+            data = payload.model_dump_json(exclude_none=True).encode("utf-8")
+            await request.respond(data)
+        except Exception as exc:
+            # A respond() failure (broker dropped, request torn down, encode
+            # error in a future richer payload) MUST surface as a §9.1 error
+            # to the caller, not silently propagate into nats-py's framework
+            # — mirroring _on_prompt_request's explicit error path.
+            log.exception("status handler failed on %s", request.subject)
+            with contextlib.suppress(Exception):
+                await request.respond_error(
+                    "500", _sanitize_error_desc(f"status handler error: {exc}")
+                )
 
     async def _on_prompt_request(self, request: Request) -> None:
         keepalive_task: asyncio.Task[None] | None = None
@@ -345,7 +360,8 @@ class AgentService:
 
             stream = PromptStream(request, self._nc)
             handler = self._prompt_handler
-            assert handler is not None  # enforced in start()
+            if handler is None:  # pragma: no cover — start() rejects this path
+                raise RuntimeError("prompt handler invoked before on_prompt() registered one")
 
             if self._keepalive_interval_s is not None:
                 keepalive_task = asyncio.create_task(
