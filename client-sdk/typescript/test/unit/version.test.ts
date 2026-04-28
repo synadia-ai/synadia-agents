@@ -32,20 +32,21 @@ describe("parseProtocolVersion", () => {
 
 describe("compareProtocolVersion", () => {
   it("returns 'compatible' on exact MAJOR.MINOR match", () => {
-    expect(compareProtocolVersion({ major: 0, minor: 2 })).toBe("compatible");
+    expect(compareProtocolVersion({ major: 0, minor: 3 })).toBe("compatible");
   });
 
   it("returns 'minor-drift' when MAJOR matches but MINOR differs", () => {
     expect(compareProtocolVersion({ major: 0, minor: 1 })).toBe("minor-drift");
-    expect(compareProtocolVersion({ major: 0, minor: 3 })).toBe("minor-drift");
+    expect(compareProtocolVersion({ major: 0, minor: 2 })).toBe("minor-drift");
+    expect(compareProtocolVersion({ major: 0, minor: 4 })).toBe("minor-drift");
   });
 
   it("returns 'incompatible' on different MAJOR", () => {
-    expect(compareProtocolVersion({ major: 1, minor: 2 })).toBe("incompatible");
+    expect(compareProtocolVersion({ major: 1, minor: 3 })).toBe("incompatible");
     expect(compareProtocolVersion({ major: 2, minor: 0 })).toBe("incompatible");
   });
 
   it("exposes SDK_PROTOCOL_VERSION matching the protocol this SDK speaks", () => {
-    expect(SDK_PROTOCOL_VERSION).toEqual({ major: 0, minor: 2 });
+    expect(SDK_PROTOCOL_VERSION).toEqual({ major: 0, minor: 3 });
   });
 });

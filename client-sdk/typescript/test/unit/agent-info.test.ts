@@ -11,12 +11,12 @@ function validInfo(overrides: Partial<RawServiceInfo> = {}): RawServiceInfo {
       agent: "claude-code",
       owner: "alice",
       session: "sess-1",
-      protocol_version: "0.2",
+      protocol_version: "0.3",
     },
     endpoints: [
       {
         name: "prompt",
-        subject: "agents.cc.alice.sess-1",
+        subject: "agents.prompt.cc.alice.sess-1",
         queue_group: "agents",
         metadata: { max_payload: "1MB", attachments_ok: "true" },
       },
@@ -33,8 +33,8 @@ describe("buildAgentInfo", () => {
     expect(a!.agent).toBe("claude-code");
     expect(a!.owner).toBe("alice");
     expect(a!.session).toBe("sess-1");
-    expect(a!.name).toBe("sess-1"); // 4th token of the prompt subject
-    expect(a!.protocolVersion).toBe("0.2");
+    expect(a!.name).toBe("sess-1"); // 5th token of the v0.3 prompt subject
+    expect(a!.protocolVersion).toBe("0.3");
     expect(a!.description).toBe("test agent");
     expect(a!.version).toBe("1.0.0");
     expect(a!.promptEndpoint.name).toBe("prompt");
@@ -53,10 +53,10 @@ describe("buildAgentInfo", () => {
 
   it("returns null when required metadata is missing", () => {
     expect(
-      buildAgentInfo(validInfo({ metadata: { owner: "alice", protocol_version: "0.2" } })),
+      buildAgentInfo(validInfo({ metadata: { owner: "alice", protocol_version: "0.3" } })),
     ).toBeNull();
     expect(
-      buildAgentInfo(validInfo({ metadata: { agent: "claude-code", protocol_version: "0.2" } })),
+      buildAgentInfo(validInfo({ metadata: { agent: "claude-code", protocol_version: "0.3" } })),
     ).toBeNull();
     expect(
       buildAgentInfo(validInfo({ metadata: { agent: "claude-code", owner: "alice" } })),
@@ -67,7 +67,7 @@ describe("buildAgentInfo", () => {
     expect(
       buildAgentInfo(
         validInfo({
-          endpoints: [{ name: "other", subject: "agents.cc.alice.sess-1.other" }],
+          endpoints: [{ name: "other", subject: "agents.prompt.cc.alice.sess-1.other" }],
         }),
       ),
     ).toBeNull();
@@ -76,8 +76,10 @@ describe("buildAgentInfo", () => {
   it("session is undefined when metadata.session is absent or empty", () => {
     const a = buildAgentInfo(
       validInfo({
-        metadata: { agent: "openclaw", owner: "rene", protocol_version: "0.2" },
-        endpoints: [{ name: "prompt", subject: "agents.oc.rene.default", metadata: {} }],
+        metadata: { agent: "openclaw", owner: "rene", protocol_version: "0.3" },
+        endpoints: [
+          { name: "prompt", subject: "agents.prompt.oc.rene.default", metadata: {} },
+        ],
       }),
     );
     expect(a).not.toBeNull();
@@ -90,7 +92,7 @@ describe("buildAgentInfo", () => {
         metadata: {
           agent: "claude-code",
           owner: "alice",
-          protocol_version: "0.2",
+          protocol_version: "0.3",
           type: "agent",
           custom_field: "xyz",
         },
