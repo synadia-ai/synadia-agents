@@ -1,14 +1,13 @@
 // DSPy-style NATS agent: ax-llm ReAct loop with sandboxed fs tools, exposed as
-// a NATS Agent Protocol (0.2.0-draft) service. Streams ReAct status lines and
-// final-answer deltas as protocol-typed chunks.
+// a NATS Agent Protocol v0.3 service via the SDK's `AgentService` helper.
+// Streams ReAct status lines and final-answer deltas as protocol-typed chunks.
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { ai, ax } from "@ax-llm/ax";
-import type { ServiceMsg } from "@nats-io/services";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { ReferenceAgent } from "@synadia-ai/agents/testing";
+import { AgentService } from "@synadia-ai/agents";
 import { makeFsTools } from "./tools.js";
 
 const NATS_URL = process.env["NATS_URL"] ?? "nats://127.0.0.1:4222";
@@ -92,9 +91,13 @@ const llm = ai({
 
 const nc = await natsConnect({ servers: NATS_URL });
 
-const encoder = new TextEncoder();
-
-const agent = new ReferenceAgent({
+// AgentService takes care of:
+//   - registering as the `agents` micro service with v0.3 metadata
+//   - the prompt + status endpoints (verb-first subjects per §2 v0.3)
+//   - per-request keep-alive ack chunks (§6.4)
+//   - the §6.5 stream terminator on every completion path
+//   - 400 envelope-decode errors / 500 handler errors (§9.1)
+const service = new AgentService({
   nc,
   agent: "dspy",
   owner: process.env["USER"] ?? "anon",
@@ -104,52 +107,45 @@ const agent = new ReferenceAgent({
   maxPayload: "1MB",
   attachmentsOk: false,
   heartbeatIntervalS: 10,
-  promptHandler: async (msg: ServiceMsg) => {
-    const raw = new TextDecoder().decode(msg.data);
-    let question = raw;
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && "prompt" in parsed) {
-        question = String((parsed as { prompt: unknown }).prompt ?? raw);
-      }
-    } catch {
-      // plain-text body — leave as-is
-    }
-
-    const chunk = (type: "status" | "response", data: string): void => {
-      msg.respond(encoder.encode(JSON.stringify({ type, data })));
-    };
-
-    chunk("status", "ack");
-
-    const tools = makeFsTools(SANDBOX, (line) => chunk("status", line));
-
-    const program = ax(
-      'question:string "user request — may require reading, listing, or writing files in the sandbox" -> answer:string "final answer to the user"',
-      { functions: tools },
-    );
-
-    try {
-      const result = await program.forward(llm, { question });
-      if (result.answer) chunk("response", String(result.answer));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      chunk("response", `\n[agent error] ${message}`);
-    } finally {
-      msg.respond(""); // spec-mandated empty-body no-headers terminator
-    }
-  },
+  // Send our own per-tool status lines mid-handler — disable AgentService's
+  // keep-alive ack so the two streams don't interleave.
+  keepaliveIntervalS: null,
 });
 
-await agent.start();
-console.log(`dspy agent listening on ${agent.promptSubject}`);
+service.onPrompt(async (envelope, response) => {
+  // The §5.3 plain-text shorthand and §5.1 JSON envelope both surface as
+  // `envelope.prompt` thanks to `AgentService`'s decoder.
+  const question = envelope.prompt;
+
+  await response.send({ type: "status", status: "ack" });
+
+  const tools = makeFsTools(SANDBOX, (line) => {
+    void response.send({ type: "status", status: line });
+  });
+
+  const program = ax(
+    'question:string "user request — may require reading, listing, or writing files in the sandbox" -> answer:string "final answer to the user"',
+    { functions: tools },
+  );
+
+  try {
+    const result = await program.forward(llm, { question });
+    if (result.answer) await response.send(String(result.answer));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await response.send(`\n[agent error] ${message}`);
+  }
+});
+
+await service.start();
+console.log(`dspy agent listening on ${service.subject.prompt}`);
 console.log(`model:   ${MODEL}`);
 console.log(`sandbox: ${SANDBOX}`);
 console.log("press Ctrl+C to stop");
 
 const shutdown = async (): Promise<void> => {
   console.log("\nshutting down…");
-  await agent.stop();
+  await service.stop();
   await nc.close();
   process.exit(0);
 };

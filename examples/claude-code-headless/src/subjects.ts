@@ -1,44 +1,63 @@
 // Subject builders + session-id sanitizer for claude-code-headless.
 //
-// The controller lives at `agents.cc.<owner>.<name>` with three extra
-// endpoints on `.spawn`, `.stop`, `.list`. Each spawned session lives at
-// its own subject `agents.cc.<owner>.<session_id>` (registered by a
-// `ReferenceAgent` from the SDK's testing subpath), which means callers
-// can discover and prompt sessions using nothing but the standard
-// protocol.
+// Wire layout (v0.3 — verb-first per spec §2):
+//   agents.prompt.cc.<owner>.<name>     → controller's prompt endpoint
+//   agents.hb.cc.<owner>.<name>         → controller heartbeat
+//   agents.status.cc.<owner>.<name>     → controller status (v0.3 §-TBD)
+//   agents.prompt.cc.<owner>.<session>  → spawned session's prompt endpoint
+//   agents.hb.cc.<owner>.<session>      → spawned session heartbeat
+//   agents.status.cc.<owner>.<session>  → spawned session status
+//
+// Custom endpoints stay on a non-verb-first form so they're clearly
+// application extensions (not protocol endpoints):
+//   agents.cc.<owner>.<name>.spawn      → POST JSON → session descriptor
+//   agents.cc.<owner>.<name>.stop       → POST {session_id} → ok
+//   agents.cc.<owner>.<name>.list       → (empty) → {sessions:[...]}
 //
 // The `cc` token is shared with `agents/claude-code/` (Claude Code as
 // MCP-driven NATS client). They co-exist because the controller name
-// and per-session ids disambiguate the 4th subject token.
+// and per-session ids disambiguate the trailing subject tokens.
 
 export const AGENT_TOKEN = "cc";
 
 export function controllerPromptSubject(owner: string, name: string): string {
-  return `agents.${AGENT_TOKEN}.${owner}.${name}`;
-}
-
-export function controllerSpawnSubject(owner: string, name: string): string {
-  return `${controllerPromptSubject(owner, name)}.spawn`;
-}
-
-export function controllerStopSubject(owner: string, name: string): string {
-  return `${controllerPromptSubject(owner, name)}.stop`;
-}
-
-export function controllerListSubject(owner: string, name: string): string {
-  return `${controllerPromptSubject(owner, name)}.list`;
+  return `agents.prompt.${AGENT_TOKEN}.${owner}.${name}`;
 }
 
 export function controllerHeartbeatSubject(owner: string, name: string): string {
-  return `${controllerPromptSubject(owner, name)}.heartbeat`;
+  return `agents.hb.${AGENT_TOKEN}.${owner}.${name}`;
+}
+
+export function controllerStatusSubject(owner: string, name: string): string {
+  return `agents.status.${AGENT_TOKEN}.${owner}.${name}`;
+}
+
+/** Custom endpoints — application-specific, NOT part of the v0.3 verb-first scheme. */
+const customSubjectRoot = (owner: string, name: string): string =>
+  `agents.${AGENT_TOKEN}.${owner}.${name}`;
+
+export function controllerSpawnSubject(owner: string, name: string): string {
+  return `${customSubjectRoot(owner, name)}.spawn`;
+}
+
+export function controllerStopSubject(owner: string, name: string): string {
+  return `${customSubjectRoot(owner, name)}.stop`;
+}
+
+export function controllerListSubject(owner: string, name: string): string {
+  return `${customSubjectRoot(owner, name)}.list`;
 }
 
 export function sessionPromptSubject(owner: string, sessionId: string): string {
-  return `agents.${AGENT_TOKEN}.${owner}.${sessionId}`;
+  return `agents.prompt.${AGENT_TOKEN}.${owner}.${sessionId}`;
 }
 
 export function sessionHeartbeatSubject(owner: string, sessionId: string): string {
-  return `${sessionPromptSubject(owner, sessionId)}.heartbeat`;
+  return `agents.hb.${AGENT_TOKEN}.${owner}.${sessionId}`;
+}
+
+export function sessionStatusSubject(owner: string, sessionId: string): string {
+  return `agents.status.${AGENT_TOKEN}.${owner}.${sessionId}`;
 }
 
 // Tokens MUST follow §2.2: [a-z0-9_-], not starting with $, 1..63 chars.
