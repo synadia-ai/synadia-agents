@@ -4,7 +4,7 @@ One home for everything built on the **NATS Agent Protocol** - the SDKs that spe
 
 Every AI agent in this repo (Claude Code, OpenClaw, PI, DSPy-ReAct, …) registers as a NATS micro service named `agents`. Callers discover, prompt, and stream from it using any language's SDK - same wire format everywhere.
 
-The TypeScript SDK, the OpenClaw and PI channel plugins, and two runnable examples ship to npm under the **`@synadia-ai/*`** scope — see each package's `package.json` for its published identity.
+The TypeScript SDK, the OpenClaw and PI channel plugins, and three runnable examples ship to npm under the **`@synadia-ai/*`** scope — see each package's `package.json` for its published identity.
 
 ## Repository layout
 
@@ -23,9 +23,10 @@ synadia-agents/
 │   └── claude-code/       ← Claude Code MCP plugin
 └── examples/              ← apps built with the SDK (callers and agents)
     ├── README.md
-    ├── agent-web-ui/      ← Vue 3 + Bun browser client
-    ├── dspy/              ← standalone agent built from scratch with the SDK (ax-llm ReAct)
-    └── pi-headless/       ← spawn/stop many PI sessions, each as its own NATS agent
+    ├── agent-web-ui/             ← Vue 3 + Bun browser client
+    ├── claude-code-headless/     ← spawn/stop many Claude Code sessions, each as its own NATS agent
+    ├── dspy/                     ← standalone agent built from scratch with the SDK (ax-llm ReAct)
+    └── pi-headless/              ← spawn/stop many PI sessions, each as its own NATS agent
 ```
 
 Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`, `agents/README.md`, `examples/README.md`) describe what lives at each level.
