@@ -13,7 +13,7 @@ On session start the extension:
 1. Connects to NATS using a configured context (or `demo.nats.io` by default).
 2. Registers a NATS micro service named `agents` with spec metadata (`agent`, `owner`, `session`, `protocol_version`).
 3. Adds a `prompt` endpoint at `agents.prompt.pi.<owner>.<session>` (verb-first §2 v0.3) advertising `max_payload: 1MB` and `attachments_ok: true`.
-4. Adds a `status` endpoint at `agents.status.pi.<owner>.<session>` (v0.3 §-TBD) that replies with the same payload shape as a heartbeat.
+4. Adds a `status` endpoint at `agents.status.pi.<owner>.<session>` (§8.7 (v0.3)) that replies with the same payload shape as a heartbeat.
 5. Begins publishing heartbeats on `agents.hb.pi.<owner>.<session>` (verb is the abbreviation `hb`, §8.1 v0.3) every 30 s.
 5. On each inbound prompt: decodes any attached files to `~/.pi/agent/attachments/<session>/<uuid>/<filename>`, prepends their absolute paths to the prompt text, emits a `status: ack` chunk, injects the augmented prompt into PI via `pi.sendUserMessage()`, streams `text_delta` events back as typed `{type:"response",data}` chunks, and closes with the spec-mandated empty-body no-headers terminator.
 6. Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Staging failures (disk full, permission denied) return `500`.
@@ -80,7 +80,7 @@ The spec reserves the subject structure for protocol use; there is no `org` segm
 ```
 agents.prompt.pi.<owner>.<session>      # prompt endpoint (spec §2, §5 — v0.3 verb-first)
 agents.hb.pi.<owner>.<session>          # liveness beacon (spec §8.1 — verb `hb`)
-agents.status.pi.<owner>.<session>      # status request/response (v0.3 §-TBD)
+agents.status.pi.<owner>.<session>      # status request/response (§8.7 (v0.3))
 ```
 
 - `pi` is both `metadata.agent` and its subject abbreviation (Appendix C).

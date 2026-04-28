@@ -138,7 +138,7 @@ export async function startNatsGateway(
     },
   });
 
-  // 4. v0.3 §-TBD status request/response endpoint. Replies with the same
+  // 4. §8.7 (v0.3) status request/response endpoint. Replies with the same
   //    JSON payload shape as a heartbeat (§8.3), freshly built per request.
   service.addEndpoint("status", {
     subject: stSubject,

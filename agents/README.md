@@ -13,7 +13,7 @@ For an example of *building* a fresh agent from scratch using the TypeScript SDK
 | `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | 1 MB          | true             |
 | `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | 1 MB (configurable) | true        |
 
-Every agent also publishes heartbeats on `agents.hb.<type-token>.<owner>.<session>` every 30 s and answers `agents.status.<type-token>.<owner>.<session>` requests with the same payload (v0.3 §-TBD).
+Every agent also publishes heartbeats on `agents.hb.<type-token>.<owner>.<session>` every 30 s and answers `agents.status.<type-token>.<owner>.<session>` requests with the same payload (§8.7 (v0.3)).
 
 ## How it works
 

@@ -69,14 +69,14 @@ PI auth / model registry comes from `~/.pi/agent/auth.json` (the same location `
 
 ```
 agents.prompt.pi.<owner>.<name>             ← controller prompt endpoint (help text)
-agents.status.pi.<owner>.<name>             ← controller status (v0.3 §-TBD; replies with heartbeat-shaped payload)
+agents.status.pi.<owner>.<name>             ← controller status (§8.7 (v0.3); replies with heartbeat-shaped payload)
 agents.hb.pi.<owner>.<name>                 ← controller heartbeat (§8.1 v0.3, 30 s)
 agents.pi.<owner>.<name>.spawn              ← POST JSON → session descriptor (custom; non-verb-first)
 agents.pi.<owner>.<name>.stop               ← POST { session_id } → { ok: true }    (custom)
 agents.pi.<owner>.<name>.list               ← (empty) → { sessions: [...] }          (custom)
 
 agents.prompt.pi.<owner>.<session_id>       ← spawned session prompt (§5/§6, v0.3)
-agents.status.pi.<owner>.<session_id>       ← spawned session status (v0.3 §-TBD)
+agents.status.pi.<owner>.<session_id>       ← spawned session status (§8.7 (v0.3))
 agents.hb.pi.<owner>.<session_id>           ← spawned session heartbeat (§8.1 v0.3, 30 s)
 ```
 

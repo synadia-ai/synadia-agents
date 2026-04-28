@@ -5,7 +5,7 @@
 //
 //   - `prompt`  (§5/§6-compliant)  — returns a help-text response, so the
 //                                    controller is usable with `nats req`.
-//   - `status`  (v0.3 §-TBD)       — replies with a heartbeat-shaped payload.
+//   - `status`  (§8.7 (v0.3))       — replies with a heartbeat-shaped payload.
 //   - `spawn`   (request/reply)    — creates a new PI session, registers it
 //                                    as its own NATS agent instance.
 //   - `stop`    (request/reply)    — disposes a session.
@@ -131,7 +131,7 @@ export class Controller {
       },
     });
 
-    // v0.3 §-TBD status endpoint — replies with a heartbeat-shaped payload.
+    // §8.7 (v0.3) status endpoint — replies with a heartbeat-shaped payload.
     this.service.addEndpoint(STATUS_ENDPOINT_NAME, {
       subject: this.statusSubject,
       queue: STATUS_QUEUE_GROUP,

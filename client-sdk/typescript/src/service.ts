@@ -8,7 +8,7 @@
 //     with queue group `"agents"` (§3.3) and metadata `{max_payload,
 //     attachments_ok}` (§2.1).
 //   - Adds a `status` endpoint at `agents.status.<agent>.<owner>.<name>`
-//     (v0.3 §-TBD) that replies with a freshly-built §8.3 heartbeat
+//     (§8.7 (v0.3)) that replies with a freshly-built §8.3 heartbeat
 //     payload. Same queue group as `prompt`.
 //   - Publishes heartbeats on `agents.hb.<agent>.<owner>.<name>` every
 //     `heartbeatIntervalS` seconds (§8.1, §8.2). First heartbeat is

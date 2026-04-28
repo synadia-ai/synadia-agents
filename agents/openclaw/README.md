@@ -13,7 +13,7 @@ When OpenClaw starts the channel:
 1. Connects to NATS using the configured URL and optional credentials.
 2. Registers a NATS micro service named `agents` with spec metadata (`agent`, `owner`, `session`, `protocol_version`).
 3. Adds a `prompt` endpoint at `agents.prompt.oc.<owner>.<agentName>` (verb-first §2 v0.3) advertising `max_payload: 1MB` and `attachments_ok: true`.
-4. Adds a `status` endpoint at `agents.status.oc.<owner>.<agentName>` (v0.3 §-TBD) that replies with the same payload shape as a heartbeat.
+4. Adds a `status` endpoint at `agents.status.oc.<owner>.<agentName>` (§8.7 (v0.3)) that replies with the same payload shape as a heartbeat.
 5. Publishes heartbeats on `agents.hb.oc.<owner>.<agentName>` (verb is the abbreviation `hb`, §8.1 v0.3) every 30 s.
 5. On each inbound prompt: decodes any attached files to `~/.openclaw/attachments/<agentName>/<uuid>/<filename>`, prepends their absolute paths to the prompt text, emits a `status: ack` chunk, dispatches the augmented prompt into OpenClaw's direct-DM pipeline, and streams each delivered block back as a typed `{type:"response",data}` chunk, terminating with the spec-mandated empty-body no-headers terminator.
 6. Agent-initiated messages (the old `sendText` outbound path) still publish to `agents.oc.<owner>.<agentName>.outbound` - an OpenClaw-specific extension, NOT part of the v0.3 verb-first scheme. Stays on the v0.2-style subject because it's an application extension, not a protocol endpoint.

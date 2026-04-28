@@ -63,7 +63,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `VERB_STATUS="status"`, `VERB_ATTACHMENTS="attachments"`,
   `RESERVED_VERBS`, `SUBJECT_ROOT="agents"`) and helpers
   (`parseAgentSubject(subject, {verb})`, `isHeartbeatSubject(subject)`).
-- **`status` request/response endpoint (v0.3 §-TBD).** Every
+- **`status` request/response endpoint (§8.7 (v0.3)).** Every
   `AgentService` (and `ReferenceAgent`) registers an additional NATS
   micro endpoint named `status` on `agents.status.{a}.{o}.{n}` (queue
   group `"agents"`). Replies with the same JSON payload shape as a

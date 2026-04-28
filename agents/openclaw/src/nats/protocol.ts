@@ -18,7 +18,7 @@ import type { DecodedAttachment, HeartbeatPayload, ParsedEnvelope } from "./type
 export const SERVICE_NAME = "agents";
 /** Spec §3.3: queue group that the `prompt` endpoint MUST register with. */
 export const PROMPT_QUEUE_GROUP = "agents";
-/** v0.3 §-TBD: the `status` endpoint shares the prompt's queue group. */
+/** §8.7 (v0.3): the `status` endpoint shares the prompt's queue group. */
 export const STATUS_QUEUE_GROUP = "agents";
 export const SERVICE_VERSION = "0.3.0";
 export const PROTOCOL_VERSION = "0.3";

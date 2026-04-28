@@ -10,7 +10,7 @@ An example of **building a new agent from scratch** using the `@synadia-ai/agent
 ```
 agents.prompt.dspy.<owner>.react       # prompt endpoint (v0.3 verb-first)
 agents.hb.dspy.<owner>.react           # 10 s heartbeat (§8.1 v0.3)
-agents.status.dspy.<owner>.react       # status request/response (v0.3 §-TBD)
+agents.status.dspy.<owner>.react       # status request/response (§8.7 (v0.3))
 ```
 
 ## Streamed chunks

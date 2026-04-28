@@ -8,7 +8,7 @@
 //      and lives at `agents.prompt.pi.{owner}.{name}` (verb-first §2 v0.3).
 //   3. Heartbeats arrive on `agents.hb.pi.{owner}.{name}` (§8.1 v0.3).
 //   4. The `status` endpoint at `agents.status.pi.{owner}.{name}` replies
-//      with a heartbeat-shaped payload (v0.3 §-TBD).
+//      with a heartbeat-shaped payload (§8.7 (v0.3)).
 //   5. Empty payload → 400 + terminator.
 //   6. Plain-text prompt yields a `status: ack` chunk, text chunks via the
 //      mock emitter, and an empty-body no-headers terminator.

@@ -46,6 +46,12 @@ describe("decodeEnvelope", () => {
     expect(() => decodeEnvelope(utf8(JSON.stringify({ attachments: [] })))).toThrow(ProtocolError);
   });
 
+  it("rejects envelopes with an empty-string prompt (§5.1 — must be non-empty)", () => {
+    // Matches the behaviour of the hand-rolled decoders in pi / claude-code /
+    // openclaw which all return 400 for empty prompt strings.
+    expect(() => decodeEnvelope(utf8(JSON.stringify({ prompt: "" })))).toThrow(ProtocolError);
+  });
+
   it("rejects non-array attachments", () => {
     expect(() =>
       decodeEnvelope(utf8(JSON.stringify({ prompt: "x", attachments: "not array" }))),

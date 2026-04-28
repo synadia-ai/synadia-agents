@@ -6,7 +6,7 @@
  * Self-contained MCP server that registers as an `agents` micro service,
  * exposes a `prompt` endpoint on agents.prompt.cc.<owner>.<name>, publishes
  * heartbeats on agents.hb.cc.<owner>.<name> (§8.1 v0.3 verb-first), and
- * answers status requests on agents.status.cc.<owner>.<name> (v0.3 §-TBD).
+ * answers status requests on agents.status.cc.<owner>.<name> (§8.7 (v0.3)).
  *
  * Bridges prompt requests into the Claude Code session via MCP <channel>
  * notifications. Claude responds via the `reply` tool; each response is
@@ -46,7 +46,7 @@ const AGENT_ID = 'claude-code'          // metadata.agent (canonical per Appendi
 const AGENT_SUBJECT_TOKEN = 'cc'        // 3rd subject token (abbreviation per Appendix C)
 const SERVICE_NAME = 'agents'           // §3.1 — the bare token, subject-safe as-is
 const PROMPT_QUEUE_GROUP = 'agents'     // §3.3 — queue group on the prompt endpoint
-const STATUS_QUEUE_GROUP = 'agents'     // v0.3 §-TBD — same as prompt
+const STATUS_QUEUE_GROUP = 'agents'     // §8.7 (v0.3) — same as prompt
 const MAX_PAYLOAD_STRING = '1MB'        // advertised in endpoint metadata
 const MAX_PAYLOAD_BYTES = 1024 * 1024   // enforcement value (base-1024, matches SDK)
 const ATTACHMENTS_OK = true
@@ -189,9 +189,12 @@ async function resolveSessionName(nc: NatsConnection, base: string, owner: strin
       if (si.metadata?.agent !== AGENT_ID) continue
       if (si.metadata?.owner !== owner) continue
       for (const ep of si.endpoints ?? []) {
-        // Instance name is the 4th subject token of the endpoint subject (§4.3).
+        // Instance name is the 5th subject token under v0.3 verb-first
+        // (`agents.{verb}.{agent}.{owner}.{name}`). Pre-v0.3 was the 4th
+        // token (`agents.{agent}.{owner}.{name}`) — but v0.3 is a hard
+        // wire cut, so we only look at the v0.3 shape.
         const tokens = ep.subject.split('.')
-        if (tokens.length >= 4) taken.add(tokens[3]!)
+        if (tokens.length >= 5) taken.add(tokens[4]!)
       }
     }
   } catch {
@@ -436,7 +439,7 @@ service.addEndpoint('prompt', {
 
 const instanceId = service.info().id
 
-// v0.3 §-TBD: status request/response endpoint replies with a freshly-built
+// §8.7 (v0.3): status request/response endpoint replies with a freshly-built
 // §8.3 heartbeat payload. Same shape as the periodic heartbeat, different
 // transport (request/response instead of pub/sub).
 function buildHeartbeatPayloadObject(): Record<string, unknown> {

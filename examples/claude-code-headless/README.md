@@ -114,14 +114,14 @@ The out-of-the-box defaults are deliberately conservative for a public reference
 
 ```
 agents.prompt.cc.<owner>.<name>             ← controller prompt endpoint (help text)
-agents.status.cc.<owner>.<name>             ← controller status (v0.3 §-TBD; replies with heartbeat-shaped payload)
+agents.status.cc.<owner>.<name>             ← controller status (§8.7 (v0.3); replies with heartbeat-shaped payload)
 agents.hb.cc.<owner>.<name>                 ← controller heartbeat (§8.1 v0.3, 30 s)
 agents.cc.<owner>.<name>.spawn              ← POST JSON → session descriptor (custom; non-verb-first)
 agents.cc.<owner>.<name>.stop               ← POST { session_id } → { ok: true }    (custom)
 agents.cc.<owner>.<name>.list               ← (empty) → { sessions: [...] }          (custom)
 
 agents.prompt.cc.<owner>.<session_id>       ← spawned session prompt (§5/§6, v0.3)
-agents.status.cc.<owner>.<session_id>       ← spawned session status (v0.3 §-TBD)
+agents.status.cc.<owner>.<session_id>       ← spawned session status (§8.7 (v0.3))
 agents.hb.cc.<owner>.<session_id>           ← spawned session heartbeat (§8.1 v0.3, 30 s)
 ```
 

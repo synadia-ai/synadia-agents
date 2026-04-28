@@ -53,7 +53,7 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 const SERVICE_NAME = "agents";
 // Spec §3.3: the `prompt` endpoint MUST be registered with this queue group.
 const PROMPT_QUEUE_GROUP = "agents";
-// v0.3 §-TBD: the `status` endpoint shares the prompt's queue group so callers
+// §8.7 (v0.3): the `status` endpoint shares the prompt's queue group so callers
 // load-balance to one responder per logical agent.
 const STATUS_QUEUE_GROUP = "agents";
 const SERVICE_VERSION = "0.3.0";
@@ -643,7 +643,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	/**
-	 * v0.3 §-TBD status endpoint handler. Replies with the same JSON payload
+	 * §8.7 (v0.3) status endpoint handler. Replies with the same JSON payload
 	 * shape as a heartbeat (§8.3), freshly built per request — future PRs can
 	 * extend the response with richer agent metadata in one place.
 	 */
@@ -822,7 +822,7 @@ export default function (pi: ExtensionAPI) {
 					attachments_ok: ATTACHMENTS_OK ? "true" : "false",
 				},
 			});
-			// v0.3 §-TBD: status request/response endpoint. Replies with a
+			// §8.7 (v0.3): status request/response endpoint. Replies with a
 			// freshly-built §8.3 heartbeat payload on every request — same shape
 			// as the periodic heartbeat, different transport (request/response
 			// instead of pub/sub).

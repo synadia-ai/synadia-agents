@@ -120,6 +120,12 @@ export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
   if (typeof prompt !== "string") {
     throw new ProtocolError("envelope missing required string `prompt` field");
   }
+  if (prompt.length === 0) {
+    // §5.1: an envelope's `prompt` field is required to be non-empty.
+    // Matches the behaviour of the hand-rolled decoders in
+    // `agents/{pi,claude-code,openclaw}/`, which all return 400 on empty.
+    throw new ProtocolError("envelope `prompt` must be a non-empty string");
+  }
 
   const rawAttachments = obj["attachments"];
   if (rawAttachments === undefined) {

@@ -3,7 +3,7 @@
 // Wire layout (v0.3 — verb-first per spec §2):
 //   agents.prompt.cc.<owner>.<name>     → controller's prompt endpoint
 //   agents.hb.cc.<owner>.<name>         → controller heartbeat
-//   agents.status.cc.<owner>.<name>     → controller status (v0.3 §-TBD)
+//   agents.status.cc.<owner>.<name>     → controller status (§8.7 (v0.3))
 //   agents.prompt.cc.<owner>.<session>  → spawned session's prompt endpoint
 //   agents.hb.cc.<owner>.<session>      → spawned session heartbeat
 //   agents.status.cc.<owner>.<session>  → spawned session status

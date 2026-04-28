@@ -8,7 +8,7 @@
 //     `agents.prompt.<agent>.<owner>.<name>` (§2 v0.3) with metadata
 //     `max_payload` / `attachments_ok` (§2.1).
 //   - Registers a `status` endpoint at `agents.status.<agent>.<owner>.<name>`
-//     (v0.3 §-TBD) that replies with a freshly-built §8.3 heartbeat payload.
+//     (§8.7 (v0.3)) that replies with a freshly-built §8.3 heartbeat payload.
 //   - Publishes heartbeats at `agents.hb.<agent>.<owner>.<name>` with all
 //     §8.3 fields including `instance_id` (from the service id).
 //   - Emits an empty-body no-headers terminator after each prompt
@@ -91,7 +91,7 @@ export class ReferenceAgent {
     return this.#subject.heartbeat;
   }
 
-  /** Status endpoint subject (v0.3 §-TBD). */
+  /** Status endpoint subject (§8.7 (v0.3)). */
   get statusSubject(): string {
     return this.#subject.status;
   }
@@ -150,7 +150,7 @@ export class ReferenceAgent {
       },
     });
 
-    // v0.3 §-TBD: status request/response endpoint. Replies with a freshly-
+    // §8.7 (v0.3): status request/response endpoint. Replies with a freshly-
     // built §8.3 heartbeat payload — same shape, different transport (request/
     // response instead of pub/sub). Same queue group as `prompt` so callers
     // load-balance to one responder per logical agent.

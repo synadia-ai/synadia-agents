@@ -109,7 +109,7 @@ export class AgentSubject {
     return `${SUBJECT_ROOT}.${VERB_HEARTBEAT}.${this.agent}.${this.owner}.${this.name}`;
   }
 
-  /** The agent's status request/response subject — `agents.status.{agent}.{owner}.{name}` (v0.3 §-TBD). */
+  /** The agent's status request/response subject — `agents.status.{agent}.{owner}.{name}` (§8.7 (v0.3)). */
   get status(): string {
     return `${SUBJECT_ROOT}.${VERB_STATUS}.${this.agent}.${this.owner}.${this.name}`;
   }

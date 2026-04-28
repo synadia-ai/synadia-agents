@@ -12,10 +12,10 @@ export const SERVICE_NAME = "agents";
 /** Spec §3.3: queue group the `prompt` endpoint MUST register with. */
 export const PROMPT_QUEUE_GROUP = "agents";
 
-/** v0.3 §-TBD: endpoint name for the request/response status endpoint. */
+/** §8.7 (v0.3): endpoint name for the request/response status endpoint. */
 export const STATUS_ENDPOINT_NAME = "status";
 
-/** v0.3 §-TBD: queue group for the `status` endpoint — same as `prompt`. */
+/** §8.7 (v0.3): queue group for the `status` endpoint — same as `prompt`. */
 export const STATUS_QUEUE_GROUP = "agents";
 
 /** @returns true iff `name` identifies a protocol-compliant agent service. */
