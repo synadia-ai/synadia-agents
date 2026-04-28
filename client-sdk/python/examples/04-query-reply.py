@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from examples._connect_cli import add_connection_flags, connect_from_cli
-from synadia_ai.agents import Agents, Query, ResponseChunk, StatusChunk
+from synadia_ai.agents import Agents, DiscoverFilter, Query, ResponseChunk, StatusChunk
 
 
 async def _ask(prompt: str) -> str:
@@ -41,11 +41,9 @@ async def main() -> None:
         default=None,
         metavar="NAME",
         help=(
-            "Optional conversation label on the request envelope (§5.1). "
-            "Only needed for agents that multiplex multiple conversations over "
-            "one NATS subject (Hermes-style). For most agents, running this "
-            "script repeatedly against the same discovered subject already "
-            "gives you chat — the subject IS the session."
+            "Select the agent whose `session_name` matches NAME — i.e. the "
+            "5th subject token (v0.3). When omitted, the first discovered "
+            "agent is used."
         ),
     )
     add_connection_flags(parser)
@@ -54,13 +52,14 @@ async def main() -> None:
     nc = await connect_from_cli(args)
     agents = Agents(nc=nc)
     try:
-        found = await agents.discover()
+        filt = DiscoverFilter(session_name=args.session) if args.session else None
+        found = await agents.discover(filter=filt)
         if not found:
             print("no agents found.", file=sys.stderr)
             sys.exit(2)
         agent = found[0]
 
-        async for msg in agent.prompt(args.text, session=args.session):
+        async for msg in agent.prompt(args.text):
             if isinstance(msg, ResponseChunk):
                 sys.stdout.write(msg.text)
                 sys.stdout.flush()

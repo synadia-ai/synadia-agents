@@ -70,7 +70,7 @@ async def test_stream_stall_logs_warning(
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="observability-stall",
+        session_name="observability-stall",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
@@ -118,7 +118,7 @@ async def test_service_error_logs_warning(
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="observability-raises",
+        session_name="observability-raises",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )

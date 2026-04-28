@@ -21,6 +21,7 @@ from synadia_ai.agents import (
     Agents,
     Attachment,
     AttachmentsNotSupportedError,
+    DiscoverFilter,
     NatsAgentError,
     PayloadTooLargeError,
     Query,
@@ -44,11 +45,9 @@ async def main() -> None:
         default=None,
         metavar="NAME",
         help=(
-            "Optional conversation label on the request envelope (§5.1). "
-            "Only needed for agents that multiplex multiple conversations over "
-            "one NATS subject (Hermes-style). For most agents, running this "
-            "script repeatedly against the same discovered subject already "
-            "gives you chat — the subject IS the session."
+            "Select the agent whose `session_name` matches NAME — i.e. the "
+            "5th subject token (v0.3). When omitted, the first discovered "
+            "agent is used."
         ),
     )
     add_connection_flags(parser)
@@ -62,7 +61,8 @@ async def main() -> None:
     nc = await connect_from_cli(args)
     agents = Agents(nc=nc)
     try:
-        found = await agents.discover()
+        filt = DiscoverFilter(session_name=args.session) if args.session else None
+        found = await agents.discover(filter=filt)
         if not found:
             print("no agents reachable — start the reference agent first", file=sys.stderr)
             sys.exit(2)
@@ -72,13 +72,13 @@ async def main() -> None:
         mp = ep.max_payload_bytes if ep.max_payload_bytes is not None else "unspecified"
         ao = ep.attachments_ok if ep.attachments_ok is not None else "unspecified"
         print(
-            f"prompting {chosen.agent}/{chosen.owner}/{chosen.name} "
+            f"prompting {chosen.agent}/{chosen.owner}/{chosen.session_name} "
             f"(max_payload={mp}, attachments_ok={ao})"
         )
 
         attachment = Attachment.from_path(attachment_path)
         try:
-            stream = chosen.prompt(args.prompt, attachments=[attachment], session=args.session)
+            stream = chosen.prompt(args.prompt, attachments=[attachment])
             async for msg in stream:
                 if isinstance(msg, ResponseChunk):
                     sys.stdout.write(msg.text)

@@ -8,6 +8,50 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Changed (breaking, public API)
+
+- **Token 5 of every agent subject is the *session name*; no more
+  separate "instance name" + envelope/metadata `session` field.** The
+  SDK collapses the previous `name` + `session` pair into one
+  positional concept: `agents.{verb}.{agent}.{owner}.{session_name}`.
+  A worker that wants to host N sessions registers N services (one
+  per session-named subject); the §3.3 queue group `"agents"` keeps
+  load-balancing across instances of the same logical session. The
+  envelope-level multiplexing pattern (Hermes-style: one subject,
+  many envelope.session labels) is dropped.
+- **Renames** (every site mirrors the same identifier):
+  - `AgentSubject.name` → `AgentSubject.session_name`
+  - `AgentSubject.new(..., name=...)` → `AgentSubject.new(..., session_name=...)`
+  - `AgentService(..., name=..., session=...)` → `AgentService(..., session_name=...)`
+  - `AgentInfo.name` → `AgentInfo.session_name`
+  - `Agent.name` → `Agent.session_name`
+  - `DiscoverFilter(name=..., session=...)` → `DiscoverFilter(session_name=...)`
+- **Removals**:
+  - `metadata.session` (§3.2) — agents no longer advertise it.
+  - `HeartbeatPayload.session` (§8.3) — the publishing subject IS the
+    session.
+  - `Envelope.session` (§5.1) — the request subject IS the session.
+    A stray inbound `session` from a non-compliant peer rides the
+    §5.6 `extra="allow"` unknown-field bag instead of surfacing as a
+    first-class field.
+  - `AgentService(session=...)` and `Agent.prompt(session=...)`
+    kwargs — both lost their feed once the metadata/envelope/payload
+    fields above went away.
+  - `DiscoverFilter.session` — subsumed by `DiscoverFilter.session_name`.
+  - `AgentInfo.session` and `Agent.session` properties.
+
+  Migration:
+
+  ```diff
+  - service = AgentService(agent="hermes", owner="rene", name="default", session="alice", nc=nc)
+  + service = AgentService(agent="hermes", owner="rene", session_name="alice", nc=nc)
+
+  - async for msg in agent.prompt("hi", session="alice"):
+  + filt = DiscoverFilter(session_name="alice")
+  + [agent] = await agents.discover(filter=filt)
+  + async for msg in agent.prompt("hi"):
+  ```
+
 ### Changed (wire-breaking)
 
 - **Wire moves to verb-first subjects (protocol v0.3).** The agent

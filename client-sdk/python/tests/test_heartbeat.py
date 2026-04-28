@@ -24,29 +24,36 @@ if TYPE_CHECKING:
 
 
 def test_decodes_spec_example() -> None:
-    """Appendix B.11 — exact wire shape with session + instance_id."""
+    """v0.3 wire shape — heartbeat payload no longer carries a session."""
     wire = (
-        b'{"agent":"claude-code","owner":"aconnolly","session":"synadia-com-2",'
+        b'{"agent":"claude-code","owner":"aconnolly",'
         b'"instance_id":"VMKS6MHK71PCPWGY38A7N5",'
         b'"ts":"2026-04-21T14:23:01Z","interval_s":30}'
     )
     hb = HeartbeatPayload.model_validate_json(wire)
     assert hb.agent == "claude-code"
     assert hb.owner == "aconnolly"
-    assert hb.session == "synadia-com-2"
     assert hb.instance_id == "VMKS6MHK71PCPWGY38A7N5"
     assert hb.ts == "2026-04-21T14:23:01Z"
     assert hb.interval_s == 30
 
 
-def test_session_optional() -> None:
-    """Session-less harnesses (openclaw) omit the field on the wire."""
+def test_inbound_session_is_silently_dropped() -> None:
+    """A non-compliant v0.2 peer might send a stray `session`; §8.3 says
+    receivers MUST tolerate unknown fields. ``HeartbeatPayload`` uses
+    ``extra="ignore"``, so the stray field is dropped on decode rather
+    than surfacing as a first-class attribute or riding into a re-encode."""
     wire = (
-        b'{"agent":"openclaw","owner":"rene","instance_id":"ABC",'
-        b'"ts":"2026-04-21T00:00:00Z","interval_s":30}'
+        b'{"agent":"claude-code","owner":"alice","session":"legacy",'
+        b'"instance_id":"ABC","ts":"2026-04-21T00:00:00Z","interval_s":30}'
     )
     hb = HeartbeatPayload.model_validate_json(wire)
-    assert hb.session is None
+    assert hb.agent == "claude-code"
+    # `session` is no longer a HeartbeatPayload field at all.
+    assert "session" not in HeartbeatPayload.model_fields
+    # And the stray field did NOT round-trip — `extra="ignore"` drops it.
+    parsed = json.loads(hb.model_dump_json())
+    assert "session" not in parsed
 
 
 def test_unknown_fields_tolerated() -> None:
@@ -60,8 +67,9 @@ def test_unknown_fields_tolerated() -> None:
     assert hb.agent == "claude-code"
 
 
-def test_encoded_form_omits_session_when_absent() -> None:
-    """Session-less payloads MUST NOT emit an empty `session` key on the wire."""
+def test_encoded_form_carries_no_session_key() -> None:
+    """Regression guard: the §8.3 payload MUST NOT carry a `session` key
+    on the wire — under v0.3 the publishing subject IS the session."""
     hb = HeartbeatPayload(
         agent="openclaw",
         owner="rene",
@@ -69,7 +77,7 @@ def test_encoded_form_omits_session_when_absent() -> None:
         ts="2026-04-21T00:00:00Z",
         interval_s=30,
     )
-    parsed = json.loads(hb.model_dump_json(exclude_none=True))
+    parsed = json.loads(hb.model_dump_json())
     assert "session" not in parsed
     assert parsed == {
         "agent": "openclaw",
@@ -80,27 +88,14 @@ def test_encoded_form_omits_session_when_absent() -> None:
     }
 
 
-def test_encoded_form_includes_session_when_present() -> None:
-    hb = HeartbeatPayload(
-        agent="claude-code",
-        owner="alice",
-        session="proj-1",
-        instance_id="X",
-        ts="2026-04-21T00:00:00Z",
-        interval_s=30,
-    )
-    parsed = json.loads(hb.model_dump_json(exclude_none=True))
-    assert parsed["session"] == "proj-1"
-
-
 # ---------------------------------------------------------------------------
 # HeartbeatTracker — keyed on instance_id, per-instance listeners.
 # ---------------------------------------------------------------------------
 
 
 async def test_tracker_keys_on_instance_id_not_subject(nc: NATSClient) -> None:
-    """Two instances of the same (agent, owner, name) on the same subject
-    MUST stay distinguishable in tracker state — the key is
+    """Two instances of the same (agent, owner, session_name) on the same
+    subject MUST stay distinguishable in tracker state — the key is
     ``payload.instance_id``, not the subject."""
     tracker = HeartbeatTracker(nc)
     await tracker.start()

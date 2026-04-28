@@ -18,49 +18,49 @@ from synadia_ai.agents.subjects import (
 
 class TestConstruction:
     def test_valid_simple_tokens(self) -> None:
-        subj = AgentSubject.new(agent="oc", owner="derek", name="summarizer")
+        subj = AgentSubject.new(agent="oc", owner="derek", session_name="summarizer")
         assert subj.prompt == "agents.prompt.oc.derek.summarizer"
         assert subj.heartbeat == "agents.hb.oc.derek.summarizer"
         assert subj.status == "agents.status.oc.derek.summarizer"
         # `inbox` stays as a backwards-name-compat alias of `prompt`.
         assert subj.inbox == subj.prompt
 
-    def test_hyphens_and_underscores_in_name(self) -> None:
-        subj = AgentSubject.new(agent="hermes", owner="rene", name="default_worker-1")
+    def test_hyphens_and_underscores_in_session_name(self) -> None:
+        subj = AgentSubject.new(agent="hermes", owner="rene", session_name="default_worker-1")
         assert subj.prompt == "agents.prompt.hermes.rene.default_worker-1"
 
     def test_empty_agent_rejected(self) -> None:
         with pytest.raises(InvalidSubjectToken):
-            AgentSubject.new(agent="", owner="o", name="n")
+            AgentSubject.new(agent="", owner="o", session_name="n")
 
     def test_uppercase_agent_rejected(self) -> None:
         with pytest.raises(InvalidSubjectToken):
-            AgentSubject.new(agent="Hermes", owner="o", name="n")
+            AgentSubject.new(agent="Hermes", owner="o", session_name="n")
 
     def test_agent_with_underscore_rejected(self) -> None:
         # §2: agent token is hyphens only (no underscore).
         with pytest.raises(InvalidSubjectToken):
-            AgentSubject.new(agent="my_agent", owner="o", name="n")
+            AgentSubject.new(agent="my_agent", owner="o", session_name="n")
 
 
 class TestBase64Sanitization:
     """SDK-internal escape — invalid token chars get base64-url-no-padding encoded."""
 
     def test_owner_with_space_encoded(self) -> None:
-        subj = AgentSubject.new(agent="hermes", owner="Rene S", name="default")
+        subj = AgentSubject.new(agent="hermes", owner="Rene S", session_name="default")
         expected_owner = base64.urlsafe_b64encode(b"Rene S").rstrip(b"=").decode("ascii")
         assert subj.owner == expected_owner
         assert subj.prompt.startswith(f"agents.prompt.hermes.{expected_owner}.")
 
-    def test_name_with_special_chars_encoded(self) -> None:
-        subj = AgentSubject.new(agent="hermes", owner="rene", name="path/to/worker")
+    def test_session_name_with_special_chars_encoded(self) -> None:
+        subj = AgentSubject.new(agent="hermes", owner="rene", session_name="path/to/worker")
         expected_name = base64.urlsafe_b64encode(b"path/to/worker").rstrip(b"=").decode("ascii")
-        assert subj.name == expected_name
+        assert subj.session_name == expected_name
 
     def test_already_valid_token_passes_through(self) -> None:
-        subj = AgentSubject.new(agent="hermes", owner="rene", name="worker_1-a")
+        subj = AgentSubject.new(agent="hermes", owner="rene", session_name="worker_1-a")
         assert subj.owner == "rene"
-        assert subj.name == "worker_1-a"
+        assert subj.session_name == "worker_1-a"
 
 
 class TestSubjectClassification:
@@ -85,7 +85,7 @@ class TestParseAgentSubject:
         assert subj is not None
         assert subj.agent == "hermes"
         assert subj.owner == "rene"
-        assert subj.name == "default"
+        assert subj.session_name == "default"
 
     def test_wrong_verb_returns_none(self) -> None:
         # Default `verb=VERB_PROMPT` filter rejects non-prompt subjects.
@@ -94,17 +94,17 @@ class TestParseAgentSubject:
 
     def test_verb_filter_overrideable(self) -> None:
         subj = parse_agent_subject("agents.hb.hermes.rene.default", verb=VERB_HEARTBEAT)
-        assert subj is not None and subj.name == "default"
+        assert subj is not None and subj.session_name == "default"
         subj_status = parse_agent_subject("agents.status.hermes.rene.default", verb=VERB_STATUS)
-        assert subj_status is not None and subj_status.name == "default"
+        assert subj_status is not None and subj_status.session_name == "default"
 
-    def test_instance_named_after_a_verb_is_fine_under_v03(self) -> None:
-        # Verbs and instance names live in different positions now, so an
-        # instance literally named `hb` or `heartbeat` no longer collides
+    def test_session_named_after_a_verb_is_fine(self) -> None:
+        # Verbs and session names live in different positions now, so a
+        # session literally named `hb` or `heartbeat` no longer collides
         # with the §8 heartbeat subject.
-        for instance in ("hb", "heartbeat"):
-            subj = parse_agent_subject(f"agents.prompt.hermes.rene.{instance}")
-            assert subj is not None and subj.name == instance
+        for session in ("hb", "heartbeat"):
+            subj = parse_agent_subject(f"agents.prompt.hermes.rene.{session}")
+            assert subj is not None and subj.session_name == session
 
     def test_wrong_root(self) -> None:
         assert parse_agent_subject("services.prompt.hermes.rene.default") is None

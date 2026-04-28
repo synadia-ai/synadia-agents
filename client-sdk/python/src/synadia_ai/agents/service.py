@@ -180,15 +180,14 @@ class PromptStream:
 class AgentService:
     """A protocol-compliant agent (§12 implementation checklist).
 
-    Construct with ``agent``/``owner``/``name`` plus a live NATS client,
-    register a prompt handler via :meth:`on_prompt`, then call
+    Construct with ``agent``/``owner``/``session_name`` plus a live NATS
+    client, register a prompt handler via :meth:`on_prompt`, then call
     :meth:`start`. The agent keeps a background heartbeat task running
     until :meth:`stop` is awaited.
 
-    ``heartbeat_interval_s`` defaults to 30 s per §8.2. ``session`` is
-    carried in both service metadata (§3.2) and the heartbeat payload
-    (§8.3) when set; session-aware harnesses (``claude-code``, ``pi``,
-    ``hermes``) MUST supply it.
+    ``heartbeat_interval_s`` defaults to 30 s per §8.2. Under v0.3 the
+    session lives in the subject (token 5 — the ``session_name``); a
+    worker that wants to serve N sessions registers N services.
 
     ``keepalive_interval_s`` controls per-request keep-alive: while a
     handler is running, the agent emits ``{"type":"status","data":"ack"}``
@@ -204,13 +203,12 @@ class AgentService:
         *,
         agent: str,
         owner: str,
-        name: str,
+        session_name: str,
         nc: NATSClient,
         description: str = "",
         heartbeat_interval_s: int = 30,
         max_payload: str = DEFAULT_MAX_PAYLOAD,
         attachments_ok: bool = DEFAULT_ATTACHMENTS_OK,
-        session: str | None = None,
         keepalive_interval_s: float | None = DEFAULT_KEEPALIVE_INTERVAL_S,
     ) -> None:
         if heartbeat_interval_s <= 0:
@@ -220,10 +218,9 @@ class AgentService:
         # Validate max_payload eagerly so misconfiguration fails at construction
         # rather than surfacing later via caller-side validation (§5.4).
         parse_human_bytes(max_payload)
-        self.subject = AgentSubject.new(agent=agent, owner=owner, name=name)
+        self.subject = AgentSubject.new(agent=agent, owner=owner, session_name=session_name)
         self._nc = nc
-        self._description = description or f"{agent} agent {self.subject.name}"
-        self._session = session
+        self._description = description or f"{agent} agent {self.subject.session_name}"
         self._heartbeat_interval_s = heartbeat_interval_s
         self._max_payload = max_payload
         self._attachments_ok = attachments_ok
@@ -248,8 +245,6 @@ class AgentService:
             "owner": self.subject.owner,
             "protocol_version": _PROTOCOL_VERSION,
         }
-        if self._session is not None:
-            metadata["session"] = self._session
         config = ServiceConfig(
             name=SERVICE_NAME,
             version=_SDK_VERSION,
@@ -297,7 +292,6 @@ class AgentService:
                 self._heartbeat_interval_s,
                 self._service.id,
                 self._heartbeat_stop,
-                session=self._session,
             ),
             name=f"heartbeat-{self.subject.inbox}",
         )
@@ -333,9 +327,8 @@ class AgentService:
                 self.subject,
                 self._heartbeat_interval_s,
                 self._service.id,
-                self._session,
             )
-            data = payload.model_dump_json(exclude_none=True).encode("utf-8")
+            data = payload.model_dump_json().encode("utf-8")
             await request.respond(data)
         except Exception as exc:
             # A respond() failure (broker dropped, request torn down, encode

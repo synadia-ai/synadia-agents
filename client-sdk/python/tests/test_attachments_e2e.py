@@ -71,7 +71,7 @@ async def _run_roundtrip(
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name=NAME,
+        session_name=NAME,
         nc=nc,
         description="integration-test file-echo agent",
     )

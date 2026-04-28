@@ -44,7 +44,7 @@ async def main() -> None:
     agent = AgentService(
         agent="demo",
         owner=owner,
-        name="echo",
+        session_name="echo",
         nc=nc,
         description="demo echo agent",
         heartbeat_interval_s=5,

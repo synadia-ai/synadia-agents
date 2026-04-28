@@ -197,17 +197,7 @@ async def test_python_client_discovers_ts_reference_agent(
 async def test_python_client_prompts_ts_reference_agent(
     nc: NATSClient, ts_reference_agent: _ReferenceAgentProcess
 ) -> None:
-    """Python client round-trips a prompt through the TS reference agent.
-
-    Note: the caller-supplied request-envelope ``session`` field is an SDK
-    convention tolerated per §5.6; it is NOT yet surfaced by the TS SDK —
-    its ``RequestEnvelope`` does not include ``session``. Sending the
-    field is still safe on the wire (§5.6 tolerance), but an end-to-end
-    session assertion across PY → TS has to wait for a matching TS PR.
-    Until then, this test only exercises the session-less path; the
-    session-bearing round-trip is covered intra-SDK by
-    ``tests/test_session_e2e.py``.
-    """
+    """Python client round-trips a prompt through the TS reference agent."""
     assert ts_reference_agent.prompt_subject is not None
 
     agents = Agents(nc=nc)
