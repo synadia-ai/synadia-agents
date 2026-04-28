@@ -34,7 +34,7 @@ async def main() -> None:
         print(f"found {len(found)} agent(s):\n")
         for a in found:
             ep = a.prompt_endpoint
-            print(f"  {a.agent}/{a.owner}/{a.name}")
+            print(f"  {a.agent}/{a.owner}/{a.session_name}")
             print(f"    instance_id:      {a.instance_id}")
             print(f"    protocol_version: {a.protocol_version or 'unspecified'}")
             print(f"    version:          {a.version or 'unspecified'}")

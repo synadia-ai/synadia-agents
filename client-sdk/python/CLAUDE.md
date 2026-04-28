@@ -37,32 +37,37 @@ pick a default, they MUST pick the same default - drift is tracked in
 v0.3 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
 
 - **Subject hierarchy** (§2 v0.3): verb-first —
-  `agents.{verb}.{agent}.{owner}.{name}` where `verb` is one of `prompt`
-  / `hb` (heartbeat, abbreviated for wire economy) / `status` (plus
-  `attachments` reserved for the future §5.5 endpoint). Verbs and
-  instance names live in different positions, so an instance literally
-  named `hb` or `heartbeat` no longer collides with §8.
+  `agents.{verb}.{agent}.{owner}.{session_name}` where `verb` is one of
+  `prompt` / `hb` (heartbeat, abbreviated for wire economy) / `status`
+  (plus `attachments` reserved for the future §5.5 endpoint). **Token 5
+  is the session name** — the subject IS the session, so a worker that
+  wants to host N sessions registers N services. Verbs and session
+  names live in different positions, so a session literally named `hb`
+  or `heartbeat` no longer collides with §8.
   Tokens with non-NATS-safe characters are base64-url-no-padding escaped
   internally - an SDK implementation detail, not a protocol contract
   (see `src/synadia_ai/agents/subjects.py::_sanitize`).
 - **Service registration** (§3): every agent registers as a NATS micro
   service named `agents` with `metadata = {agent, owner,
-  protocol_version = "0.3", session?}`. The `prompt` endpoint MUST be
-  registered with queue group `"agents"` (§3.3) - the framework default
-  differs between SDKs, so we pin the spec value explicitly. The service
-  name is shared across all compliant agents - callers filter by this
-  single value. The `status` endpoint (v0.3 §-TBD) registers alongside
-  with the same queue group.
+  protocol_version = "0.3"}` — exactly three fields under v0.3; the
+  session lives in the subject, not in metadata. The `prompt` endpoint
+  MUST be registered with queue group `"agents"` (§3.3) - the framework
+  default differs between SDKs, so we pin the spec value explicitly.
+  The service name is shared across all compliant agents - callers
+  filter by this single value. The `status` endpoint (v0.3 §-TBD)
+  registers alongside with the same queue group.
 - **Request envelope** (§5.1): `{prompt: str, attachments?: [{filename,
   content: <base64>}]}`. Plain-text request payloads are promoted to
-  `{"prompt": <text>}` (§5.3).
+  `{"prompt": <text>}` (§5.3). The envelope no longer carries a
+  `session` field — the request subject is the session.
 - **Response stream** (§6): typed `{type, data}` chunks in publication
   order, terminated by a zero-byte body with no NATS headers.
 - **Mid-stream queries** (§7): agent-initiated questions via
   `PromptStream.ask`; caller replies via `Query.reply`.
-- **Heartbeat** (§8.3): `{agent, owner, session?, instance_id, ts,
-  interval_s}` on `agents.hb.{a}.{o}.{n}` (v0.3; verb is the
-  abbreviation `hb`).
+- **Heartbeat** (§8.3): `{agent, owner, instance_id, ts, interval_s}`
+  on `agents.hb.{a}.{o}.{session_name}` (v0.3; verb is the abbreviation
+  `hb`). No `session` field on the payload — the publishing subject is
+  the session.
 - **Status** (v0.3 §-TBD): request/response on `agents.status.{a}.{o}.{n}`
   returns the same payload shape as a heartbeat, freshly built per
   request. Future PRs extend the response with richer agent metadata
@@ -315,16 +320,31 @@ either guides them to success or frustrates them.
 
 ## Alignment milestones
 
+- **2026-04-28 - session-name collapse (Python-only, ahead of spec).**
+  Token 5 of every agent subject IS the session: `name` + `session`
+  collapse into a single `session_name`. Public-API renames on
+  `AgentSubject` / `AgentService` / `AgentInfo` / `Agent` /
+  `DiscoverFilter` (`name` → `session_name`); removals of
+  `metadata.session`, `HeartbeatPayload.session`, `Envelope.session`,
+  `AgentService(session=...)`, `Agent.prompt(session=...)`,
+  `DiscoverFilter.session`, `Agent.session` / `AgentInfo.session`
+  properties. Envelope-level multiplexing on a single subject
+  (Hermes-style: one registration, many `envelope.session` labels) is
+  dropped; a worker serving N sessions registers N services, with
+  §3.3's queue group `"agents"` load-balancing across instances of
+  the same logical session. Ships under the same protocol version
+  `"0.3"` as the verb-first wire bump (no second protocol bump). See
+  `CHANGELOG.md` [Unreleased] for full migration notes.
 - **2026-04-27 - v0.3.0 wire bump (Python-only, ahead of spec).** Moves
   the agent subject hierarchy to verb-first
-  (`agents.{verb}.{agent}.{owner}.{name}`) so each endpoint owns its
-  own positional slot, and adds a request/response `status` endpoint at
-  `agents.status.{a}.{o}.{n}` that replies with a freshly-built
-  heartbeat-shaped payload (`HeartbeatPayload`, §8.3). Heartbeat moves
-  to `agents.hb.{a}.{o}.{n}` (verb is the abbreviation `hb` —
-  heartbeats dominate per-account subject volume so the short form
-  earns its keep); `HEARTBEAT_SUBJECT` wildcard is now
-  `agents.hb.*.*.*`. `metadata.protocol_version` bumps
+  (`agents.{verb}.{agent}.{owner}.{session_name}`) so each endpoint
+  owns its own positional slot, and adds a request/response `status`
+  endpoint at `agents.status.{a}.{o}.{session_name}` that replies with
+  a freshly-built heartbeat-shaped payload (`HeartbeatPayload`, §8.3).
+  Heartbeat moves to `agents.hb.{a}.{o}.{session_name}` (verb is the
+  abbreviation `hb` — heartbeats dominate per-account subject volume
+  so the short form earns its keep); `HEARTBEAT_SUBJECT` wildcard is
+  now `agents.hb.*.*.*`. `metadata.protocol_version` bumps
   `"0.2"` → `"0.3"`; old v0.2 callers fail to discovery-match a v0.3
   agent rather than silently talking past it. Ships ahead of the
   protocol spec, the TypeScript SDK, and the agent harnesses

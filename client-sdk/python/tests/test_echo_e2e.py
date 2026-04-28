@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 AGENT = "test"  # NOT 'pysdk' — CLAUDE.md forbids the SDK owning an agent id.
 OWNER = "pytest"
-NAME = "echo"
+SESSION_NAME = "echo"
 HEARTBEAT_INTERVAL_S = 1  # Short enough to verify a beacon within the test window.
 
 
@@ -57,7 +57,7 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name=NAME,
+        session_name=SESSION_NAME,
         nc=nc,
         description="integration-test echo agent",
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
@@ -76,12 +76,21 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         assert srv_info_parsed["metadata"]["agent"] == AGENT
         assert srv_info_parsed["metadata"]["owner"] == OWNER
         assert srv_info_parsed["metadata"]["protocol_version"] == "0.3"
-        # Spec §3.2 forbids echoing the instance name into metadata.
+        # Spec §3.2 forbids echoing the session/instance name into metadata.
         assert "name" not in srv_info_parsed["metadata"]
+        # v0.3 collapsed name + session into the subject — `session` is no
+        # longer carried in metadata. Regression guard against re-introducing it.
+        assert "session" not in srv_info_parsed["metadata"]
         # And the removed v0.0.1-era keys MUST be gone.
         assert "type" not in srv_info_parsed["metadata"]
         assert "platform" not in srv_info_parsed["metadata"]
         assert "protocol" not in srv_info_parsed["metadata"]
+        # Metadata is now exactly three fields under v0.3.
+        assert set(srv_info_parsed["metadata"].keys()) == {
+            "agent",
+            "owner",
+            "protocol_version",
+        }
 
         # §2.1: prompt endpoint declares capability metadata. On the wire it's
         # Record<string,string>, so attachments_ok is "true"/"false".
@@ -175,7 +184,7 @@ async def test_status_endpoint_e2e(nc: NATSClient, evidence: EvidenceRecorder) -
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name=NAME,
+        session_name=SESSION_NAME,
         nc=nc,
         description="integration-test echo agent",
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,

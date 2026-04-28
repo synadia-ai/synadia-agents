@@ -170,7 +170,7 @@ async def main() -> None:
     service = AgentService(
         agent="demo",            # your harness identifier
         owner="alice",           # your operator / account
-        name="worker-1",         # this instance's name
+        session_name="worker-1", # 5th subject token / session this instance serves
         nc=nc,
         description="demo echo agent",
     )

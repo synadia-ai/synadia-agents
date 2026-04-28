@@ -64,7 +64,7 @@ def test_constructor_rejects_non_positive_keepalive(bad_value: float) -> None:
         AgentService(
             agent=AGENT,
             owner=OWNER,
-            name="cfg",
+            session_name="cfg",
             nc=object(),  # type: ignore[arg-type]
             keepalive_interval_s=bad_value,
         )
@@ -81,7 +81,7 @@ async def test_keepalive_emits_ack_during_slow_handler(
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="slow-default",
+        session_name="slow-default",
         nc=nc,
         keepalive_interval_s=interval,
     )
@@ -126,7 +126,7 @@ async def test_keepalive_disabled_emits_no_ack(nc: NATSClient, evidence: Evidenc
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="slow-disabled",
+        session_name="slow-disabled",
         nc=nc,
         keepalive_interval_s=None,
     )
@@ -185,7 +185,7 @@ async def test_keepalive_no_ack_between_error_frame_and_terminator(
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="raises",
+        session_name="raises",
         nc=nc,
         keepalive_interval_s=interval,
     )
@@ -258,7 +258,7 @@ async def test_keepalive_skips_ack_for_fast_handler(
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="fast",
+        session_name="fast",
         nc=nc,
         keepalive_interval_s=interval,
     )

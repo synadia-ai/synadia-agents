@@ -19,20 +19,19 @@ spec to catch up.
 | Non-agent services                       | Dropped - responses whose `name` isn't `"agents"` are ignored.                         | §4.3       |
 | `EndpointInfo.max_payload_bytes`         | Parsed from `metadata.max_payload` (case-insensitive; base-1024: KB=1024, MB=1024²).   | §2.1       |
 | `EndpointInfo.attachments_ok`            | Parsed from `metadata.attachments_ok` (`"true"` / `"false"`).                          | §2.1       |
-| `AgentInfo.name` derivation              | 5th token of the prompt endpoint's subject when it matches `agents.prompt.{a}.{o}.{n}` (v0.3); else `""`. | §4.3     |
-| `AgentInfo.session`                      | From `metadata.session` (absent/empty ⇒ `None`).                                       | §3.2       |
+| `AgentInfo.session_name` derivation      | 5th token of the prompt endpoint's subject when it matches `agents.prompt.{a}.{o}.{session_name}` (v0.3); else `""`. The token IS the session this agent serves. | §4.3 |
 
 ## Service registration (§3)
 
 | SDK                        | Wire behaviour                                                                                  | Spec ref   |
 | -------------------------- | ----------------------------------------------------------------------------------------------- | ---------- |
 | `AgentService.start()`     | `ServiceConfig(name="agents", ...)` - the single shared name from §3.1.                        | §3.1     |
-| Service metadata emitted   | `{agent, owner, protocol_version}` + `session` when `AgentService(session=...)` is set.         | §3.2       |
+| Service metadata emitted   | `{agent, owner, protocol_version}` — exactly three fields under v0.3; the session lives in the subject's 5th token. | §3.2       |
 | `protocol_version` value   | `"0.3"` - MAJOR.MINOR only (§11.1).                                                             | §3.2, §11.1 |
 | Endpoint `prompt` metadata | `{max_payload, attachments_ok}`. Boolean serialised as `"true"`/`"false"` on the wire.          | §2.1       |
 | `prompt` queue group       | `"agents"` - pinned explicitly; framework defaults differ between SDKs and would break interop. | §3.3       |
-| `status` endpoint          | Registered alongside `prompt` with subject `agents.status.{a}.{o}.{n}` and queue group `"agents"` (v0.3, §-TBD). Replies with a freshly-built `HeartbeatPayload` (§8.3 shape). | v0.3 §-TBD |
-| Subject layout             | `agents.{verb}.{agent}.{owner}.{name}` (v0.3 verb-first); the SDK doesn't allow overrides today. | §2, §2.3   |
+| `status` endpoint          | Registered alongside `prompt` with subject `agents.status.{a}.{o}.{session_name}` and queue group `"agents"` (v0.3, §-TBD). Replies with a freshly-built `HeartbeatPayload` (§8.3 shape). | v0.3 §-TBD |
+| Subject layout             | `agents.{verb}.{agent}.{owner}.{session_name}` (v0.3 verb-first; token 5 IS the session); the SDK doesn't allow overrides today. | §2, §2.3   |
 
 ## Request envelope (§5)
 
@@ -45,8 +44,7 @@ spec to catch up.
 | Pre-publish `max_payload` check              | `PayloadTooLargeError(limit, actual)` before any wire I/O.                            | §5.4       |
 | Empty prompt rejected pre-publish            | `PromptEmptyError` before any wire I/O.                                               | §5.1, §5.3 |
 | Endpoint subject resolution                  | Always `endpoints[].subject` from discovery; never constructed from identity.         | §4.3, §12  |
-| Unknown envelope fields                      | `Envelope` uses `extra="allow"`; decode → encode round-trips lossless per §5.6.       | §5.6       |
-| `Envelope.session`                           | SDK convention tolerated per §5.6 (no longer a §5.1 field in v0.2); still round-trips. | §5.6      |
+| Unknown envelope fields                      | `Envelope` uses `extra="allow"`; decode → encode round-trips lossless per §5.6. A stray inbound `session` from a non-compliant peer rides this bag — under v0.3 the request subject IS the session, so `Envelope.session` is no longer a first-class field. | §5.6 |
 
 ## Response streaming (§6)
 
@@ -87,9 +85,9 @@ spec to catch up.
 
 | SDK                          | Wire behaviour                                                                                   | Spec ref   |
 | ---------------------------- | ------------------------------------------------------------------------------------------------ | ---------- |
-| Subject                      | `agents.hb.{agent}.{owner}.{name}` (v0.3 verb-first; `hb` abbreviates `heartbeat`).              | §8.1       |
+| Subject                      | `agents.hb.{agent}.{owner}.{session_name}` (v0.3 verb-first; `hb` abbreviates `heartbeat`).      | §8.1       |
 | Default interval             | `AgentService(heartbeat_interval_s=30)` (spec recommendation).                                   | §8.2       |
-| Payload fields               | `{agent, owner, session?, instance_id, ts, interval_s}` - `session` omitted when absent.         | §8.3       |
+| Payload fields               | `{agent, owner, instance_id, ts, interval_s}` — no `session` (the publishing subject IS the session under v0.3). | §8.3 |
 | `HeartbeatPayload` tolerance | `extra="ignore"` - unknown fields silently accepted per §8.3.                                    | §8.3       |
 | `instance_id` source         | `service.id` assigned by nats-py's micro framework (matches `$SRV.INFO` `id`).                   | §3.4, §8.3 |
 | First heartbeat              | Published immediately after service registration so subscribe-then-discover sees liveness.       | §8.5       |
@@ -136,10 +134,19 @@ mirror the TypeScript SDK so the two stay in lockstep.
    work".
 5. **`status` request/response endpoint.** Not yet defined in the spec.
    This SDK registers a NATS micro endpoint named `status` on
-   `agents.status.{a}.{o}.{n}` (queue group `"agents"`) that replies
-   with the §8.3 heartbeat payload, freshly built per request.
+   `agents.status.{a}.{o}.{session_name}` (queue group `"agents"`) that
+   replies with the §8.3 heartbeat payload, freshly built per request.
    Anticipated to land in the spec as a §-TBD section once the verb-
    first PR settles.
+6. **Token 5 is the session name (`name` + `session` collapse).** The
+   SDK collapses the previous `name` (5th subject token) and `session`
+   (metadata + envelope + heartbeat-payload field) into a single
+   `session_name` positional. A worker serving N sessions registers N
+   services. Envelope-level multiplexing (Hermes-style: one
+   registration, many `envelope.session` labels) is dropped. Lands
+   ahead of the spec's blessing — the upstream PR will cover §3.2
+   metadata, §5.1 envelope, and §8.3 heartbeat-payload field
+   removals in lockstep.
 
 ## Deferred TS-parity work
 

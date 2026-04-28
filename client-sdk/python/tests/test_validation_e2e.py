@@ -42,7 +42,7 @@ async def test_prompt_empty_raises_locally(nc: NATSClient) -> None:
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="strict-empty",
+        session_name="strict-empty",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )
@@ -70,7 +70,7 @@ async def test_attachments_rejected_when_not_supported(nc: NATSClient) -> None:
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="strict-noattach",
+        session_name="strict-noattach",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
         attachments_ok=False,
@@ -101,7 +101,7 @@ async def test_payload_too_large_raises_with_context(nc: NATSClient) -> None:
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="tiny-limit",
+        session_name="tiny-limit",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
         max_payload="1B",  # deliberately impossible: any non-empty envelope overflows
@@ -120,45 +120,6 @@ async def test_payload_too_large_raises_with_context(nc: NATSClient) -> None:
                 agent.prompt("this is longer than 1 byte")
             assert excinfo.value.limit == 1
             assert excinfo.value.actual > 1
-        finally:
-            await agents.close()
-    finally:
-        await service.stop()
-
-
-@pytest.mark.asyncio
-async def test_payload_size_includes_session(nc: NATSClient) -> None:
-    """§5.1 + §5.4 — the optional ``session`` string rides the wire and
-    therefore counts toward ``max_payload``. The limit is picked so the
-    short prompt fits but the same prompt + a session label does not."""
-    service = AgentService(
-        agent=AGENT,
-        owner=OWNER,
-        name="session-size",
-        nc=nc,
-        heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
-        # {"prompt":"x"} is 14 bytes; {"prompt":"x","session":"LONG_SESSION"}
-        # is 35 bytes — split the two with a 20-byte ceiling.
-        max_payload="20B",
-    )
-    service.on_prompt(_never_called)
-    await service.start()
-
-    try:
-        agents = Agents(nc=nc)
-        try:
-            found = await agents.discover(timeout=1.0)
-            agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
-            assert agent.prompt_endpoint.max_payload_bytes == 20
-
-            # Session-less: short enough to pass — we're only verifying the
-            # session-adds-bytes claim, not running the full round-trip.
-            # (session="" never lands on the wire because ``encode()`` uses
-            # exclude_none=True.)
-            with pytest.raises(PayloadTooLargeError) as excinfo:
-                agent.prompt("x", session="LONG_SESSION_VALUE")
-            assert excinfo.value.limit == 20
-            assert excinfo.value.actual > 20
         finally:
             await agents.close()
     finally:

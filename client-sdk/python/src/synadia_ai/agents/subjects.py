@@ -1,21 +1,25 @@
 """Subject construction and validation per protocol §2.
 
-Wire layout (v0.3): ``agents.{verb}.{agent}.{owner}.{name}`` where ``verb``
-is one of the protocol-reserved verbs ``prompt``, ``hb`` (heartbeat),
-``status`` (plus ``attachments`` reserved for the future §5.5 endpoint).
-Verbs and instance names live in different positions, so an agent literally
-named ``hb`` or ``heartbeat`` no longer collides with the §8 heartbeat
-subject.
+Wire layout (v0.3): ``agents.{verb}.{agent}.{owner}.{session_name}`` where
+``verb`` is one of the protocol-reserved verbs ``prompt``, ``hb``
+(heartbeat), ``status`` (plus ``attachments`` reserved for the future
+§5.5 endpoint). The 5th token is the **session name** — token 5 IS the
+session, so a worker that wants to serve N sessions registers N
+services. Verbs and session names live in different positions, so a
+session literally named ``hb`` or ``heartbeat`` no longer collides with
+the §8 heartbeat subject.
 
-``agent``, ``owner``, and ``name`` are constrained to lowercase alphanumeric
-plus hyphens (``agent``) or hyphens and underscores (``owner``, ``name``).
-Tokens that would otherwise be invalid NATS subject characters are escaped
-internally as base64-url-no-padding — the SDK's "sanitize sensibly"
-implementation detail, not a protocol contract.
+``agent``, ``owner``, and ``session_name`` are constrained to lowercase
+alphanumeric plus hyphens (``agent``) or hyphens and underscores
+(``owner``, ``session_name``). Tokens that would otherwise be invalid
+NATS subject characters are escaped internally as base64-url-no-padding
+— the SDK's "sanitize sensibly" implementation detail, not a protocol
+contract.
 
 §2 uses ``agent`` where v0.0.1 of this SDK used ``platform``; the rename
 is tracked in CHANGELOG.md under 0.1.0. The verb-first move landed in
-0.4.0 (protocol v0.3).
+0.4.0 (protocol v0.3), and the same release collapsed ``name`` +
+``session`` into a single ``session_name`` token.
 """
 
 from __future__ import annotations
@@ -44,7 +48,7 @@ VERB_ATTACHMENTS = "attachments"
 
 RESERVED_VERBS = frozenset({VERB_PROMPT, VERB_HEARTBEAT, VERB_STATUS, VERB_ATTACHMENTS})
 
-# `agents.{verb}.{agent}.{owner}.{name}` — 5 tokens (§2 v0.3).
+# `agents.{verb}.{agent}.{owner}.{session_name}` — 5 tokens (§2 v0.3).
 _SUBJECT_TOKEN_COUNT = 5
 
 
@@ -53,16 +57,16 @@ class AgentSubject:
     """The three identifying tokens of an agent, already validated/sanitized.
 
     Construct via :meth:`new` — it enforces §1 constraints and falls back to
-    SDK-internal base64 escaping for owner/name tokens that contain characters
-    NATS subjects can't carry directly.
+    SDK-internal base64 escaping for owner/session_name tokens that contain
+    characters NATS subjects can't carry directly.
     """
 
     agent: str
     owner: str
-    name: str
+    session_name: str
 
     @classmethod
-    def new(cls, agent: str, owner: str, name: str) -> AgentSubject:
+    def new(cls, agent: str, owner: str, session_name: str) -> AgentSubject:
         if not agent:
             raise InvalidSubjectToken("agent must be non-empty")
         if not _AGENT_RE.fullmatch(agent):
@@ -72,7 +76,7 @@ class AgentSubject:
         return cls(
             agent=agent,
             owner=_sanitize(owner, "owner", _OWNER_RE),
-            name=_sanitize(name, "name", _NAME_RE),
+            session_name=_sanitize(session_name, "session_name", _NAME_RE),
         )
 
     @property
@@ -83,17 +87,17 @@ class AgentSubject:
     @property
     def prompt(self) -> str:
         """The agent's prompt subject (§2)."""
-        return f"{ROOT}.{VERB_PROMPT}.{self.agent}.{self.owner}.{self.name}"
+        return f"{ROOT}.{VERB_PROMPT}.{self.agent}.{self.owner}.{self.session_name}"
 
     @property
     def heartbeat(self) -> str:
         """The agent's heartbeat subject (§8.1)."""
-        return f"{ROOT}.{VERB_HEARTBEAT}.{self.agent}.{self.owner}.{self.name}"
+        return f"{ROOT}.{VERB_HEARTBEAT}.{self.agent}.{self.owner}.{self.session_name}"
 
     @property
     def status(self) -> str:
         """The agent's status request/response subject (v0.3 §-TBD)."""
-        return f"{ROOT}.{VERB_STATUS}.{self.agent}.{self.owner}.{self.name}"
+        return f"{ROOT}.{VERB_STATUS}.{self.agent}.{self.owner}.{self.session_name}"
 
 
 def _sanitize(token: str, field: str, pattern: re.Pattern[str]) -> str:
@@ -121,7 +125,7 @@ def is_heartbeat_subject(subject: str) -> bool:
 
 
 def parse_agent_subject(subject: str, *, verb: str = VERB_PROMPT) -> AgentSubject | None:
-    """Parse an `agents.{verb}.{agent}.{owner}.{name}` subject.
+    """Parse an `agents.{verb}.{agent}.{owner}.{session_name}` subject.
 
     Returns ``None`` when the subject is not the expected verb (default
     ``prompt``), has the wrong root, or fails token validation. Pass a
@@ -131,8 +135,8 @@ def parse_agent_subject(subject: str, *, verb: str = VERB_PROMPT) -> AgentSubjec
     parts = subject.split(".")
     if len(parts) != _SUBJECT_TOKEN_COUNT or parts[0] != ROOT or parts[1] != verb:
         return None
-    _, _, agent, owner, name = parts
+    _, _, agent, owner, session_name = parts
     try:
-        return AgentSubject.new(agent=agent, owner=owner, name=name)
+        return AgentSubject.new(agent=agent, owner=owner, session_name=session_name)
     except InvalidSubjectToken:
         return None

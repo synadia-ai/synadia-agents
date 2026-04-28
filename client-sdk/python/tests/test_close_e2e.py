@@ -47,7 +47,7 @@ async def test_close_interrupts_in_flight_prompt(nc: NATSClient) -> None:
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name="close-mid-stream",
+        session_name="close-mid-stream",
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
     )

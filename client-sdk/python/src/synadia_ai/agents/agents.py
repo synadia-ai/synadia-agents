@@ -126,7 +126,7 @@ class Agents:
           in that window. Use for deterministic scans / health checks.
 
         ``filter`` AND-matches the discovered records by identity
-        (``agent``, ``owner``, ``name``, ``session``, ``protocol_version``)
+        (``agent``, ``owner``, ``session_name``, ``protocol_version``)
         before the live :class:`Agent` instances are constructed.
 
         The first call to :meth:`discover` lazily starts the heartbeat

@@ -14,7 +14,11 @@ Unknown top-level fields are tolerated (§5.6): `extra="allow"` preserves
 them on the parsed envelope and re-emits them on `encode()`, so a decode →
 encode round-trip is lossless for future extension fields. Production
 agents that forward raw bytes rather than re-serializing remain correct
-either way.
+either way. Under v0.3 the subject IS the session (token 5 of
+``agents.prompt.{a}.{o}.{session_name}``), so the envelope no longer
+carries a `session` field — a stray inbound `session` key from a
+non-compliant peer rides the §5.6 unknown-field bag rather than
+surfacing as a first-class field.
 """
 
 from __future__ import annotations
@@ -64,21 +68,18 @@ class Attachment(BaseModel):
 class Envelope(BaseModel):
     """Request / query-reply envelope per spec §5.1.
 
-    `session` is an SDK convention tolerated on the wire per §5.6 —
-    v0.2's §5.1 no longer defines `session` as a first-class envelope
-    field, but the same extension-field preservation rules that apply to
-    any unknown top-level key keep it round-trippable. Session-aware
-    harnesses (Hermes, pi, ...) thread it through their own storage.
-
-    `extra="allow"` preserves any other top-level field a future revision
-    or peer SDK adds, so decode → encode is lossless (§5.6).
+    Under v0.3 the subject IS the session, so the envelope itself no
+    longer defines a `session` field. ``extra="allow"`` preserves any
+    other top-level field a future revision or peer SDK adds, so
+    decode → encode is lossless (§5.6); a stray `session` from a
+    non-compliant peer rides this unknown-field bag instead of surfacing
+    as a first-class attribute.
     """
 
     model_config = ConfigDict(extra="allow", frozen=True)
 
     prompt: str
     attachments: list[Attachment] | None = None
-    session: str | None = None
 
 
 def encode(envelope: Envelope) -> bytes:

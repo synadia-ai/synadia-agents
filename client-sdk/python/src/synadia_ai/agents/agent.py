@@ -123,14 +123,14 @@ class Agent:
         return self._info.owner
 
     @property
-    def name(self) -> str:
-        """5th token of `agents.prompt.{a}.{o}.{n}` (v0.3); ``""`` for custom subjects (§4.3)."""
-        return self._info.name
+    def session_name(self) -> str:
+        """5th token of the prompt subject — the session this agent serves (v0.3).
 
-    @property
-    def session(self) -> str | None:
-        """``metadata.session`` when present (§3.2)."""
-        return self._info.session
+        Empty string for custom prompt-endpoint subjects that don't follow
+        the default ``agents.prompt.{agent}.{owner}.{session_name}`` layout
+        (§4.3).
+        """
+        return self._info.session_name
 
     @property
     def protocol_version(self) -> str:
@@ -179,19 +179,18 @@ class Agent:
         text: str | Envelope,
         *,
         attachments: list[Attachment] | None = None,
-        session: str | None = None,
         timeout: float | None = None,
     ) -> AsyncIterator[StreamMessage]:
         """Send a prompt and return an async iterator of streamed messages.
 
         ``text`` is either a bare string or a fully-constructed
         :class:`Envelope`. ``attachments``, when provided, are attached to
-        the envelope (per §5.1). ``session`` is an optional caller-supplied
-        conversation label carried on the request envelope as an SDK
-        convention tolerated per §5.6 — session-aware harnesses use it to
-        pin multi-turn conversations. When ``text`` is an :class:`Envelope`
-        with its own ``session``, an explicit ``session=`` kwarg wins
-        (caller's call takes precedence).
+        the envelope (per §5.1).
+
+        Under v0.3 the session is the 5th subject token, not a kwarg —
+        callers pick a session by discovering the agent whose
+        ``session_name`` matches (e.g. ``DiscoverFilter(session_name=...)``).
+        See ``CHANGELOG.md`` for the migration note.
 
         ``timeout`` is the per-message inactivity timeout in seconds;
         defaults to the value passed to the owning :class:`Agents` (60 s
@@ -204,8 +203,7 @@ class Agent:
         - :class:`AttachmentsNotSupportedError` — attachments with
           ``attachments_ok=false`` (§5.4).
         - :class:`PayloadTooLargeError` — envelope exceeds ``max_payload``
-          (§5.4). The ``session`` string counts toward the encoded payload
-          size the limit is checked against.
+          (§5.4).
 
         The iterator yields :class:`ResponseChunk` / :class:`StatusChunk` as
         the agent emits them and :class:`Query` when the agent asks a
@@ -226,21 +224,14 @@ class Agent:
                 merged_attachments.extend(attachments)
             else:
                 merged_attachments = list(text.attachments) if text.attachments else None
-            # Explicit session= kwarg wins over an envelope-embedded session
-            # (principle of least surprise — caller's kwarg is the fresher
-            # intent). `None` explicitly passed as kwarg still means "use the
-            # envelope's session" — only a truthy kwarg overrides.
-            effective_session = session if session is not None else text.session
             envelope = Envelope(
                 prompt=text.prompt,
                 attachments=merged_attachments,
-                session=effective_session,
             )
         else:
             envelope = Envelope(
                 prompt=text,
                 attachments=list(attachments) if attachments else None,
-                session=session,
             )
 
         # §5.4: local validation happens synchronously BEFORE any wire I/O.

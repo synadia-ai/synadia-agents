@@ -45,11 +45,11 @@ async def _noop(envelope: Envelope, stream: PromptStream) -> None:
     del envelope, stream
 
 
-async def _start_service(nc: NATSClient, name: str, **kwargs: object) -> AgentService:
+async def _start_service(nc: NATSClient, session_name: str, **kwargs: object) -> AgentService:
     service = AgentService(
         agent=AGENT,
         owner=OWNER,
-        name=name,
+        session_name=session_name,
         nc=nc,
         heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
         **kwargs,  # type: ignore[arg-type]
@@ -135,12 +135,12 @@ async def test_discover_filter_excludes_non_matches(
     try:
         found = await agents.discover(
             timeout=1.0,
-            filter=DiscoverFilter(name="discover-a"),
+            filter=DiscoverFilter(session_name="discover-a"),
         )
-        names = [x.name for x in found]
+        session_names = [x.session_name for x in found]
         # Only the matching service makes it through.
-        assert "discover-a" in names
-        assert "discover-b" not in names
+        assert "discover-a" in session_names
+        assert "discover-b" not in session_names
         assert any(x.prompt_subject == a.subject.prompt for x in found)
     finally:
         await agents.close()
