@@ -8,6 +8,16 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Changed
+
+- Reply-inbox prefix for prompt streams, mid-stream queries, and
+  internal `$SRV.INFO` discovery is now fixed at `_INBOX.agents` (was
+  the connection's default `_INBOX`). The prefix is held constant
+  across language SDKs so a single NATS permission
+  (`_INBOX.agents.>`) covers caller-side reply traffic regardless of
+  language. The connection's `inbox_prefix` is no longer consulted for
+  agents-SDK reply subjects; not user-overridable.
+
 ### Changed (breaking, public API)
 
 - **Token 5 of every agent subject is the *session name*; no more

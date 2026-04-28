@@ -16,6 +16,7 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
+from ._inbox import new_inbox
 from ._logging import get_logger
 from .discovery import AgentInfo, EndpointInfo
 from .envelope import Attachment, Envelope, encode
@@ -249,7 +250,7 @@ class Agent:
         self, envelope: Envelope, encoded: bytes, timeout: float
     ) -> AsyncIterator[StreamMessage]:
         del envelope  # retained for readability at the call site; not needed here
-        reply = self._nc.new_inbox()
+        reply = new_inbox()
         sub = await self._nc.subscribe(reply)
         subject = self._info.prompt_endpoint.subject
         # §6.6: per-chunk inactivity timeout. Honor the owning Agents.close()

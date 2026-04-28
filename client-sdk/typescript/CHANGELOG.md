@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 > not actual npm releases. `[0.1.0]` is the first real release under
 > `@synadia-ai/agents`.
 
+## [Unreleased]
+
+### Changed
+
+- Reply-inbox prefix for prompt streams is now fixed at `_INBOX.agents`
+  (was `_INBOX`). The prefix is held constant across language SDKs so a
+  single NATS permission (`_INBOX.agents.>`) covers caller-side reply
+  traffic regardless of language. Not user-overridable.
+
 ## [0.1.1] - 2026-04-25
 
 ### Added
