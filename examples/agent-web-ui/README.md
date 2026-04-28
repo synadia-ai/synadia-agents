@@ -13,7 +13,7 @@ implementations - [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-c
 
 ## Features
 
-- **Unified agent grid** — every discovered agent, controller, and session shows up as a card in a single grouped grid (PI Exec Sessions · PI Exec Control · CC Exec Sessions · CC Exec Control · PI Interactive · Claude Code · OpenClaw · Other). No mode switching.
+- **Unified agent grid** — every discovered agent, controller, and session shows up as a card in a single grouped grid (PI Headless Sessions · PI Headless · Claude Code Headless Sessions · Claude Code Headless · PI Interactive · Claude Code · OpenClaw · Other). No mode switching.
 - **Context-aware right panel** — click a card and the right pane adapts:
   - regular agent or session → live **chat** surface (streaming responses, attachments, mid-stream queries, tool-call cards, per-turn cost)
   - `pi-headless` controller → **New Session** + **Fan-out** tabs
@@ -85,8 +85,8 @@ bun run server/index.ts [--port 3300] [--context current] [--servers nats://...]
 ## Spawning sessions and fan-out
 
 When a [`pi-headless`](../pi-headless) or [`claude-code-headless`](../claude-code-headless)
-controller is discovered, it shows up in the grid under **PI Exec Control** /
-**CC Exec Control** with a slightly different (purple-tinted) card style.
+controller is discovered, it shows up in the grid under **PI Headless** /
+**Claude Code Headless** with a slightly different (purple-tinted) card style.
 Click it and the right panel switches from "chat" to a small workspace:
 
 - **New Session** — `cwd` (required) + optional `session_id`, `model`,
@@ -99,8 +99,8 @@ Click it and the right panel switches from "chat" to a small workspace:
   in parallel, streams each into its own result card, and offers per-card
   abort plus a global clear.
 
-Spawned sessions are first-class NATS agents: they appear under **PI Exec
-Sessions** / **CC Exec Sessions** in the grid, the chat surface works against
+Spawned sessions are first-class NATS agents: they appear under **PI Headless
+Sessions** / **Claude Code Headless Sessions** in the grid, the chat surface works against
 them like any other agent, and lifetime / queue-depth / cost are shown
 live on each card via 5s polling of the controller's `list` endpoint.
 
@@ -142,5 +142,5 @@ cd ../pi-headless && bun run start
 cd ../../examples/agent-web-ui && bun run build && bun run start
 ```
 
-A **PI Exec Control** card appears in the grid. Click it, spawn a session in
+A **PI Headless** card appears in the grid. Click it, spawn a session in
 `/tmp`, then try a fan-out across a few sandbox directories in parallel.

@@ -111,10 +111,14 @@ export const BUCKET_ORDER: Bucket[] = [
 ];
 
 export const BUCKET_LABELS: Record<Bucket, string> = {
-  [BUCKETS.PI_EXEC_SESSION]: "PI Exec Sessions",
-  [BUCKETS.PI_EXEC_CONTROL]: "PI Exec Control",
-  [BUCKETS.CC_EXEC_SESSION]: "CC Exec Sessions",
-  [BUCKETS.CC_EXEC_CONTROL]: "CC Exec Control",
+  // "Headless" matches the canonical protocol vocabulary used in
+  // metadata.role / metadata.spawner ("pi-headless-controller",
+  // "claude-code-headless"); aligning UI labels keeps users one term away
+  // from the docs they'll read next.
+  [BUCKETS.PI_EXEC_SESSION]: "PI Headless Sessions",
+  [BUCKETS.PI_EXEC_CONTROL]: "PI Headless",
+  [BUCKETS.CC_EXEC_SESSION]: "Claude Code Headless Sessions",
+  [BUCKETS.CC_EXEC_CONTROL]: "Claude Code Headless",
   [BUCKETS.PI_AGENT]: "PI Interactive",
   [BUCKETS.CC_AGENT]: "Claude Code",
   [BUCKETS.OPENCLAW]: "OpenClaw",

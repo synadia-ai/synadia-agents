@@ -55,7 +55,7 @@ function focusSpawnedSession(d: PiExecSpawnDescriptor | CcExecSpawnDescriptor): 
     <template v-else-if="role === 'pi-controller'">
       <header class="panel-head">
         <div class="head-title">
-          <span class="agent-tag mono ctrl">pi-ctrl</span>
+          <span class="agent-tag mono ctrl">pi-headless</span>
           <span class="head-name">{{ agent.session ?? agent.name }}</span>
           <span class="head-owner mono">@{{ agent.owner }}</span>
         </div>
@@ -87,7 +87,7 @@ function focusSpawnedSession(d: PiExecSpawnDescriptor | CcExecSpawnDescriptor): 
     <template v-else-if="role === 'cc-controller'">
       <header class="panel-head">
         <div class="head-title">
-          <span class="agent-tag mono ctrl">cc-ctrl</span>
+          <span class="agent-tag mono ctrl">cc-headless</span>
           <span class="head-name">{{ agent.session ?? agent.name }}</span>
           <span class="head-owner mono">@{{ agent.owner }}</span>
         </div>
