@@ -128,9 +128,15 @@ export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
   if (spawner === "claude-code-headless") return BUCKETS.CC_EXEC_SESSION;
   if (role === "pi-headless-controller") return BUCKETS.PI_EXEC_CONTROL;
   if (role === "claude-code-headless-controller") return BUCKETS.CC_EXEC_CONTROL;
+  // `agent.agent` carries the value of `metadata.agent` (per Appendix C of
+  // the spec). Each runtime publishes its own canonical token — match the
+  // actual values the runtimes set, plus the legacy short aliases that
+  // some deployments still use (cc/ccc/oc).
   if (agent.agent === "pi") return BUCKETS.PI_AGENT;
-  if (agent.agent === "ccc" || agent.agent === "cc") return BUCKETS.CC_AGENT;
-  if (agent.agent === "oc") return BUCKETS.OPENCLAW;
+  if (agent.agent === "claude-code" || agent.agent === "cc" || agent.agent === "ccc") {
+    return BUCKETS.CC_AGENT;
+  }
+  if (agent.agent === "openclaw" || agent.agent === "oc") return BUCKETS.OPENCLAW;
   return BUCKETS.OTHER;
 }
 
