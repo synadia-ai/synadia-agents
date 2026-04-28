@@ -20,7 +20,7 @@ class TestConstruction:
     def test_valid_simple_tokens(self) -> None:
         subj = AgentSubject.new(agent="oc", owner="derek", name="summarizer")
         assert subj.prompt == "agents.prompt.oc.derek.summarizer"
-        assert subj.heartbeat == "agents.heartbeat.oc.derek.summarizer"
+        assert subj.heartbeat == "agents.hb.oc.derek.summarizer"
         assert subj.status == "agents.status.oc.derek.summarizer"
         # `inbox` stays as a backwards-name-compat alias of `prompt`.
         assert subj.inbox == subj.prompt
@@ -65,18 +65,18 @@ class TestBase64Sanitization:
 
 class TestSubjectClassification:
     def test_is_heartbeat_subject_true(self) -> None:
-        assert is_heartbeat_subject("agents.heartbeat.hermes.rene.default") is True
+        assert is_heartbeat_subject("agents.hb.hermes.rene.default") is True
 
     def test_is_heartbeat_subject_wrong_verb(self) -> None:
         assert is_heartbeat_subject("agents.prompt.hermes.rene.default") is False
         assert is_heartbeat_subject("agents.status.hermes.rene.default") is False
 
     def test_is_heartbeat_subject_wrong_length(self) -> None:
-        assert is_heartbeat_subject("agents.heartbeat.hermes.rene") is False
-        assert is_heartbeat_subject("agents.heartbeat.hermes.rene.default.extra") is False
+        assert is_heartbeat_subject("agents.hb.hermes.rene") is False
+        assert is_heartbeat_subject("agents.hb.hermes.rene.default.extra") is False
 
     def test_is_heartbeat_subject_wrong_root(self) -> None:
-        assert is_heartbeat_subject("other.heartbeat.hermes.rene.default") is False
+        assert is_heartbeat_subject("other.hb.hermes.rene.default") is False
 
 
 class TestParseAgentSubject:
@@ -89,22 +89,22 @@ class TestParseAgentSubject:
 
     def test_wrong_verb_returns_none(self) -> None:
         # Default `verb=VERB_PROMPT` filter rejects non-prompt subjects.
-        assert parse_agent_subject("agents.heartbeat.hermes.rene.default") is None
+        assert parse_agent_subject("agents.hb.hermes.rene.default") is None
         assert parse_agent_subject("agents.status.hermes.rene.default") is None
 
     def test_verb_filter_overrideable(self) -> None:
-        subj = parse_agent_subject("agents.heartbeat.hermes.rene.default", verb=VERB_HEARTBEAT)
+        subj = parse_agent_subject("agents.hb.hermes.rene.default", verb=VERB_HEARTBEAT)
         assert subj is not None and subj.name == "default"
         subj_status = parse_agent_subject("agents.status.hermes.rene.default", verb=VERB_STATUS)
         assert subj_status is not None and subj_status.name == "default"
 
-    def test_instance_named_heartbeat_is_fine_under_v03(self) -> None:
+    def test_instance_named_after_a_verb_is_fine_under_v03(self) -> None:
         # Verbs and instance names live in different positions now, so an
-        # instance literally named `heartbeat` no longer collides with the
-        # §8 heartbeat subject — `agents.prompt.hermes.rene.heartbeat`
-        # parses as a valid prompt subject.
-        subj = parse_agent_subject("agents.prompt.hermes.rene.heartbeat")
-        assert subj is not None and subj.name == "heartbeat"
+        # instance literally named `hb` or `heartbeat` no longer collides
+        # with the §8 heartbeat subject.
+        for instance in ("hb", "heartbeat"):
+            subj = parse_agent_subject(f"agents.prompt.hermes.rene.{instance}")
+            assert subj is not None and subj.name == instance
 
     def test_wrong_root(self) -> None:
         assert parse_agent_subject("services.prompt.hermes.rene.default") is None

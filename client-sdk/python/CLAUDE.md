@@ -38,9 +38,10 @@ v0.3 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
 
 - **Subject hierarchy** (§2 v0.3): verb-first —
   `agents.{verb}.{agent}.{owner}.{name}` where `verb` is one of `prompt`
-  / `heartbeat` / `status` (plus `attachments` reserved for the future
-  §5.5 endpoint). Verbs and instance names live in different positions,
-  so an instance literally named `heartbeat` no longer collides with §8.
+  / `hb` (heartbeat, abbreviated for wire economy) / `status` (plus
+  `attachments` reserved for the future §5.5 endpoint). Verbs and
+  instance names live in different positions, so an instance literally
+  named `hb` or `heartbeat` no longer collides with §8.
   Tokens with non-NATS-safe characters are base64-url-no-padding escaped
   internally - an SDK implementation detail, not a protocol contract
   (see `src/synadia_ai/agents/subjects.py::_sanitize`).
@@ -60,7 +61,8 @@ v0.3 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
 - **Mid-stream queries** (§7): agent-initiated questions via
   `PromptStream.ask`; caller replies via `Query.reply`.
 - **Heartbeat** (§8.3): `{agent, owner, session?, instance_id, ts,
-  interval_s}` on `agents.heartbeat.{a}.{o}.{n}` (v0.3).
+  interval_s}` on `agents.hb.{a}.{o}.{n}` (v0.3; verb is the
+  abbreviation `hb`).
 - **Status** (v0.3 §-TBD): request/response on `agents.status.{a}.{o}.{n}`
   returns the same payload shape as a heartbeat, freshly built per
   request. Future PRs extend the response with richer agent metadata
@@ -319,8 +321,10 @@ either guides them to success or frustrates them.
   own positional slot, and adds a request/response `status` endpoint at
   `agents.status.{a}.{o}.{n}` that replies with a freshly-built
   heartbeat-shaped payload (`HeartbeatPayload`, §8.3). Heartbeat moves
-  to `agents.heartbeat.{a}.{o}.{n}`; `HEARTBEAT_SUBJECT` wildcard is
-  now `agents.heartbeat.*.*.*`. `metadata.protocol_version` bumps
+  to `agents.hb.{a}.{o}.{n}` (verb is the abbreviation `hb` —
+  heartbeats dominate per-account subject volume so the short form
+  earns its keep); `HEARTBEAT_SUBJECT` wildcard is now
+  `agents.hb.*.*.*`. `metadata.protocol_version` bumps
   `"0.2"` → `"0.3"`; old v0.2 callers fail to discovery-match a v0.3
   agent rather than silently talking past it. Ships ahead of the
   protocol spec, the TypeScript SDK, and the agent harnesses

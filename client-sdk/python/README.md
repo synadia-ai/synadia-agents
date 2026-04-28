@@ -191,7 +191,7 @@ Probe it with the `nats` CLI (subjects are verb-first per protocol v0.3):
 nats micro list                                          # see "agents"
 nats req  agents.prompt.demo.alice.worker-1 "hello"      # prompt it
 nats req  agents.status.demo.alice.worker-1 ""           # heartbeat-shaped status reply
-nats sub  "agents.heartbeat.demo.alice.worker-1"         # watch heartbeats
+nats sub  "agents.hb.demo.alice.worker-1"                # watch heartbeats
 ```
 
 ## Documentation

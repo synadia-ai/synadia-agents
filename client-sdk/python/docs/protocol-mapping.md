@@ -87,7 +87,7 @@ spec to catch up.
 
 | SDK                          | Wire behaviour                                                                                   | Spec ref   |
 | ---------------------------- | ------------------------------------------------------------------------------------------------ | ---------- |
-| Subject                      | `agents.heartbeat.{agent}.{owner}.{name}` (v0.3 verb-first).                                     | §8.1       |
+| Subject                      | `agents.hb.{agent}.{owner}.{name}` (v0.3 verb-first; `hb` abbreviates `heartbeat`).              | §8.1       |
 | Default interval             | `AgentService(heartbeat_interval_s=30)` (spec recommendation).                                   | §8.2       |
 | Payload fields               | `{agent, owner, session?, instance_id, ts, interval_s}` - `session` omitted when absent.         | §8.3       |
 | `HeartbeatPayload` tolerance | `extra="ignore"` - unknown fields silently accepted per §8.3.                                    | §8.3       |

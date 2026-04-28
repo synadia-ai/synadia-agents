@@ -1,10 +1,11 @@
 """Subject construction and validation per protocol §2.
 
 Wire layout (v0.3): ``agents.{verb}.{agent}.{owner}.{name}`` where ``verb``
-is one of the protocol-reserved verbs ``prompt``, ``heartbeat``, ``status``
-(plus ``attachments`` reserved for the future §5.5 endpoint). Verbs and
-instance names live in different positions, so an agent literally named
-``heartbeat`` no longer collides with the §8 heartbeat subject.
+is one of the protocol-reserved verbs ``prompt``, ``hb`` (heartbeat),
+``status`` (plus ``attachments`` reserved for the future §5.5 endpoint).
+Verbs and instance names live in different positions, so an agent literally
+named ``hb`` or ``heartbeat`` no longer collides with the §8 heartbeat
+subject.
 
 ``agent``, ``owner``, and ``name`` are constrained to lowercase alphanumeric
 plus hyphens (``agent``) or hyphens and underscores (``owner``, ``name``).
@@ -32,10 +33,12 @@ _AGENT_RE = re.compile(r"^[a-z0-9-]+$")
 _OWNER_RE = re.compile(r"^[a-z0-9_-]+$")
 _NAME_RE = _OWNER_RE
 
-# §2 (v0.3) reserved verbs. ``prompt``/``heartbeat``/``status`` are wired up
-# by this SDK; ``attachments`` is reserved for the future §5.5 endpoint.
+# §2 (v0.3) reserved verbs. ``prompt``/``hb``/``status`` are wired up by
+# this SDK; ``attachments`` is reserved for the future §5.5 endpoint. The
+# heartbeat verb is the abbreviation ``hb`` on the wire (§8.1) — kept short
+# because heartbeat traffic dominates per-account subject volume.
 VERB_PROMPT = "prompt"
-VERB_HEARTBEAT = "heartbeat"
+VERB_HEARTBEAT = "hb"
 VERB_STATUS = "status"
 VERB_ATTACHMENTS = "attachments"
 
@@ -112,7 +115,7 @@ def _sanitize(token: str, field: str, pattern: re.Pattern[str]) -> str:
 
 
 def is_heartbeat_subject(subject: str) -> bool:
-    """True iff the subject is of the form `agents.heartbeat.{a}.{o}.{n}`."""
+    """True iff the subject is of the form `agents.hb.{a}.{o}.{n}` (§8.1, v0.3)."""
     parts = subject.split(".")
     return len(parts) == _SUBJECT_TOKEN_COUNT and parts[0] == ROOT and parts[1] == VERB_HEARTBEAT
 

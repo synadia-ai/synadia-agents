@@ -18,7 +18,7 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   | endpoint  | v0.2 wire                         | v0.3 wire (this release) |
   | --------- | --------------------------------- | ------------------------ |
   | prompt    | `agents.{a}.{o}.{n}`              | `agents.prompt.{a}.{o}.{n}` |
-  | heartbeat | `agents.{a}.{o}.{n}.heartbeat`    | `agents.heartbeat.{a}.{o}.{n}` |
+  | heartbeat | `agents.{a}.{o}.{n}.heartbeat`    | `agents.hb.{a}.{o}.{n}` (verb abbreviated; heartbeats dominate per-account subject volume) |
   | status    | —                                 | `agents.status.{a}.{o}.{n}` (new) |
 
   `AgentSubject` exposes `prompt`, `heartbeat`, and `status` properties
@@ -30,8 +30,8 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   discovery filters via metadata make the mismatch a hard refusal
   rather than a silent talk-past. There is no back-compat shim — 0.x
   permits breaking changes per protocol §11.2.
-- **Heartbeat tracker subscribes to `agents.heartbeat.*.*.*`** (the
-  exported `HEARTBEAT_SUBJECT` constant). The tracker still keys on
+- **Heartbeat tracker subscribes to `agents.hb.*.*.*`** (the exported
+  `HEARTBEAT_SUBJECT` constant). The tracker still keys on
   `payload.instance_id` per §8.3, so observable behaviour is identical
   once both sides speak v0.3.
 

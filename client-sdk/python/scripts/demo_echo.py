@@ -11,7 +11,7 @@ Once running, try from another shell (subjects are verb-first per v0.3):
     nats micro list
     nats req  agents.prompt.demo.$USER.echo "hello"
     nats req  agents.status.demo.$USER.echo ""
-    nats sub  "agents.heartbeat.demo.$USER.echo"
+    nats sub  "agents.hb.demo.$USER.echo"
 """
 
 from __future__ import annotations

@@ -7,7 +7,7 @@ Spins up a real nats-server, registers an echo agent, connects an
 - ``$SRV.INFO.agents`` reports spec §3.2 metadata (``agent``,
   ``owner``, ``protocol_version``) on the shared service name
 - the ``prompt`` endpoint is registered with queue group ``"agents"`` (§3.3)
-- a heartbeat is published on ``agents.heartbeat.{a}.{o}.{n}`` within the
+- a heartbeat is published on ``agents.hb.{a}.{o}.{n}`` within the
   agent's configured interval (§8.1, v0.3 verb-first layout)
 - the ``status`` endpoint replies with a freshly-built heartbeat-shaped
   payload (v0.3 §-TBD)

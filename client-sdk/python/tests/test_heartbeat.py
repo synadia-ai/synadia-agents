@@ -105,7 +105,7 @@ async def test_tracker_keys_on_instance_id_not_subject(nc: NATSClient) -> None:
     tracker = HeartbeatTracker(nc)
     await tracker.start()
     try:
-        subject = "agents.heartbeat.test.pytest.shared"
+        subject = "agents.hb.test.pytest.shared"
         for instance_id in ("instance-A", "instance-B"):
             payload = HeartbeatPayload(
                 agent="test",
@@ -149,7 +149,7 @@ async def test_tracker_liveness_is_offline_when_stale(nc: NATSClient) -> None:
     tracker = HeartbeatTracker(nc)
     await tracker.start()
     try:
-        subject = "agents.heartbeat.test.pytest.stale"
+        subject = "agents.hb.test.pytest.stale"
         payload = HeartbeatPayload(
             agent="test",
             owner="pytest",
@@ -188,7 +188,7 @@ async def test_tracker_on_heartbeat_listener_fires_and_unsubscribes(
     seen: list[HeartbeatPayload] = []
     unsubscribe = tracker.on_heartbeat("listener-id", seen.append)
     try:
-        subject = "agents.heartbeat.test.pytest.listener"
+        subject = "agents.hb.test.pytest.listener"
         for _ in range(2):
             payload = HeartbeatPayload(
                 agent="test",

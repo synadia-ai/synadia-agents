@@ -27,8 +27,9 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-# §8.1 (v0.3): heartbeat wildcard subject. Subscribed to by :class:`HeartbeatTracker`.
-HEARTBEAT_SUBJECT = "agents.heartbeat.*.*.*"
+# §8.1 (v0.3): heartbeat wildcard subject (verb is the abbreviation `hb`).
+# Subscribed to by :class:`HeartbeatTracker`.
+HEARTBEAT_SUBJECT = "agents.hb.*.*.*"
 
 # §8.2 default: a tracked instance is online iff its last heartbeat is
 # within ``slack * interval_s`` seconds of "now". Mirrors TS
@@ -41,8 +42,8 @@ class HeartbeatPayload(BaseModel):
 
     The instance name is deliberately absent: §8.3 directs receivers to
     extract it from the heartbeat subject (the 5th token under v0.3's
-    ``agents.heartbeat.{agent}.{owner}.{name}`` layout). The tracker keys
-    on ``payload.instance_id`` per §8.3, not on the subject — the subject
+    ``agents.hb.{agent}.{owner}.{name}`` layout). The tracker keys on
+    ``payload.instance_id`` per §8.3, not on the subject — the subject
     note is only relevant when callers want a human-readable instance
     name. ``extra="ignore"`` because §8.3 requires callers to tolerate
     unknown fields for forward compat; pydantic will silently drop them
