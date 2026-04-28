@@ -10,6 +10,19 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Changed
 
+- **Release plumbing moved to PyPI [trusted publishing][tp].** The
+  `release-python.yml` workflow no longer references
+  `secrets.PYPI_API_TOKEN`; publishes go through
+  `pypa/gh-action-pypi-publish@release/v1`, with the GitHub-issued OIDC
+  token exchanged for a short-lived PyPI credential. The `pypi`
+  GitHub Environment has a `python-v*` tag protection rule, so a
+  publish can only fire from a release tag. A pending publisher on
+  PyPI for `synadia-ai-agents` reserves the project name; the project
+  materializes on PyPI on the first successful OIDC publish from this
+  workflow + environment. No user-visible API change.
+
+  [tp]: https://docs.pypi.org/trusted-publishers/
+
 - Reply-inbox prefix for prompt streams, mid-stream queries, and
   internal `$SRV.INFO` discovery is now fixed at `_INBOX.agents` (was
   the connection's default `_INBOX`). The prefix is held constant
