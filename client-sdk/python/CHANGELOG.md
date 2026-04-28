@@ -91,7 +91,7 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
-- **`status` request/response endpoint (v0.3 §-TBD).** Every
+- **`status` request/response endpoint (§8.7 (v0.3)).** Every
   `AgentService` registers an additional NATS micro endpoint named
   `status` on `agents.status.{a}.{o}.{n}` (queue group `"agents"`).
   Replies with the same JSON payload shape as a heartbeat

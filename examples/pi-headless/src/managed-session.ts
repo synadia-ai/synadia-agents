@@ -11,7 +11,11 @@ import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import { cleanupStaged, decorateWithAttachments, stageAttachments } from "./attachments.js";
 import { responseText, statusAck } from "./chunk-encoder.js";
 import { EnvelopeError, parseEnvelope, type ParsedAttachment } from "./envelope.js";
-import { sessionHeartbeatSubject, sessionPromptSubject } from "./subjects.js";
+import {
+  sessionHeartbeatSubject,
+  sessionPromptSubject,
+  sessionStatusSubject,
+} from "./subjects.js";
 
 export interface ManagedSessionOptions {
   readonly nc: NatsConnection;
@@ -28,6 +32,7 @@ export interface SessionSummary {
   readonly session_id: string;
   readonly subject: string;
   readonly heartbeat_subject: string;
+  readonly status_subject: string;
   readonly cwd: string;
   readonly model: string | undefined;
   readonly thinking_level: string | undefined;
@@ -58,6 +63,7 @@ export class ManagedSession {
   readonly createdAt: number;
   readonly subject: string;
   readonly heartbeatSubject: string;
+  readonly statusSubject: string;
 
   private readonly nc: NatsConnection;
   private readonly owner: string;
@@ -83,6 +89,7 @@ export class ManagedSession {
     this.lastActivity = this.createdAt;
     this.subject = sessionPromptSubject(this.owner, this.sessionId);
     this.heartbeatSubject = sessionHeartbeatSubject(this.owner, this.sessionId);
+    this.statusSubject = sessionStatusSubject(this.owner, this.sessionId);
 
     const extraMetadata: Record<string, string> = {
       spawner: "pi-headless",
@@ -99,7 +106,7 @@ export class ManagedSession {
       name: this.sessionId,
       session: this.sessionId,
       description: `pi-headless session ${this.sessionId} (${this.cwd})`,
-      version: "0.1.0",
+      version: "0.3.0",
       maxPayload: "1MB",
       attachmentsOk: true,
       heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
@@ -128,6 +135,7 @@ export class ManagedSession {
       session_id: this.sessionId,
       subject: this.subject,
       heartbeat_subject: this.heartbeatSubject,
+      status_subject: this.statusSubject,
       cwd: this.cwd,
       model: this.model,
       thinking_level: this.thinkingLevel,

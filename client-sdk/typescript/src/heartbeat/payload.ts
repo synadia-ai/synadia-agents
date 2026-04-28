@@ -1,18 +1,23 @@
 // Heartbeat payload per spec §8.3.
 //
-// Wire shape:
+// Wire shape (v0.3):
 //   {
 //     "agent": "claude-code",
 //     "owner": "aconnolly",
-//     "session": "synadia-com-2",
+//     "session": "alice",                          // optional, §5.6
 //     "instance_id": "VMKS6MHK71PCPWGY38A7N5",
 //     "ts": "2026-04-21T14:23:01Z",
 //     "interval_s": 30
 //   }
 //
-// The instance name is NOT in the payload — receivers extract it from the
-// 4th token of the subject (§8.3). Callers MUST tolerate additional unknown
-// fields (§8.3, §12).
+// Published on `agents.hb.{agent}.{owner}.{name}` (§8.1 v0.3) — the
+// instance name is NOT in the payload; receivers extract it from the 5th
+// subject token. The optional `session` field carries the §5.6 envelope-
+// level conversation label for harnesses that multiplex over a single
+// subject (e.g. Hermes). Callers MUST tolerate additional unknown fields
+// (§8.3, §12).
+
+import type { AgentSubject } from "../subjects.js";
 
 export interface HeartbeatPayload {
   readonly agent: string;
@@ -66,4 +71,53 @@ export function decodeHeartbeatPayload(input: unknown): HeartbeatPayload | null 
     extras: Object.freeze(extras),
     ...(session !== undefined ? { session } : {}),
   });
+}
+
+export interface BuildHeartbeatPayloadOptions {
+  /** §5.6 envelope-level session label, when the harness multiplexes. */
+  readonly session?: string;
+  /** Extra forward-compat fields merged into the wire payload. */
+  readonly extras?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Construct a §8.3 heartbeat payload for `subject`.
+ *
+ * Pure helper shared between the heartbeat publisher and the v0.3 status
+ * request/response endpoint — both emit the same payload shape, and any
+ * richer agent metadata added in future PRs lands here in one place.
+ */
+export function buildHeartbeatPayload(
+  subject: AgentSubject,
+  intervalS: number,
+  instanceId: string,
+  options: BuildHeartbeatPayloadOptions = {},
+): HeartbeatPayload {
+  return Object.freeze({
+    agent: subject.agent,
+    owner: subject.owner,
+    instanceId,
+    ts: new Date().toISOString(),
+    intervalS,
+    extras: Object.freeze({ ...(options.extras ?? {}) }),
+    ...(options.session !== undefined ? { session: options.session } : {}),
+  });
+}
+
+/**
+ * Encode a {@link HeartbeatPayload} to wire-shape JSON bytes (snake_case
+ * keys per §8.3). `extras` are splatted alongside the known fields so a
+ * `decode → build` round-trip preserves forward-compat fields.
+ */
+export function encodeHeartbeatPayload(payload: HeartbeatPayload): Uint8Array {
+  const wire: Record<string, unknown> = {
+    agent: payload.agent,
+    owner: payload.owner,
+    instance_id: payload.instanceId,
+    ts: payload.ts,
+    interval_s: payload.intervalS,
+    ...payload.extras,
+  };
+  if (payload.session !== undefined) wire["session"] = payload.session;
+  return new TextEncoder().encode(JSON.stringify(wire));
 }

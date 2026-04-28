@@ -1,4 +1,4 @@
-// Wire-level smoke test for the NATS Agent Protocol 0.2.0-draft layer of
+// Wire-level smoke test for the NATS Agent Protocol v0.3 layer of
 // @synadia-ai/nats-channel (OpenClaw).
 //
 // This test does NOT boot a full OpenClaw pipeline. Instead it assembles a
@@ -69,7 +69,8 @@ function step(name, fn) {
 
 // ── Observer connection (subscribes BEFORE service registers) ──────────────
 const obs = await connect({ servers: "nats://127.0.0.1:4222" });
-const hbSub = obs.subscribe("agents.*.*.*.heartbeat");
+// v0.3 heartbeat wildcard: `agents.hb.<agent>.<owner>.<name>`.
+const hbSub = obs.subscribe("agents.hb.*.*.*");
 const heartbeats = [];
 (async () => {
 	for await (const m of hbSub) {
@@ -209,7 +210,7 @@ await step("$SRV.INFO.agents returns spec-shaped metadata + prompt endpoint", as
 	assert.equal(mine.metadata.agent, "openclaw");
 	assert.equal(mine.metadata.owner, OWNER);
 	assert.equal(mine.metadata.session, "default");
-	assert.equal(mine.metadata.protocol_version, "0.2");
+	assert.equal(mine.metadata.protocol_version, "0.3");
 	const ep = mine.endpoints?.find((e) => e.name === "prompt");
 	assert.ok(ep, "prompt endpoint missing");
 	assert.equal(ep.subject, SUBJECT);

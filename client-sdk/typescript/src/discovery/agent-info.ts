@@ -72,11 +72,12 @@ export function buildAgentInfo(info: RawServiceInfo): AgentInfo | null {
   const promptEndpoint = endpoints.find((e) => e.name === PROMPT_ENDPOINT_NAME);
   if (!promptEndpoint) return null;
 
-  // Per §4.3 step 3: derive instance name from the 4th token of the prompt
-  // endpoint subject when it follows the default pattern. Otherwise fall
-  // back to the session label, then to an empty string.
+  // Per §4.3 step 3 (v0.3): derive instance name from the 5th token of the
+  // prompt endpoint subject (`agents.prompt.<agent>.<owner>.<name>`) when it
+  // follows the default verb-first pattern. Otherwise fall back to an empty
+  // string — the caller can still address the agent via `promptEndpoint.subject`.
   const tokens = promptEndpoint.subject.split(".");
-  const nameFromSubject = tokens[3];
+  const nameFromSubject = tokens[4];
   const name = nameFromSubject !== undefined && nameFromSubject !== "" ? nameFromSubject : "";
 
   const rawSession = metadata["session"];

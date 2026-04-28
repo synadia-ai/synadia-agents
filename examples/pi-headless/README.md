@@ -1,8 +1,8 @@
 # pi-headless
 
-A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia-ai/agents` and conforming to the NATS Agent Protocol v0.2.0.
+A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia-ai/agents` and conforming to the NATS Agent Protocol **v0.3** (verb-first subjects + `status` endpoint).
 
-Each spawned PI session registers as its own NATS agent instance under `agents.pi.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text).
+Each spawned PI session registers as its own NATS agent instance under `agents.prompt.pi.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
 
 In short: one process, many PI sessions, all first-class NATS agents.
 
@@ -20,7 +20,7 @@ bun run build
 cd ../../examples/pi-headless
 bun install
 bun run start                # connects via $NATS_CONTEXT or NATS_URL
-# pi-headless: controller listening on agents.pi.<you>.exec
+# pi-headless: controller listening on agents.prompt.pi.<you>.exec
 # pi-headless: extra endpoints - …exec.spawn  …exec.stop  …exec.list
 
 # 3. Spawn a session + prompt + stop, from another shell.
@@ -68,14 +68,16 @@ PI auth / model registry comes from `~/.pi/agent/auth.json` (the same location `
 ## Subject layout
 
 ```
-agents.pi.<owner>.<name>                    ← controller prompt endpoint (help text)
-agents.pi.<owner>.<name>.spawn              ← POST JSON → session descriptor
-agents.pi.<owner>.<name>.stop               ← POST { session_id } → { ok: true }
-agents.pi.<owner>.<name>.list               ← (empty) → { sessions: [...] }
-agents.pi.<owner>.<name>.heartbeat          ← §8 heartbeat (30s)
+agents.prompt.pi.<owner>.<name>             ← controller prompt endpoint (help text)
+agents.status.pi.<owner>.<name>             ← controller status (§8.7 (v0.3); replies with heartbeat-shaped payload)
+agents.hb.pi.<owner>.<name>                 ← controller heartbeat (§8.1 v0.3, 30 s)
+agents.pi.<owner>.<name>.spawn              ← POST JSON → session descriptor (custom; non-verb-first)
+agents.pi.<owner>.<name>.stop               ← POST { session_id } → { ok: true }    (custom)
+agents.pi.<owner>.<name>.list               ← (empty) → { sessions: [...] }          (custom)
 
-agents.pi.<owner>.<session_id>              ← spawned session prompt (§5/§6)
-agents.pi.<owner>.<session_id>.heartbeat    ← §8 heartbeat (30s)
+agents.prompt.pi.<owner>.<session_id>       ← spawned session prompt (§5/§6, v0.3)
+agents.status.pi.<owner>.<session_id>       ← spawned session status (§8.7 (v0.3))
+agents.hb.pi.<owner>.<session_id>           ← spawned session heartbeat (§8.1 v0.3, 30 s)
 ```
 
 ## Wire examples
@@ -86,13 +88,13 @@ agents.pi.<owner>.<session_id>.heartbeat    ← §8 heartbeat (30s)
 nats req agents.pi.$USER.exec.spawn \
   '{"cwd":"/tmp/pi-sandbox","model":"anthropic/claude-sonnet-4-5","max_lifetime_s":900}' \
   --timeout=10s
-# → { "session_id":"sess-a1b2c3d4", "subject":"agents.pi.$USER.sess-a1b2c3d4", ... }
+# → { "session_id":"sess-a1b2c3d4", "subject":"agents.prompt.pi.$USER.sess-a1b2c3d4", "status_subject":"agents.status.pi.$USER.sess-a1b2c3d4", ... }
 ```
 
 ### Prompt (protocol-standard - no custom format)
 
 ```bash
-nats req agents.pi.$USER.sess-a1b2c3d4 \
+nats req agents.prompt.pi.$USER.sess-a1b2c3d4 \
   'summarise the files in this directory' --replies=0 --timeout=60s
 # → {"type":"status","data":"ack"}
 # → {"type":"response","data":"There are three files: …"}

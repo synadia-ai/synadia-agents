@@ -48,7 +48,7 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
       textInputs: [
         {
           inputKey: "agentName",
-          message: "Agent name (4th subject token — agents.oc.<owner>.<agentName>)",
+          message: "Agent name (5th subject token — agents.prompt.oc.<owner>.<agentName>)",
           placeholder: "my-agent",
           required: true,
           currentValue: ({ cfg, accountId }: Record<string, unknown>) => {
@@ -124,7 +124,7 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
       describeAccount: (account: ResolvedNatsAccount) => ({
         accountId: account.accountId,
         label: account.agentName,
-        summary: `agents.oc.${account.owner}.${account.agentName} @ ${account.url}`,
+        summary: `agents.prompt.oc.${account.owner}.${account.agentName} @ ${account.url}`,
       }),
     },
     setup: {

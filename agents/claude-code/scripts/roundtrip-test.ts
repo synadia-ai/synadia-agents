@@ -14,7 +14,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { connect } from '@nats-io/transport-node'
 import { readFileSync, rmSync, existsSync } from 'fs'
 
-const SUBJECT = 'agents.cc.m64.rt-test'
+const SUBJECT = 'agents.prompt.cc.m64.rt-test'
 const STATE_DIR = '/tmp/rt-test-state'
 const MAX_PAYLOAD = 1024 * 1024
 

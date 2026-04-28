@@ -30,7 +30,7 @@ spec to catch up.
 | `protocol_version` value   | `"0.3"` - MAJOR.MINOR only (§11.1).                                                             | §3.2, §11.1 |
 | Endpoint `prompt` metadata | `{max_payload, attachments_ok}`. Boolean serialised as `"true"`/`"false"` on the wire.          | §2.1       |
 | `prompt` queue group       | `"agents"` - pinned explicitly; framework defaults differ between SDKs and would break interop. | §3.3       |
-| `status` endpoint          | Registered alongside `prompt` with subject `agents.status.{a}.{o}.{session_name}` and queue group `"agents"` (v0.3, §-TBD). Replies with a freshly-built `HeartbeatPayload` (§8.3 shape). | v0.3 §-TBD |
+| `status` endpoint          | Registered alongside `prompt` with subject `agents.status.{a}.{o}.{session_name}` and queue group `"agents"` (v0.3, §8.7). Replies with a freshly-built `HeartbeatPayload` (§8.3 shape). | §8.7 (v0.3) |
 | Subject layout             | `agents.{verb}.{agent}.{owner}.{session_name}` (v0.3 verb-first; token 5 IS the session); the SDK doesn't allow overrides today. | §2, §2.3   |
 
 ## Request envelope (§5)
@@ -136,7 +136,7 @@ mirror the TypeScript SDK so the two stay in lockstep.
    This SDK registers a NATS micro endpoint named `status` on
    `agents.status.{a}.{o}.{session_name}` (queue group `"agents"`) that
    replies with the §8.3 heartbeat payload, freshly built per request.
-   Anticipated to land in the spec as a §-TBD section once the verb-
+   Anticipated to land in the spec as a §8.7 section once the verb-
    first PR settles.
 6. **Token 5 is the session name (`name` + `session` collapse).** The
    SDK collapses the previous `name` (5th subject token) and `session`

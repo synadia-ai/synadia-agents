@@ -52,7 +52,7 @@ describe.skipIf(!natsUrl)("Agents.discover", () => {
     expect(match).toBeDefined();
     expect(match!.agent).toBe("ref-agent");
     expect(match!.owner).toBe("testers");
-    expect(match!.protocolVersion).toBe("0.2");
+    expect(match!.protocolVersion).toBe("0.3");
     expect(match!.promptEndpoint.subject).toBe(agent.promptSubject);
     expect(match!.promptEndpoint.queueGroup).toBe("agents");
     expect(match!.promptEndpoint.maxPayloadBytes).toBe(1024 * 1024);

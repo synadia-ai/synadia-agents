@@ -29,7 +29,11 @@ import {
   toolUseStatus,
 } from "./chunk-encoder.js";
 import { EnvelopeError, parseEnvelope, type ParsedAttachment } from "./envelope.js";
-import { sessionHeartbeatSubject, sessionPromptSubject } from "./subjects.js";
+import {
+  sessionHeartbeatSubject,
+  sessionPromptSubject,
+  sessionStatusSubject,
+} from "./subjects.js";
 
 export interface ManagedSessionOptions {
   readonly nc: NatsConnection;
@@ -49,6 +53,7 @@ export interface SessionSummary {
   readonly session_id: string;
   readonly subject: string;
   readonly heartbeat_subject: string;
+  readonly status_subject: string;
   readonly cwd: string;
   readonly model: string;
   readonly allowed_tools: ReadonlyArray<string>;
@@ -91,6 +96,7 @@ export class ManagedSession {
   readonly createdAt: number;
   readonly subject: string;
   readonly heartbeatSubject: string;
+  readonly statusSubject: string;
 
   private readonly nc: NatsConnection;
   private readonly owner: string;
@@ -121,6 +127,7 @@ export class ManagedSession {
     this.lastActivity = this.createdAt;
     this.subject = sessionPromptSubject(this.owner, this.sessionId);
     this.heartbeatSubject = sessionHeartbeatSubject(this.owner, this.sessionId);
+    this.statusSubject = sessionStatusSubject(this.owner, this.sessionId);
 
     const extraMetadata: Record<string, string> = {
       spawner: "claude-code-headless",
@@ -139,7 +146,7 @@ export class ManagedSession {
       name: this.sessionId,
       session: this.sessionId,
       description: `claude-code-headless session ${this.sessionId} (${this.cwd})`,
-      version: "0.1.0",
+      version: "0.3.0",
       maxPayload: "1MB",
       attachmentsOk: true,
       heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
@@ -168,6 +175,7 @@ export class ManagedSession {
       session_id: this.sessionId,
       subject: this.subject,
       heartbeat_subject: this.heartbeatSubject,
+      status_subject: this.statusSubject,
       cwd: this.cwd,
       model: this.model,
       allowed_tools: this.allowedTools,

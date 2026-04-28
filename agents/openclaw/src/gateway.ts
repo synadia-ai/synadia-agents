@@ -17,12 +17,14 @@ import {
   PROTOCOL_VERSION,
   SERVICE_NAME,
   SERVICE_VERSION,
+  STATUS_QUEUE_GROUP,
   buildHeartbeatPayload,
   connectToNats,
   drainConnection,
   heartbeatSubject,
   parseEnvelope,
   promptSubject,
+  statusSubject,
   wrapResponseChunk,
   wrapStatusChunk,
 } from "./nats/index.js";
@@ -86,9 +88,10 @@ export async function startNatsGateway(
   const owner = account.owner;
   const subject = promptSubject(owner, agentName);
   const hbSubject = heartbeatSubject(owner, agentName);
+  const stSubject = statusSubject(owner, agentName);
 
   ctx.log?.info?.(
-    `nats: gateway starting — agents.oc.${owner}.${agentName} @ ${account.url} (accountId: ${account.accountId}, enabled: ${account.enabled})`,
+    `nats: gateway starting — agents.prompt.oc.${owner}.${agentName} @ ${account.url} (accountId: ${account.accountId}, enabled: ${account.enabled})`,
   );
 
   await cleanupPrevious();
@@ -124,7 +127,7 @@ export async function startNatsGateway(
   const instanceId = service.info().id;
 
   // 3. The `prompt` endpoint. Subject is the canonical default
-  //    `agents.oc.<owner>.<name>`; metadata advertises capabilities per §2.1.
+  //    `agents.prompt.oc.<owner>.<name>`; metadata advertises capabilities per §2.1.
   service.addEndpoint("prompt", {
     subject,
     queue: PROMPT_QUEUE_GROUP,
@@ -135,7 +138,32 @@ export async function startNatsGateway(
     },
   });
 
-  // 4. Heartbeat — starts AFTER registration so callers discovering via the
+  // 4. §8.7 (v0.3) status request/response endpoint. Replies with the same
+  //    JSON payload shape as a heartbeat (§8.3), freshly built per request.
+  service.addEndpoint("status", {
+    subject: stSubject,
+    queue: STATUS_QUEUE_GROUP,
+    handler: (err, msg: ServiceMsg) => {
+      if (err) return;
+      try {
+        const payload = buildHeartbeatPayload({
+          owner,
+          session: DEFAULT_SESSION,
+          instanceId,
+          intervalS: HEARTBEAT_INTERVAL_S,
+        });
+        msg.respond(JSON.stringify(payload));
+      } catch (e) {
+        try {
+          msg.respondError(500, `status handler error: ${(e as Error).message}`);
+        } catch {
+          // best effort
+        }
+      }
+    },
+  });
+
+  // 5. Heartbeat — starts AFTER registration so callers discovering via the
   //    beacon can resolve metadata via $SRV.INFO (spec §8.2).
   const publishHeartbeat = (): void => {
     try {

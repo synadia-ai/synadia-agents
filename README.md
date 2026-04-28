@@ -33,11 +33,12 @@ Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`,
 
 ## Subject namespace
 
-The protocol only requires an endpoint named `prompt` - the subject it's served on is up to each agent. For the agents in this repo we've chosen a single pattern:
+The protocol only requires an endpoint named `prompt` - the subject it's served on is up to each agent. For the agents in this repo we've chosen a single verb-first pattern (v0.3):
 
 ```
-agents.<type-token>.<owner>.<session>             # prompt endpoint
-agents.<type-token>.<owner>.<session>.heartbeat   # liveness beacon
+agents.prompt.<type-token>.<owner>.<session>      # prompt endpoint
+agents.hb.<type-token>.<owner>.<session>          # liveness beacon (verb is the abbreviation `hb`)
+agents.status.<type-token>.<owner>.<session>      # status request/response (replies with the same payload as a heartbeat)
 ```
 
 Type tokens currently in this repo:
@@ -55,7 +56,7 @@ Discovery is standard NATS micro:
 ```bash
 nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
 nats micro ls
-nats sub 'agents.*.*.*.heartbeat'
+nats sub 'agents.hb.*.*.*'
 ```
 
 ## Wire protocol
