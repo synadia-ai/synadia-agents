@@ -3,17 +3,17 @@ import { computed, ref } from "vue";
 import { useBridge } from "../../composables/useBridge.ts";
 import { agentsState } from "../../stores/agents.ts";
 import {
-  appendFanoutRun,
-  findFanoutRun,
-  onSpawned,
-  onStopped,
-  piexecState,
-  resetFanout,
-  selectedController,
-  type FanoutRun,
-} from "../../stores/piexec.ts";
+  appendCcFanoutRun,
+  ccexecState,
+  findCcFanoutRun,
+  onCcSpawned,
+  onCcStopped,
+  resetCcFanout,
+  selectedCcController,
+} from "../../stores/ccexec.ts";
+import type { FanoutRun } from "../../stores/piexec.ts";
 import { appendMessage, findMessage } from "../../stores/chat.ts";
-import FanoutRunCard from "./FanoutRunCard.vue";
+import FanoutRunCard from "../piexec/FanoutRunCard.vue";
 import { randomUUID } from "../../uuid.ts";
 
 const bridge = useBridge();
@@ -28,8 +28,8 @@ const validCwds = computed(() =>
 
 const disabled = computed(
   () =>
-    !selectedController.value ||
-    piexecState.fanoutRunning ||
+    !selectedCcController.value ||
+    ccexecState.fanoutRunning ||
     prompt.value.trim().length === 0 ||
     validCwds.value.length === 0,
 );
@@ -63,15 +63,14 @@ function resolveSession(instanceId: string, retries = 10, delayMs = 300): Promis
 }
 
 async function runOne(run: FanoutRun, promptText: string): Promise<void> {
-  const controller = selectedController.value;
+  const controller = selectedCcController.value;
   if (!controller) return;
 
-  // 1. Spawn
   run.status = "spawning";
   let descriptor;
   try {
-    descriptor = await bridge.piexecSpawn(controller.instanceId, { cwd: run.cwd });
-    onSpawned(descriptor);
+    descriptor = await bridge.ccexecSpawn(controller.instanceId, { cwd: run.cwd });
+    onCcSpawned(descriptor);
     run.sessionId = descriptor.session_id;
     run.instanceId = descriptor.instance_id;
   } catch (err) {
@@ -80,7 +79,6 @@ async function runOne(run: FanoutRun, promptText: string): Promise<void> {
     return;
   }
 
-  // 2. Wait for the session to be visible to the SDK, then prompt.
   try {
     await resolveSession(descriptor.instance_id);
   } catch (err) {
@@ -145,11 +143,11 @@ async function runOne(run: FanoutRun, promptText: string): Promise<void> {
   async function maybeStop(): Promise<void> {
     if (!stopAfterDone.value) return;
     if (!run.sessionId) return;
-    const c = selectedController.value;
+    const c = selectedCcController.value;
     if (!c) return;
     try {
-      await bridge.piexecStop(c.instanceId, run.sessionId);
-      onStopped(run.sessionId);
+      await bridge.ccexecStop(c.instanceId, run.sessionId);
+      onCcStopped(run.sessionId);
     } catch {
       /* leave dangling — user can manually stop */
     }
@@ -159,14 +157,14 @@ async function runOne(run: FanoutRun, promptText: string): Promise<void> {
 async function onSubmit(e: Event): Promise<void> {
   e.preventDefault();
   if (disabled.value) return;
-  const controller = selectedController.value;
+  const controller = selectedCcController.value;
   if (!controller) return;
 
   const promptText = prompt.value;
   const targets = [...validCwds.value];
-  resetFanout();
-  piexecState.fanoutRunning = true;
-  piexecState.lastError = null;
+  resetCcFanout();
+  ccexecState.fanoutRunning = true;
+  ccexecState.lastError = null;
 
   try {
     const runs: FanoutRun[] = targets.map((cwd) => ({
@@ -175,30 +173,30 @@ async function onSubmit(e: Event): Promise<void> {
       status: "pending",
       content: "",
     }));
-    for (const r of runs) appendFanoutRun(r);
+    for (const r of runs) appendCcFanoutRun(r);
 
     await Promise.all(runs.map((r) => runOne(r, promptText)));
   } finally {
-    piexecState.fanoutRunning = false;
+    ccexecState.fanoutRunning = false;
   }
 }
 
 function onCancel(id: string): void {
-  const run = findFanoutRun(id);
+  const run = findCcFanoutRun(id);
   if (!run || !run.promptId) return;
   bridge.cancel(run.promptId);
   run.status = "stopped";
 }
 
 function clearResults(): void {
-  resetFanout();
+  resetCcFanout();
 }
 </script>
 
 <template>
   <section class="panel">
     <form class="form" @submit="onSubmit">
-      <p class="lede">Run the same prompt across multiple working directories in parallel. Each run spawns its own session against the selected controller.</p>
+      <p class="lede">Run the same prompt across multiple working directories in parallel. Each run spawns its own claude-code session against the selected controller.</p>
 
       <label class="field">
         <span class="field-label">Prompt</span>
@@ -207,7 +205,7 @@ function clearResults(): void {
           class="prompt mono"
           rows="3"
           placeholder="Run the test suite and report failures"
-          :disabled="!selectedController || piexecState.fanoutRunning"
+          :disabled="!selectedCcController || ccexecState.fanoutRunning"
         />
       </label>
 
@@ -224,12 +222,12 @@ function clearResults(): void {
             type="text"
             placeholder="/path/to/repo"
             autocomplete="off"
-            :disabled="!selectedController || piexecState.fanoutRunning"
+            :disabled="!selectedCcController || ccexecState.fanoutRunning"
           />
           <button
             type="button"
             class="cwd-remove"
-            :disabled="piexecState.fanoutRunning"
+            :disabled="ccexecState.fanoutRunning"
             title="Remove"
             @click="removeCwd(i)"
           >×</button>
@@ -237,7 +235,7 @@ function clearResults(): void {
         <button
           type="button"
           class="cwd-add mono"
-          :disabled="piexecState.fanoutRunning"
+          :disabled="ccexecState.fanoutRunning"
           @click="addCwd"
         >+ add directory</button>
       </div>
@@ -246,7 +244,7 @@ function clearResults(): void {
         <input
           type="checkbox"
           v-model="stopAfterDone"
-          :disabled="piexecState.fanoutRunning"
+          :disabled="ccexecState.fanoutRunning"
         />
         <span class="mono">stop sessions after each prompt finishes</span>
       </label>
@@ -256,23 +254,23 @@ function clearResults(): void {
         <button
           type="button"
           class="btn ghost"
-          :disabled="piexecState.fanoutRuns.length === 0 || piexecState.fanoutRunning"
+          :disabled="ccexecState.fanoutRuns.length === 0 || ccexecState.fanoutRunning"
           @click="clearResults"
         >Clear</button>
         <button type="submit" class="btn primary" :disabled="disabled">
-          {{ piexecState.fanoutRunning ? "running…" : `Run fan-out (${validCwds.length})` }}
+          {{ ccexecState.fanoutRunning ? "running…" : `Run fan-out (${validCwds.length})` }}
         </button>
       </div>
     </form>
 
-    <div v-if="piexecState.fanoutRuns.length > 0" class="results">
+    <div v-if="ccexecState.fanoutRuns.length > 0" class="results">
       <h3 class="results-title">
         Results
-        <span class="dim mono">{{ piexecState.fanoutRuns.filter(r => r.status === 'done').length }} / {{ piexecState.fanoutRuns.length }}</span>
+        <span class="dim mono">{{ ccexecState.fanoutRuns.filter(r => r.status === 'done').length }} / {{ ccexecState.fanoutRuns.length }}</span>
       </h3>
       <div class="grid">
         <FanoutRunCard
-          v-for="r in piexecState.fanoutRuns"
+          v-for="r in ccexecState.fanoutRuns"
           :key="r.id"
           :run="r"
           @cancel="onCancel"

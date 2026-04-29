@@ -10,8 +10,8 @@
   /* Text hierarchy */
   --text-primary: #e8e8f0;
   --text-secondary: #9090a8;
-  --text-muted: #606078;
-  --text-dim: #404050;
+  --text-muted: #8a8ab0;   /* was #606078 — bumped (twice) for legibility on dark cards */
+  --text-dim: #7474a0;     /* was #404050 — same reason */
 
   /* Accent colors */
   --accent-primary: #667eea;
@@ -35,6 +35,17 @@
   --memory-fact: #818cf8;
   --memory-preference: #a78bfa;
   --memory-note: #67e8f9;
+
+  /* Bucket / agent-family palette — per-runtime hues used by the agent-tag
+     pill on each card. Mirrors the old nats-agent-dashboard's AgentBadge
+     scheme so the visual language stays consistent. Aliases of the memory
+     palette where a hue already existed; one new red for openclaw. */
+  --bucket-pi: var(--memory-fact);          /* indigo */
+  --bucket-cc: var(--memory-note);          /* cyan */
+  --bucket-headless: var(--memory-preference); /* violet — controllers */
+  --bucket-openclaw: #ef4444;               /* red */
+  --bucket-hermes: #f59e0b;                 /* amber / orange */
+  --bucket-other: var(--text-muted);        /* muted gray */
 
   /* Typography */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',

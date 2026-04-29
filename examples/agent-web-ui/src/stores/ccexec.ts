@@ -2,52 +2,48 @@
 //
 // Mirrors the shape of `piexec.ts` but typed for claude-code-headless: spawn
 // descriptors / session summaries carry CC-specific fields (allowed_tools,
-// permission_mode, max_turns) instead of PI's thinking_level. Discovery and
-// chat surface remain shared with the rest of the UI; only the spawn / list /
-// stop endpoints are CC-specific.
+// permission_mode, max_turns) instead of PI's thinking_level. As with piexec,
+// `selectedCcController` derives from `agentsState.selectedInstanceId` —
+// clicking a controller card both selects it and routes spawn requests to it.
 
 import { computed, reactive } from "vue";
-import { ccexecControllers, ccexecSessions } from "./agents.ts";
+import { agentsState, ccexecSessions } from "./agents.ts";
 import type {
   CcExecSessionSummary,
   CcExecSpawnDescriptor,
 } from "../wire.ts";
+import type { FanoutRun } from "./piexec.ts";
 
 export const ccexecState = reactive<{
-  selectedControllerId: string | null;
   summaries: Map<string, CcExecSessionSummary>; // keyed by session_id
   refreshing: boolean;
   lastError: string | null;
+  fanoutRuns: FanoutRun[];
+  fanoutRunning: boolean;
+  rightPanelTab: "spawn" | "fanout";
 }>({
-  selectedControllerId: null,
   summaries: new Map(),
   refreshing: false,
   lastError: null,
+  fanoutRuns: [],
+  fanoutRunning: false,
+  rightPanelTab: "spawn",
 });
-
-export const selectedCcController = computed(() => {
-  const id = ccexecState.selectedControllerId;
-  if (!id) return null;
-  return ccexecControllers.value.find((a) => a.instanceId === id) ?? null;
-});
-
-/** Auto-select the first controller if none is picked yet. */
-export function autoPickCcController(): void {
-  if (ccexecState.selectedControllerId) {
-    const still = ccexecControllers.value.some(
-      (a) => a.instanceId === ccexecState.selectedControllerId,
-    );
-    if (still) return;
-  }
-  const first = ccexecControllers.value[0];
-  ccexecState.selectedControllerId = first?.instanceId ?? null;
-}
 
 /**
- * Sessions that belong to the selected controller's owner+agent tuple. Derived
- * live from `agentsState` so heartbeat liveness stays accurate even between
- * explicit `list` refreshes.
+ * The currently selected claude-code-headless controller, or null when the
+ * selected agent isn't a claude-code-headless-controller.
  */
+export const selectedCcController = computed(() => {
+  const id = agentsState.selectedInstanceId;
+  if (!id) return null;
+  const agent = agentsState.list.find((a) => a.instanceId === id);
+  if (!agent) return null;
+  if (agent.metadata?.["role"] !== "claude-code-headless-controller") return null;
+  return agent;
+});
+
+/** Sessions belonging to the selected controller's owner. */
 export const visibleCcSessions = computed(() => {
   const controller = selectedCcController.value;
   if (!controller) return [];
@@ -90,4 +86,17 @@ export function bumpCcSessionCost(sessionId: string, totalCostUsd: number): void
 
 export function onCcStopped(sessionId: string): void {
   ccexecState.summaries.delete(sessionId);
+}
+
+export function resetCcFanout(): void {
+  ccexecState.fanoutRuns = [];
+  ccexecState.fanoutRunning = false;
+}
+
+export function appendCcFanoutRun(run: FanoutRun): void {
+  ccexecState.fanoutRuns.push(run);
+}
+
+export function findCcFanoutRun(id: string): FanoutRun | undefined {
+  return ccexecState.fanoutRuns.find((r) => r.id === id);
 }

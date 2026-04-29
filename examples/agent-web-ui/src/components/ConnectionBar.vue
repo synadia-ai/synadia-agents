@@ -5,6 +5,11 @@ import { agentsState } from "../stores/agents.ts";
 
 const emit = defineEmits<{ refresh: [] }>();
 
+// Dashboard's own version — Vite-`define`d at build time from package.json
+// so `bun run build` always picks up the current value without a runtime
+// fetch. Sits next to the protocol version in the bar for parity.
+const appVersion = __APP_VERSION__;
+
 const statusLabel = computed(() => {
   switch (bridgeState.status) {
     case "connecting":
@@ -29,10 +34,13 @@ const statusLabel = computed(() => {
       <span v-if="bridgeState.sdkProtocolVersion" class="proto mono">
         protocol {{ bridgeState.sdkProtocolVersion }}
       </span>
+      <span class="proto mono" :title="`Dashboard build v${appVersion}`">
+        ui v{{ appVersion }}
+      </span>
     </div>
 
     <div class="brand">
-      <span class="brand-title">nats-ai-testui</span>
+      <span class="brand-title">NATS Agent Dashboard</span>
     </div>
 
     <div class="right">

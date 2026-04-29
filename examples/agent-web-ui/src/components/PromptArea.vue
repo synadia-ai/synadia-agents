@@ -119,7 +119,7 @@ const overLimit = computed(() => {
         v-model="text"
         class="textarea"
         rows="1"
-        :placeholder="disabled ? 'Select an agent to start prompting...' : 'Type a prompt — Enter to send, Shift+Enter for newline'"
+        :placeholder="disabled ? 'Select an agent to start prompting...' : 'Type a prompt — Enter to send'"
         :disabled="disabled"
         @keydown="onKey"
       />
