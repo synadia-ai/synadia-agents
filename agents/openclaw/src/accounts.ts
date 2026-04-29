@@ -119,7 +119,12 @@ export function resolveNatsAccount(
   const env = process.env;
 
   // ── Per-field env overrides (lower precedence than $NATS_CONTEXT) ──────
-  applyEnvOverride(resolved, "url", raw.url, env.NATS_URL, id, "NATS_URL");
+  // Pass `resolved.*` (not `raw.*`) for url/credentials so the override
+  // log reflects the actual prior value being replaced — including the
+  // case where `config.context` already expanded it. Logging `raw.url` /
+  // `raw.credentials` would read `<unset>` even when the prior value was
+  // sourced from a context file, which misleads debugging.
+  applyEnvOverride(resolved, "url", resolved.url, env.NATS_URL, id, "NATS_URL");
   applyEnvOverride(resolved, "agentName", raw.agentName, env.NATS_AGENT_NAME, id, "NATS_AGENT_NAME");
   applyEnvOverride(resolved, "description", raw.description, env.NATS_DESCRIPTION, id, "NATS_DESCRIPTION");
   if (env.NATS_OWNER !== undefined) {
@@ -127,7 +132,7 @@ export function resolveNatsAccount(
   } else if (env.NATS_ORG !== undefined) {
     applyEnvOverride(resolved, "owner", raw.owner ?? raw.org, env.NATS_ORG, id, "NATS_ORG");
   }
-  applyEnvOverride(resolved, "credentials", raw.credentials, env.NATS_CREDENTIALS, id, "NATS_CREDENTIALS", true);
+  applyEnvOverride(resolved, "credentials", resolved.credentials, env.NATS_CREDENTIALS, id, "NATS_CREDENTIALS", true);
 
   // ── $NATS_CONTEXT (highest precedence) ───────────────────────────────
   // Applied LAST so it wins over $NATS_URL and $NATS_CREDENTIALS — a

@@ -134,6 +134,18 @@ describe.skipIf(skip)("config.context resolution", () => {
     expect(acct.credentials).toBe("/c.creds");
   });
 
+  it("$NATS_CREDENTIALS overrides config.context credentials (per-field env beats wizard context)", () => {
+    writeContext("ngs", { url: "tls://connect.ngs.global", creds: "/from-context.creds" });
+    process.env.NATS_CREDENTIALS = "/from-env.creds";
+    const cfg = {
+      channels: { nats: { accounts: { default: { agentName: "x", context: "ngs" } } } },
+    };
+    const acct = resolveNatsAccount(cfg, "default");
+    // url stays from the context — only the credentials field was overridden.
+    expect(acct.url).toBe("tls://connect.ngs.global");
+    expect(acct.credentials).toBe("/from-env.creds");
+  });
+
   it("$NATS_CONTEXT overrides config.context entirely", () => {
     writeContext("wizard-ctx", { url: "nats://wizard:4222", creds: "/w.creds" });
     writeContext("env-ctx", { url: "tls://env-context:4222", creds: "/e.creds" });

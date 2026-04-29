@@ -100,9 +100,21 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
           placeholder: "demo.nats.io",
           required: false,
           initialValue: () => "demo.nats.io",
+          // Read the raw config field directly rather than going through
+          // `resolveNatsAccount`, which now expands `config.context` into
+          // `resolved.url`. If the wizard SDK persists `currentValue` back
+          // into the saved config, going via `resolveNatsAccount` would
+          // bake the context-derived URL into `config.url` — silently
+          // shadowing future context-file updates at precedence 5.
           currentValue: ({ cfg, accountId }: Record<string, unknown>) => {
             try {
-              return resolveNatsAccount(cfg as OpenClawConfig, accountId as string).url || undefined;
+              const id = (accountId as string) ?? "";
+              const channels = ((cfg as Record<string, unknown>).channels ?? {}) as Record<string, unknown>;
+              const nats = (channels.nats ?? {}) as Record<string, unknown>;
+              const accounts = (nats.accounts ?? {}) as Record<string, unknown>;
+              const acct = (accounts[id] ?? {}) as Record<string, unknown>;
+              const v = acct.url;
+              return typeof v === "string" && v.length > 0 ? v : undefined;
             } catch { return undefined; }
           },
         },
@@ -139,9 +151,20 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
           message: "NATS credentials file path (optional — for NKEY/JWT auth, e.g. NGS)",
           placeholder: "/home/user/.config/nats/ngs.creds",
           required: false,
+          // Read the raw config field directly — same reason as `url`
+          // above. `resolveNatsAccount` would return the context-derived
+          // creds path, which the wizard SDK may persist back, baking it
+          // into `config.credentials` and shadowing future updates the
+          // user makes to the underlying context file.
           currentValue: ({ cfg, accountId }: Record<string, unknown>) => {
             try {
-              return resolveNatsAccount(cfg as OpenClawConfig, accountId as string).credentials || undefined;
+              const id = (accountId as string) ?? "";
+              const channels = ((cfg as Record<string, unknown>).channels ?? {}) as Record<string, unknown>;
+              const nats = (channels.nats ?? {}) as Record<string, unknown>;
+              const accounts = (nats.accounts ?? {}) as Record<string, unknown>;
+              const acct = (accounts[id] ?? {}) as Record<string, unknown>;
+              const v = acct.credentials;
+              return typeof v === "string" && v.length > 0 ? v : undefined;
             } catch { return undefined; }
           },
         },
