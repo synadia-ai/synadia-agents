@@ -13,6 +13,8 @@ Public API entry points:
   claude-code, pi, openclaw) embed to register themselves on the bus.
 * :func:`load_context_options` — translate a ``nats`` CLI context into
   kwargs for :func:`nats.connect`.
+* :func:`parse_nats_url` — parse a NATS URL (with optional userinfo
+  for token / user:password) into kwargs for :func:`nats.connect`.
 
 The SDK does NOT open NATS connections — callers build a
 :class:`~nats.aio.client.Client` and hand it to :class:`Agents`. This
@@ -29,7 +31,7 @@ from .agent import (
     StreamMessage,
 )
 from .agents import Agents
-from .context import load_context_options
+from .context import load_context_options, parse_nats_url
 from .discovery import (
     DEFAULT_DISCOVER_MAX_WAIT_S,
     DEFAULT_DISCOVER_STALL_S,
@@ -120,4 +122,5 @@ __all__ = [
     "decode",
     "encode",
     "load_context_options",
+    "parse_nats_url",
 ]

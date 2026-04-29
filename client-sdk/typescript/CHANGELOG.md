@@ -96,6 +96,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `StatusChunk`, `QueryChunk`) — pure encoder mirroring the existing
   `chunk-decoder.ts`. Used by `AgentService` to push response / status /
   query chunks back to the caller.
+- **`parseNatsUrl(url)`** — sibling of `loadContextOptions` that converts
+  a NATS URL into `NodeConnectionOptions`, extracting credentials from
+  `userinfo` if present:
+  - `nats://TOKEN@host:port` → `{ servers, token }`
+  - `nats://USER:PASS@host:port` → `{ servers, user, pass }`
+  - `nats://a:4222,nats://b:4222` (multi-server) supported; mixed
+    credentials across entries throw `NatsContextError`.
+
+  Bridges a UX gap: the `nats` CLI parses userinfo from URLs, but
+  `@nats-io/transport-node` does not — meaning every example in this
+  repo that accepted `--url URL` silently dropped the token when given
+  the URL form, even though the same URL worked with `nats` CLI /
+  `nats context save`. Every example's `--url` path now goes through
+  `parseNatsUrl` (`agent-web-ui`, `pi-headless`, `claude-code-headless`,
+  `dspy`).
 
 ### Changed
 
