@@ -139,26 +139,26 @@ function loadNatsContext(name: string): NatsContext {
 // `nats://TOKEN@host:port` would silently drop the token because
 // `@nats-io/transport-node` doesn't parse credentials from URLs (the
 // `nats` CLI does, which is the UX gap this closes). Inlined per the
-// repo CLAUDE.md "Agents do NOT depend on the SDK" rule — this is the
-// byte-equivalent of `@synadia-ai/agents`'s `parseNatsUrl` helper, kept
-// minimal for the single-URL case this server needs.
-function parseNatsUrl(url: string): { servers: string; token?: string; user?: string; pass?: string } {
-  const withScheme = /^[a-z]+:\/\//i.test(url) ? url : `nats://${url}`
+// repo CLAUDE.md "Agents do NOT depend on the SDK" rule —
+// byte-equivalent to `@synadia-ai/agents`'s `parseNatsUrl`. Supports
+// comma-separated cluster URLs (the form `@nats-io/transport-node`
+// accepts via `servers: string`).
+type ParsedSingle = { server: string; token?: string; user?: string; pass?: string }
+function parseSingleNatsUrl(part: string, original: string): ParsedSingle {
+  const withScheme = /^[a-z]+:\/\//i.test(part) ? part : `nats://${part}`
   let parsed: URL
   try {
     parsed = new URL(withScheme)
   } catch (e) {
-    throw new Error(`invalid NATS URL ${JSON.stringify(url)}: ${(e as Error).message}`)
+    throw new Error(`invalid NATS URL ${JSON.stringify(original)}: ${(e as Error).message}`)
   }
   if (!/^(nats|tls|ws|wss):$/.test(parsed.protocol)) {
-    throw new Error(`unsupported scheme "${parsed.protocol}" in NATS URL ${JSON.stringify(url)}`)
+    throw new Error(`unsupported scheme "${parsed.protocol}" in NATS URL ${JSON.stringify(original)}`)
   }
   if (!parsed.host) {
-    throw new Error(`NATS URL ${JSON.stringify(url)} is missing a host`)
+    throw new Error(`NATS URL ${JSON.stringify(original)} is missing a host`)
   }
-  const out: { servers: string; token?: string; user?: string; pass?: string } = {
-    servers: `${parsed.protocol}//${parsed.host}`,
-  }
+  const out: ParsedSingle = { server: `${parsed.protocol}//${parsed.host}` }
   // WHATWG `URL` squashes `nats://user@host` and `nats://user:@host` into
   // `password === ""`; sniff raw input for a colon to recover the intent.
   const userinfoMatch = withScheme.match(/^[a-z]+:\/\/([^/@]*)@/i)
@@ -169,6 +169,28 @@ function parseNatsUrl(url: string): { servers: string; token?: string; user?: st
   } else if (parsed.username !== '') {
     out.token = decodeURIComponent(parsed.username)
   }
+  return out
+}
+function parseNatsUrl(url: string): { servers: string[]; token?: string; user?: string; pass?: string } {
+  const parts = url.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
+  if (parts.length === 0) {
+    throw new Error(`empty NATS URL: ${JSON.stringify(url)}`)
+  }
+  const parsedAll = parts.map((p) => parseSingleNatsUrl(p, url))
+  const first = parsedAll[0]!
+  // Mixed userinfo across cluster entries can't be expressed in one
+  // ConnectionOptions — fail loudly rather than silently drop credentials.
+  for (const p of parsedAll.slice(1)) {
+    if (p.token !== first.token || p.user !== first.user || p.pass !== first.pass) {
+      throw new Error(`NATS URL has mixed credentials across server entries: ${url}`)
+    }
+  }
+  const out: { servers: string[]; token?: string; user?: string; pass?: string } = {
+    servers: parsedAll.map((p) => p.server),
+  }
+  if (first.token !== undefined) out.token = first.token
+  if (first.user !== undefined) out.user = first.user
+  if (first.pass !== undefined) out.pass = first.pass
   return out
 }
 
