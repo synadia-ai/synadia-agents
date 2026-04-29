@@ -50,6 +50,20 @@ describe("loadNatsContextFromFile (openclaw)", () => {
     expect(out.url).toBe("nats://alice:s3cret@nats.example.com:4222");
   });
 
+  it("preserves the colon for user-with-no-password (regression: don't misclassify as token)", () => {
+    // Without an explicit empty password the synthesised URL would lose its
+    // colon and become indistinguishable from a single-userinfo token URL,
+    // so `parseNatsUrl` would route `alice` through the token branch and a
+    // server expecting user/password CONNECT messages would refuse auth.
+    writeContext("user-only", {
+      url: "nats://nats.example.com:4222",
+      user: "alice",
+      // `password` intentionally absent
+    });
+    const out = loadNatsContextFromFile("user-only");
+    expect(out.url).toBe("nats://alice:@nats.example.com:4222");
+  });
+
   it("URL-encodes reserved chars in userinfo so it round-trips through parseNatsUrl", () => {
     writeContext("special", {
       url: "nats://host:4222",
@@ -91,5 +105,20 @@ describe("loadNatsContextFromFile (openclaw)", () => {
   it("throws when the context is missing 'url'", () => {
     writeContext("no-url", { token: "tok" });
     expect(() => loadNatsContextFromFile("no-url")).toThrow(/missing 'url'/);
+  });
+
+  it("rejects context names that would escape the context directory", () => {
+    for (const bad of [
+      "",
+      "..",
+      "../escape",
+      "../../etc/someapp",
+      "a/b",
+      "a\\b",
+      ".hidden",
+      "a\x00b",
+    ]) {
+      expect(() => loadNatsContextFromFile(bad)).toThrow(/invalid/);
+    }
   });
 });

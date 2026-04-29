@@ -45,6 +45,24 @@ export interface NatsContextResolved {
  * Throws on missing file, malformed JSON, or missing `url` field.
  */
 export function loadNatsContextFromFile(name: string): NatsContextResolved {
+  // Reject names that would escape the context directory. `$NATS_CONTEXT`
+  // is a deployer-set env var so the threat model is "operator typo / shell
+  // mishap" more than malicious input, but a clear error beats reading a
+  // surprise file from `/etc`. (`agents/pi` and `agents/claude-code` have
+  // the same pre-existing pattern without this check; harden in a separate
+  // pass when those get touched.)
+  if (
+    !name ||
+    name.includes("/") ||
+    name.includes("\\") ||
+    name.includes("\0") ||
+    name === ".." ||
+    name.startsWith(".")
+  ) {
+    throw new Error(
+      `NATS context name ${JSON.stringify(name)} is invalid (must not contain path separators or start with '.')`,
+    );
+  }
   const path = join(homedir(), ...CONTEXT_DIR_PARTS, `${name}.json`);
   let raw: string;
   try {
@@ -73,7 +91,13 @@ export function loadNatsContextFromFile(name: string): NatsContextResolved {
   if (parsed.token !== undefined && parsed.token !== "") {
     urlWithAuth = injectUserinfo(parsed.url, parsed.token);
   } else if (parsed.user !== undefined && parsed.user !== "") {
-    urlWithAuth = injectUserinfo(parsed.url, parsed.user, parsed.password);
+    // Pass an explicit empty string when password is missing so the
+    // colon separator is preserved in the synthesised URL. Without it
+    // `nats://alice@host:4222` looks identical to a single-userinfo
+    // token URL, and `parseNatsUrl` would route `alice` through the
+    // token branch instead of the user/password branch — a server
+    // expecting user/password CONNECT messages would then refuse auth.
+    urlWithAuth = injectUserinfo(parsed.url, parsed.user, parsed.password ?? "");
   }
 
   const out: NatsContextResolved = { url: urlWithAuth };
@@ -96,19 +120,34 @@ function expandHome(p: string): string {
  * the same parse error at connect time with a more actionable message).
  */
 function injectUserinfo(url: string, usernameRaw: string, passwordRaw?: string): string {
+  // Build the URL string manually rather than via `new URL()` + `.toString()`
+  // because WHATWG `URL` collapses `nats://user:@host` (empty password) to
+  // `nats://user@host` on serialisation — the spec treats both as
+  // equivalent. But `parseNatsUrl` uses the colon to discriminate user/pass
+  // from a single-component token, so we have to preserve it. The match
+  // regex covers `scheme://[userinfo@]host[:port][/path]` which is the
+  // entire URL surface NATS accepts.
   const parts = url.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
   if (parts.length === 0) return url;
   const rebuilt: string[] = [];
   for (const part of parts) {
     const withScheme = /^[a-z]+:\/\//i.test(part) ? part : `nats://${part}`;
-    try {
-      const u = new URL(withScheme);
-      u.username = encodeURIComponent(usernameRaw);
-      if (passwordRaw !== undefined) u.password = encodeURIComponent(passwordRaw);
-      rebuilt.push(u.toString());
-    } catch {
-      return url; // give up, hand the original back
-    }
+    const match = withScheme.match(/^([a-z]+:\/\/)([^/?#]*)([/?#].*)?$/i);
+    if (!match) return url; // unparseable — hand original back, parseNatsUrl surfaces the error
+    const scheme = match[1]!;
+    const authority = match[2]!;
+    const rest = match[3] ?? "";
+    // Strip any existing userinfo from the authority so we don't end up with
+    // `tok@old@new@host` if a context has both a token and a userinfo URL.
+    const atIdx = authority.lastIndexOf("@");
+    const hostPart = atIdx >= 0 ? authority.slice(atIdx + 1) : authority;
+    if (!hostPart) return url; // hostless after stripping userinfo
+    const userEnc = encodeURIComponent(usernameRaw);
+    const userinfo =
+      passwordRaw === undefined
+        ? userEnc
+        : `${userEnc}:${encodeURIComponent(passwordRaw)}`;
+    rebuilt.push(`${scheme}${userinfo}@${hostPart}${rest}`);
   }
   return rebuilt.join(",");
 }
