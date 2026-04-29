@@ -12,15 +12,22 @@ import type {
   CcExecSessionSummary,
   CcExecSpawnDescriptor,
 } from "../wire.ts";
+import type { FanoutRun } from "./piexec.ts";
 
 export const ccexecState = reactive<{
   summaries: Map<string, CcExecSessionSummary>; // keyed by session_id
   refreshing: boolean;
   lastError: string | null;
+  fanoutRuns: FanoutRun[];
+  fanoutRunning: boolean;
+  rightPanelTab: "spawn" | "fanout";
 }>({
   summaries: new Map(),
   refreshing: false,
   lastError: null,
+  fanoutRuns: [],
+  fanoutRunning: false,
+  rightPanelTab: "spawn",
 });
 
 /**
@@ -79,4 +86,17 @@ export function bumpCcSessionCost(sessionId: string, totalCostUsd: number): void
 
 export function onCcStopped(sessionId: string): void {
   ccexecState.summaries.delete(sessionId);
+}
+
+export function resetCcFanout(): void {
+  ccexecState.fanoutRuns = [];
+  ccexecState.fanoutRunning = false;
+}
+
+export function appendCcFanoutRun(run: FanoutRun): void {
+  ccexecState.fanoutRuns.push(run);
+}
+
+export function findCcFanoutRun(id: string): FanoutRun | undefined {
+  return ccexecState.fanoutRuns.find((r) => r.id === id);
 }

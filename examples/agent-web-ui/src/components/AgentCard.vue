@@ -282,7 +282,7 @@ function onTrash(): void {
       <p v-if="cwd" class="cwd mono" :title="cwd">{{ cwd }}</p>
 
       <p
-        v-if="agent.promptEndpoint.subject && !cwd"
+        v-if="agent.promptEndpoint.subject && (!cwd || isPiSession || isCcSession)"
         class="subject mono"
         :title="agent.promptEndpoint.subject"
       ><span class="dim">›</span>{{ agent.promptEndpoint.subject }}</p>

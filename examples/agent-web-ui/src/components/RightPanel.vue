@@ -4,9 +4,11 @@ import ChatPanel from "./ChatPanel.vue";
 import PiSpawnForm from "./piexec/SpawnForm.vue";
 import PiFanoutPanel from "./piexec/FanoutPanel.vue";
 import CcSpawnForm from "./ccexec/SpawnForm.vue";
+import CcFanoutPanel from "./ccexec/FanoutPanel.vue";
 import { selectedAgent } from "../stores/agents.ts";
 import { selectAgent } from "../stores/agents.ts";
 import { piexecState } from "../stores/piexec.ts";
+import { ccexecState } from "../stores/ccexec.ts";
 import type { PiExecSpawnDescriptor, CcExecSpawnDescriptor } from "../wire.ts";
 
 type Tab = "spawn" | "fanout";
@@ -25,11 +27,18 @@ const role = computed<"pi-controller" | "cc-controller" | "session" | "agent" | 
   return "agent";
 });
 
-// Tab state for pi-controller view (spawn vs fanout). Mirrored on the store
-// so it persists across selection changes and accidental remounts.
-const activeTab = computed<Tab>(() => piexecState.rightPanelTab);
-function setTab(t: Tab): void {
+// Tab state per controller flavour — mirrored on each store so the
+// chosen tab persists across selection changes and accidental remounts.
+// PI and CC each get their own slot since they're distinct workspaces;
+// switching from a PI controller to a CC controller shouldn't clobber
+// the other's last-used tab.
+const piActiveTab = computed<Tab>(() => piexecState.rightPanelTab);
+const ccActiveTab = computed<Tab>(() => ccexecState.rightPanelTab);
+function setPiTab(t: Tab): void {
   piexecState.rightPanelTab = t;
+}
+function setCcTab(t: Tab): void {
+  ccexecState.rightPanelTab = t;
 }
 
 function focusSpawnedSession(d: PiExecSpawnDescriptor | CcExecSpawnDescriptor): void {
@@ -64,25 +73,25 @@ function focusSpawnedSession(d: PiExecSpawnDescriptor | CcExecSpawnDescriptor): 
         <button
           type="button"
           class="tab"
-          :class="{ active: activeTab === 'spawn' }"
-          @click="setTab('spawn')"
+          :class="{ active: piActiveTab === 'spawn' }"
+          @click="setPiTab('spawn')"
         >New Session</button>
         <button
           type="button"
           class="tab"
-          :class="{ active: activeTab === 'fanout' }"
-          @click="setTab('fanout')"
+          :class="{ active: piActiveTab === 'fanout' }"
+          @click="setPiTab('fanout')"
         >Fan-out</button>
       </nav>
       <div class="tab-body">
-        <div v-if="activeTab === 'spawn'" class="scroll-wrap">
+        <div v-if="piActiveTab === 'spawn'" class="scroll-wrap">
           <PiSpawnForm @spawned="focusSpawnedSession" />
         </div>
         <PiFanoutPanel v-else />
       </div>
     </template>
 
-    <!-- claude-code-headless controller: Spawn only -->
+    <!-- claude-code-headless controller: Spawn / Fan-out tabs (mirrors pi). -->
     <template v-else-if="role === 'cc-controller'">
       <header class="panel-head">
         <div class="head-title">
@@ -91,10 +100,25 @@ function focusSpawnedSession(d: PiExecSpawnDescriptor | CcExecSpawnDescriptor): 
         </div>
         <div class="head-sub mono">{{ agent.promptEndpoint.subject }}</div>
       </header>
+      <nav class="tab-bar">
+        <button
+          type="button"
+          class="tab"
+          :class="{ active: ccActiveTab === 'spawn' }"
+          @click="setCcTab('spawn')"
+        >New Session</button>
+        <button
+          type="button"
+          class="tab"
+          :class="{ active: ccActiveTab === 'fanout' }"
+          @click="setCcTab('fanout')"
+        >Fan-out</button>
+      </nav>
       <div class="tab-body">
-        <div class="scroll-wrap">
+        <div v-if="ccActiveTab === 'spawn'" class="scroll-wrap">
           <CcSpawnForm @spawned="focusSpawnedSession" />
         </div>
+        <CcFanoutPanel v-else />
       </div>
     </template>
 
