@@ -56,7 +56,6 @@ function focusSpawnedSession(d: PiExecSpawnDescriptor | CcExecSpawnDescriptor): 
       <header class="panel-head">
         <div class="head-title">
           <span class="agent-tag mono ctrl">pi-headless</span>
-          <span class="head-name">{{ agent.session ?? agent.name }}</span>
           <span class="head-owner mono">@{{ agent.owner }}</span>
         </div>
         <div class="head-sub mono">{{ agent.promptEndpoint.subject }}</div>
@@ -88,7 +87,6 @@ function focusSpawnedSession(d: PiExecSpawnDescriptor | CcExecSpawnDescriptor): 
       <header class="panel-head">
         <div class="head-title">
           <span class="agent-tag mono ctrl">cc-headless</span>
-          <span class="head-name">{{ agent.session ?? agent.name }}</span>
           <span class="head-owner mono">@{{ agent.owner }}</span>
         </div>
         <div class="head-sub mono">{{ agent.promptEndpoint.subject }}</div>

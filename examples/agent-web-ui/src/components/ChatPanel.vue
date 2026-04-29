@@ -25,6 +25,19 @@ const isCcSession = computed(
   () => props.agent.metadata?.["spawner"] === "claude-code-headless",
 );
 
+// Human label for the chat-header pill. Mirrors AgentCard's tagLabel
+// so a card and its chat header always show the same friendly name.
+// Headless controllers don't reach this component (RightPanel routes
+// them to the spawn forms instead), so the controller branch is omitted.
+const tagLabel = computed<string>(() => {
+  const a = props.agent.agent;
+  if (a === "claude-code" || a === "cc" || a === "ccc") return "CLAUDE CODE";
+  if (a === "openclaw" || a === "oc") return "OPENCLAW";
+  if (a === "pi") return "PI";
+  if (a === "hermes") return "HERMES";
+  return a.toUpperCase();
+});
+
 // Per-bucket color for the chat-header pill — keeps the visual language
 // consistent with the per-card AgentCard tag.
 const tagColor = computed<string>(() => {
@@ -40,6 +53,8 @@ const tagColor = computed<string>(() => {
       return "var(--bucket-headless)";
     case BUCKETS.OPENCLAW:
       return "var(--bucket-openclaw)";
+    case BUCKETS.HERMES:
+      return "var(--bucket-hermes)";
     default:
       return "var(--bucket-other)";
   }
@@ -196,7 +211,7 @@ function onStop(): void {
   <section class="chat-pane" :style="{ '--tag-color': tagColor }">
     <header class="chat-head">
       <div class="chat-title">
-        <span class="chat-agent mono">{{ agent.agent }}</span>
+        <span class="chat-agent mono">{{ tagLabel }}</span>
         <span class="chat-name">{{ agent.session ?? agent.name }}</span>
         <span class="chat-owner mono">@{{ agent.owner }}</span>
       </div>

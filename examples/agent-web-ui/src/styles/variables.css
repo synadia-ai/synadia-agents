@@ -44,6 +44,7 @@
   --bucket-cc: var(--memory-note);          /* cyan */
   --bucket-headless: var(--memory-preference); /* violet — controllers */
   --bucket-openclaw: #ef4444;               /* red */
+  --bucket-hermes: #f59e0b;                 /* amber / orange */
   --bucket-other: var(--text-muted);        /* muted gray */
 
   /* Typography */

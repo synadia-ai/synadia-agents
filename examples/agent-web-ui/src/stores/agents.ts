@@ -94,6 +94,7 @@ export const BUCKETS = {
   PI_AGENT: "pi-agent",
   CC_AGENT: "cc-agent",
   OPENCLAW: "openclaw",
+  HERMES: "hermes",
   OTHER: "other",
 } as const;
 
@@ -107,6 +108,7 @@ export const BUCKET_ORDER: Bucket[] = [
   BUCKETS.PI_AGENT,
   BUCKETS.CC_AGENT,
   BUCKETS.OPENCLAW,
+  BUCKETS.HERMES,
   BUCKETS.OTHER,
 ];
 
@@ -122,6 +124,7 @@ export const BUCKET_LABELS: Record<Bucket, string> = {
   [BUCKETS.PI_AGENT]: "PI Interactive",
   [BUCKETS.CC_AGENT]: "Claude Code",
   [BUCKETS.OPENCLAW]: "OpenClaw",
+  [BUCKETS.HERMES]: "Hermes",
   [BUCKETS.OTHER]: "Other",
 };
 
@@ -141,6 +144,7 @@ export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
     return BUCKETS.CC_AGENT;
   }
   if (agent.agent === "openclaw" || agent.agent === "oc") return BUCKETS.OPENCLAW;
+  if (agent.agent === "hermes") return BUCKETS.HERMES;
   return BUCKETS.OTHER;
 }
 

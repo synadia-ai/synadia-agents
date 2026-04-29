@@ -32,6 +32,23 @@ const isController = computed(
     bucket.value === BUCKETS.CC_EXEC_CONTROL,
 );
 
+// Human label for the agent-tag pill. The wire `agent` token (e.g. "cc",
+// "claude-code") is short and ambiguous in the UI — map known tokens to
+// their full display names. Headless-controller buckets get a hardcoded
+// label that names the role rather than the wire token, since "PI" /
+// "CC" alone don't tell operators that the card is the controller and
+// not a session.
+const tagLabel = computed<string>(() => {
+  if (bucket.value === BUCKETS.PI_EXEC_CONTROL) return "PI HEADLESS";
+  if (bucket.value === BUCKETS.CC_EXEC_CONTROL) return "CC HEADLESS";
+  const a = props.agent.agent;
+  if (a === "claude-code" || a === "cc" || a === "ccc") return "CLAUDE CODE";
+  if (a === "openclaw" || a === "oc") return "OPENCLAW";
+  if (a === "pi") return "PI";
+  if (a === "hermes") return "HERMES";
+  return a.toUpperCase();
+});
+
 // Per-bucket agent-tag color, mirroring the old nats-agent-dashboard's
 // AgentBadge palette. Only the agent-tag pill tints — no other shape /
 // layout changes per family.
@@ -48,6 +65,8 @@ const tagColor = computed<string>(() => {
       return "var(--bucket-headless)";
     case BUCKETS.OPENCLAW:
       return "var(--bucket-openclaw)";
+    case BUCKETS.HERMES:
+      return "var(--bucket-hermes)";
     default:
       return "var(--bucket-other)";
   }
@@ -60,7 +79,20 @@ const ccSummary = computed(() =>
   isCcSession.value ? ccexecState.summaries.get(props.agent.name) : undefined,
 );
 
-const subtitle = computed(() => props.agent.session ?? props.agent.name);
+// Card title (second line). For sessions / regular agents this is
+// `session` if present, else the registered service name. Headless
+// controllers return null so the title row is omitted entirely — the
+// badge already says "PI HEADLESS" / "CC HEADLESS", and the
+// wire-internal service name (often "exec" or similar) just adds noise.
+const subtitle = computed<string | null>(() => {
+  if (
+    bucket.value === BUCKETS.PI_EXEC_CONTROL ||
+    bucket.value === BUCKETS.CC_EXEC_CONTROL
+  ) {
+    return null;
+  }
+  return props.agent.session ?? props.agent.name;
+});
 
 const humanPayload = computed(() => {
   const n = props.agent.promptEndpoint.maxPayloadBytes;
@@ -234,11 +266,11 @@ function onTrash(): void {
       @click="$emit('select', agent.instanceId)"
     >
       <header class="card-head">
-        <span class="agent-tag mono">{{ agent.agent }}</span>
+        <span class="agent-tag mono">{{ tagLabel }}</span>
         <AgentStatusDot class="status-led" :instance-id="agent.instanceId" />
       </header>
 
-      <h3 class="card-title">{{ subtitle }}</h3>
+      <h3 v-if="subtitle" class="card-title">{{ subtitle }}</h3>
 
       <div class="meta">
         <span class="owner mono">@{{ agent.owner }}</span>
