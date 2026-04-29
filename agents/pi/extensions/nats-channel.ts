@@ -160,11 +160,55 @@ function loadNatsContext(name: string): NatsContext {
 	}
 }
 
+// Parse a NATS URL into a partial `NodeConnectionOptions`, extracting
+// credentials from `userinfo` if present. Without this, a URL like
+// `nats://TOKEN@host:port` would silently drop the token because
+// `@nats-io/transport-node` doesn't parse credentials from URLs (the
+// `nats` CLI does, which is the UX gap this closes). Inlined per the
+// repo CLAUDE.md "Agents do NOT depend on the SDK" rule — byte-equivalent
+// of `@synadia-ai/agents`'s `parseNatsUrl`, kept minimal for this single-URL case.
+function parseNatsUrl(url: string): { servers: string; token?: string; user?: string; pass?: string } {
+	const withScheme = /^[a-z]+:\/\//i.test(url) ? url : `nats://${url}`;
+	let parsed: URL;
+	try {
+		parsed = new URL(withScheme);
+	} catch (e) {
+		throw new Error(`invalid NATS URL ${JSON.stringify(url)}: ${(e as Error).message}`);
+	}
+	if (!/^(nats|tls|ws|wss):$/.test(parsed.protocol)) {
+		throw new Error(`unsupported scheme "${parsed.protocol}" in NATS URL ${JSON.stringify(url)}`);
+	}
+	if (!parsed.host) {
+		throw new Error(`NATS URL ${JSON.stringify(url)} is missing a host`);
+	}
+	const out: { servers: string; token?: string; user?: string; pass?: string } = {
+		servers: `${parsed.protocol}//${parsed.host}`,
+	};
+	// WHATWG `URL` squashes `nats://user@host` and `nats://user:@host` into
+	// `password === ""`; sniff raw input for a colon to recover the intent.
+	const userinfoMatch = withScheme.match(/^[a-z]+:\/\/([^/@]*)@/i);
+	const hasColonSeparator = (userinfoMatch?.[1] ?? "").includes(":");
+	if (hasColonSeparator) {
+		out.user = decodeURIComponent(parsed.username);
+		out.pass = decodeURIComponent(parsed.password);
+	} else if (parsed.username !== "") {
+		out.token = decodeURIComponent(parsed.username);
+	}
+	return out;
+}
+
 function contextToConnectOpts(ctx: NatsContext): NodeConnectionOptions {
 	const opts: NodeConnectionOptions = { name: "pi-nats-channel" };
 
-	if (ctx.url) opts.servers = ctx.url;
+	// Parse the URL once; extracted userinfo serves as a fallback only when
+	// no explicit context-file auth field is set (precedence below).
+	const urlOpts = ctx.url ? parseNatsUrl(ctx.url) : null;
+	if (urlOpts) {
+		opts.servers = urlOpts.servers;
+	}
 
+	// Auth precedence: explicit context fields > URL userinfo. So a context
+	// file with `token: "abc"` wins over `url: "nats://xyz@host:port"`.
 	if (ctx.creds) {
 		opts.authenticator = credsAuthenticator(readFileSync(ctx.creds));
 	} else if (ctx.nkey) {
@@ -176,6 +220,10 @@ function contextToConnectOpts(ctx: NatsContext): NodeConnectionOptions {
 		opts.authenticator = tokenAuthenticator(ctx.token);
 	} else if (ctx.user) {
 		opts.authenticator = usernamePasswordAuthenticator(ctx.user, ctx.password ?? "");
+	} else if (urlOpts?.token) {
+		opts.authenticator = tokenAuthenticator(urlOpts.token);
+	} else if (urlOpts?.user !== undefined) {
+		opts.authenticator = usernamePasswordAuthenticator(urlOpts.user, urlOpts.pass ?? "");
 	}
 
 	if (ctx.cert || ctx.key || ctx.ca) {
