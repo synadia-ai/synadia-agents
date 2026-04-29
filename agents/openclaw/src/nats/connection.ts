@@ -6,7 +6,12 @@ import { parseNatsUrl } from "./url.js";
 export async function connectToNats(
   config: ConnectionConfig = {},
 ): Promise<NatsConnection> {
-  const url = config.url ?? "nats://localhost:4222";
+  // Default `demo.nats.io` matches agents/pi and agents/claude-code so
+  // every agent in this repo lands on the same broker out of the box.
+  // `||` (not `??`) so an empty-string `config.url` — which
+  // `resolveNatsAccount` produces when no url source is configured —
+  // also falls through to the default.
+  const url = config.url || "demo.nats.io";
   // `parseNatsUrl` extracts userinfo (token / user:password) — without it
   // a URL like `nats://TOKEN@host:port` would silently drop the token,
   // because `@nats-io/transport-node`'s `connect({ servers: url })` does
