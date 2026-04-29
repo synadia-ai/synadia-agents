@@ -1,8 +1,7 @@
 # hermes-agent
 
 > **Work in progress.** The NATS gateway lives on a fork
-> (`nats-gateway` branch of
-> [`renerocksai/hermes-agent`](https://github.com/renerocksai/hermes-agent));
+> ([`synadia-ai/hermes-agent`, branch `nats-gateway`](https://github.com/synadia-ai/hermes-agent/tree/nats-gateway));
 > upstream PR to [`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent)
 > is planned but not yet filed (needs a catch-up rebase first), so the
 > install below clones the fork directly.
@@ -21,7 +20,7 @@ Two parts: (1) clone the fork and bootstrap Hermes, (2) configure the gateway.
 
 ```bash
 # Clone hermes-agent anywhere you like.
-git clone -b nats-gateway https://github.com/renerocksai/hermes-agent.git
+git clone -b nats-gateway https://github.com/synadia-ai/hermes-agent.git
 cd hermes-agent
 
 # setup-hermes.sh installs uv, creates venv, installs hermes-agent[all,dev]
@@ -357,7 +356,7 @@ Current deferrals (candidates for future phases, not bugs):
 
 ## Further reading
 
-- **Hermes user guide for the NATS channel:** [`website/docs/user-guide/messaging/nats.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/website/docs/user-guide/messaging/nats.md) in the fork — deep dive on configuration, subject layout, multiple sessions via profiles, attachments, full troubleshooting table.
-- **Architecture & design:** [`docs/nats-gateway-design.md`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/docs/nats-gateway-design.md) — protocol↔adapter mapping, streaming model, approval hook, failure modes, and §17 retrospective lessons (including the v0.3 migration addenda).
-- **Adapter source:** [`gateway/platforms/nats.py`](https://github.com/renerocksai/hermes-agent/blob/nats-gateway/gateway/platforms/nats.py).
+- **Hermes user guide for the NATS channel:** [`website/docs/user-guide/messaging/nats.md`](https://github.com/synadia-ai/hermes-agent/blob/nats-gateway/website/docs/user-guide/messaging/nats.md) in the fork — deep dive on configuration, subject layout, multiple sessions via profiles, attachments, full troubleshooting table.
+- **Architecture & design:** [`docs/nats-gateway-design.md`](https://github.com/synadia-ai/hermes-agent/blob/nats-gateway/docs/nats-gateway-design.md) — protocol↔adapter mapping, streaming model, approval hook, failure modes, and §17 retrospective lessons (including the v0.3 migration addenda).
+- **Adapter source:** [`gateway/platforms/nats.py`](https://github.com/synadia-ai/hermes-agent/blob/nats-gateway/gateway/platforms/nats.py).
 - **Protocol spec:** <https://github.com/synadia-ai/nats-agent-sdk-docs>
