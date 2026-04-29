@@ -1,5 +1,6 @@
 import { connect } from "@nats-io/transport-node";
-import type { NatsConnection } from "@nats-io/nats-core";
+import { credsAuthenticator, type NatsConnection } from "@nats-io/nats-core";
+import { readFileSync } from "node:fs";
 import type { ConnectionConfig } from "./types.js";
 import { parseNatsUrl } from "./url.js";
 
@@ -16,10 +17,21 @@ export async function connectToNats(
   // a URL like `nats://TOKEN@host:port` would silently drop the token,
   // because `@nats-io/transport-node`'s `connect({ servers: url })` does
   // not parse credentials from URLs.
-  const nc = await connect({
+  const opts: Parameters<typeof connect>[0] = {
     ...parseNatsUrl(url),
     name: config.name,
-  });
+  };
+  // Wire NKEY/JWT auth from a `.creds` file when configured. Required for
+  // NGS (Synadia Cloud) and any account-mode NATS server. Without this,
+  // `tls://connect.ngs.global` connects but immediately fails CONNECT
+  // with "Authorization Violation" because no credentials are presented.
+  // `readFileSync` is intentional: the connection is async but the creds
+  // file is small and read once at startup, and `credsAuthenticator`
+  // wants the bytes synchronously to derive the seed/JWT pair.
+  if (config.credentials) {
+    opts.authenticator = credsAuthenticator(readFileSync(config.credentials));
+  }
+  const nc = await connect(opts);
 
   // Log connection status events
   (async () => {
