@@ -1,6 +1,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/core";
 import type { NatsAccountConfig, ResolvedNatsAccount } from "./types.js";
+import { loadNatsContextFromFile } from "./nats/context-loader.js";
 
 function getNatsConfig(cfg: OpenClawConfig): Record<string, unknown> {
   return (cfg as Record<string, unknown>).channels as Record<string, unknown> ?? {};
@@ -85,7 +86,21 @@ export function resolveNatsAccount(
   };
 
   // Environment variable overrides (for Docker/container deployments).
+  // Per-field env vars apply first; $NATS_CONTEXT is then applied LAST so
+  // it acts as a single source of truth for url + credentials when set
+  // (otherwise $NATS_CREDENTIALS could silently win over context creds and
+  // produce a confusing url-from-context-creds-from-elsewhere split that
+  // fails opaquely at connect time).
+  //
+  // Resolution order (matches pi-headless + agents/pi):
+  //   1. $NATS_CONTEXT — `nats` CLI context file (url + creds, highest)
+  //   2. $NATS_URL     — raw URL
+  //   3. $NATS_CREDENTIALS — overrides config creds field
+  //   4. account config (`url`, `credentials`)
+  //   5. built-in default — `demo.nats.io` (set in connection.ts)
   const env = process.env;
+
+  // ── Per-field env overrides (lower precedence than $NATS_CONTEXT) ──────
   applyEnvOverride(resolved, "url", raw.url, env.NATS_URL, id, "NATS_URL");
   applyEnvOverride(resolved, "agentName", raw.agentName, env.NATS_AGENT_NAME, id, "NATS_AGENT_NAME");
   applyEnvOverride(resolved, "description", raw.description, env.NATS_DESCRIPTION, id, "NATS_DESCRIPTION");
@@ -95,6 +110,33 @@ export function resolveNatsAccount(
     applyEnvOverride(resolved, "owner", raw.owner ?? raw.org, env.NATS_ORG, id, "NATS_ORG");
   }
   applyEnvOverride(resolved, "credentials", raw.credentials, env.NATS_CREDENTIALS, id, "NATS_CREDENTIALS", true);
+
+  // ── $NATS_CONTEXT (highest precedence) ───────────────────────────────
+  // Applied LAST so it wins over $NATS_URL and $NATS_CREDENTIALS — a
+  // deployer who set $NATS_CONTEXT meant it as the single source of
+  // truth. Failures are logged and downgraded so the gateway falls back
+  // to whatever the per-field env / config resolved instead of crashing.
+  if (env.NATS_CONTEXT) {
+    try {
+      const ctx = loadNatsContextFromFile(env.NATS_CONTEXT);
+      applyEnvOverride(resolved, "url", resolved.url, ctx.url, id, "NATS_CONTEXT");
+      if (ctx.credentials) {
+        applyEnvOverride(
+          resolved,
+          "credentials",
+          resolved.credentials,
+          ctx.credentials,
+          id,
+          "NATS_CONTEXT",
+          true,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[nats] $NATS_CONTEXT="${env.NATS_CONTEXT}" failed to load — falling back to NATS_URL/config: ${(err as Error).message}`,
+      );
+    }
+  }
 
   // Spec §2 requires a 4-token subject. Default the owner token rather than
   // leaving it empty and producing `agents.oc..name`.

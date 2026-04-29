@@ -122,6 +122,23 @@ function loadConfig(): NatsChannelConfig {
 }
 
 function loadNatsContext(name: string): NatsContext {
+  // Reject names that would escape the context directory. `$NATS_CONTEXT`
+  // is set by deployers, not random users, but a clear error beats reading
+  // a surprise `.json` file from `/etc`, and the cost is one guard.
+  // Mirrors the validation in `agents/openclaw/src/nats/context-loader.ts`.
+  if (
+    !name ||
+    name.includes('/') ||
+    name.includes('\\') ||
+    name.includes('\0') ||
+    name === '..' ||
+    name.startsWith('.')
+  ) {
+    process.stderr.write(
+      `nats channel: NATS context name ${JSON.stringify(name)} is invalid (must not contain path separators or start with '.')\n`,
+    )
+    process.exit(1)
+  }
   const contextFile = join(NATS_CONTEXT_DIR, `${name}.json`)
   try {
     return JSON.parse(readFileSync(contextFile, 'utf8')) as NatsContext
@@ -460,10 +477,26 @@ setInterval(() => {
 // ── Load config and connect ────────────────────────────────────────────
 
 const config = loadConfig()
-const natsCtx = config.context ? loadNatsContext(config.context) : DEFAULT_CONTEXT
+// Resolution order (uniform across agents/pi, agents/openclaw, and the
+// pi-headless / claude-code-headless examples):
+//   1. $NATS_CONTEXT env var
+//   2. config-file `context` field (set via /nats-channel:configure)
+//   3. $NATS_URL env var (raw URL; userinfo extracted via parseNatsUrl)
+//   4. built-in default (demo.nats.io, no auth)
+const ctxName = process.env.NATS_CONTEXT ?? config.context
+const envUrl = process.env.NATS_URL
+const natsCtx: NatsContext = ctxName
+  ? loadNatsContext(ctxName)
+  : envUrl
+    ? { url: envUrl, description: 'from $NATS_URL' }
+    : DEFAULT_CONTEXT
 const connectOpts = contextToConnectOpts(natsCtx)
 
-const ctxLabel = config.context ? `context: ${config.context}` : 'default: demo.nats.io'
+const ctxLabel = ctxName
+  ? `context: ${ctxName}`
+  : envUrl
+    ? `$NATS_URL`
+    : 'default: demo.nats.io'
 process.stderr.write(`nats channel: connecting to ${natsCtx.url ?? 'default'} (${ctxLabel})\n`)
 const nc = await connect(connectOpts)
 process.stderr.write(`nats channel: connected\n`)
