@@ -196,8 +196,20 @@ function parseSingleNatsUrl(part: string, original: string): ParsedNatsUrl {
   }
 
   const out: ParsedNatsUrl = { server: `${parsed.protocol}//${parsed.host}` };
-  if (parsed.password !== "") {
-    // user:password — both decoded
+
+  // WHATWG `URL` squashes both `nats://user@host` and `nats://user:@host`
+  // into `password === ""`, losing the distinction between "no separator"
+  // (single-component userinfo → token) and "explicit colon, empty
+  // password" (user:password form, even if password is empty). Sniff the
+  // raw userinfo for a colon to recover the original intent — Python's
+  // `urllib.parse.urlparse` distinguishes the two natively (`password is
+  // None` vs `password == ""`), but in JS we have to look at the input.
+  const userinfoMatch = withScheme.match(/^[a-z]+:\/\/([^/@]*)@/i);
+  const hasColonSeparator = (userinfoMatch?.[1] ?? "").includes(":");
+
+  if (hasColonSeparator) {
+    // user:password form (decoded; password may be empty if URL was
+    // `nats://alice:@host`, but that's still structurally user:password).
     out.user = decodeURIComponent(parsed.username);
     out.pass = decodeURIComponent(parsed.password);
   } else if (parsed.username !== "") {

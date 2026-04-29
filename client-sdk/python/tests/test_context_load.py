@@ -376,3 +376,31 @@ def test_parse_url_ipv6_host_rebracketed() -> None:
     opts_with_token = parse_nats_url("nats://tok@[::1]:4222")
     assert opts_with_token["servers"] == ["nats://[::1]:4222"]
     assert opts_with_token["token"] == "tok"
+
+
+def test_parse_url_user_with_explicit_colon_empty_password() -> None:
+    """`nats://user:@host` is structurally user:password (even if pass is empty).
+
+    Python's ``urlparse`` natively distinguishes ``password is None`` (no
+    colon, single-userinfo → token) from ``password == ""`` (colon
+    present, empty password → user:password form). The TS sibling
+    re-sniffs the raw input for the colon to achieve the same result.
+    """
+    opts = parse_nats_url("nats://alice:@nats.example.com:4222")
+    assert opts == {
+        "servers": ["nats://nats.example.com:4222"],
+        "user": "alice",
+        "password": "",
+    }
+    assert "token" not in opts
+
+
+def test_parse_url_ws_and_wss_schemes() -> None:
+    """``ws://`` and ``wss://`` schemes are accepted (NATS WebSocket transports)."""
+    ws = parse_nats_url("ws://tok@host:9222")
+    assert ws == {"servers": ["ws://host:9222"], "token": "tok"}
+    wss = parse_nats_url("wss://tok@host:9222")
+    assert wss == {"servers": ["wss://host:9222"], "token": "tok"}
+    # bare ws/wss without userinfo
+    ws_bare = parse_nats_url("ws://host:9222")
+    assert ws_bare == {"servers": ["ws://host:9222"]}

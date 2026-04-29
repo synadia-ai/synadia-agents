@@ -219,4 +219,29 @@ describe("parseNatsUrl", () => {
   it("throws on hostless URL", () => {
     expect(() => parseNatsUrl("nats://")).toThrow(NatsContextError);
   });
+
+  it("treats `user:` (explicit colon, empty password) as user:password, not token", () => {
+    // WHATWG URL squashes both `nats://user@host` and `nats://user:@host`
+    // into `password === ""`, so the implementation re-sniffs the raw
+    // input to recover the colon's intent. An empty password is
+    // semantically meaningless to the NATS server, but we preserve the
+    // structural distinction so this URL form maps where the user expected.
+    const opts = parseNatsUrl("nats://alice:@nats.example.com:4222");
+    expect(opts).toEqual({
+      servers: ["nats://nats.example.com:4222"],
+      user: "alice",
+      pass: "",
+    });
+    expect(opts.token).toBeUndefined();
+  });
+
+  it("accepts ws:// and wss:// schemes (with userinfo)", () => {
+    const ws = parseNatsUrl("ws://tok@host:9222");
+    expect(ws).toEqual({ servers: ["ws://host:9222"], token: "tok" });
+    const wss = parseNatsUrl("wss://tok@host:9222");
+    expect(wss).toEqual({ servers: ["wss://host:9222"], token: "tok" });
+    // bare ws/wss without userinfo
+    const wsBare = parseNatsUrl("ws://host:9222");
+    expect(wsBare).toEqual({ servers: ["ws://host:9222"] });
+  });
 });

@@ -31,7 +31,9 @@ async function buildConnectOptions(): Promise<NodeConnectionOptions> {
     // `parseNatsUrl` extracts userinfo (token / user:password) — without it
     // a URL like `nats://TOKEN@host:port` would silently drop the token
     // because `@nats-io/transport-node` doesn't parse credentials from URLs.
-    return { name: "testui", ...parseNatsUrl(config.servers) };
+    // `name` is spread last so the local connection identity wins even if
+    // a future `parseNatsUrl` were to start emitting a `name` field.
+    return { ...parseNatsUrl(config.servers), name: "testui" };
   }
   const contextName = config.context ?? "current";
   return { ...(await loadContextOptions(contextName)), name: "testui" };
