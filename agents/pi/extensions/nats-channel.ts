@@ -817,17 +817,30 @@ export default function (pi: ExtensionAPI) {
 		piCtx = ctx;
 		const config = loadConfig();
 
-		// 1. Resolve NATS context
+		// 1. Resolve NATS context. Resolution order (matches pi-headless +
+		//    the @synadia-ai/agents examples for cross-agent UX consistency):
+		//    1. $NATS_CONTEXT env var
+		//    2. config-file `context` field (set via /nats-channel:configure)
+		//    3. $NATS_URL env var (raw URL; userinfo extracted via parseNatsUrl
+		//       at connect time)
+		//    4. built-in default (demo.nats.io, no auth)
 		const ctxName = process.env.NATS_CONTEXT ?? config.context;
+		const envUrl = process.env.NATS_URL;
 		let natsCtx: NatsContext;
 		try {
-			natsCtx = ctxName ? loadNatsContext(ctxName) : DEFAULT_CONTEXT;
+			if (ctxName) {
+				natsCtx = loadNatsContext(ctxName);
+			} else if (envUrl) {
+				natsCtx = { url: envUrl, description: "from $NATS_URL" };
+			} else {
+				natsCtx = DEFAULT_CONTEXT;
+			}
 		} catch (e) {
 			ctx.ui.notify(`NATS: ${(e as Error).message}`, "error");
 			ctx.ui.setStatus("nats", "NATS: disconnected");
 			return;
 		}
-		contextLabel = ctxName ?? "default";
+		contextLabel = ctxName ?? (envUrl ? "$NATS_URL" : "default");
 		serverUrl = natsCtx.url ?? "demo.nats.io";
 
 		// 2. Resolve owner + session base name

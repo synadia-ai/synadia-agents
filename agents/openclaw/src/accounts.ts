@@ -1,6 +1,7 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/core";
 import type { NatsAccountConfig, ResolvedNatsAccount } from "./types.js";
+import { loadNatsContextFromFile } from "./nats/context-loader.js";
 
 function getNatsConfig(cfg: OpenClawConfig): Record<string, unknown> {
   return (cfg as Record<string, unknown>).channels as Record<string, unknown> ?? {};
@@ -86,7 +87,40 @@ export function resolveNatsAccount(
 
   // Environment variable overrides (for Docker/container deployments).
   const env = process.env;
+
+  // Resolution order (matches pi-headless + agents/pi):
+  //   1. $NATS_CONTEXT — load a `nats` CLI context file (url + creds)
+  //   2. $NATS_URL     — raw URL (used when no context resolves)
+  //   3. account config `url` field
+  //   4. default — `demo.nats.io` (set in connection.ts)
+  // NATS_URL is applied first so $NATS_CONTEXT can override it.
   applyEnvOverride(resolved, "url", raw.url, env.NATS_URL, id, "NATS_URL");
+
+  if (env.NATS_CONTEXT) {
+    try {
+      const ctx = loadNatsContextFromFile(env.NATS_CONTEXT);
+      // $NATS_CONTEXT wins over $NATS_URL because it carries auth too —
+      // a deployer who set both probably meant the context (which is the
+      // strictly more specific configuration).
+      applyEnvOverride(resolved, "url", resolved.url, ctx.url, id, "NATS_CONTEXT");
+      if (ctx.credentials) {
+        applyEnvOverride(
+          resolved,
+          "credentials",
+          resolved.credentials,
+          ctx.credentials,
+          id,
+          "NATS_CONTEXT",
+          true,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[nats] $NATS_CONTEXT="${env.NATS_CONTEXT}" failed to load — falling back to NATS_URL/config: ${(err as Error).message}`,
+      );
+    }
+  }
+
   applyEnvOverride(resolved, "agentName", raw.agentName, env.NATS_AGENT_NAME, id, "NATS_AGENT_NAME");
   applyEnvOverride(resolved, "description", raw.description, env.NATS_DESCRIPTION, id, "NATS_DESCRIPTION");
   if (env.NATS_OWNER !== undefined) {

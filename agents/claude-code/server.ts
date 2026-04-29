@@ -460,10 +460,26 @@ setInterval(() => {
 // ── Load config and connect ────────────────────────────────────────────
 
 const config = loadConfig()
-const natsCtx = config.context ? loadNatsContext(config.context) : DEFAULT_CONTEXT
+// Resolution order (uniform across agents/pi, agents/openclaw, and the
+// pi-headless / claude-code-headless examples):
+//   1. $NATS_CONTEXT env var
+//   2. config-file `context` field (set via /nats-channel:configure)
+//   3. $NATS_URL env var (raw URL; userinfo extracted via parseNatsUrl)
+//   4. built-in default (demo.nats.io, no auth)
+const ctxName = process.env.NATS_CONTEXT ?? config.context
+const envUrl = process.env.NATS_URL
+const natsCtx: NatsContext = ctxName
+  ? loadNatsContext(ctxName)
+  : envUrl
+    ? { url: envUrl, description: 'from $NATS_URL' }
+    : DEFAULT_CONTEXT
 const connectOpts = contextToConnectOpts(natsCtx)
 
-const ctxLabel = config.context ? `context: ${config.context}` : 'default: demo.nats.io'
+const ctxLabel = ctxName
+  ? `context: ${ctxName}`
+  : envUrl
+    ? `$NATS_URL`
+    : 'default: demo.nats.io'
 process.stderr.write(`nats channel: connecting to ${natsCtx.url ?? 'default'} (${ctxLabel})\n`)
 const nc = await connect(connectOpts)
 process.stderr.write(`nats channel: connected\n`)
