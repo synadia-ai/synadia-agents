@@ -150,6 +150,23 @@ function sanitizeSubjectToken(s: string): string {
 }
 
 function loadNatsContext(name: string): NatsContext {
+	// Reject names that would escape the context directory. `$NATS_CONTEXT`
+	// is set by deployers, not random users, but a clear error beats a
+	// stale-file `no 'url' field` message at 3am, and the cost is one
+	// guard. Mirrors the validation in
+	// `agents/openclaw/src/nats/context-loader.ts`.
+	if (
+		!name ||
+		name.includes("/") ||
+		name.includes("\\") ||
+		name.includes("\0") ||
+		name === ".." ||
+		name.startsWith(".")
+	) {
+		throw new Error(
+			`NATS context name ${JSON.stringify(name)} is invalid (must not contain path separators or start with '.')`,
+		);
+	}
 	const contextFile = join(NATS_CONTEXT_DIR, `${name}.json`);
 	try {
 		return JSON.parse(readFileSync(contextFile, "utf8")) as NatsContext;
