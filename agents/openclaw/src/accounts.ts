@@ -85,6 +85,23 @@ export function resolveNatsAccount(
     config: raw,
   };
 
+  // ── config.context (wizard-selected NATS CLI context) ────────────────
+  // Apply BEFORE per-field env vars so a deployer's `NATS_URL` /
+  // `NATS_CREDENTIALS` can still override an individual field of the
+  // wizard-chosen context. `$NATS_CONTEXT` (handled below) still wins
+  // over everything.
+  if (raw.context) {
+    try {
+      const ctx = loadNatsContextFromFile(raw.context);
+      resolved.url = ctx.url;
+      if (ctx.credentials) resolved.credentials = ctx.credentials;
+    } catch (err) {
+      console.warn(
+        `[nats] config.context="${raw.context}" failed to load — falling back to per-field config: ${(err as Error).message}`,
+      );
+    }
+  }
+
   // Environment variable overrides (for Docker/container deployments).
   // Per-field env vars apply first; $NATS_CONTEXT is then applied LAST so
   // it acts as a single source of truth for url + credentials when set
@@ -93,11 +110,12 @@ export function resolveNatsAccount(
   // fails opaquely at connect time).
   //
   // Resolution order (matches pi-headless + agents/pi):
-  //   1. $NATS_CONTEXT — `nats` CLI context file (url + creds, highest)
-  //   2. $NATS_URL     — raw URL
-  //   3. $NATS_CREDENTIALS — overrides config creds field
-  //   4. account config (`url`, `credentials`)
-  //   5. built-in default — `demo.nats.io` (set in connection.ts)
+  //   1. $NATS_CONTEXT       — env-var NATS CLI context file (highest)
+  //   2. $NATS_URL           — raw URL
+  //   3. $NATS_CREDENTIALS   — overrides config creds field
+  //   4. config.context      — wizard-selected NATS CLI context file
+  //   5. account config (`url`, `credentials`)
+  //   6. built-in default    — `demo.nats.io` (set in connection.ts)
   const env = process.env;
 
   // ── Per-field env overrides (lower precedence than $NATS_CONTEXT) ──────

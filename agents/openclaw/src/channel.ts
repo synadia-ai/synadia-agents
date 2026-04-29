@@ -96,13 +96,52 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
         },
         {
           inputKey: "url",
-          message: "NATS server URL",
+          message: "NATS server URL (leave blank when using a context)",
           placeholder: "demo.nats.io",
           required: false,
           initialValue: () => "demo.nats.io",
           currentValue: ({ cfg, accountId }: Record<string, unknown>) => {
             try {
               return resolveNatsAccount(cfg as OpenClawConfig, accountId as string).url || undefined;
+            } catch { return undefined; }
+          },
+        },
+        {
+          inputKey: "context",
+          message: "NATS CLI context name (optional — sources url + credentials from ~/.config/nats/context/<name>.json)",
+          placeholder: "ngs",
+          required: false,
+          currentValue: ({ cfg, accountId }: Record<string, unknown>) => {
+            try {
+              const id = (accountId as string) ?? "";
+              const channels = ((cfg as Record<string, unknown>).channels ?? {}) as Record<string, unknown>;
+              const nats = (channels.nats ?? {}) as Record<string, unknown>;
+              const accounts = (nats.accounts ?? {}) as Record<string, unknown>;
+              const acct = (accounts[id] ?? {}) as Record<string, unknown>;
+              const v = acct.context;
+              return typeof v === "string" && v.length > 0 ? v : undefined;
+            } catch { return undefined; }
+          },
+          validate: (input: unknown) => {
+            const value = (typeof input === "object" && input !== null ? (input as Record<string, unknown>).value : String(input ?? "")) as string;
+            const v = value.trim();
+            if (!v) return null; // optional
+            // Same path-traversal guard as loadNatsContextFromFile so the
+            // user gets feedback during the wizard rather than at connect.
+            if (v.includes("/") || v.includes("\\") || v.includes("\0") || v === ".." || v.startsWith(".")) {
+              return "Context name must not contain path separators or start with '.'";
+            }
+            return null;
+          },
+        },
+        {
+          inputKey: "credentials",
+          message: "NATS credentials file path (optional — for NKEY/JWT auth, e.g. NGS)",
+          placeholder: "/home/user/.config/nats/ngs.creds",
+          required: false,
+          currentValue: ({ cfg, accountId }: Record<string, unknown>) => {
+            try {
+              return resolveNatsAccount(cfg as OpenClawConfig, accountId as string).credentials || undefined;
             } catch { return undefined; }
           },
         },
