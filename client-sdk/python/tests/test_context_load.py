@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from synadia_ai.agents import NatsContextError, load_context_options
+from synadia_ai.agents import NatsContextError, load_context_options, parse_nats_url
 
 
 def _point_env_at(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -278,3 +278,101 @@ def test_current_honours_env_over_selection_file(
 
     opts = load_context_options("current")
     assert opts["servers"] == ["nats://env:4222"]
+
+
+# --- parse_nats_url ----------------------------------------------------
+
+
+def test_parse_url_no_userinfo_returns_servers_only() -> None:
+    opts = parse_nats_url("nats://nats.example.com:4222")
+    assert opts == {"servers": ["nats://nats.example.com:4222"]}
+    assert "token" not in opts
+    assert "user" not in opts
+    assert "password" not in opts
+
+
+def test_parse_url_single_userinfo_is_token() -> None:
+    """Mirrors the ``nats`` CLI: one userinfo component is treated as a token."""
+    opts = parse_nats_url("nats://abc123def@nats.example.com:4222")
+    assert opts == {
+        "servers": ["nats://nats.example.com:4222"],
+        "token": "abc123def",
+    }
+
+
+def test_parse_url_user_password_split() -> None:
+    opts = parse_nats_url("nats://alice:s3cret@nats.example.com:4222")
+    assert opts == {
+        "servers": ["nats://nats.example.com:4222"],
+        "user": "alice",
+        "password": "s3cret",
+    }
+
+
+def test_parse_url_decodes_percent_encoded_userinfo() -> None:
+    # %2B → "+", %40 → "@"
+    opts = parse_nats_url("nats://to%2Bken%40v1@nats.example.com:4222")
+    assert opts["token"] == "to+ken@v1"
+
+
+def test_parse_url_preserves_tls_scheme() -> None:
+    opts = parse_nats_url("tls://abc@nats.example.com:4443")
+    assert opts == {
+        "servers": ["tls://nats.example.com:4443"],
+        "token": "abc",
+    }
+
+
+def test_parse_url_accepts_schemeless_host_port() -> None:
+    opts = parse_nats_url("nats.example.com:4222")
+    assert opts["servers"] == ["nats://nats.example.com:4222"]
+
+
+def test_parse_url_splits_comma_separated_multiserver() -> None:
+    opts = parse_nats_url("nats://a:4222,nats://b:4222,nats://c:4222")
+    assert opts["servers"] == [
+        "nats://a:4222",
+        "nats://b:4222",
+        "nats://c:4222",
+    ]
+    assert "token" not in opts
+
+
+def test_parse_url_multiserver_with_identical_userinfo() -> None:
+    opts = parse_nats_url("nats://tok@a.example.com:4222,nats://tok@b.example.com:4222")
+    assert opts["servers"] == [
+        "nats://a.example.com:4222",
+        "nats://b.example.com:4222",
+    ]
+    assert opts["token"] == "tok"
+
+
+def test_parse_url_multiserver_mixed_credentials_rejected() -> None:
+    with pytest.raises(NatsContextError, match="mixed credentials"):
+        parse_nats_url("nats://tok1@a:4222,nats://tok2@b:4222")
+
+
+def test_parse_url_empty_input_rejected() -> None:
+    with pytest.raises(NatsContextError, match="empty NATS URL"):
+        parse_nats_url("")
+    with pytest.raises(NatsContextError, match="empty NATS URL"):
+        parse_nats_url("   ,  ")
+
+
+def test_parse_url_unsupported_scheme_rejected() -> None:
+    with pytest.raises(NatsContextError, match="unsupported scheme"):
+        parse_nats_url("http://nats.example.com:4222")
+
+
+def test_parse_url_hostless_url_rejected() -> None:
+    with pytest.raises(NatsContextError, match="missing a host"):
+        parse_nats_url("nats://")
+
+
+def test_parse_url_ipv6_host_rebracketed() -> None:
+    """``urlparse`` strips IPv6 brackets — we must put them back."""
+    opts = parse_nats_url("nats://[::1]:4222")
+    assert opts["servers"] == ["nats://[::1]:4222"]
+    opts_with_token = parse_nats_url("nats://tok@[::1]:4222")
+    assert opts_with_token["servers"] == ["nats://[::1]:4222"]
+    assert opts_with_token["token"] == "tok"
