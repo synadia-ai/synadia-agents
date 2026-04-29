@@ -13,7 +13,7 @@ const isEmpty = computed(() => groups.value.length === 0);
       <div>
         <h1 class="grid-title">Agent Network</h1>
         <p class="grid-sub">
-          Live view of every NATS micro-service that looks like an AI agent.
+          Live view of every AI agent on the connected NATS cluster. Click any agent to chat, or a controller to spawn a new session.
         </p>
       </div>
     </header>

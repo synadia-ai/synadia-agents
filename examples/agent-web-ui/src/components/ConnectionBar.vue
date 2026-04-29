@@ -32,7 +32,7 @@ const statusLabel = computed(() => {
     </div>
 
     <div class="brand">
-      <span class="brand-title">nats-ai-testui</span>
+      <span class="brand-title">NATS Agent Dashboard</span>
     </div>
 
     <div class="right">
