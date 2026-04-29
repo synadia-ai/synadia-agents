@@ -10,8 +10,8 @@
   /* Text hierarchy */
   --text-primary: #e8e8f0;
   --text-secondary: #9090a8;
-  --text-muted: #606078;
-  --text-dim: #404050;
+  --text-muted: #8a8ab0;   /* was #606078 — bumped (twice) for legibility on dark cards */
+  --text-dim: #7474a0;     /* was #404050 — same reason */
 
   /* Accent colors */
   --accent-primary: #667eea;

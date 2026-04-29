@@ -417,7 +417,11 @@ function onTrash(): void {
   gap: var(--space-xs);
   padding: var(--space-md);
   background: var(--bg-secondary);
-  border: var(--border-subtle);
+  /* Default border = a faint wash of the per-bucket tag colour. This
+     ties each card's outline to its agent family without competing with
+     the selection accent — selected cards still take over with
+     `--accent-primary` below. */
+  border: 1px solid color-mix(in srgb, var(--tag-color, var(--text-muted)) 22%, transparent);
   border-radius: var(--border-radius);
   text-align: left;
   transition: all var(--transition-normal);
@@ -427,7 +431,7 @@ function onTrash(): void {
 }
 .card:hover {
   background: var(--bg-tertiary);
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: color-mix(in srgb, var(--tag-color, var(--text-muted)) 45%, transparent);
   transform: translateY(-1px);
 }
 .card.selected {
@@ -436,15 +440,14 @@ function onTrash(): void {
   box-shadow: var(--shadow-glow);
 }
 .card.is-controller {
+  /* Controllers keep their distinctive violet vertical wash — the
+     border is already violet-tinted via `--tag-color = --bucket-headless`,
+     so we don't override it here. */
   background: linear-gradient(
     180deg,
     var(--bg-secondary) 0%,
     rgba(167, 139, 250, 0.05) 100%
   );
-  border-color: rgba(167, 139, 250, 0.18);
-}
-.card.is-controller:hover {
-  border-color: rgba(167, 139, 250, 0.5);
 }
 .card.is-controller.selected {
   border-color: var(--memory-preference);
