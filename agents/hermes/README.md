@@ -13,20 +13,6 @@ Hermes is a self-improving coding agent with a CLI, a TUI, and a messaging gatew
 
 Sibling implementations sharing the same wire protocol: [`pi`](../pi) (PI), [`openclaw`](../openclaw) (OpenClaw), [`claude-code`](../claude-code) (Claude Code).
 
-## How it works
-
-When `hermes gateway run` starts with `platforms.nats.enabled = true`:
-
-1. Connects to NATS using a configured context (or `demo.nats.io` by default via `$NATS_URL`).
-2. Registers a NATS micro service named `agents` with v0.3 spec metadata (`agent`, `owner`, `protocol_version`).
-3. Adds a `prompt` endpoint at `agents.prompt.hermes.<owner>.<session_name>` advertising `max_payload: 1MB` and `attachments_ok: true`, and a `status` endpoint at `agents.status.hermes.<owner>.<session_name>` for on-demand liveness.
-4. Publishes heartbeats on `agents.hb.hermes.<owner>.<session_name>` every 30 s.
-5. On each inbound prompt: decodes any attached files to the gateway's attachment staging area, routes images through Hermes's `vision_analyze` tool so the agent actually sees them, emits a `status: ack` chunk, runs the full Hermes agent loop (tools, memory, skills, approvals) to completion, and streams model output back as typed `{type:"response","data":…}` chunks, terminating with the spec-mandated empty-body no-headers terminator.
-6. Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Internal failures return `500`.
-7. Mid-stream approval prompts (dangerous tool calls) are surfaced as spec §7 `query` chunks when a caller drives a prompt; see `examples/04-query-reply.py` in the SDK.
-
-**Single-session-per-service (v0.3 §-PR #26).** One Hermes gateway = one `AgentService` = one `session_name` (the 5th subject token). For multiple isolated sessions on one host, run multiple **Hermes profiles** — each profile registers its own service with its own `session_name`. This matches the way pi/openclaw/claude-code already work; the v0.2 `envelope.session` demux is gone.
-
 ## Install
 
 Two parts: (1) clone the fork and bootstrap Hermes, (2) configure the gateway.
@@ -281,6 +267,20 @@ To talk to a *different* conversation, point `DiscoverFilter(session_name=...)` 
 | `examples/06-chat.py` | Multi-turn chat against one selected agent |
 
 All honor `--context`, `--url`, `$NATS_URL`, or `nats context select` (in that order). Examples that take a target agent honor `--session NAME` to filter by `session_name`.
+
+## How it works
+
+When `hermes gateway run` starts with `platforms.nats.enabled = true`:
+
+1. Connects to NATS using a configured context (or `demo.nats.io` by default via `$NATS_URL`).
+2. Registers a NATS micro service named `agents` with v0.3 spec metadata (`agent`, `owner`, `protocol_version`).
+3. Adds a `prompt` endpoint at `agents.prompt.hermes.<owner>.<session_name>` advertising `max_payload: 1MB` and `attachments_ok: true`, and a `status` endpoint at `agents.status.hermes.<owner>.<session_name>` for on-demand liveness.
+4. Publishes heartbeats on `agents.hb.hermes.<owner>.<session_name>` every 30 s.
+5. On each inbound prompt: decodes any attached files to the gateway's attachment staging area, routes images through Hermes's `vision_analyze` tool so the agent actually sees them, emits a `status: ack` chunk, runs the full Hermes agent loop (tools, memory, skills, approvals) to completion, and streams model output back as typed `{type:"response","data":…}` chunks, terminating with the spec-mandated empty-body no-headers terminator.
+6. Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Internal failures return `500`.
+7. Mid-stream approval prompts (dangerous tool calls) are surfaced as spec §7 `query` chunks when a caller drives a prompt; see `examples/04-query-reply.py` in the SDK.
+
+**Single-session-per-service (v0.3 §-PR #26).** One Hermes gateway = one `AgentService` = one `session_name` (the 5th subject token). For multiple isolated sessions on one host, run multiple **Hermes profiles** — each profile registers its own service with its own `session_name`. This matches the way pi/openclaw/claude-code already work; the v0.2 `envelope.session` demux is gone.
 
 ## Subject hierarchy (v0.3 verb-first)
 
