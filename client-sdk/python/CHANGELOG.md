@@ -17,6 +17,43 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   (`_INBOX.agents.>`) covers caller-side reply traffic regardless of
   language. The connection's `inbox_prefix` is no longer consulted for
   agents-SDK reply subjects; not user-overridable.
+- `DEFAULT_DISCOVER_STALL_S` bumped from `0.2` → `0.75` so the default
+  `discover()` (stall strategy) survives a transcontinental NATS
+  round-trip — e.g. demo.nats.io reports ~315 ms RTT from a non-US
+  client, which previously caused `discover()` to return an empty
+  list before the first reply arrived. Snappy on LAN brokers stays
+  true at 750 ms (still well under one perceptible UI tick); callers
+  wanting a tighter window can pass `stall=` to `agents.discover()` /
+  `discover_agents()`. Fixes [#31]. Mirrors the same constant change
+  in the TypeScript SDK so cross-SDK defaults stay aligned.
+
+### Added
+
+- New `parse_nats_url(url)` helper exported from `synadia_ai.agents`.
+  Sibling of `load_context_options` — both produce kwargs ready to
+  splat into `nats.connect(...)`. Extracts credentials from `userinfo`
+  if present:
+  - `nats://TOKEN@host:port` → `{"servers": [...], "token": ...}`
+    (single userinfo component is treated as a token, mirroring the
+    `nats` CLI)
+  - `nats://USER:PASS@host:port` → `{"servers": [...], "user": ...,
+    "password": ...}`
+  - `tls://`, `ws://`, `wss://` schemes preserved on output;
+    scheme-less `host:port` accepted; comma-separated multi-server
+    URLs supported (mixed credentials across entries throw
+    `NatsContextError`).
+  - URL-decodes percent-encoded userinfo, brackets IPv6 hosts back
+    correctly after `urllib`-strip.
+
+  Closes a UX gap: `nats-py`'s `connect(servers=url)` does NOT parse
+  userinfo (the bare `nats` CLI does), so a user copy-pasting a token
+  URL silently lost the token and got `Authorization Violation`.
+  Mirrors the TS SDK's `parseNatsUrl` (same PR — cross-SDK helper
+  defaults stay aligned).
+- `examples/_connect_cli.py` now routes `--url` and `$NATS_URL`
+  through `parse_nats_url`, so every numbered demo (`01-discover.py`
+  … `06-chat.py`) accepts `nats://TOKEN@host:port` URLs identically
+  to the `nats` CLI.
 
 ### Changed (breaking, public API)
 

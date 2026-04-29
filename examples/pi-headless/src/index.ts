@@ -9,7 +9,7 @@ import process from "node:process";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { loadContextOptions } from "@synadia-ai/agents";
+import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 
 import { Controller } from "./controller.js";
 import { loadConfig, parseCliOverrides } from "./config.js";
@@ -27,7 +27,10 @@ async function resolveNatsOptions(
     return { ...(await loadContextOptions(context)), name: "pi-headless" };
   }
   if (natsUrl) {
-    return { servers: natsUrl, name: "pi-headless" };
+    // `parseNatsUrl` extracts userinfo (token / user:password) — without it
+    // a URL like `nats://TOKEN@host:port` would silently drop the token
+    // because `@nats-io/transport-node` doesn't parse credentials from URLs.
+    return { ...parseNatsUrl(natsUrl), name: "pi-headless" };
   }
 
   throw new Error("no NATS target configured (context / NATS_URL / --url)");

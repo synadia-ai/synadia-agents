@@ -65,7 +65,14 @@ STATUS_QUEUE_GROUP = "agents"
 
 # Idle window after the most recent reply before discover() returns
 # (stall strategy). Mirrors TS DEFAULT_DISCOVER_STALL_MS.
-DEFAULT_DISCOVER_STALL_S: float = 0.2
+#
+# Sized to comfortably absorb a transcontinental NATS round-trip — e.g.
+# demo.nats.io reports ~315 ms RTT from a non-US client. At 750 ms we
+# still return well under one perceptible UI tick on a LAN, but no
+# longer time out before the first reply arrives on a WAN (the symptom
+# that issue #31 surfaced). Callers who want a snappier scan can pass
+# `stall=` to `agents.discover()` or `discover_agents()`.
+DEFAULT_DISCOVER_STALL_S: float = 0.75
 
 # Absolute safety cap when using the stall strategy. Mirrors TS
 # DEFAULT_DISCOVER_MAX_WAIT_MS.

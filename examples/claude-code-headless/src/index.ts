@@ -10,7 +10,7 @@ import process from "node:process";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { loadContextOptions } from "@synadia-ai/agents";
+import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 
 import { ClaudeSessionManager } from "./claude-session-manager.js";
 import { Controller } from "./controller.js";
@@ -28,7 +28,9 @@ async function resolveNatsOptions(
     return { ...(await loadContextOptions(context)), name: "claude-code-headless" };
   }
   if (natsUrl) {
-    return { servers: natsUrl, name: "claude-code-headless" };
+    // `parseNatsUrl` extracts userinfo (token / user:password) — without it
+    // `nats://TOKEN@host:port` would silently drop the token.
+    return { ...parseNatsUrl(natsUrl), name: "claude-code-headless" };
   }
 
   throw new Error("no NATS target configured (context / NATS_URL / --url)");
