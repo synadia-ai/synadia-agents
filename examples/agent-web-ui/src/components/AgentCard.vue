@@ -72,22 +72,34 @@ const humanPayload = computed(() => {
 
 function fmtRemaining(maxS: number, remainingS: number): string {
   if (maxS === 0) return "∞";
-  if (remainingS <= 0) return "expired";
+  // 0s instead of "expired" so the lifetime row doesn't double-up with
+  // the "expired" meta tag. The tag carries the semantic; the lifetime
+  // row stays as a plain numeric value to keep card height constant.
+  if (remainingS <= 0) return "0s";
   if (remainingS >= 3600)
     return `${Math.floor(remainingS / 3600)}h ${Math.floor((remainingS % 3600) / 60)}m`;
   if (remainingS >= 60) return `${Math.floor(remainingS / 60)}m ${remainingS % 60}s`;
   return `${remainingS}s`;
 }
 
-const lifetimeText = computed(() => {
+const lifetimeText = computed<string | null>(() => {
+  if (!isPiSession.value && !isCcSession.value) return null;
   const s = piSummary.value ?? ccSummary.value;
-  if (!s) return null;
+  // Session card with no summary (controller cleaned it up, or just-stopped
+  // before the bridge caught up). Show "0s" so the row stays in the card —
+  // the trash button is absolute-positioned and follows the card's bottom
+  // edge, so a vanishing row would push it outside.
+  if (!s) return "0s";
   return fmtRemaining(s.max_lifetime_s, s.remaining_lifetime_s);
 });
 
-const lifetimePercent = computed(() => {
+const lifetimePercent = computed<number | null>(() => {
+  if (!isPiSession.value && !isCcSession.value) return null;
   const s = piSummary.value ?? ccSummary.value;
-  if (!s || s.max_lifetime_s === 0) return null;
+  // No summary → render an empty bar (100% used). Same idea: keep the row
+  // visible and at the same height as a live session.
+  if (!s) return 100;
+  if (s.max_lifetime_s === 0) return null; // ∞ — no bar
   const used = s.max_lifetime_s - s.remaining_lifetime_s;
   return Math.max(0, Math.min(100, (used / s.max_lifetime_s) * 100));
 });
@@ -102,9 +114,14 @@ const model = computed(() => {
   return s?.model ?? props.agent.metadata?.["model"] ?? null;
 });
 
-const ccCost = computed(() => {
+const ccCost = computed<string | null>(() => {
+  // Only cc-headless sessions have a `cost` row at all; pi sessions don't.
+  // For cc cards, always return a string so the row renders even when no
+  // prompts have run yet — keeps the cc card height stable across "fresh"
+  // (no cost data) and "prompted" (with cost) states.
+  if (!isCcSession.value) return null;
   const s = ccSummary.value;
-  if (!s || s.total_cost_usd <= 0) return null;
+  if (!s || s.total_cost_usd <= 0) return "$0.0000";
   if (s.total_cost_usd < 0.0001) return "<$0.0001";
   return `$${s.total_cost_usd.toFixed(4)}`;
 });
@@ -242,7 +259,7 @@ function onTrash(): void {
         <div v-if="model" class="stat">
           <dt>model</dt><dd class="mono">{{ model }}</dd>
         </div>
-        <div v-if="lifetimeText && !isExpired" class="stat">
+        <div v-if="lifetimeText" class="stat">
           <dt>lifetime</dt>
           <dd>
             <span class="mono">{{ lifetimeText }}</span>
