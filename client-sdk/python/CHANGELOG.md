@@ -17,11 +17,16 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   token exchanged for a short-lived PyPI credential. The `pypi`
   GitHub Environment has a `python-v*` tag protection rule, so a
   publish can only fire from a release tag. A pending publisher on
-  PyPI for `synadia-ai-agents` reserves the project name; the project
-  materializes on PyPI on the first successful OIDC publish from this
-  workflow + environment. No user-visible API change.
+  PyPI binds `synadia-ai-agents` to this exact workflow + environment;
+  the project materializes on PyPI on the first successful OIDC
+  publish. **A pending publisher does *not* reserve the project name**
+  ([PyPI docs][tp-pending]) — if anyone else registers
+  `synadia-ai-agents` on PyPI before our first publish, the pending
+  publisher is invalidated and would have to be re-created against the
+  new owner's project. No user-visible API change.
 
   [tp]: https://docs.pypi.org/trusted-publishers/
+  [tp-pending]: https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/
 
 - Reply-inbox prefix for prompt streams, mid-stream queries, and
   internal `$SRV.INFO` discovery is now fixed at `_INBOX.agents` (was
