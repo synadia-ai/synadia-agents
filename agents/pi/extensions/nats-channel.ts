@@ -160,11 +160,78 @@ function loadNatsContext(name: string): NatsContext {
 	}
 }
 
+// Parse a NATS URL into a partial `NodeConnectionOptions`, extracting
+// credentials from `userinfo` if present. Without this, a URL like
+// `nats://TOKEN@host:port` would silently drop the token because
+// `@nats-io/transport-node` doesn't parse credentials from URLs (the
+// `nats` CLI does, which is the UX gap this closes). Inlined per the
+// repo CLAUDE.md "Agents do NOT depend on the SDK" rule —
+// byte-equivalent of `@synadia-ai/agents`'s `parseNatsUrl`. Supports
+// comma-separated cluster URLs (the form `@nats-io/transport-node`
+// accepts via `servers: string`).
+type ParsedSingle = { server: string; token?: string; user?: string; pass?: string };
+function parseSingleNatsUrl(part: string, original: string): ParsedSingle {
+	const withScheme = /^[a-z]+:\/\//i.test(part) ? part : `nats://${part}`;
+	let parsed: URL;
+	try {
+		parsed = new URL(withScheme);
+	} catch (e) {
+		throw new Error(`invalid NATS URL ${JSON.stringify(original)}: ${(e as Error).message}`);
+	}
+	if (!/^(nats|tls|ws|wss):$/.test(parsed.protocol)) {
+		throw new Error(`unsupported scheme "${parsed.protocol}" in NATS URL ${JSON.stringify(original)}`);
+	}
+	if (!parsed.host) {
+		throw new Error(`NATS URL ${JSON.stringify(original)} is missing a host`);
+	}
+	const out: ParsedSingle = { server: `${parsed.protocol}//${parsed.host}` };
+	// WHATWG `URL` squashes `nats://user@host` and `nats://user:@host` into
+	// `password === ""`; sniff raw input for a colon to recover the intent.
+	const userinfoMatch = withScheme.match(/^[a-z]+:\/\/([^/@]*)@/i);
+	const hasColonSeparator = (userinfoMatch?.[1] ?? "").includes(":");
+	if (hasColonSeparator) {
+		out.user = decodeURIComponent(parsed.username);
+		out.pass = decodeURIComponent(parsed.password);
+	} else if (parsed.username !== "") {
+		out.token = decodeURIComponent(parsed.username);
+	}
+	return out;
+}
+function parseNatsUrl(url: string): { servers: string[]; token?: string; user?: string; pass?: string } {
+	const parts = url.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+	if (parts.length === 0) {
+		throw new Error(`empty NATS URL: ${JSON.stringify(url)}`);
+	}
+	const parsedAll = parts.map((p) => parseSingleNatsUrl(p, url));
+	const first = parsedAll[0]!;
+	// Mixed userinfo across cluster entries can't be expressed in one
+	// ConnectionOptions — fail loudly rather than silently drop credentials.
+	for (const p of parsedAll.slice(1)) {
+		if (p.token !== first.token || p.user !== first.user || p.pass !== first.pass) {
+			throw new Error(`NATS URL has mixed credentials across server entries: ${url}`);
+		}
+	}
+	const out: { servers: string[]; token?: string; user?: string; pass?: string } = {
+		servers: parsedAll.map((p) => p.server),
+	};
+	if (first.token !== undefined) out.token = first.token;
+	if (first.user !== undefined) out.user = first.user;
+	if (first.pass !== undefined) out.pass = first.pass;
+	return out;
+}
+
 function contextToConnectOpts(ctx: NatsContext): NodeConnectionOptions {
 	const opts: NodeConnectionOptions = { name: "pi-nats-channel" };
 
-	if (ctx.url) opts.servers = ctx.url;
+	// Parse the URL once; extracted userinfo serves as a fallback only when
+	// no explicit context-file auth field is set (precedence below).
+	const urlOpts = ctx.url ? parseNatsUrl(ctx.url) : null;
+	if (urlOpts) {
+		opts.servers = urlOpts.servers;
+	}
 
+	// Auth precedence: explicit context fields > URL userinfo. So a context
+	// file with `token: "abc"` wins over `url: "nats://xyz@host:port"`.
 	if (ctx.creds) {
 		opts.authenticator = credsAuthenticator(readFileSync(ctx.creds));
 	} else if (ctx.nkey) {
@@ -176,6 +243,10 @@ function contextToConnectOpts(ctx: NatsContext): NodeConnectionOptions {
 		opts.authenticator = tokenAuthenticator(ctx.token);
 	} else if (ctx.user) {
 		opts.authenticator = usernamePasswordAuthenticator(ctx.user, ctx.password ?? "");
+	} else if (urlOpts?.token) {
+		opts.authenticator = tokenAuthenticator(urlOpts.token);
+	} else if (urlOpts?.user !== undefined) {
+		opts.authenticator = usernamePasswordAuthenticator(urlOpts.user, urlOpts.pass ?? "");
 	}
 
 	if (ctx.cert || ctx.key || ctx.ca) {
