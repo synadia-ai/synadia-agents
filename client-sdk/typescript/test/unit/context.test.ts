@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadContextOptions } from "../../src/context.js";
+import { loadContextOptions, parseNatsUrl } from "../../src/context.js";
 import { NatsContextError } from "../../src/errors.js";
 
 describe("loadContextOptions", () => {
@@ -130,5 +130,93 @@ describe("loadContextOptions", () => {
   it("rejects traversal names resolved via $NATS_CONTEXT", async () => {
     process.env["NATS_CONTEXT"] = "../escape";
     await expect(loadContextOptions("current")).rejects.toBeInstanceOf(NatsContextError);
+  });
+});
+
+describe("parseNatsUrl", () => {
+  it("returns bare servers with no auth for a plain URL", () => {
+    const opts = parseNatsUrl("nats://nats.example.com:4222");
+    expect(opts).toEqual({ servers: ["nats://nats.example.com:4222"] });
+    expect(opts.token).toBeUndefined();
+    expect(opts.user).toBeUndefined();
+    expect(opts.pass).toBeUndefined();
+  });
+
+  it("treats single userinfo component as a token (mirrors `nats` CLI)", () => {
+    const opts = parseNatsUrl("nats://abc123def@nats.example.com:4222");
+    expect(opts).toEqual({
+      servers: ["nats://nats.example.com:4222"],
+      token: "abc123def",
+    });
+  });
+
+  it("splits user:password userinfo into user + pass", () => {
+    const opts = parseNatsUrl("nats://alice:s3cret@nats.example.com:4222");
+    expect(opts).toEqual({
+      servers: ["nats://nats.example.com:4222"],
+      user: "alice",
+      pass: "s3cret",
+    });
+  });
+
+  it("URL-decodes userinfo so tokens with reserved characters round-trip", () => {
+    // "%2B" → "+", "%40" → "@"
+    const opts = parseNatsUrl("nats://to%2Bken%40v1@nats.example.com:4222");
+    expect(opts.token).toBe("to+ken@v1");
+  });
+
+  it("preserves the scheme for tls:// (and similar)", () => {
+    const opts = parseNatsUrl("tls://abc@nats.example.com:4443");
+    expect(opts).toEqual({
+      servers: ["tls://nats.example.com:4443"],
+      token: "abc",
+    });
+  });
+
+  it("accepts scheme-less host:port (treats as nats://)", () => {
+    const opts = parseNatsUrl("nats.example.com:4222");
+    expect(opts.servers).toEqual(["nats://nats.example.com:4222"]);
+  });
+
+  it("splits comma-separated multi-server URLs", () => {
+    const opts = parseNatsUrl("nats://a:4222,nats://b:4222,nats://c:4222");
+    expect(opts.servers).toEqual([
+      "nats://a:4222",
+      "nats://b:4222",
+      "nats://c:4222",
+    ]);
+    expect(opts.token).toBeUndefined();
+  });
+
+  it("accepts multi-server URLs when userinfo is identical on every entry", () => {
+    const opts = parseNatsUrl(
+      "nats://tok@a.example.com:4222,nats://tok@b.example.com:4222",
+    );
+    expect(opts.servers).toEqual([
+      "nats://a.example.com:4222",
+      "nats://b.example.com:4222",
+    ]);
+    expect(opts.token).toBe("tok");
+  });
+
+  it("throws when multi-server URLs have mixed credentials", () => {
+    expect(() =>
+      parseNatsUrl("nats://tok1@a:4222,nats://tok2@b:4222"),
+    ).toThrow(NatsContextError);
+  });
+
+  it("throws on empty / blank input", () => {
+    expect(() => parseNatsUrl("")).toThrow(NatsContextError);
+    expect(() => parseNatsUrl("   ,  ")).toThrow(NatsContextError);
+  });
+
+  it("throws on unsupported scheme", () => {
+    expect(() => parseNatsUrl("http://nats.example.com:4222")).toThrow(
+      NatsContextError,
+    );
+  });
+
+  it("throws on hostless URL", () => {
+    expect(() => parseNatsUrl("nats://")).toThrow(NatsContextError);
   });
 });

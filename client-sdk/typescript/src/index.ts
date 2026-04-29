@@ -123,8 +123,8 @@ export {
 // Logging
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";
 
-// NATS CLI context loader
-export { loadContextOptions } from "./context.js";
+// NATS CLI context loader + URL parser (both produce NodeConnectionOptions)
+export { loadContextOptions, parseNatsUrl } from "./context.js";
 
 // Version metadata
 export {

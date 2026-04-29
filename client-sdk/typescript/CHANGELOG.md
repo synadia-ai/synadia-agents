@@ -121,6 +121,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   wanting a tighter window can pass `timeoutMs` (timer strategy) or
   the lower-level `stallMs`. Fixes [#31].
 
+### Added
+
+- New `parseNatsUrl(url)` helper in `@synadia-ai/agents` that converts
+  a NATS URL into `NodeConnectionOptions`, extracting credentials from
+  `userinfo` if present:
+  - `nats://TOKEN@host:port` → `{ servers, token }`
+  - `nats://USER:PASS@host:port` → `{ servers, user, pass }`
+  - `nats://a:4222,nats://b:4222` (multi-server) supported; mixed
+    credentials across entries throw `NatsContextError`.
+
+  Bridges a UX gap: the `nats` CLI parses userinfo from URLs, but
+  `@nats-io/transport-node` does not — meaning every example in this
+  repo that accepted `--url URL` silently dropped the token when
+  given the URL form, even though the same URL worked with `nats`
+  CLI / `nats context save`. Every example's `--url` path now goes
+  through `parseNatsUrl` (`agent-web-ui`, `pi-headless`,
+  `claude-code-headless`, `dspy`).
+
 ### Anticipated companion work (this release)
 
 This SDK release coordinates with refactors of every agent harness and

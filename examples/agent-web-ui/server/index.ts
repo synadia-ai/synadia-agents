@@ -14,6 +14,7 @@ import {
   Agents,
   SDK_PROTOCOL_VERSION,
   loadContextOptions,
+  parseNatsUrl,
   type NatsConnection,
 } from "@synadia-ai/agents";
 import {
@@ -27,7 +28,10 @@ const config = parseConfig(Bun.argv);
 
 async function buildConnectOptions(): Promise<NodeConnectionOptions> {
   if (config.servers) {
-    return { name: "testui", servers: config.servers };
+    // `parseNatsUrl` extracts userinfo (token / user:password) — without it
+    // a URL like `nats://TOKEN@host:port` would silently drop the token
+    // because `@nats-io/transport-node` doesn't parse credentials from URLs.
+    return { name: "testui", ...parseNatsUrl(config.servers) };
   }
   const contextName = config.context ?? "current";
   return { ...(await loadContextOptions(contextName)), name: "testui" };

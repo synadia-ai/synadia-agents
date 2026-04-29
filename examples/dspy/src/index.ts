@@ -7,7 +7,7 @@ import path from "node:path";
 import process from "node:process";
 import { ai, ax } from "@ax-llm/ax";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { AgentService } from "@synadia-ai/agents";
+import { AgentService, parseNatsUrl } from "@synadia-ai/agents";
 import { makeFsTools } from "./tools.js";
 
 const NATS_URL = process.env["NATS_URL"] ?? "nats://127.0.0.1:4222";
@@ -89,7 +89,9 @@ const llm = ai({
   options: { fetch: scrubbedFetch as typeof fetch },
 });
 
-const nc = await natsConnect({ servers: NATS_URL });
+// `parseNatsUrl` extracts userinfo (token / user:password) so
+// `NATS_URL=nats://TOKEN@host:port` works the same way the `nats` CLI does.
+const nc = await natsConnect(parseNatsUrl(NATS_URL));
 
 // AgentService takes care of:
 //   - registering as the `agents` micro service with v0.3 metadata
