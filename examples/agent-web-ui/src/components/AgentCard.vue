@@ -2,7 +2,13 @@
 import { computed, ref } from "vue";
 import AgentStatusDot from "./AgentStatusDot.vue";
 import type { DiscoveredAgentDTO } from "../wire.ts";
-import { agentsState, bucketOf, BUCKETS, type Bucket } from "../stores/agents.ts";
+import {
+  agentsState,
+  bucketOf,
+  BUCKETS,
+  removeAgent,
+  type Bucket,
+} from "../stores/agents.ts";
 import { onStopped, piexecState } from "../stores/piexec.ts";
 import { ccexecState, onCcStopped } from "../stores/ccexec.ts";
 import { useBridge } from "../composables/useBridge.ts";
@@ -113,6 +119,31 @@ const queued = computed(() => {
   return s && s.queued_requests > 0 ? s.queued_requests : null;
 });
 
+/**
+ * Lifecycle state for a session card. Survives both transition modes:
+ *
+ *  - `summary present + remaining > 0`     → "alive"   — running normally
+ *  - `summary present + remaining <= 0`    → "expired" — controller still
+ *      tracks it but the TTL hit zero
+ *  - `summary absent`                      → "expired" — controller cleaned
+ *      it up, or user clicked stop, but the bridge hasn't yet emitted
+ *      `agent-removed` so the agent record is still in the grid
+ *
+ * Without this, an expired session briefly shows "expired" in the lifetime
+ * row, then loses it once the next `list` poll wipes the summary out of
+ * the local map — leaving a half-empty zombie card. Tracking the state
+ * here keeps the "expired" indicator + trash button consistent through
+ * both phases.
+ */
+const sessionState = computed<"alive" | "expired">(() => {
+  if (!isPiSession.value && !isCcSession.value) return "alive";
+  const s = piSummary.value ?? ccSummary.value;
+  if (!s) return "expired";
+  if (s.remaining_lifetime_s <= 0) return "expired";
+  return "alive";
+});
+const isExpired = computed(() => sessionState.value === "expired");
+
 // Find the controller that spawned this session (matched by spawner role +
 // owner). Returns null if the controller has vanished — in which case the
 // stop button is shown disabled with a tooltip.
@@ -149,13 +180,27 @@ async function onStop(): Promise<void> {
       await bridge.ccexecStop(controller.instanceId, props.agent.name);
       onCcStopped(props.agent.name);
     }
-    // The agent record will disappear from the grid on the next discover /
-    // agent-removed push; nothing to do locally.
+    // Optimistic local cleanup: the bridge emits `agent-removed` only when
+    // it notices the service vanished from NATS, which can take several
+    // seconds. Removing the record here makes the card disappear the
+    // instant the controller acks the stop; redundant pushes from the
+    // bridge later are no-ops because `removeAgent` is idempotent.
+    removeAgent(props.agent.instanceId);
   } catch (e) {
     stopError.value = (e as Error).message;
   } finally {
     stopping.value = false;
   }
+}
+
+/**
+ * Remove an expired / cleaned-up session card from the grid. Local-only —
+ * the controller has already finished with this session, there's nothing
+ * to ask it to do. Used as the click handler for the trash icon that
+ * replaces ✕ once `sessionState === "expired"`.
+ */
+function onTrash(): void {
+  removeAgent(props.agent.instanceId);
 }
 </script>
 
@@ -180,7 +225,8 @@ async function onStop(): Promise<void> {
 
       <div class="meta">
         <span class="owner mono">@{{ agent.owner }}</span>
-        <span v-if="running" class="running-tag">running</span>
+        <span v-if="isExpired" class="expired-tag mono">expired</span>
+        <span v-else-if="running" class="running-tag">running</span>
         <span v-if="queued" class="queued-tag mono">+{{ queued }} queued</span>
       </div>
 
@@ -196,7 +242,7 @@ async function onStop(): Promise<void> {
         <div v-if="model" class="stat">
           <dt>model</dt><dd class="mono">{{ model }}</dd>
         </div>
-        <div v-if="lifetimeText" class="stat">
+        <div v-if="lifetimeText && !isExpired" class="stat">
           <dt>lifetime</dt>
           <dd>
             <span class="mono">{{ lifetimeText }}</span>
@@ -227,16 +273,38 @@ async function onStop(): Promise<void> {
       v-if="isPiSession || isCcSession"
       type="button"
       class="stop-btn"
-      :disabled="stopping || !parentController"
+      :class="{ 'is-trash': isExpired }"
+      :disabled="!isExpired && (stopping || !parentController)"
       :title="
         stopError
           ? `stop failed: ${stopError}`
-          : !parentController
-            ? 'no controller online — cannot stop from UI'
-            : 'stop session'
+          : isExpired
+            ? 'remove from list'
+            : !parentController
+              ? 'no controller online — cannot stop from UI'
+              : 'stop session'
       "
-      @click.stop="onStop"
-    >×</button>
+      @click.stop="isExpired ? onTrash() : onStop()"
+    >
+      <!-- ✕ when alive (stop the running session via the controller).
+           🗑 when expired/cleaned-up (remove the lingering local card). -->
+      <svg
+        v-if="isExpired"
+        class="icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M3 6h18" />
+        <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      </svg>
+      <span v-else aria-hidden="true">×</span>
+    </button>
   </div>
 </template>
 
@@ -279,6 +347,13 @@ async function onStop(): Promise<void> {
 .stop-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+.stop-btn .icon {
+  /* SVG trash icon shown when sessionState === 'expired'. Sized to match
+     the ✕ glyph (~12px optical size) and tinted via currentColor. */
+  width: 11px;
+  height: 11px;
+  display: block;
 }
 /* Keep the stop button aligned with the card while the card is hover-lifted. */
 .card-wrap:hover .stop-btn { transform: translateY(-1px); }
@@ -385,6 +460,13 @@ async function onStop(): Promise<void> {
   border-radius: var(--border-radius-sm);
   background: var(--warning-dim);
   color: var(--warning);
+}
+.expired-tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: var(--border-radius-sm);
+  background: var(--error-dim);
+  color: var(--error);
 }
 
 .cwd {
