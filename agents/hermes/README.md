@@ -1,8 +1,7 @@
 # hermes-agent
 
 > **Work in progress.** The NATS gateway lives on a fork
-> (`nats-gateway` branch of
-> [`synadia-ai/hermes-agent`](https://github.com/synadia-ai/hermes-agent));
+> ([`synadia-ai/hermes-agent`, branch `nats-gateway`](https://github.com/synadia-ai/hermes-agent/tree/nats-gateway));
 > upstream PR to [`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent)
 > is planned but not yet filed (needs a catch-up rebase first), so the
 > install below clones the fork directly.
