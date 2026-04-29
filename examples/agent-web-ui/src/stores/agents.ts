@@ -118,9 +118,9 @@ export const BUCKET_LABELS: Record<Bucket, string> = {
   // "claude-code-headless"); aligning UI labels keeps users one term away
   // from the docs they'll read next.
   [BUCKETS.PI_EXEC_SESSION]: "PI Headless Sessions",
-  [BUCKETS.PI_EXEC_CONTROL]: "PI Headless",
+  [BUCKETS.PI_EXEC_CONTROL]: "PI Headless Controllers",
   [BUCKETS.CC_EXEC_SESSION]: "Claude Code Headless Sessions",
-  [BUCKETS.CC_EXEC_CONTROL]: "Claude Code Headless",
+  [BUCKETS.CC_EXEC_CONTROL]: "Claude Code Headless Controllers",
   [BUCKETS.PI_AGENT]: "PI Interactive",
   [BUCKETS.CC_AGENT]: "Claude Code",
   [BUCKETS.OPENCLAW]: "OpenClaw",
