@@ -19,6 +19,37 @@ the GitHub URL when reasoning about wire shape. Local
 `docs/protocol-mapping.md` files inside each SDK translate spec → impl;
 they are not the spec itself.
 
+## Reference agents — canonical implementations
+
+Every SDK in this repo ships a spec-compliant **reference agent** that
+implements the full §12 agent-checklist (service registration, prompt
+endpoint, status endpoint, heartbeats on `agents.hb.*.*.*`, terminator
+semantics). When reasoning about wire shape, expected on-the-wire
+behaviour, or testing a new SDK / agent, read these first — they are
+the authoritative on-the-wire counterpart to the spec doc.
+
+- **TypeScript**: `client-sdk/typescript/src/testing/reference-agent.ts`
+  — the `ReferenceAgent` class, importable from third-party packages
+  via `@synadia-ai/agents/testing`. Runnable script:
+  `client-sdk/typescript/examples/_run-reference-agent.ts`.
+- **Python**: `client-sdk/python/examples/_reference_agent.py` — a
+  runnable echo agent with conversation memory, used as the test
+  harness for the numbered demos and as a wire-compat counterparty.
+
+Each SDK also has a parallel set of numbered demo scripts that exercise
+discovery, prompting (text + attachments), mid-stream queries, and
+liveness against the reference agent — useful both as documentation
+and as a smoke surface:
+
+- TS: `client-sdk/typescript/examples/01-discover.ts` … `05-liveness.ts`.
+- Python: `client-sdk/python/examples/01-discover.py` … `05-liveness.py`,
+  plus `06-chat.py` (interactive REPL). See
+  `client-sdk/python/examples/README.md` for the full table.
+
+The Python interop test (`client-sdk/python/tests/test_interop_e2e.py`)
+runs the TS reference agent as a subprocess and validates wire
+compatibility between the two SDKs.
+
 ## Repository layout (and what's published)
 
 | Path | Package | Published as | Notes |
@@ -173,8 +204,17 @@ and publish to PyPI via `uv publish`.
 
 - `README.md` — repo overview, layout, subject namespace, wire
   shape.
+- `client-sdk/typescript/src/testing/reference-agent.ts` and
+  `client-sdk/python/examples/_reference_agent.py` — canonical
+  spec-compliant reference agents (see "Reference agents" section
+  above). Read these before touching anything wire-shape-y.
+- `client-sdk/typescript/examples/` and `client-sdk/python/examples/`
+  — parallel numbered demo scripts (`01-discover` …) that exercise
+  the SDKs end-to-end against the reference agent.
 - `client-sdk/typescript/CHANGELOG.md`, `client-sdk/python/CHANGELOG.md`
   — recent API moves (Keep a Changelog format).
 - `client-sdk/python/CLAUDE.md` — package-specific deep guide; mirror
   it if you need the same depth on the TS side.
 - `agents/*/README.md` — per-agent config, subject layout, install.
+- `examples/README.md` — runnable end-to-end demos in the monorepo
+  (browser test client, headless controllers, DSPy ReAct).

@@ -31,6 +31,19 @@ synadia-agents/
 
 Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`, `agents/README.md`, `examples/README.md`) describe what lives at each level.
 
+## Reference agents and demo scripts
+
+Both SDKs ship a **spec-compliant reference agent** plus a parallel set of numbered demo scripts. The reference agent is the canonical implementation of every §12 agent-checklist requirement — registration, heartbeats, status endpoint, stream-terminator semantics. Third-party SDKs and AI/LLM-generated tooling should test against it. The numbered demos are the fastest way to exercise either SDK end-to-end.
+
+| SDK | Reference agent | Demo scripts |
+| --- | --- | --- |
+| TypeScript | `ReferenceAgent` class — [`client-sdk/typescript/src/testing/reference-agent.ts`](client-sdk/typescript/src/testing/reference-agent.ts), importable as `@synadia-ai/agents/testing`. Runnable script: [`client-sdk/typescript/examples/_run-reference-agent.ts`](client-sdk/typescript/examples/_run-reference-agent.ts). | [`client-sdk/typescript/examples/`](client-sdk/typescript/examples/) — `01-discover.ts`, `02-prompt-text.ts`, `03-prompt-attachment.ts`, `04-query-reply.ts`, `05-liveness.ts`. |
+| Python | Runnable echo agent (with conversation memory) — [`client-sdk/python/examples/_reference_agent.py`](client-sdk/python/examples/_reference_agent.py). | [`client-sdk/python/examples/`](client-sdk/python/examples/) — `01-discover.py` through `05-liveness.py`, plus `06-chat.py` (interactive REPL). See the [examples README](client-sdk/python/examples/README.md). |
+
+The Python side also has [`tests/test_interop_e2e.py`](client-sdk/python/tests/test_interop_e2e.py), which runs the TS reference agent as a subprocess and validates wire compatibility between the two SDKs.
+
+For larger end-to-end examples — controllers that spawn ephemeral agents, a browser test client, a from-scratch DSPy ReAct agent — see [`examples/`](examples/) and its [README](examples/README.md).
+
 ## Subject namespace
 
 The protocol only requires an endpoint named `prompt` - the subject it's served on is up to each agent. For the agents in this repo we've chosen a single verb-first pattern (v0.3):
