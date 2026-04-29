@@ -29,61 +29,58 @@ When `hermes gateway run` starts with `platforms.nats.enabled = true`:
 
 ## Install
 
-The install has three parts: (1) clone the fork and bootstrap Hermes, (2) install the Python SDK editable from this monorepo (not yet on PyPI), (3) configure the gateway. Sibling agents ship as npm plugins; Hermes is a full application, so the first two steps look different.
-
-### Directory layout
-
-You're reading this README inside a clone of `synadia-agents`. The commands below clone `hermes-agent` as a **sibling** of that clone, so the SDK (which lives inside this monorepo) is reachable via the relative path `../synadia-agents/client-sdk/python` from the hermes-agent root:
-
-```
-parent/
-├── synadia-agents/                    ← you're reading this inside here
-│   ├── agents/hermes/README.md
-│   └── client-sdk/python/             ← the synadia-ai-agents SDK
-└── hermes-agent/                      ← you'll clone the fork here
-    └── venv/                          ← created by ./setup-hermes.sh
-```
-
-If you prefer a different layout, substitute an absolute path (e.g. `/home/you/projects/synadia-agents/client-sdk/python`) for every occurrence of `../synadia-agents` in the commands below. Nothing else needs to change.
+Two parts: (1) clone the fork and bootstrap Hermes, (2) configure the gateway.
 
 ### 1. Clone and bootstrap Hermes
 
-Run this from the **root of your `synadia-agents` clone** (`cd` there first if you opened this file deeper in the tree — e.g. from `agents/hermes/` do `cd ../..`):
-
 ```bash
-# Clone hermes-agent as a sibling of synadia-agents.
-cd ..
+# Clone hermes-agent anywhere you like.
 git clone -b nats-gateway https://github.com/renerocksai/hermes-agent.git
 cd hermes-agent
 
-# setup-hermes.sh installs uv, creates venv, installs hermes-agent[all,dev],
+# setup-hermes.sh installs uv, creates venv, installs hermes-agent[all,dev]
+# (which pulls synadia-ai-agents from PyPI via the [nats] extra),
 # symlinks ~/.local/bin/hermes, and prompts for an LLM provider key.
 ./setup-hermes.sh
 ```
 
 After this you can run `hermes --help` from anywhere. User state lives in `~/.hermes/`.
 
-> You'll see a yellow warning during `setup-hermes.sh`:
-> `⚠ Lockfile install failed (may be outdated), falling back to pip install...`
-> That's **expected** until `synadia-ai-agents` publishes to PyPI — the `[nats]` extra pins an unpublished package, which breaks the primary `uv sync --all-extras --locked` path, so the script falls back to `uv pip install -e ".[all]"` (which excludes `[nats]` by design). Step 2 below installs the SDK manually.
+<details>
+<summary><b>Pre-PyPI install</b> — required until <code>synadia-ai-agents</code> ships to PyPI. Delete this block once PyPI is live.</summary>
 
-### 2. Install the `synadia-ai-agents` Python SDK
+Until `synadia-ai-agents` v0.4 publishes to PyPI, `setup-hermes.sh` prints a yellow warning and falls back to `uv pip install -e ".[all]"`, which omits the `[nats]` extra (because it pins an unpublished package). You then need to install the SDK editable from a local checkout of the `synadia-agents` monorepo.
 
-The SDK is in this monorepo at [`../../client-sdk/python`](../../client-sdk/python). It's **not yet on PyPI** (publishing will follow the upstream Hermes PR merge), so install it editable from the sibling `synadia-agents` checkout — this is how you point hermes at the SDK:
+**Directory layout.** Clone `hermes-agent` as a **sibling** of your `synadia-agents` clone so the SDK is reachable via the relative path `../synadia-agents/client-sdk/python`:
+
+```
+parent/
+├── synadia-agents/                    ← you're reading this inside here
+│   ├── agents/hermes/README.md
+│   └── client-sdk/python/             ← the synadia-ai-agents SDK
+└── hermes-agent/                      ← clone the fork here
+    └── venv/                          ← created by ./setup-hermes.sh
+```
+
+If you prefer a different layout, substitute an absolute path (e.g. `/home/you/projects/synadia-agents/client-sdk/python`) for `../synadia-agents` in the command below.
+
+**The yellow warning** during `setup-hermes.sh` (`⚠ Lockfile install failed (may be outdated), falling back to pip install...`) is **expected** until PyPI publishes — the `[nats]` extra pins an unpublished package, which breaks the primary `uv sync --all-extras --locked` path.
+
+**Install the SDK editable** from the sibling `synadia-agents` checkout:
 
 ```bash
-# From the hermes-agent clone (the sibling of synadia-agents), venv active:
+# From the hermes-agent clone, venv active:
 source venv/bin/activate
 uv pip install --python venv/bin/python -e ../synadia-agents/client-sdk/python
 ```
-
-(If you didn't clone synadia-agents as a sibling, replace `../synadia-agents/client-sdk/python` with the absolute path to this monorepo's `client-sdk/python` directory.)
 
 Verify: `venv/bin/python -c "import synadia_ai.agents; print(synadia_ai.agents.__file__)"` should print a path inside this monorepo.
 
 Without this, Hermes logs `NATS: synadia-ai-agents not installed` at startup and skips registering the NATS adapter.
 
-### 3. Configure the gateway
+</details>
+
+### 2. Configure the gateway
 
 Edit `~/.hermes/config.yaml` and add the `platforms.nats` block. The `owner` and `session_name` fields determine your subject — `agents.prompt.hermes.<owner>.<session_name>`.
 
@@ -349,7 +346,7 @@ Current deferrals (candidates for future phases, not bugs):
 
 ## Troubleshooting
 
-- **`NATS: synadia-ai-agents not installed` at gateway startup.** Install step 2 was skipped. Re-run `uv pip install --python venv/bin/python -e ../synadia-agents/client-sdk/python` from the hermes-agent clone with the venv active. **`./setup-hermes.sh` does NOT install the SDK** — it isn't on PyPI yet — so re-run the editable install after every bootstrap.
+- **`NATS: synadia-ai-agents not installed` at gateway startup.** The `[nats]` extra wasn't installed. Run `uv pip install --python venv/bin/python -e ".[nats]"` from the hermes-agent clone with the venv active. (If `setup-hermes.sh` should have done this for you, it's a packaging bug — file an issue. Pre-PyPI, see the collapsible install block in the README.)
 - **Gateway not discovered / `nats micro list` returns nothing.** Gateway didn't register. Check `platforms.nats.enabled: true`, that the NATS URL/context resolves, and look for `[Nats] Connected — subscribed at …` in the gateway log. If another Hermes instance already holds the same `(agent, owner, session_name)` on this host, the log shows `NATS agent identity hermes:<owner>:<session_name> already in use (PID …)`.
 - **Stale platform lock blocks restart.** Lives at `~/.local/state/hermes/gateway-locks/nats-<hash>.lock`. Verify the recorded PID is dead (`ps -p <PID>`), then `rm` the file.
 - **`nats req` returns only one chunk.** That's expected — `nats request` shows the first reply. For the full streamed body use `examples/02-prompt-text.py` (or any caller iterating the SDK's async iterator).
