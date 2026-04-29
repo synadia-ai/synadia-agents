@@ -112,6 +112,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   tests that exercise it cover the new endpoint automatically. The
   `subjectAgentToken` option is gone — agents declare a single
   `agent` token used in both metadata and the subject.
+- `DEFAULT_DISCOVER_STALL_MS` bumped from `200` → `750` so the default
+  `discover()` (stall strategy) survives a transcontinental NATS
+  round-trip — e.g. demo.nats.io reports ~315 ms RTT from a non-US
+  client, which previously caused `discover()` to return an empty
+  list before the first reply arrived. Snappy on LAN brokers stays
+  true at 750 ms (still well under one perceptible UI tick); callers
+  wanting a tighter window can pass `timeoutMs` (timer strategy) or
+  the lower-level `stallMs`. Fixes [#31].
 
 ### Anticipated companion work (this release)
 

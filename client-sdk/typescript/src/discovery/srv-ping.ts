@@ -14,8 +14,18 @@ import { buildAgentInfo, type AgentInfo } from "./agent-info.js";
 
 /** Absolute safety cap when using the stall strategy (no explicit timeoutMs). */
 export const DEFAULT_DISCOVER_MAX_WAIT_MS = 2000;
-/** Idle window after the last reply before the stall strategy returns. */
-export const DEFAULT_DISCOVER_STALL_MS = 200;
+/**
+ * Idle window after the last reply before the stall strategy returns.
+ *
+ * Sized to comfortably absorb a transcontinental NATS round-trip
+ * (e.g. demo.nats.io reports ~315 ms RTT from a non-US client). At 750 ms
+ * we still return well under one perceptible UI tick on a LAN, but no
+ * longer time out before the first reply arrives on a WAN — the
+ * symptom that issue #31 surfaced. Callers who want a snappier scan on
+ * a known-fast broker can still pass `timeoutMs` (timer strategy) or
+ * call the lower-level helpers with their own `stall_s` / `stallMs`.
+ */
+export const DEFAULT_DISCOVER_STALL_MS = 750;
 
 export interface DiscoveryFilter {
   readonly agent?: string;
