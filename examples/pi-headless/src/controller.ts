@@ -21,9 +21,8 @@ import {
   PROMPT_QUEUE_GROUP,
   STATUS_ENDPOINT_NAME,
   STATUS_QUEUE_GROUP,
+  encodeChunk,
 } from "@synadia-ai/agents";
-
-import { responseText, statusAck } from "./chunk-encoder.js";
 import {
   controllerHeartbeatSubject,
   controllerListSubject,
@@ -190,16 +189,17 @@ export class Controller {
 
   private async handleHelp(msg: ServiceMsg): Promise<void> {
     try {
-      msg.respond(statusAck());
+      msg.respond(encodeChunk({ type: "status", status: "ack" }));
       msg.respond(
-        responseText(
-          helpText(
+        encodeChunk({
+          type: "response",
+          text: helpText(
             this.promptSubject,
             controllerSpawnSubject(this.opts.owner, this.opts.name),
             controllerStopSubject(this.opts.owner, this.opts.name),
             controllerListSubject(this.opts.owner, this.opts.name),
           ),
-        ),
+        }),
       );
     } catch {
       /* noop */
