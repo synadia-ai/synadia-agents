@@ -31,33 +31,36 @@ import { createInbox } from "@nats-io/nats-core";
 import { Svcm } from "@nats-io/services";
 
 import {
-	AGENT_ID,
-	ATTACHMENTS_OK,
-	DEFAULT_SESSION,
-	HEARTBEAT_INTERVAL_S,
-	DEFAULT_MAX_PAYLOAD_STR,
+	AgentSubject,
+	DEFAULT_ATTACHMENTS_OK,
+	DEFAULT_HEARTBEAT_INTERVAL_S,
+	DEFAULT_MAX_PAYLOAD,
 	PROMPT_QUEUE_GROUP,
-	PROTOCOL_VERSION,
+	ProtocolError,
+	SDK_PROTOCOL_VERSION,
 	SERVICE_NAME,
-	SERVICE_VERSION,
 	buildHeartbeatPayload,
-	formatMaxPayloadString,
-	heartbeatSubject,
-	parseEnvelope,
-	promptSubject,
-	wrapResponseChunk,
-	wrapStatusChunk,
-} from "../src/nats/protocol.ts";
+	decodeEnvelope,
+	encodeChunk,
+	encodeHeartbeatPayload,
+	formatHumanBytes,
+} from "@synadia-ai/agents";
 import {
-	cleanupAgentStaging,
-	stageAttachmentsIntoPrompt,
-} from "../src/attachments.ts";
+	AGENT_ID,
+	DEFAULT_SESSION,
+	SERVICE_VERSION,
+	SUBJECT_AGENT_TOKEN,
+} from "../src/nats/protocol.ts";
+import { cleanupAgentStaging, stageAttachmentsIntoPrompt } from "../src/attachments.ts";
 
 const OWNER = "smoke";
 const AGENT_NAME = `oc-${process.pid}`;
 const STAGE_DIR = join(tmpdir(), `nats-oc-smoke-${process.pid}`);
-const SUBJECT = promptSubject(OWNER, AGENT_NAME);
-const HB_SUBJECT = heartbeatSubject(OWNER, AGENT_NAME);
+const subject = AgentSubject.new(AGENT_ID, OWNER, AGENT_NAME, {
+	subjectToken: SUBJECT_AGENT_TOKEN,
+});
+const SUBJECT = subject.prompt;
+const HB_SUBJECT = subject.heartbeat;
 
 let ok = 0;
 let fail = 0;
@@ -132,9 +135,7 @@ const heartbeats = [];
 // ── Gateway connection + minimal service ───────────────────────────────────
 const gw = await connect({ servers: SERVER_URL });
 // Match the gateway: derive the advertised max_payload from `nc.info`.
-const maxPayloadStr = gw.info?.max_payload
-	? formatMaxPayloadString(gw.info.max_payload)
-	: DEFAULT_MAX_PAYLOAD_STR;
+const maxPayloadStr = gw.info?.max_payload ? formatHumanBytes(gw.info.max_payload) : DEFAULT_MAX_PAYLOAD;
 const svc = await new Svcm(gw).add({
 	name: SERVICE_NAME,
 	version: SERVICE_VERSION,
@@ -143,7 +144,7 @@ const svc = await new Svcm(gw).add({
 		agent: AGENT_ID,
 		owner: OWNER,
 		session: DEFAULT_SESSION,
-		protocol_version: PROTOCOL_VERSION,
+		protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
 		platform: "openclaw",
 	},
 });
@@ -157,13 +158,16 @@ svc.addEndpoint("prompt", {
 	queue: PROMPT_QUEUE_GROUP,
 	metadata: {
 		max_payload: maxPayloadStr,
-		attachments_ok: ATTACHMENTS_OK ? "true" : "false",
+		attachments_ok: DEFAULT_ATTACHMENTS_OK ? "true" : "false",
 	},
 	handler: (err, msg) => {
 		if (err || !msg.reply) return;
-		const parsed = parseEnvelope(msg.data);
-		if (!parsed.ok) {
-			msg.respondError(parsed.code, parsed.error);
+		let envelope;
+		try {
+			envelope = decodeEnvelope(msg.data);
+		} catch (e) {
+			const code = e instanceof ProtocolError ? 400 : 500;
+			msg.respondError(code, e.message);
 			gw.publish(msg.reply, "");
 			return;
 		}
@@ -172,8 +176,11 @@ svc.addEndpoint("prompt", {
 			finalPrompt = stageAttachmentsIntoPrompt({
 				baseDir: STAGE_DIR,
 				agentName: AGENT_NAME,
-				prompt: parsed.prompt,
-				attachments: parsed.attachments,
+				prompt: envelope.prompt,
+				attachments: (envelope.attachments ?? []).map((a) => ({
+					filename: a.filename,
+					bytes: a.content,
+				})),
 			});
 		} catch (e) {
 			msg.respondError(500, `staging failed: ${e.message}`);
@@ -182,8 +189,8 @@ svc.addEndpoint("prompt", {
 		}
 		lastAcceptedPrompt = finalPrompt;
 		// ack → response → terminator
-		gw.publish(msg.reply, wrapStatusChunk("ack"));
-		gw.publish(msg.reply, wrapResponseChunk("ok"));
+		gw.publish(msg.reply, encodeChunk({ type: "status", status: "ack" }));
+		gw.publish(msg.reply, encodeChunk({ type: "response", text: "ok" }));
 		gw.publish(msg.reply, "");
 	},
 });
@@ -192,26 +199,20 @@ svc.addEndpoint("prompt", {
 const hbTimer = setInterval(() => {
 	gw.publish(
 		HB_SUBJECT,
-		JSON.stringify(
-			buildHeartbeatPayload({
-				owner: OWNER,
+		encodeHeartbeatPayload(
+			buildHeartbeatPayload(subject, DEFAULT_HEARTBEAT_INTERVAL_S, instanceId, {
 				session: DEFAULT_SESSION,
-				instanceId,
-				intervalS: HEARTBEAT_INTERVAL_S,
 			}),
 		),
 	);
-}, HEARTBEAT_INTERVAL_S * 1000);
+}, DEFAULT_HEARTBEAT_INTERVAL_S * 1000);
 hbTimer.unref?.();
 // One immediate beat so smoke test doesn't wait a full cadence.
 gw.publish(
 	HB_SUBJECT,
-	JSON.stringify(
-		buildHeartbeatPayload({
-			owner: OWNER,
+	encodeHeartbeatPayload(
+		buildHeartbeatPayload(subject, DEFAULT_HEARTBEAT_INTERVAL_S, instanceId, {
 			session: DEFAULT_SESSION,
-			instanceId,
-			intervalS: HEARTBEAT_INTERVAL_S,
 		}),
 	),
 );

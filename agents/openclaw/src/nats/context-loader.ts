@@ -1,17 +1,20 @@
-// Minimal `nats` CLI context-file loader for openclaw.
+// Thin adapter around `@synadia-ai/agents`'s `loadContextOptions` that
+// returns the narrow `{url, credentials?}` shape openclaw's
+// `accounts.ts` and `connection.ts` consume.
 //
-// Reads files under `~/.config/nats/context/<name>.json` written by
-// `nats context add` / `nats context save`, and translates them into
-// the small subset openclaw needs: the `url` (with credentials folded
-// into userinfo so `parseNatsUrl` can extract them at connect time),
-// plus an optional `credentials` path for nats user-creds files.
+// The SDK helper produces a full `NodeConnectionOptions` blob (with
+// authenticator already constructed for creds / nkey / jwt+seed and
+// `tls` populated for cert/key/ca/tls_first). For the common case
+// openclaw configures today — direct URL or context with creds —
+// we pull just the URL (servers, joined with commas to round-trip
+// through `parseNatsUrl` later) plus an optional creds path.
 //
-// Inlined per the repo CLAUDE.md "Agents do NOT depend on the SDK"
-// rule. This file is openclaw-specific and intentionally narrower than
-// the @synadia-ai/agents SDK's `loadContextOptions` — it only honours
-// fields openclaw can actually use today (url, token, user, password,
-// creds). nkey / user_jwt / TLS triple are not supported here; users
-// who need those should configure auth on the openclaw account directly.
+// Limitations of this narrow layer (deliberate, follow-up work):
+// nkey, inline `user_jwt` (+/- `user_seed`), and the TLS triple
+// drop on this code path because openclaw's existing internal config
+// shape (`{ url, credentials }`) doesn't carry them. The SDK supports
+// all of those today; widening openclaw's `ConnectionConfig` to splat
+// the full `NodeConnectionOptions` is a follow-up.
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -30,7 +33,7 @@ interface RawNatsContext {
 export interface NatsContextResolved {
   /**
    * Server URL with credentials folded into userinfo, ready to hand to
-   * `parseNatsUrl()`. Round-trip safe via WHATWG `URL`.
+   * the SDK's `parseNatsUrl()` at connect time.
    */
   url: string;
   /** Path to a nats user-creds file, if the context declared one. */
@@ -43,14 +46,13 @@ export interface NatsContextResolved {
  * an optional credentials path.
  *
  * Throws on missing file, malformed JSON, or missing `url` field.
+ *
+ * Synchronous I/O matches the existing call shape in `accounts.ts`.
+ * The path-traversal guard mirrors what the SDK's `loadContextOptions`
+ * applies — kept here so a misconfigured `$NATS_CONTEXT` fails fast
+ * before we even hit the filesystem.
  */
 export function loadNatsContextFromFile(name: string): NatsContextResolved {
-  // Reject names that would escape the context directory. `$NATS_CONTEXT`
-  // is a deployer-set env var so the threat model is "operator typo / shell
-  // mishap" more than malicious input, but a clear error beats reading a
-  // surprise file from `/etc`. (`agents/pi` and `agents/claude-code` have
-  // the same pre-existing pattern without this check; harden in a separate
-  // pass when those get touched.)
   if (
     !name ||
     name.includes("/") ||
@@ -84,19 +86,13 @@ export function loadNatsContextFromFile(name: string): NatsContextResolved {
     throw new Error(`NATS context "${name}" is missing 'url'`);
   }
 
-  // Fold token / user:password into userinfo so the existing
-  // `parseNatsUrl` path in connection.ts extracts them at connect time.
-  // Comma-separated cluster URLs round-trip via WHATWG `URL` per-entry.
+  // Fold token / user:password into userinfo so the SDK's `parseNatsUrl`
+  // path in `connection.ts` extracts them at connect time. Comma-separated
+  // cluster URLs round-trip per-entry.
   let urlWithAuth = parsed.url;
   if (parsed.token !== undefined && parsed.token !== "") {
     urlWithAuth = injectUserinfo(parsed.url, parsed.token);
   } else if (parsed.user !== undefined && parsed.user !== "") {
-    // Pass an explicit empty string when password is missing so the
-    // colon separator is preserved in the synthesised URL. Without it
-    // `nats://alice@host:4222` looks identical to a single-userinfo
-    // token URL, and `parseNatsUrl` would route `alice` through the
-    // token branch instead of the user/password branch — a server
-    // expecting user/password CONNECT messages would then refuse auth.
     urlWithAuth = injectUserinfo(parsed.url, parsed.user, parsed.password ?? "");
   }
 
@@ -123,30 +119,27 @@ function injectUserinfo(url: string, usernameRaw: string, passwordRaw?: string):
   // Build the URL string manually rather than via `new URL()` + `.toString()`
   // because WHATWG `URL` collapses `nats://user:@host` (empty password) to
   // `nats://user@host` on serialisation — the spec treats both as
-  // equivalent. But `parseNatsUrl` uses the colon to discriminate user/pass
-  // from a single-component token, so we have to preserve it. The match
-  // regex covers `scheme://[userinfo@]host[:port][/path]` which is the
-  // entire URL surface NATS accepts.
-  const parts = url.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  // equivalent. But the SDK's `parseNatsUrl` uses the colon to discriminate
+  // user/pass from a single-component token, so we have to preserve it.
+  const parts = url
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
   if (parts.length === 0) return url;
   const rebuilt: string[] = [];
   for (const part of parts) {
     const withScheme = /^[a-z]+:\/\//i.test(part) ? part : `nats://${part}`;
     const match = withScheme.match(/^([a-z]+:\/\/)([^/?#]*)([/?#].*)?$/i);
-    if (!match) return url; // unparseable — hand original back, parseNatsUrl surfaces the error
+    if (!match) return url;
     const scheme = match[1]!;
     const authority = match[2]!;
     const rest = match[3] ?? "";
-    // Strip any existing userinfo from the authority so we don't end up with
-    // `tok@old@new@host` if a context has both a token and a userinfo URL.
     const atIdx = authority.lastIndexOf("@");
     const hostPart = atIdx >= 0 ? authority.slice(atIdx + 1) : authority;
-    if (!hostPart) return url; // hostless after stripping userinfo
+    if (!hostPart) return url;
     const userEnc = encodeURIComponent(usernameRaw);
     const userinfo =
-      passwordRaw === undefined
-        ? userEnc
-        : `${userEnc}:${encodeURIComponent(passwordRaw)}`;
+      passwordRaw === undefined ? userEnc : `${userEnc}:${encodeURIComponent(passwordRaw)}`;
     rebuilt.push(`${scheme}${userinfo}@${hostPart}${rest}`);
   }
   return rebuilt.join(",");

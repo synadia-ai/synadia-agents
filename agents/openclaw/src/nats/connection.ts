@@ -1,20 +1,18 @@
 import { connect } from "@nats-io/transport-node";
 import { credsAuthenticator, type NatsConnection } from "@nats-io/nats-core";
+import { parseNatsUrl } from "@synadia-ai/agents";
 import { readFileSync } from "node:fs";
 import type { ConnectionConfig } from "./types.js";
-import { parseNatsUrl } from "./url.js";
 
-export async function connectToNats(
-  config: ConnectionConfig = {},
-): Promise<NatsConnection> {
+export async function connectToNats(config: ConnectionConfig = {}): Promise<NatsConnection> {
   // Default `demo.nats.io` matches agents/pi and agents/claude-code so
   // every agent in this repo lands on the same broker out of the box.
   // `||` (not `??`) so an empty-string `config.url` — which
   // `resolveNatsAccount` produces when no url source is configured —
   // also falls through to the default.
   const url = config.url || "demo.nats.io";
-  // `parseNatsUrl` extracts userinfo (token / user:password) — without it
-  // a URL like `nats://TOKEN@host:port` would silently drop the token,
+  // SDK `parseNatsUrl` extracts userinfo (token / user:password) — without
+  // it a URL like `nats://TOKEN@host:port` would silently drop the token,
   // because `@nats-io/transport-node`'s `connect({ servers: url })` does
   // not parse credentials from URLs.
   const opts: Parameters<typeof connect>[0] = {
@@ -22,12 +20,10 @@ export async function connectToNats(
     name: config.name,
   };
   // Wire NKEY/JWT auth from a `.creds` file when configured. Required for
-  // NGS (Synadia Cloud) and any account-mode NATS server. Without this,
-  // `tls://connect.ngs.global` connects but immediately fails CONNECT
-  // with "Authorization Violation" because no credentials are presented.
-  // `readFileSync` is intentional: the connection is async but the creds
-  // file is small and read once at startup, and `credsAuthenticator`
-  // wants the bytes synchronously to derive the seed/JWT pair.
+  // NGS (Synadia Cloud) and any account-mode NATS server. `readFileSync`
+  // is intentional: the connection is async but the creds file is small
+  // and read once at startup, and `credsAuthenticator` wants the bytes
+  // synchronously to derive the seed/JWT pair.
   if (config.credentials) {
     opts.authenticator = credsAuthenticator(readFileSync(config.credentials));
   }

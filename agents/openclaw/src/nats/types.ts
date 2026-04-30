@@ -26,28 +26,13 @@ export interface AgentConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Request envelope (spec §5)
+// Attachment shape used by `attachments.ts` for OpenClaw's media-allowlist
+// staging step. Distinct from the SDK's `RequestAttachment` because the
+// stager has already vetted the filename and decoded the bytes.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface DecodedAttachment {
   /** Sanitized basename, safe to join with a staging directory. */
   filename: string;
   bytes: Uint8Array;
-}
-
-export type ParsedEnvelope =
-  | { ok: true; prompt: string; attachments: DecodedAttachment[] }
-  | { ok: false; code: 400; error: string };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Heartbeat payload (spec §8.3)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface HeartbeatPayload {
-  agent: string;
-  owner: string;
-  session: string;
-  instance_id: string;
-  ts: string;
-  interval_s: number;
 }
