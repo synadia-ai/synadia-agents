@@ -65,7 +65,7 @@ uv sync --all-extras --locked
 
 Both SDKs land as editable installs against the sibling checkout in one step.
 
-**Plain-pip fallback.** If you bypass `uv` (e.g. setup-hermes.sh fell back to plain pip), install both SDKs manually:
+**Manual editable install.** If `uv sync` didn't land the SDKs (e.g. lockfile mismatch or a plain-pip setup-hermes.sh fallback), install both SDKs directly:
 
 ```bash
 source venv/bin/activate
