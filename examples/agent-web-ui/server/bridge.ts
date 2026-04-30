@@ -11,6 +11,7 @@ import {
   buildAgentInfo,
   decodeBase64,
   AttachmentsNotSupportedError,
+  HEARTBEAT_SUBJECT,
   PayloadTooLargeError,
   SERVICE_NAME,
   ServiceError,
@@ -539,17 +540,17 @@ export class Bridge {
   // ─── Auto-discovery via heartbeat wildcard ────────────────────────────────
 
   /**
-   * Subscribe to `agents.*.*.*.heartbeat` (protocol-fixed subject, §2) so new
-   * agents are picked up as soon as they publish their first heartbeat —
-   * which `ReferenceAgent` does synchronously in `start()` (see
+   * Subscribe to the protocol-fixed heartbeat wildcard so new agents are
+   * picked up as soon as they publish their first heartbeat — which
+   * `ReferenceAgent` does synchronously in `start()` (see
    * `reference-agent.ts:173`), yielding sub-second latency for fresh
    * instances. Unknown instance_ids trigger a direct `$SRV.INFO.agents.<id>`
-   * lookup (§4.2) so we add them to the map with full metadata.
+   * lookup so we add them to the map with full metadata.
    */
   private startHeartbeatWatch(): void {
     if (this.heartbeatWildcardSub) return;
     try {
-      this.heartbeatWildcardSub = this.nc.subscribe("agents.*.*.*.heartbeat", {
+      this.heartbeatWildcardSub = this.nc.subscribe(HEARTBEAT_SUBJECT, {
         callback: (err, msg) => {
           if (err || this.closed) return;
           let parsed: unknown;
