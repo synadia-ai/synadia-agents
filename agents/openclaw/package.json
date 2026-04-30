@@ -56,6 +56,9 @@
     "@sinclair/typebox": "^0.34.0",
     "@synadia-ai/agents": "file:../../client-sdk/typescript"
   },
+  "bundleDependencies": [
+    "@synadia-ai/agents"
+  ],
   "peerDependencies": {
     "openclaw": ""
   },
