@@ -539,7 +539,7 @@ export default function (pi: ExtensionAPI) {
 	 */
 	function publishResponseText(replySubject: string, text: string): void {
 		if (!nc || text.length === 0) return;
-		const serverMax = nc.info?.max_payload ?? 1024 * 1024;
+		const serverMax = maxPayloadBytes;
 		// Reserve for the `{"type":"response","data":""}` wrapper + JSON escapes.
 		const reserve = 256;
 		const textBudget = Math.max(1, serverMax - reserve);
