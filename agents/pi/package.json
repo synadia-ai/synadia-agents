@@ -41,7 +41,8 @@
   },
   "dependencies": {
     "@nats-io/transport-node": "^3.3.0",
-    "@nats-io/services": "^3.3.0"
+    "@nats-io/services": "^3.3.0",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*"
