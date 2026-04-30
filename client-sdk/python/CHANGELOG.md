@@ -10,6 +10,31 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Changed
 
+- Caller-side §5.4 validation now considers **both** the agent's
+  advertised `max_payload` *and* the caller's own
+  `nc.max_payload` (the broker holding the caller's connection).
+  The effective cap is the smaller of the two — in multi-cluster /
+  per-account deployments the caller's broker may reject an
+  oversized publish with `MAX_PAYLOAD_VIOLATION` before it ever
+  reaches the agent. `assert_within_max_payload(payload_size,
+  max_payload_bytes)` gains an optional third
+  `connection_max_payload` parameter (defaults to `None` =
+  not-declared); `Agent.prompt` passes `nc.max_payload` so callers
+  fail fast when their own connection is the binding constraint.
+  Mirrors the same change on the TS side.
+- `AgentService(max_payload=...)` is now clamped down to the connected
+  server's negotiated `max_payload` (`nc.max_payload`, populated from
+  the NATS server's `INFO` block) at `start()`. If the override is
+  larger than the server allows, the SDK logs a warning and advertises
+  the server's value formatted via the new `_bytes.format_human_bytes`
+  helper. Smaller overrides are still honored (use case: shed
+  expensive prompts before they reach the handler). When the server
+  didn't report a value (unconnected client / INFO without
+  `max_payload`), the override stands as configured. Mirrors the same
+  clamp added to the TS `AgentService` and `ReferenceAgent`. Rationale:
+  advertising larger than the broker accepts only sets up callers for
+  `MAX_PAYLOAD_VIOLATION` rejections at publish time, with no
+  local-validation path catching it first.
 - `load_context_options(...)` and `parse_nats_url(...)` now default a
   missing port to `4222` for `nats://` / `tls://` server entries
   (`ws://` / `wss://` left alone, mirroring nats-py's own carve-out at

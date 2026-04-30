@@ -90,10 +90,16 @@ export class Agent {
       assertAttachmentsAllowed(true, this.promptEndpoint);
     }
 
+    // The caller's own broker may enforce a smaller `max_payload` than
+    // the agent advertises (multi-cluster / per-account configs); pass
+    // `nc.info?.max_payload` so the validator picks the smaller of the
+    // two. Treat 0 / missing as "not declared".
+    const connLimit = this.#nc.info?.max_payload;
+
     // Fast path: text-only — max_payload check is sync.
     if (!hasAttachments) {
       const envelope: RequestEnvelope = { prompt: text };
-      assertWithinMaxPayload(encodedEnvelopeSize(envelope), this.promptEndpoint);
+      assertWithinMaxPayload(encodedEnvelopeSize(envelope), this.promptEndpoint, connLimit);
       return Promise.resolve(this.#buildStream(envelope, opts));
     }
 
@@ -101,7 +107,7 @@ export class Agent {
     return (async (): Promise<PromptStream> => {
       const attachments = await normalizeAttachments(attachmentInputs);
       const envelope: RequestEnvelope = { prompt: text, attachments };
-      assertWithinMaxPayload(encodedEnvelopeSize(envelope), this.promptEndpoint);
+      assertWithinMaxPayload(encodedEnvelopeSize(envelope), this.promptEndpoint, connLimit);
       return this.#buildStream(envelope, opts);
     })();
   }

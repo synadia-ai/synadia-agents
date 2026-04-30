@@ -77,9 +77,7 @@ describe("buildAgentInfo", () => {
     const a = buildAgentInfo(
       validInfo({
         metadata: { agent: "openclaw", owner: "rene", protocol_version: "0.3" },
-        endpoints: [
-          { name: "prompt", subject: "agents.prompt.oc.rene.default", metadata: {} },
-        ],
+        endpoints: [{ name: "prompt", subject: "agents.prompt.oc.rene.default", metadata: {} }],
       }),
     );
     expect(a).not.toBeNull();

@@ -8,10 +8,12 @@ For an example of *building* a fresh agent from scratch using the TypeScript SDK
 
 | Path                | Type token | Underlying harness                          | Prompt subject (v0.3 verb-first)                              | `max_payload` | `attachments_ok` |
 | ------------------- | ---------- | ------------------------------------------- | ------------------------------------------------------------- | ------------- | ---------------- |
-| `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.prompt.pi.<owner>.<session>`                      | 1 MB          | true             |
-| `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.prompt.oc.<owner>.<agentName>`                        | 1 MB          | true             |
-| `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | 1 MB          | true             |
-| `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | 1 MB (configurable) | true        |
+| `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.prompt.pi.<owner>.<session>`                      | 1 MB / system-defined | true |
+| `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.prompt.oc.<owner>.<agentName>`                        | 1 MB / system-defined | true |
+| `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | 1 MB / system-defined | true |
+| `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | 1 MB / system-defined (config can request a smaller cap) | true |
+
+`max_payload` is read from the NATS connection's `INFO` block at startup and advertised verbatim, formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar. A `nats-server` running the default 1 MB advertises `1MB`; bump `--max_payload 8MB` and the agents track it.
 
 Every agent also publishes heartbeats on `agents.hb.<type-token>.<owner>.<session>` every 30 s and answers `agents.status.<type-token>.<owner>.<session>` requests with the same payload (§8.7 (v0.3)).
 

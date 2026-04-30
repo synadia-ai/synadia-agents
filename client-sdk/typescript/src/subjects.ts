@@ -119,9 +119,7 @@ export class AgentSubject {
 export function isHeartbeatSubject(subject: string): boolean {
   const parts = subject.split(".");
   return (
-    parts.length === SUBJECT_TOKEN_COUNT &&
-    parts[0] === SUBJECT_ROOT &&
-    parts[1] === VERB_HEARTBEAT
+    parts.length === SUBJECT_TOKEN_COUNT && parts[0] === SUBJECT_ROOT && parts[1] === VERB_HEARTBEAT
   );
 }
 

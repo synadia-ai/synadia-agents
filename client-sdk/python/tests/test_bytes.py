@@ -9,7 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from synadia_ai.agents._bytes import InvalidSizeError, parse_human_bytes, utf8_byte_length
+from synadia_ai.agents._bytes import (
+    InvalidSizeError,
+    format_human_bytes,
+    parse_human_bytes,
+    utf8_byte_length,
+)
 
 
 class TestParseHumanBytes:
@@ -37,6 +42,38 @@ class TestParseHumanBytes:
     def test_rejects_malformed(self, value: str) -> None:
         with pytest.raises(InvalidSizeError):
             parse_human_bytes(value)
+
+
+class TestFormatHumanBytes:
+    @pytest.mark.parametrize(
+        ("byte_count", "expected"),
+        [
+            (0, "0B"),
+            (1, "1B"),
+            (512 * 1024, "512KB"),
+            (1024 * 1024, "1MB"),
+            (8 * 1024 * 1024, "8MB"),
+            (4 * 1024 * 1024 * 1024, "4GB"),
+        ],
+    )
+    def test_happy_path(self, byte_count: int, expected: str) -> None:
+        assert format_human_bytes(byte_count) == expected
+
+    def test_picks_largest_clean_unit(self) -> None:
+        # 8MB-worth of bytes round-trips to "8MB", not "8192KB".
+        assert format_human_bytes(8 * 1024 * 1024) == "8MB"
+
+    def test_falls_back_to_bytes_when_no_clean_unit(self) -> None:
+        # 1500 bytes isn't a whole number of KB/MB/GB.
+        assert format_human_bytes(1500) == "1500B"
+
+    @pytest.mark.parametrize("byte_count", [0, 1, 512, 1024, 1024 * 1024, 8 * 1024 * 1024])
+    def test_round_trip_with_parse(self, byte_count: int) -> None:
+        assert parse_human_bytes(format_human_bytes(byte_count)) == byte_count
+
+    def test_rejects_negative(self) -> None:
+        with pytest.raises(InvalidSizeError):
+            format_human_bytes(-1)
 
 
 class TestUtf8ByteLength:

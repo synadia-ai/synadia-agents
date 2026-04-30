@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 from nats.micro import ServiceConfig, add_service
 from nats.micro.service import EndpointConfig
 
-from ._bytes import parse_human_bytes
+from ._bytes import format_human_bytes, parse_human_bytes
 from ._inbox import new_inbox
 from ._logging import get_logger
 from .discovery import (
@@ -76,9 +76,16 @@ def _resolve_sdk_version() -> str:
 
 _SDK_VERSION = _resolve_sdk_version()
 
-# §2.1: prompt endpoint metadata defaults. Spec's own example uses 1MB;
-# attachments_ok defaults to True so envelopes with `attachments` just work
-# out of the box. Agents MAY override via `AgentService(max_payload=..., ...)`.
+# §2.1: prompt endpoint metadata defaults.
+#
+# ``DEFAULT_MAX_PAYLOAD`` is used only when ``nc.max_payload`` is missing or
+# zero (an unconnected client, or a server that did not include the field in
+# its INFO block) — the broker's negotiated value is the real cap, so when
+# it's available we always advertise that. The TS harnesses share the same
+# constant under the same name (``agents/{claude-code,openclaw,pi}``).
+#
+# ``attachments_ok`` defaults to True so envelopes with ``attachments`` just
+# work out of the box.
 DEFAULT_MAX_PAYLOAD = "1MB"
 DEFAULT_ATTACHMENTS_OK = True
 
@@ -197,6 +204,15 @@ class AgentService:
     handlers. Defaults to 30 s, matching the TS reference harnesses.
     Pass ``None`` to disable — for example when the handler emits its
     own status chunks at a finer cadence.
+
+    ``max_payload`` is honored up to the connected server's negotiated
+    limit (``nc.max_payload``). If you pass a value *larger* than the
+    server allows, :meth:`start` clamps the advertised metadata down to
+    the server's limit and logs a warning — the broker would reject
+    anything larger before it ever reached your handler, so
+    over-advertising would only break callers. Smaller overrides are
+    honored (use case: shed expensive prompts before they reach the
+    handler).
     """
 
     def __init__(
@@ -235,11 +251,48 @@ class AgentService:
         """Register the prompt handler. Must be called before :meth:`start`."""
         self._prompt_handler = handler
 
+    def _effective_max_payload(self) -> str:
+        """Return the value to advertise on the prompt endpoint.
+
+        Constructor-supplied ``max_payload`` is honored **unless it
+        exceeds** the connected server's negotiated limit
+        (``nc.max_payload``). When the override is larger, the broker
+        would reject any request that fits the override but not the
+        server cap, so we clamp down to the server value, log a warning,
+        and advertise the clamped value.
+
+        ``nc.max_payload == 0`` (or the attribute missing — older
+        ``nats-py`` builds) is treated as "no INFO available" and the
+        override stands as configured.
+        """
+        override_bytes = parse_human_bytes(self._max_payload)
+        server_bytes = getattr(self._nc, "max_payload", 0) or 0
+        if server_bytes <= 0:
+            return self._max_payload
+        if override_bytes <= server_bytes:
+            return self._max_payload
+        clamped = format_human_bytes(server_bytes)
+        log.warning(
+            "max_payload=%s (%d bytes) exceeds server limit %s (%d bytes); "
+            "clamping advertised value to %s — anything larger would be "
+            "rejected by the broker before reaching the handler",
+            self._max_payload,
+            override_bytes,
+            clamped,
+            server_bytes,
+            clamped,
+        )
+        return clamped
+
     async def start(self) -> None:
         if self._prompt_handler is None:
             raise RuntimeError("register a prompt handler via on_prompt() before start()")
         if self._service is not None:
             raise RuntimeError("agent already started")
+
+        # Resolve and clamp ``max_payload`` against the server's negotiated
+        # limit (§2.1). See ``_effective_max_payload`` for the rule.
+        max_payload_str = self._effective_max_payload()
 
         metadata: dict[str, str] = {
             "agent": self.subject.agent,
@@ -266,7 +319,7 @@ class AgentService:
                 # §2.1: endpoint metadata is a `Record<string, string>` on the
                 # wire — booleans are encoded as "true" / "false".
                 metadata={
-                    "max_payload": self._max_payload,
+                    "max_payload": max_payload_str,
                     "attachments_ok": "true" if self._attachments_ok else "false",
                 },
             )

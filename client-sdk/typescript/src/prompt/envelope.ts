@@ -193,9 +193,7 @@ function assertSafeFilename(name: string, idx: number): void {
     throw new ProtocolError(`attachment[${idx}] has empty filename`);
   }
   if (FILENAME_FORBIDDEN_RE.test(name)) {
-    throw new ProtocolError(
-      `attachment[${idx}] has unsafe filename (path separator or NUL)`,
-    );
+    throw new ProtocolError(`attachment[${idx}] has unsafe filename (path separator or NUL)`);
   }
   if (name === "." || name === ".." || name.startsWith("../") || name.startsWith("./")) {
     throw new ProtocolError(`attachment[${idx}] has unsafe filename ('.' or '..' component)`);

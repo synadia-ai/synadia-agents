@@ -47,9 +47,21 @@ const AGENT_SUBJECT_TOKEN = 'cc'        // 3rd subject token (abbreviation per A
 const SERVICE_NAME = 'agents'           // §3.1 — the bare token, subject-safe as-is
 const PROMPT_QUEUE_GROUP = 'agents'     // §3.3 — queue group on the prompt endpoint
 const STATUS_QUEUE_GROUP = 'agents'     // §8.7 (v0.3) — same as prompt
-const MAX_PAYLOAD_STRING = '1MB'        // advertised in endpoint metadata
-const MAX_PAYLOAD_BYTES = 1024 * 1024   // enforcement value (base-1024, matches SDK)
+// Fallbacks used only when the server `INFO` block is unavailable. The real
+// values come from `nc.info.max_payload` after connect — that's the limit the
+// server will actually accept for this user/account, so it's also what we
+// advertise in endpoint metadata and enforce on inbound requests.
+const DEFAULT_MAX_PAYLOAD_STR = '1MB'
+const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024
 const ATTACHMENTS_OK = true
+
+/** Format a byte count back into the §2.1 `\d+(B|KB|MB|GB)` grammar, base-1024. */
+function formatMaxPayloadString(bytes: number): string {
+  if (bytes >= 1024 ** 3 && bytes % 1024 ** 3 === 0) return `${bytes / 1024 ** 3}GB`
+  if (bytes >= 1024 ** 2 && bytes % 1024 ** 2 === 0) return `${bytes / 1024 ** 2}MB`
+  if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024}KB`
+  return `${bytes}B`
+}
 const HEARTBEAT_INTERVAL_S = 30         // §8.2 recommended default
 const ACK_INTERVAL_MS = 30_000          // keep-alive cadence; caller inactivity timeout is 60s
 const PERMISSION_TIMEOUT_MS = 120_000   // query reply timeout for permission prompts
@@ -305,11 +317,11 @@ type ParseResult =
 const WHITESPACE = new Set([0x09, 0x0A, 0x0D, 0x20])
 const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/
 
-function parseRequest(data: Uint8Array): ParseResult {
+function parseRequest(data: Uint8Array, maxPayloadBytes: number): ParseResult {
   if (data.byteLength === 0) {
     return { kind: 'error', code: 400, description: 'empty payload' }
   }
-  if (data.byteLength > MAX_PAYLOAD_BYTES) {
+  if (data.byteLength > maxPayloadBytes) {
     return { kind: 'error', code: 400, description: 'request exceeds max_payload' }
   }
 
@@ -499,7 +511,13 @@ const ctxLabel = ctxName
     : 'default: demo.nats.io'
 process.stderr.write(`nats channel: connecting to ${natsCtx.url ?? 'default'} (${ctxLabel})\n`)
 const nc = await connect(connectOpts)
-process.stderr.write(`nats channel: connected\n`)
+// Server-negotiated max_payload (§2.1). Reflects this user/account's real
+// limit, so we use it for both endpoint metadata and §5.4 enforcement.
+const MAX_PAYLOAD_BYTES = nc.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES
+const MAX_PAYLOAD_STR = nc.info?.max_payload
+  ? formatMaxPayloadString(MAX_PAYLOAD_BYTES)
+  : DEFAULT_MAX_PAYLOAD_STR
+process.stderr.write(`nats channel: connected (max_payload=${MAX_PAYLOAD_STR})\n`)
 
 // ── Resolve session name and register micro service ────────────────────
 
@@ -534,7 +552,7 @@ service.addEndpoint('prompt', {
   queue: PROMPT_QUEUE_GROUP,
   handler: (err, msg) => handleNatsMessage(err, msg),
   metadata: {
-    max_payload: MAX_PAYLOAD_STRING,
+    max_payload: MAX_PAYLOAD_STR,
     attachments_ok: ATTACHMENTS_OK ? 'true' : 'false',
   },
 })
@@ -744,7 +762,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           `nats channel: replying to ${pending.replySubject} (request ${requestId}, done=${done}, bytes=${text.length})\n`,
         )
 
-        const maxPayload = nc.info?.max_payload ?? MAX_PAYLOAD_BYTES
+        const maxPayload = MAX_PAYLOAD_BYTES
 
         if (text.length > 0) {
           const envelope = JSON.stringify({ type: 'response', data: text })
@@ -803,7 +821,7 @@ function handleNatsMessage(err: Error | null, msg: ServiceMsg): void {
     return
   }
 
-  const parsed = parseRequest(msg.data)
+  const parsed = parseRequest(msg.data, MAX_PAYLOAD_BYTES)
   if (parsed.kind === 'error') {
     process.stderr.write(`nats channel: rejecting request (${parsed.code} ${parsed.description})\n`)
     msg.respondError(parsed.code, parsed.description)

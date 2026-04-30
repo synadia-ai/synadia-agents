@@ -33,9 +33,21 @@ export const SUBJECT_AGENT_TOKEN = "oc";
  *  (spec Appendix C). We set it so callers always see a value in $SRV.INFO. */
 export const DEFAULT_SESSION = "default";
 
-export const MAX_PAYLOAD_STR = "1MB";
-export const MAX_PAYLOAD_BYTES = 1024 * 1024; // base-1024, NATS convention
+// Fallbacks used only when the server `INFO` block is unavailable. The real
+// values come from `nc.info.max_payload` after connect — that's the negotiated
+// limit for this user/account, so it's also what we advertise on the prompt
+// endpoint and enforce on inbound requests.
+export const DEFAULT_MAX_PAYLOAD_STR = "1MB";
+export const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024; // base-1024, NATS convention
 export const ATTACHMENTS_OK = true;
+
+/** Format a byte count back into the §2.1 `\d+(B|KB|MB|GB)` grammar (base-1024). */
+export function formatMaxPayloadString(bytes: number): string {
+  if (bytes >= 1024 ** 3 && bytes % 1024 ** 3 === 0) return `${bytes / 1024 ** 3}GB`;
+  if (bytes >= 1024 ** 2 && bytes % 1024 ** 2 === 0) return `${bytes / 1024 ** 2}MB`;
+  if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024}KB`;
+  return `${bytes}B`;
+}
 
 /** Spec §8.2 recommended default cadence. */
 export const HEARTBEAT_INTERVAL_S = 30;

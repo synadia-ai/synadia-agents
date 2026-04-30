@@ -46,12 +46,30 @@ def assert_attachments_allowed(
 def assert_within_max_payload(
     payload_size: int,
     max_payload_bytes: int | None,
+    connection_max_payload: int | None = None,
 ) -> None:
-    """Fail if the encoded payload is larger than the endpoint's declared limit.
+    """Fail if the encoded payload is larger than the effective limit.
 
-    ``max_payload_bytes = None`` means the endpoint didn't declare a limit
-    (or the declared value was unparseable); in that case we don't enforce
-    locally and let the server decide (§5.4 last paragraph).
+    Two caps bind a publish:
+
+    1. ``max_payload_bytes`` — the agent's advertised limit (from its
+       ``$SRV.INFO`` metadata, §2.1). What the *agent's* broker accepts.
+    2. ``connection_max_payload`` — the *caller's* own
+       ``nc.max_payload`` (from the local NATS server's INFO block).
+       What the broker holding the caller's connection will publish at
+       all. In multi-cluster / per-account deployments this can be
+       smaller than the agent's advertised cap, in which case the
+       caller's broker rejects the publish with
+       ``MAX_PAYLOAD_VIOLATION`` before it ever reaches the agent.
+
+    The effective cap is ``min`` of whichever are set. ``None`` for
+    either means "not declared / not known" — when both are ``None`` we
+    don't enforce locally and let the server decide (§5.4 last
+    paragraph).
     """
-    if max_payload_bytes is not None and payload_size > max_payload_bytes:
-        raise PayloadTooLargeError(limit=max_payload_bytes, actual=payload_size)
+    limits = [lim for lim in (max_payload_bytes, connection_max_payload) if lim is not None]
+    if not limits:
+        return
+    effective = min(limits)
+    if payload_size > effective:
+        raise PayloadTooLargeError(limit=effective, actual=payload_size)

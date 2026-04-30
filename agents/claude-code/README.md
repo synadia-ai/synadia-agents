@@ -110,8 +110,11 @@ This plugin implements the **NATS Agent Protocol v0.3** end-to-end:
   token).
 - Service metadata includes `agent`, `owner`, `session`, and
   `protocol_version: "0.3"` (§3.2).
-- `prompt` endpoint declares `max_payload: "1MB"`,
-  `attachments_ok: "true"` (§2.1), and queue group `"agents"` (§3.3).
+- `prompt` endpoint declares the server-negotiated `max_payload` (read
+  from `nc.info.max_payload` at startup and formatted into the §2.1
+  `\d+(B|KB|MB|GB)` grammar — `1MB` against a default `nats-server`,
+  larger if the operator bumped `--max_payload`), `attachments_ok:
+  "true"` (§2.1), and queue group `"agents"` (§3.3).
 - Accepts both plain-text shorthand and JSON envelopes with optional
   base64-encoded attachments (§5.1, §5.2, §5.3). Inbound attachments
   are staged to a per-request temp directory and exposed to Claude via
