@@ -44,6 +44,9 @@
     "@nats-io/services": "^3.3.0",
     "@synadia-ai/agents": "file:../../client-sdk/typescript"
   },
+  "bundleDependencies": [
+    "@synadia-ai/agents"
+  ],
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*"
   }
