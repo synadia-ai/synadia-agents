@@ -80,10 +80,17 @@ function encodeResponse(chunk: ResponseChunk): Record<string, unknown> {
  *
  * Iterates by code-point so a multi-byte UTF-8 sequence or a UTF-16
  * surrogate pair is never split mid-character. The per-slice budget
- * defaults to half of `(maxPayloadBytes - reserveBytes)` to leave headroom
- * for worst-case JSON escaping (every char rewritten to `\uXXXX`); pass
- * a tighter `safetyDivisor` if the input is known to contain few escape
- * candidates and the agent wants larger chunks.
+ * is `(maxPayloadBytes - reserveBytes) / safetyDivisor`.
+ *
+ * **`safetyDivisor` selection.** The default `safetyDivisor = 2` is sized
+ * for natural-language text where JSON escaping is rare (typical LLM
+ * output: a handful of `"` / `\\` per chunk, ~1% expansion). It is **not**
+ * worst-case-safe: a string of ASCII control characters where every byte
+ * rewrites to `\uXXXX` (6 chars) can produce a JSON-encoded chunk up to
+ * ~3× `maxPayloadBytes`. Callers feeding arbitrary binary-ish content,
+ * mixed-encoding strings, or a high control-character density should pass
+ * `safetyDivisor: 6` (or higher) to guarantee the encoded chunk stays
+ * under `maxPayloadBytes` even under worst-case escaping.
  *
  * Designed to replace the identical `splitTextForChunks` /
  * `publishResponseText` chunkers carried by the `agents/{claude-code,
@@ -96,8 +103,6 @@ export function splitResponseText(
 ): string[] {
   // 32 covers `{"type":"response","data":""}` (28 chars) plus a small margin.
   const reserve = opts.reserveBytes ?? 32;
-  // Halve by default: worst-case JSON escaping (every char → `\uXXXX`) is 6×
-  // expansion, so 0.5× of the remaining budget is conservative-but-not-paranoid.
   const safetyDivisor = opts.safetyDivisor ?? 2;
   const budget = Math.max(64, Math.floor((maxPayloadBytes - reserve) / safetyDivisor));
 

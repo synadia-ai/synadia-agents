@@ -10,6 +10,7 @@ import {
 import { Svcm } from "@nats-io/services";
 import { Agent } from "../agent.js";
 import { SERVICE_NAME } from "../internal/service-name.js";
+import { assertValidToken } from "../subjects.js";
 import { buildAgentInfo, type AgentInfo, type RawServiceInfo } from "./agent-info.js";
 
 /** Absolute safety cap when using the stall strategy (no explicit timeoutMs). */
@@ -119,6 +120,15 @@ export async function lookupAgentInstance(
   opts: { timeoutMs?: number } = {},
 ): Promise<Agent | null> {
   const timeout = opts.timeoutMs ?? 2000;
+  // §2 MUST rules — instanceIds are normally server-generated UUIDs, but a
+  // crafted heartbeat payload could supply something with `.`, `*`, `>`, or
+  // whitespace which would either silently address an unintended subject or
+  // be rejected by the broker. Treat invalid ids as "not present".
+  try {
+    assertValidToken(instanceId, "instanceId");
+  } catch {
+    return null;
+  }
   const subject = `$SRV.INFO.${SERVICE_NAME}.${instanceId}`;
   let raw: RawServiceInfo;
   try {

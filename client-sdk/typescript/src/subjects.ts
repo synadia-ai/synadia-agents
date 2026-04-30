@@ -166,6 +166,16 @@ export interface ParseAgentSubjectOptions {
  * Returns `null` when the subject has the wrong root, is the wrong verb
  * (default `prompt`), or fails token validation. Pass a different `verb`
  * to parse heartbeat / status subjects through the same helper.
+ *
+ * **Note on the canonical agent identifier.** The 3rd subject token is
+ * the *wire token* — for harnesses that set `subjectToken` to an
+ * abbreviation (e.g. `"cc"` for `claude-code`, `"oc"` for `openclaw`),
+ * `AgentSubject.agent` returned here is the abbreviation, **not** the
+ * canonical `metadata.agent` value. The canonical name only lives in
+ * `$SRV.INFO.metadata.agent`; callers that need it should use
+ * `Agents.lookupInstance(instanceId)` (or `Agents.discover()`) and read
+ * `AgentInfo.agent`. Filtering on `subject.agent` matches the wire token,
+ * filtering on `AgentInfo.agent` matches the canonical identifier.
  */
 export function parseAgentSubject(
   subject: string,
