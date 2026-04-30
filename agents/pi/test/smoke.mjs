@@ -207,7 +207,13 @@ await step("$SRV.INFO returns spec-shaped service info", async () => {
 	assert.equal(ep.queue_group, "agents", "prompt endpoint must register queue_group=agents (spec §3.3)");
 	// max_payload is server-driven (`nc.info.max_payload`), so just verify it
 	// matches the §2.1 `\d+(B|KB|MB|GB)` grammar.
+	// max_payload is server-driven (`nc.info.max_payload`), so verify it
+	// matches the §2.1 grammar AND the value our server is advertising.
+	const expectedMaxPayload = obs.info?.max_payload
+		? formatMaxPayloadString(obs.info.max_payload)
+		: DEFAULT_MAX_PAYLOAD_STR;
 	assert.match(ep.metadata?.max_payload ?? "", /^\d+(B|KB|MB|GB)$/);
+	assert.equal(ep.metadata?.max_payload, expectedMaxPayload);
 	assert.equal(ep.metadata?.attachments_ok, "true");
 })();
 
