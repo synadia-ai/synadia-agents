@@ -26,6 +26,25 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   CI runners without protecting any caller-visible invariant; the
   upper bound is the load-bearing liveness check.
 
+### Removed
+
+- Dropped the unused `utf8_byte_length` helper from the private
+  `synadia_ai.agent_service._bytes` module. It was copied wholesale
+  from the client-sdk during the 0.1.0 extraction but has no caller
+  in the agent-sdk — it's a caller-side pre-publish size check used
+  inside `synadia-ai-agents` only.
+
+### CI
+
+- The "Install nats-server" steps in
+  `client-sdk-python-agent-service.yml` and
+  `release-python-agent-service.yml` now extract the tarball into
+  `${{ runner.temp }}` instead of inheriting
+  `defaults.run.working-directory: agent-sdk/python`. Stops every
+  run from leaving an empty `nats-server-v*-linux-amd64/` parent
+  dir in `agent-sdk/python/` after the binary is `mv`'d to
+  `/usr/local/bin/`. Cosmetic only — no behavior change.
+
 ## [0.1.0] - 2026-04-30
 
 Initial release. **Extracted from `synadia-ai-agents@0.5.0`** so the

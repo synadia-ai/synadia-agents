@@ -40,6 +40,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install nats-server
+        # Extract into the runner's auto-cleaned temp area so we don't leave the
+        # unpacked `nats-server-v*-linux-amd64/` parent directory in
+        # `agent-sdk/python/` after the binary is `mv`'d out (the default
+        # working-directory at job level is `agent-sdk/python`).
+        working-directory: ${{ runner.temp }}
         run: |
           curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${NATS_SERVER_VERSION}/nats-server-v${NATS_SERVER_VERSION}-linux-amd64.tar.gz" | tar xz
           sudo mv "nats-server-v${NATS_SERVER_VERSION}-linux-amd64/nats-server" /usr/local/bin/

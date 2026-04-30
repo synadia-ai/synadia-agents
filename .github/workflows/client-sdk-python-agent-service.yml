@@ -40,7 +40,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install nats-server
-        # This step has no working-directory because it only touches /usr/local/bin.
+        # Override the default working-directory so the tarball extracts into
+        # the runner's auto-cleaned temp area instead of leaving the unpacked
+        # `nats-server-v*-linux-amd64/` parent directory in `agent-sdk/python/`
+        # after the binary is `mv`'d out. (The default at job level is
+        # `agent-sdk/python`; without this override, every CI run dropped a
+        # stray dir there — cosmetic, but caught by the reviewer bot.)
+        working-directory: ${{ runner.temp }}
         run: |
           curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${NATS_SERVER_VERSION}/nats-server-v${NATS_SERVER_VERSION}-linux-amd64.tar.gz" | tar xz
           sudo mv "nats-server-v${NATS_SERVER_VERSION}-linux-amd64/nats-server" /usr/local/bin/

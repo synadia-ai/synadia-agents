@@ -1,10 +1,16 @@
-"""Size-unit parsing + UTF-8 byte-length measurement (internal).
+"""Size-unit parsing for ``max_payload`` (internal).
 
 Spec §2.1 defines ``max_payload`` as "a positive integer followed by ``B``,
 ``KB``, ``MB``, or ``GB``" but is silent on base (1000 vs 1024) and on case
 sensitivity. We use base-1024 (matching ``nats-server`` config conventions)
 and parse units case-insensitively. Both choices mirror the TS SDK; both are
 flagged for upstream clarification.
+
+The agent-sdk needs ``parse_human_bytes`` (validate the user-supplied
+``max_payload`` argument) and ``format_human_bytes`` (re-emit a server-clamped
+limit in the §2.1 grammar for service metadata). The pre-publish
+``utf8_byte_length`` helper is caller-side only and lives in the
+``synadia-ai-agents`` sibling.
 """
 
 from __future__ import annotations
@@ -63,8 +69,3 @@ def format_human_bytes(byte_count: int) -> str:
         if byte_count >= multiplier and byte_count % multiplier == 0:
             return f"{byte_count // multiplier}{unit}"
     return f"{byte_count}B"
-
-
-def utf8_byte_length(text: str) -> int:
-    """UTF-8 byte length of a Python string — pre-publish size check helper."""
-    return len(text.encode("utf-8"))
