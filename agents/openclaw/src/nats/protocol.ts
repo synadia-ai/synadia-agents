@@ -22,7 +22,7 @@ export const SUBJECT_AGENT_TOKEN = "oc";
 /** Service version reported in `$SRV.INFO.version`. Bumped when this
  *  harness's wire-visible behaviour changes; not the protocol version
  *  (which lives in `metadata.protocol_version` and comes from the SDK). */
-export const SERVICE_VERSION = "0.3.0";
+export const SERVICE_VERSION = "0.4.0";
 
 /** Session-less harnesses MAY omit `metadata.session` or set it to "default"
  *  (spec Appendix C). We set it so callers always see a value in $SRV.INFO. */

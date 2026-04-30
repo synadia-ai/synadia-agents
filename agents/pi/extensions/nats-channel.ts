@@ -68,7 +68,7 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 // PI-specific protocol constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SERVICE_VERSION = "0.3.0";
+const SERVICE_VERSION = "0.4.0";
 
 // Spec §2, Appendix C: `pi` is both the canonical agent identifier and its
 // conventional subject abbreviation, so `metadata.agent` and the wire

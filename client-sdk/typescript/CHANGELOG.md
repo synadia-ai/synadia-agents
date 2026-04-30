@@ -13,6 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-30
+
+> **Note:** `0.3.0` was tagged in code (verb-first wire bump + max_payload
+> work) but never published to npm — the changeset moved through `file:`
+> dev-cycle PRs only. `0.4.0` bundles the 0.3.0 wire changes together
+> with the agent + example SDK adoption work and the new public surface
+> listed below.
+
 ### Added
 
 - `HeartbeatTracker` is now exported from the package root. Existing
