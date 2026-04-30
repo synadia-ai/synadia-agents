@@ -17,7 +17,12 @@
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { Agent } from "./agent.js";
-import { discoverAgents, pingInstance, type DiscoverOptions } from "./discovery/srv-ping.js";
+import {
+  discoverAgents,
+  lookupAgentInstance,
+  pingInstance,
+  type DiscoverOptions,
+} from "./discovery/srv-ping.js";
 import { HeartbeatTracker, type Liveness } from "./heartbeat/tracker.js";
 import { type HeartbeatPayload } from "./heartbeat/payload.js";
 import { type Logger, SILENT_LOGGER } from "./internal/logger.js";
@@ -137,6 +142,32 @@ export class Agents {
   async ping(instanceId: string, opts: { timeoutMs?: number } = {}): Promise<boolean> {
     this.#ensureOpen();
     return pingInstance(this.#nc, instanceId, opts);
+  }
+
+  /**
+   * Targeted `$SRV.INFO.agents.<instanceId>` lookup. Returns a constructed
+   * {@link Agent} for an already-known instance id, or `null` if the
+   * instance doesn't reply within the timeout / replies with malformed
+   * metadata. The returned `Agent` shares this client's connection and
+   * close signal, so closing the `Agents` client cancels in-flight streams
+   * on the looked-up handle too.
+   *
+   * Use this when you already have an `instance_id` (e.g. from a heartbeat
+   * payload) and want to materialise an `Agent` without re-running a
+   * full discovery scan.
+   */
+  async lookupInstance(
+    instanceId: string,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<Agent | null> {
+    this.#ensureOpen();
+    return lookupAgentInstance(
+      this.#nc,
+      instanceId,
+      this.#streamInactivityTimeoutMs,
+      this.#closeController.signal,
+      opts,
+    );
   }
 
   /**
