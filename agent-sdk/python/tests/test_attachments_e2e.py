@@ -23,15 +23,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-
 from synadia_ai.agents import (
     Agents,
-    AgentService,
     Attachment,
     Envelope,
-    PromptStream,
     ResponseChunk,
 )
+
+from synadia_ai.agent_service import AgentService, PromptStream
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient

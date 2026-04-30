@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-
 from synadia_ai.agents import Agents, Attachment, ResponseChunk
 
 if TYPE_CHECKING:

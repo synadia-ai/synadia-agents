@@ -168,8 +168,8 @@ uv run ruff check .                  # lint
 uv run ruff format --check .         # formatting check (drop --check to apply)
 uv run mypy src tests examples       # strict type check
 uv run pytest -v                     # full suite; e2e auto-skip if nats-server missing
-uv run python scripts/demo_echo.py   # echo agent for manual poking
 uv run python examples/01-discover.py --url nats://127.0.0.1:4222  # user-facing demos
+# Reference agent + demo_echo.py now live in ../../agent-sdk/python/ (sibling dist).
 uv build                             # build sdist + wheel to dist/
 ls tests/_evidence/                  # last run's per-test wire traces
 ```

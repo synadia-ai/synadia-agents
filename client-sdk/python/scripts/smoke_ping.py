@@ -3,7 +3,8 @@
 Two scenarios — pass the mode as the first positional argument:
 
   up      Expects a protocol-compliant agent to be on the bus (e.g.
-          `scripts/demo_echo.py` running). At INFO level, asserts
+          the agent-sdk's `agent-sdk/python/scripts/demo_echo.py`
+          running). At INFO level, asserts
           discover() returns ≥ 1 entry and NO log records are emitted
           on the client side — the success path is silent.
 

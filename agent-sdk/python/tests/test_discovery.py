@@ -18,15 +18,14 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
-
 from synadia_ai.agents import (
     DEFAULT_DISCOVER_MAX_WAIT_S,
     Agents,
-    AgentService,
     DiscoverFilter,
     Envelope,
-    PromptStream,
 )
+
+from synadia_ai.agent_service import AgentService, PromptStream
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

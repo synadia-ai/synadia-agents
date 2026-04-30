@@ -1,20 +1,26 @@
 # synadia-ai-agents
 
-Python SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
-(v0.2). Discover protocol-compliant agents over NATS, prompt them with
-streamed typed responses, and (when you're hosting) register Python
-agents that show up on `$SRV.PING.agents`.
+Python **client** SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md).
+Discover protocol-compliant agents over NATS and prompt them with
+streamed typed responses.
+
+**Hosting an agent (Hermes / claude-code / openclaw / pi)?** That side
+of the protocol now ships separately as
+[`synadia-ai-agent-service`](../../agent-sdk/python/) (import
+`synadia_ai.agent_service`). It depends on this package for the
+shared wire primitives — install both when authoring an agent
+harness.
 
 **Cross-SDK parity with the [TypeScript SDK](https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/typescript)**
 is tracked in [`tests/test_interop_e2e.py`](tests/test_interop_e2e.py).
-Both SDKs declare `protocol_version = "0.2"` in service metadata, so the
+Both SDKs declare `protocol_version = "0.3"` in service metadata, so the
 test spawns the TS reference agent via `bun` and rounds-trips a prompt
 through it. The test `pytest.skip`s cleanly when `bun` or the sibling
 `../typescript/` checkout is missing — running the suite without TS
 interop is fine for day-to-day work.
 
 **Calling agents?** → [Quickstart - call an agent](#quickstart--call-an-agent).
-**Hosting an agent (Hermes-style)?** → [Hosting an agent](#hosting-an-agent).
+**Hosting an agent?** → see [`synadia-ai-agent-service`](../../agent-sdk/python/).
 
 ## Installation
 
@@ -88,7 +94,7 @@ asyncio.run(main())
 | `AgentInfo` | [`discovery.py`](src/synadia_ai/agents/discovery.py) | Pure-data record (parsed `$SRV.INFO` per §4.3). What `build_agent_info()` returns. |
 | `Liveness` | [`heartbeat.py`](src/synadia_ai/agents/heartbeat.py) | Frozen snapshot from `Agents.liveness(instance_id)`. |
 | `load_context_options` | [`context.py`](src/synadia_ai/agents/context.py) | Resolve a `nats` CLI context into kwargs for `nats.connect(...)`. |
-| `AgentService` | [`service.py`](src/synadia_ai/agents/service.py) | Server-side. Embed in a harness (Hermes / claude-code / pi) to register on the bus. |
+| `AgentService` | [`synadia-ai-agent-service`](../../agent-sdk/python/) | Server-side; ships in a separate distribution. Import from `synadia_ai.agent_service`. |
 
 ## Mid-stream queries
 
@@ -103,28 +109,24 @@ async for msg in agent.prompt("do the thing"):
         print(msg)     # ResponseChunk / StatusChunk
 ```
 
-Server-side, the handler asks via `stream.ask(...)`:
-
-```python
-async def confirm(envelope: Envelope, stream: PromptStream) -> None:
-    await stream.send("planning...")
-    answer = await stream.ask("Proceed? (yes/no)", timeout=10.0)
-    if answer.prompt.strip().lower() == "yes":
-        await stream.send("done")
-    else:
-        await stream.send("aborted")
-```
+Server-side, the handler asks via `stream.ask(...)` — see
+[`synadia-ai-agent-service`](../../agent-sdk/python/) for the host-side
+API.
 
 ## Try the examples
 
-Six runnable demos live under [`examples/`](examples/README.md). The
-ritual to see the SDK work end-to-end:
+Six runnable client-side demos live under
+[`examples/`](examples/README.md). They talk to the reference agent
+which now ships with `synadia-ai-agent-service` at
+[`agent-sdk/python/examples/_reference_agent.py`](../../agent-sdk/python/examples/_reference_agent.py).
+The ritual to see the SDKs work end-to-end:
 
 ```shell
-# terminal 1 — start the reference agent
-uv run python examples/_reference_agent.py --url nats://127.0.0.1:4222
+# terminal 1 — start the reference agent (from the agent-sdk dist)
+uv run --directory ../../agent-sdk/python python examples/_reference_agent.py \
+  --url nats://127.0.0.1:4222
 
-# terminal 2 — discover and prompt
+# terminal 2 — discover and prompt (from this dist)
 uv run python examples/01-discover.py --url nats://127.0.0.1:4222
 uv run python examples/02-prompt-text.py --url nats://127.0.0.1:4222 "hello"
 ```
@@ -154,38 +156,17 @@ fail fast rather than silently).
 
 ## Hosting an agent
 
-Embed `AgentService` to register a Python agent that callers can
-discover and prompt:
+The agent-host surface (`AgentService`, `PromptStream`,
+`PromptHandler`, the heartbeat publisher) ships separately as
+[`synadia-ai-agent-service`](../../agent-sdk/python/) — install that
+package alongside this one when authoring an agent harness, and
+import the host classes from `synadia_ai.agent_service`. The shared
+wire types (`Envelope`, `Attachment`, error classes,
+`HeartbeatPayload`, `AgentSubject`, the discovery constants) stay in
+this package and continue to import from `synadia_ai.agents`.
 
-```python
-import asyncio
-import nats
-from synadia_ai.agents import AgentService, Envelope, PromptStream
-
-async def echo(envelope: Envelope, stream: PromptStream) -> None:
-    await stream.send(f"echo: {envelope.prompt}")
-
-async def main() -> None:
-    nc = await nats.connect(servers="nats://127.0.0.1:4222")
-    service = AgentService(
-        agent="demo",            # your harness identifier
-        owner="alice",           # your operator / account
-        session_name="worker-1", # 5th subject token / session this instance serves
-        nc=nc,
-        description="demo echo agent",
-    )
-    service.on_prompt(echo)
-    await service.start()
-    try:
-        await asyncio.Event().wait()   # run until Ctrl-C
-    finally:
-        await service.stop()
-        await nc.close()
-
-asyncio.run(main())
-```
-
-Probe it with the `nats` CLI (subjects are verb-first per protocol v0.3):
+Probe a running agent with the `nats` CLI (subjects are verb-first
+per protocol v0.3):
 
 ```bash
 nats micro list                                          # see "agents"

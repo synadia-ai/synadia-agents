@@ -1,0 +1,110 @@
+name: Release — agent-sdk/python
+
+# Publishes a new synadia-ai-agent-service release to PyPI when a tag
+# matching `python-agent-service-v*` is pushed. The distinct tag prefix
+# disambiguates the agent-sdk's releases from the client-sdk's
+# `python-v*` tags in the monorepo. Runs the full test matrix first
+# and fails shut if anything is red.
+#
+# Authentication uses PyPI trusted publishing (OIDC + the repo's
+# `pypi` GitHub Environment), mirroring the post-merge shape of the
+# client-sdk's release workflow (PR #28). A pending publisher must be
+# registered on PyPI for `synadia-ai-agent-service` (workflow file
+# name = `release-python-agent-service.yml`, environment = `pypi`)
+# before the first publish materializes the project name.
+
+on:
+  push:
+    tags:
+      - "python-agent-service-v*"
+
+concurrency:
+  group: release-python-agent-service-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: agent-sdk/python
+
+jobs:
+  verify:
+    name: Verify (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      NATS_SERVER_VERSION: "2.12.7"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nats-server
+        run: |
+          curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${NATS_SERVER_VERSION}/nats-server-v${NATS_SERVER_VERSION}-linux-amd64.tar.gz" | tar xz
+          sudo mv "nats-server-v${NATS_SERVER_VERSION}-linux-amd64/nats-server" /usr/local/bin/
+          nats-server --version
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "agent-sdk/python/uv.lock"
+          python-version: ${{ matrix.python-version }}
+
+      - run: uv sync --all-extras
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src tests examples
+      - run: uv run pytest -v
+
+  publish:
+    name: Publish to PyPI
+    needs: verify
+    runs-on: ubuntu-latest
+    # Bind to the "pypi" environment so the OIDC trust policy is
+    # evaluated against the same environment used by the client-sdk's
+    # release workflow.
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write  # required for PyPI trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "agent-sdk/python/uv.lock"
+          python-version: "3.11"
+
+      - name: Build sdist + wheel
+        run: |
+          uv build
+          ls -lh dist/
+
+      - name: Verify tag matches pyproject version
+        run: |
+          # Strip the `python-agent-service-v` monorepo prefix before comparing.
+          TAG_VERSION="${GITHUB_REF_NAME#python-agent-service-v}"
+          PKG_VERSION="$(uv run python -c 'import tomllib,sys; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag python-agent-service-v$TAG_VERSION does not match pyproject version $PKG_VERSION"
+            exit 1
+          fi
+          echo "Tag and pyproject.toml both at $PKG_VERSION."
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: agent-sdk/python/dist/
+
+      - name: Attach artifacts to GitHub release
+        if: ${{ !cancelled() }}
+        uses: softprops/action-gh-release@v2
+        # `files:` globs resolve from $GITHUB_WORKSPACE (defaults.run.working-directory
+        # does not apply to action inputs), so paths are given from the repo root.
+        with:
+          files: |
+            agent-sdk/python/dist/*.whl
+            agent-sdk/python/dist/*.tar.gz
+          generate_release_notes: true

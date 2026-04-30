@@ -7,10 +7,10 @@ handler via :meth:`AgentService.on_prompt`; the handler receives the
 decoded envelope and a :class:`PromptStream` on which to emit response
 chunks.
 
-This file hosts the **server side** (what Hermes / claude-code / pi
-embed). The **client side** lives in :mod:`synadia_ai.agents.agent` as a
-:class:`~synadia_ai.agents.agent.Agent` returned from
-:meth:`~synadia_ai.agents.agents.Agents.discover`.
+The **client side** of the protocol (discover-and-prompt) lives in the
+sibling distribution :mod:`synadia_ai.agents` as
+:class:`~synadia_ai.agents.Agent` returned from
+:meth:`~synadia_ai.agents.Agents.discover`.
 """
 
 from __future__ import annotations
@@ -25,28 +25,29 @@ from typing import TYPE_CHECKING
 
 from nats.micro import ServiceConfig, add_service
 from nats.micro.service import EndpointConfig
-
-from ._bytes import format_human_bytes, parse_human_bytes
-from ._inbox import new_inbox
-from ._logging import get_logger
-from .discovery import (
+from synadia_ai.agents import (
     PROMPT_ENDPOINT_NAME,
     PROMPT_QUEUE_GROUP,
     SERVICE_NAME,
     STATUS_ENDPOINT_NAME,
     STATUS_QUEUE_GROUP,
-)
-from .envelope import Attachment, Envelope, decode
-from .errors import ProtocolError, QueryTimeout
-from .heartbeat import build_heartbeat_payload, run_publisher
-from .messages import (
+    AgentSubject,
+    Attachment,
     Chunk,
+    Envelope,
+    ProtocolError,
     QueryChunk,
+    QueryTimeout,
     ResponseChunk,
     StatusChunk,
-    encode_chunk,
+    decode,
 )
-from .subjects import AgentSubject
+from synadia_ai.agents.messages import encode_chunk
+
+from ._bytes import format_human_bytes, parse_human_bytes
+from ._inbox import new_inbox
+from ._logging import get_logger
+from .heartbeat import build_heartbeat_payload, run_publisher
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
@@ -69,7 +70,7 @@ def _resolve_sdk_version() -> str:
     still emits a syntactically valid version field.
     """
     try:
-        return _pkg_version("synadia-ai-agents")
+        return _pkg_version("synadia-ai-agent-service")
     except PackageNotFoundError:
         return "0.0.0+unknown"
 
