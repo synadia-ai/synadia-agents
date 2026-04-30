@@ -35,6 +35,23 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   advertising larger than the broker accepts only sets up callers for
   `MAX_PAYLOAD_VIOLATION` rejections at publish time, with no
   local-validation path catching it first.
+- `load_context_options(...)` and `parse_nats_url(...)` now default a
+  missing port to `4222` for `nats://` / `tls://` server entries
+  (`ws://` / `wss://` left alone, mirroring nats-py's own carve-out at
+  `nats/aio/client.py:1359`). Works around an asymmetric nats-py
+  URL-parsing bug: in `nats/aio/client.py::_setup_server_pool`, the
+  single-string path applies port defaulting via `_parse_server_uri`,
+  but the list path (`servers=[...]` — what both helpers feed)
+  `urlparse`s each entry and leaves `Srv(uri).uri.port` as `None`, so
+  the asyncio TCP connect lands on port 0 and the kernel rejects with
+  `EADDRNOTAVAIL` (see `nats/aio/client.py:1373-1376`). The `nats` CLI
+  papers over the missing port internally, so context files written by
+  `nats context add` routinely carry entries like
+  `tls://connect.ngs.global` (no port); previously these silently
+  failed at connect time with a confusing kernel error. Python-only
+  fix; the TypeScript SDK uses a different transport and is not
+  affected. Filing the upstream bug against nats-py is out of scope
+  here — TODO follow-up.
 - Reply-inbox prefix for prompt streams, mid-stream queries, and
   internal `$SRV.INFO` discovery is now fixed at `_INBOX.agents` (was
   the connection's default `_INBOX`). The prefix is held constant

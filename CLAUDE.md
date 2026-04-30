@@ -69,13 +69,27 @@ its own deps and tooling. Examples that ship to npm pin the SDK by
 semver range (`^0.1.x`); private/dev-only examples (currently just
 `dspy`) use `file:../../client-sdk/typescript`.
 
-**Agents do _not_ depend on the SDK package.** They use
-`@nats-io/transport-node` and `@nats-io/services` directly because they
-implement the server side of the protocol — the SDK is for callers.
-Don't propose adding `@synadia-ai/agents` to an agent's `package.json`
-just because it has a useful helper; either inline the equivalent logic
-(see `agents/pi/extensions/nats-channel.ts` and
-`agents/claude-code/server.ts` for prior art) or copy the helper.
+**Agents _should_ reuse the SDK package where it helps.** The SDK
+(primarily the TS one) has accumulated meaningful shared logic —
+framing, validation, helpers — and the direction of travel is an SDK
+that covers **both client and agent sides** of the protocol. If an
+agent harness needs functionality the SDK already provides, prefer
+adding `@synadia-ai/agents` to its `package.json` and importing from
+there over inlining or copy-pasting.
+
+This is a reversal of the prior rule that agents must stay on raw
+`@nats-io/*`. That rule no longer applies — duplicated hand-written
+code in the agent harnesses is now technical debt, not a deliberate
+boundary.
+
+Caveat: this is a forward-looking rule, not a retroactive sweep. The
+existing agents (`agents/pi/extensions/nats-channel.ts`,
+`agents/claude-code/server.ts`, `agents/openclaw/`) still use
+`@nats-io/transport-node` and `@nats-io/services` directly. Migrating
+them is opportunistic — do it when you're already in the file for
+another reason, or when the duplication actively bites. Don't open a
+standalone "convert agent X to the SDK" PR without checking with the
+user first.
 
 ## Protocol vs package versions — don't read skew
 

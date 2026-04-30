@@ -122,6 +122,53 @@ def test_split_urls_comma_separated(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert opts["servers"] == ["nats://a:4222", "nats://b:4222", "nats://c:4222"]
 
 
+def test_split_urls_defaults_port_for_bare_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _point_env_at(tmp_path, monkeypatch)
+    _write_context(base, "bare", {"url": "nats://nats.example.com"})
+    opts = load_context_options("bare")
+    assert opts["servers"] == ["nats://nats.example.com:4222"]
+
+
+def test_split_urls_defaults_port_for_ngs_style_tls_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: `nats context add` writes `tls://connect.ngs.global` (no port).
+
+    Without port-defaulting, nats-py's list path leaves ``Srv.uri.port``
+    as ``None`` and the asyncio TCP connect lands on port 0 →
+    ``EADDRNOTAVAIL``.
+    """
+    base = _point_env_at(tmp_path, monkeypatch)
+    _write_context(base, "ngs", {"url": "tls://connect.ngs.global"})
+    opts = load_context_options("ngs")
+    assert opts["servers"] == ["tls://connect.ngs.global:4222"]
+
+
+def test_split_urls_mixed_port_and_bare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit ports survive untouched; bare hosts get :4222 appended."""
+    base = _point_env_at(tmp_path, monkeypatch)
+    _write_context(base, "mixed", {"url": "nats://a:5222,nats://b,tls://c,tls://d:7777"})
+    opts = load_context_options("mixed")
+    assert opts["servers"] == [
+        "nats://a:5222",
+        "nats://b:4222",
+        "tls://c:4222",
+        "tls://d:7777",
+    ]
+
+
+def test_split_urls_passes_ws_and_wss_through_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ws://`` / ``wss://`` mirror nats-py's carve-out at client.py:1359."""
+    base = _point_env_at(tmp_path, monkeypatch)
+    _write_context(base, "ws", {"url": "ws://host,wss://host"})
+    opts = load_context_options("ws")
+    assert opts["servers"] == ["ws://host", "wss://host"]
+
+
 def test_field_mapping_full_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``creds`` supersedes user/pass/token; inbox_prefix survives."""
     base = _point_env_at(tmp_path, monkeypatch)
@@ -404,3 +451,34 @@ def test_parse_url_ws_and_wss_schemes() -> None:
     # bare ws/wss without userinfo
     ws_bare = parse_nats_url("ws://host:9222")
     assert ws_bare == {"servers": ["ws://host:9222"]}
+
+
+def test_parse_url_defaults_port_for_bare_nats_host() -> None:
+    opts = parse_nats_url("nats://host")
+    assert opts == {"servers": ["nats://host:4222"]}
+
+
+def test_parse_url_defaults_port_for_bare_tls_host_with_token() -> None:
+    """Port defaulted, userinfo stripped onto kwargs, scheme preserved."""
+    opts = parse_nats_url("tls://tok@host")
+    assert opts == {"servers": ["tls://host:4222"], "token": "tok"}
+
+
+def test_parse_url_defaults_port_for_bare_ipv6_host() -> None:
+    """IPv6 brackets are preserved alongside the default port."""
+    opts = parse_nats_url("nats://[::1]")
+    assert opts == {"servers": ["nats://[::1]:4222"]}
+
+
+def test_parse_url_defaults_port_and_scheme_for_bare_host() -> None:
+    """Schemeless + portless: both defaults applied."""
+    opts = parse_nats_url("host")
+    assert opts == {"servers": ["nats://host:4222"]}
+
+
+def test_parse_url_does_not_default_port_for_ws_scheme() -> None:
+    """``ws://`` / ``wss://`` carve-out applies to parse_nats_url too."""
+    opts = parse_nats_url("ws://host")
+    assert opts == {"servers": ["ws://host"]}
+    opts_wss = parse_nats_url("wss://host")
+    assert opts_wss == {"servers": ["wss://host"]}
