@@ -1,0 +1,73 @@
+name: CI — agent-sdk/python
+
+on:
+  push:
+    branches: [main]
+    # The agent-sdk's tests resolve `synadia-ai-agents` to the local
+    # client-sdk checkout via `[tool.uv.sources]` — a client-sdk change
+    # can break agent-sdk CI, so the path filter spans both subtrees
+    # and any of the three relevant workflow files.
+    paths:
+      - "agent-sdk/python/**"
+      - "client-sdk/python/**"
+      - ".github/workflows/client-sdk-python-agent-service.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "agent-sdk/python/**"
+      - "client-sdk/python/**"
+      - ".github/workflows/client-sdk-python-agent-service.yml"
+
+concurrency:
+  group: ci-py-agent-service-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: agent-sdk/python
+
+jobs:
+  test:
+    name: Test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      NATS_SERVER_VERSION: "2.12.7"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nats-server
+        # Override the default working-directory so the tarball extracts into
+        # the runner's auto-cleaned temp area instead of leaving the unpacked
+        # `nats-server-v*-linux-amd64/` parent directory in `agent-sdk/python/`
+        # after the binary is `mv`'d out. (The default at job level is
+        # `agent-sdk/python`; without this override, every CI run dropped a
+        # stray dir there — cosmetic, but caught by the reviewer bot.)
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${NATS_SERVER_VERSION}/nats-server-v${NATS_SERVER_VERSION}-linux-amd64.tar.gz" | tar xz
+          sudo mv "nats-server-v${NATS_SERVER_VERSION}-linux-amd64/nats-server" /usr/local/bin/
+          nats-server --version
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "agent-sdk/python/uv.lock"
+          python-version: ${{ matrix.python-version }}
+
+      - run: uv sync --all-extras
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src tests examples
+      - run: uv run pytest -v
+
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-py${{ matrix.python-version }}
+          path: agent-sdk/python/tests/_evidence/
+          retention-days: 7

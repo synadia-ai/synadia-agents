@@ -27,7 +27,6 @@ import sys
 from typing import TYPE_CHECKING
 
 import nats
-
 from synadia_ai.agents import NatsContextError, load_context_options, parse_nats_url
 
 if TYPE_CHECKING:

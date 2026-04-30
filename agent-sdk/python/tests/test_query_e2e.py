@@ -21,16 +21,15 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
-
 from synadia_ai.agents import (
     Agents,
-    AgentService,
     Envelope,
-    PromptStream,
     Query,
     QueryTimeout,
     ResponseChunk,
 )
+
+from synadia_ai.agent_service import AgentService, PromptStream
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient

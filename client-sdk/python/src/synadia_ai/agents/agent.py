@@ -5,7 +5,8 @@ Wraps a parsed :class:`~synadia_ai.agents.discovery.AgentInfo` with the
 SDK's ``Agent`` class (PR #7): every field flat / read-only, ``prompt()``
 is the one method that actually does I/O.
 
-The server-side counterpart is :class:`~synadia_ai.agents.service.AgentService`.
+The server-side counterpart (``AgentService``) ships in the sibling
+distribution :mod:`synadia_ai.agent_service`.
 """
 
 from __future__ import annotations

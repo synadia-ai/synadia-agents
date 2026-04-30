@@ -8,6 +8,16 @@ SDKs and for reviewers auditing this one. The Python SDK currently ships
 for the verb-first-shape and `status`-endpoint additions waiting on the
 spec to catch up.
 
+> **Note.** As of `synadia-ai-agents@0.5.0` the agent-host surface
+> (`AgentService`, `PromptStream`, `PromptHandler`, the heartbeat
+> publisher) ships in the sibling distribution
+> [`synadia-ai-agent-service`](../../../agent-sdk/python/) (import path
+> `synadia_ai.agent_service`). The host-side rows in the tables below
+> still describe real, spec-compliant behavior — they just import from
+> the agent-sdk now. The shared wire primitives (`Envelope`,
+> `HeartbeatPayload`, `AgentSubject`, error classes, discovery
+> constants) stay in this distribution.
+
 ## Discovery (§4)
 
 | SDK                                      | Wire behaviour                                                                         | Spec ref   |

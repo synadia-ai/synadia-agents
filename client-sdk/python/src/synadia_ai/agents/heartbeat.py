@@ -1,14 +1,18 @@
-"""Heartbeat per protocol §8: payload schema + publisher loop + subscriber tracker.
+"""Heartbeat per protocol §8: payload schema + subscriber tracker.
 
 Tracker storage is keyed on ``payload.instance_id`` (§8.3) — NOT on the
 heartbeat subject — so multiple instances of the same logical agent
 (spec §3.3) stay distinguishable. Mirrors the TS SDK's
 ``heartbeat/tracker.ts`` (PR #7).
+
+The publisher half (``build_heartbeat_payload``, ``run_publisher``,
+``publish_one``) lives in the sibling package
+:mod:`synadia_ai.agent_service` — agent harnesses pull it from there.
+This module retains only the shapes and tracker that *callers* need.
 """
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,8 +25,6 @@ from ._logging import get_logger
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
-
-    from .subjects import AgentSubject
 
 log = get_logger(__name__)
 
@@ -82,60 +84,6 @@ HeartbeatListener = Callable[[HeartbeatPayload], None]
 def now_iso() -> str:
     """UTC ISO 8601 with seconds precision and ``Z`` suffix."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def build_heartbeat_payload(
-    subject: AgentSubject,
-    interval_s: int,
-    instance_id: str,
-) -> HeartbeatPayload:
-    """Construct a §8.3 heartbeat payload for ``subject``.
-
-    Pure helper shared between the heartbeat publisher and the v0.3
-    ``status`` request/response endpoint — both emit the same payload
-    shape, and richer agent metadata added in future PRs lands here in
-    one place.
-    """
-    return HeartbeatPayload(
-        agent=subject.agent,
-        owner=subject.owner,
-        instance_id=instance_id,
-        ts=now_iso(),
-        interval_s=interval_s,
-    )
-
-
-async def publish_one(
-    nc: NATSClient,
-    subject: AgentSubject,
-    interval_s: int,
-    instance_id: str,
-) -> None:
-    """Publish a single heartbeat frame to the agent's heartbeat subject."""
-    payload = build_heartbeat_payload(subject, interval_s, instance_id)
-    data = payload.model_dump_json().encode("utf-8")
-    await nc.publish(subject.heartbeat, data)
-
-
-async def run_publisher(
-    nc: NATSClient,
-    subject: AgentSubject,
-    interval_s: int,
-    instance_id: str,
-    stop: asyncio.Event,
-) -> None:
-    """Periodically publish heartbeats until `stop` is set."""
-    log.debug("heartbeat publisher starting for %s (interval=%ss)", subject.inbox, interval_s)
-    # Emit one heartbeat immediately so callers that subscribe-then-discover
-    # observe liveness without waiting a full interval (§8.5).
-    await publish_one(nc, subject, interval_s, instance_id)
-    while not stop.is_set():
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=interval_s)
-        if stop.is_set():
-            break
-        await publish_one(nc, subject, interval_s, instance_id)
-    log.debug("heartbeat publisher stopped for %s", subject.inbox)
 
 
 @dataclass(slots=True)
@@ -274,8 +222,5 @@ __all__ = [
     "HeartbeatPayload",
     "HeartbeatTracker",
     "Liveness",
-    "build_heartbeat_payload",
     "now_iso",
-    "publish_one",
-    "run_publisher",
 ]

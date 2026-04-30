@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# uv / virtualenv
+.venv/
+.python-version.local
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Test evidence (per-test artifacts; not committed)
+tests/_evidence/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

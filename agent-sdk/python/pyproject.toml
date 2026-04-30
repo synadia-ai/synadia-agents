@@ -1,7 +1,7 @@
 [project]
-name = "synadia-ai-agents"
-version = "0.5.0"
-description = "Python client SDK for the NATS Agent Protocol — discover and prompt spec-compliant agents over NATS"
+name = "synadia-ai-agent-service"
+version = "0.1.0"
+description = "Python agent-host SDK for the NATS Agent Protocol — register and serve spec-compliant agents over NATS"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
@@ -23,19 +23,22 @@ classifiers = [
 dependencies = [
     "nats-py>=2.7",
     "pydantic>=2.5",
-]
-
-[project.optional-dependencies]
-examples = [
-    "rich>=13",
+    "synadia-ai-agents>=0.5",
 ]
 
 [project.urls]
-Homepage = "https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/python"
+Homepage = "https://github.com/synadia-ai/synadia-agents/tree/main/agent-sdk/python"
 Repository = "https://github.com/synadia-ai/synadia-agents"
-Documentation = "https://github.com/synadia-ai/synadia-agents/blob/main/client-sdk/python/docs/protocol-mapping.md"
-Changelog = "https://github.com/synadia-ai/synadia-agents/blob/main/client-sdk/python/CHANGELOG.md"
+Changelog = "https://github.com/synadia-ai/synadia-agents/blob/main/agent-sdk/python/CHANGELOG.md"
 Issues = "https://github.com/synadia-ai/synadia-agents/issues"
+
+[tool.uv.sources]
+# Resolve `synadia-ai-agents` to the local sibling checkout during
+# `uv sync`. This affects monorepo developers only — it is dev-time
+# config and is NOT persisted into the built wheel's METADATA, so an
+# external user installing `synadia-ai-agent-service` from PyPI gets
+# the declared dep (`synadia-ai-agents>=0.5`) from PyPI as normal.
+synadia-ai-agents = { path = "../../client-sdk/python", editable = true }
 
 [dependency-groups]
 dev = [
@@ -43,12 +46,6 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
-    # `rich` is an examples-extra runtime dep, but `tests/test_chat_commands.py`
-    # imports the chat parser out of `examples/06-chat.py`, which top-level
-    # imports rich and `sys.exit(3)`s on ImportError. Including rich in the
-    # default dev set means `uv sync` (no extras) gets a clean `pytest` run
-    # instead of 16 ERROR rows.
-    "rich>=13",
 ]
 
 [build-system]
@@ -66,7 +63,7 @@ src = ["src", "tests", "examples"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "PL", "RUF"]
 ignore = [
-    "PLR0913", # too many arguments — Agent/Client constructors are config objects
+    "PLR0913", # too many arguments — AgentService constructor is a config object
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -80,7 +77,7 @@ python_version = "3.11"
 mypy_path = "src"
 namespace_packages = true
 explicit_package_bases = true
-packages = ["synadia_ai.agents"]
+packages = ["synadia_ai.agent_service"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]

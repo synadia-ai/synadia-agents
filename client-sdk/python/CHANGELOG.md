@@ -8,8 +8,49 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-30
+
+### Removed
+
+- **`AgentService`, `PromptStream`, `PromptHandler` — extracted to a
+  separate distribution.** The agent-host surface now lives in
+  `synadia-ai-agent-service` (PyPI; import path
+  `synadia_ai.agent_service`). Callers that only consume agents no
+  longer pull host machinery; agent harness authors (Hermes,
+  claude-code, openclaw, pi, …) take a focused dependency. The shared
+  primitives (`Envelope`, `Attachment`, `HeartbeatPayload`,
+  `AgentSubject`, error classes, discovery constants,
+  `load_context_options`, `parse_nats_url`, …) stay here and are
+  imported from `synadia_ai.agents` by the agent-sdk. Migration:
+
+  ```diff
+  - from synadia_ai.agents import AgentService, PromptStream, PromptHandler
+  + from synadia_ai.agent_service import AgentService, PromptStream, PromptHandler
+  + # Envelope / Attachment / Chunk types continue to import from synadia_ai.agents.
+  ```
+- **`DEFAULT_MAX_PAYLOAD`, `DEFAULT_KEEPALIVE_INTERVAL_S`,
+  `DEFAULT_ATTACHMENTS_OK`** — the three agent-side defaults move with
+  `AgentService` to `synadia_ai.agent_service`.
+- **Heartbeat publisher helpers** — `build_heartbeat_payload`,
+  `run_publisher`, `publish_one` move to
+  `synadia_ai.agent_service.heartbeat`. `HeartbeatPayload`,
+  `HeartbeatTracker`, `Liveness`, `HeartbeatListener`,
+  `HEARTBEAT_SUBJECT`, `DEFAULT_LIVENESS_SLACK`, and `now_iso` stay
+  here — both sides need the shapes and the tracker is caller-side.
+- **`examples/_reference_agent.py`** moves to
+  `agent-sdk/python/examples/_reference_agent.py`. The numbered
+  client-side demos (`01-discover.py` … `06-chat.py`) and
+  `_connect_cli.py` stay here unchanged.
+- **`scripts/demo_echo.py`** (the one-shot dev-diagnostic echo agent
+  used for `nats` CLI poking) moves to
+  `agent-sdk/python/scripts/demo_echo.py` — same destination dist
+  as `_reference_agent.py`, since it constructs an `AgentService`.
+  The client-side `scripts/smoke_ping.py` stays here.
+
 ### Changed
 
+- **Package description narrowed** to "Python client SDK …" since the
+  host surface now ships separately. No code change.
 - Caller-side §5.4 validation now considers **both** the agent's
   advertised `max_payload` *and* the caller's own
   `nc.max_payload` (the broker holding the caller's connection).

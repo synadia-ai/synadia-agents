@@ -1,10 +1,11 @@
 """Python counterpart to the TS SDK's ``_run-reference-agent.ts``.
 
-Run this in one terminal, point the numbered example scripts at it from
-another. The agent simply echoes the received prompt back (prefixed) and
-optionally saves any inbound attachments to a local directory. Under v0.3
-the subject IS the session — this agent serves whichever session the
-caller specifies via ``--session-name``.
+Run this in one terminal, point the numbered example scripts in
+``client-sdk/python/examples/`` at it from another. The agent simply
+echoes the received prompt back (prefixed) and optionally saves any
+inbound attachments to a local directory. Under v0.3 the subject IS
+the session — this agent serves whichever session the caller specifies
+via ``--session-name``.
 
 Usage::
 
@@ -42,10 +43,12 @@ from types import FrameType
 # `python examples/_reference_agent.py` or `python -m examples._reference_agent`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from examples._connect_cli import add_connection_flags, connect_from_cli
-from synadia_ai.agents import AgentService, Envelope, PromptStream
+from synadia_ai.agents import Envelope
 
-log = logging.getLogger("synadia_ai.agents.examples.reference")
+from examples._connect_cli import add_connection_flags, connect_from_cli
+from synadia_ai.agent_service import AgentService, PromptStream
+
+log = logging.getLogger("synadia_ai.agent_service.examples.reference")
 
 DEFAULT_SAVE_DIR = "/tmp/synadia-ai-agents-ref/attachments"
 

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from synadia_ai.agents.service import AgentService
+from synadia_ai.agent_service import AgentService
 
 
 def _make_service(
@@ -45,7 +45,7 @@ class TestEffectiveMaxPayload:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         svc = _make_service(max_payload="16MB", server_max_payload=8 * 1024 * 1024)
-        with caplog.at_level(logging.WARNING, logger="synadia_ai.agents.service"):
+        with caplog.at_level(logging.WARNING, logger="synadia_ai.agent_service.service"):
             advertised = svc._effective_max_payload()
         assert advertised == "8MB"
         assert any("clamping advertised value to 8MB" in rec.message for rec in caplog.records)

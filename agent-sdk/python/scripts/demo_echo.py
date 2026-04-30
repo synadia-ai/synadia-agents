@@ -23,8 +23,9 @@ import signal
 from types import FrameType
 
 import nats
+from synadia_ai.agents import Envelope
 
-from synadia_ai.agents import AgentService, Envelope, PromptStream
+from synadia_ai.agent_service import AgentService, PromptStream
 
 
 async def echo_handler(envelope: Envelope, stream: PromptStream) -> None:
