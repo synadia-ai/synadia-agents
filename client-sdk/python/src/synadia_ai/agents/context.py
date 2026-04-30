@@ -42,6 +42,20 @@ with an actionable message: ``nkey``, TLS triple (``cert`` / ``key`` /
 Ignored (present in JSON but irrelevant to the SDK): ``jetstream_*``,
 ``socks_proxy``, ``color_scheme``, ``windows_*``, ``user_seed`` (only
 meaningful with ``nkey``), ``tls_first``.
+
+Both helpers normalise each server URL by defaulting a missing port to
+``4222`` for ``nats://`` / ``tls://`` schemes (``ws://`` / ``wss://``
+left alone, mirroring ``nats-py``'s own carve-out). This works around
+an asymmetric ``nats-py`` URL-parsing bug: in
+``nats/aio/client.py::_setup_server_pool``, the single-string path
+defaults missing ports via ``_parse_server_uri``, but the list path
+(``servers=[...]``) just calls ``urlparse`` per entry and leaves
+``Srv(uri).uri.port`` as ``None``, so the asyncio TCP connect lands on
+port 0 and the kernel rejects with ``EADDRNOTAVAIL``. The ``nats``
+CLI papers over the missing port internally, so context files written
+by ``nats context add`` routinely contain entries like
+``tls://connect.ngs.global``; without this defaulting, those would
+silently fail at connect time with a confusing kernel error.
 """
 
 from __future__ import annotations
@@ -226,7 +240,37 @@ def _resolve_current_context_name() -> str:
 
 def _split_urls(url: str) -> list[str]:
     """Split a context's ``url`` field into individual server URLs."""
-    return [part.strip() for part in url.split(",") if part.strip()]
+    return [_ensure_default_port(part.strip()) for part in url.split(",") if part.strip()]
+
+
+def _ensure_default_port(server: str) -> str:
+    """Append ``:4222`` to a server URL that's missing a port (nats/tls only).
+
+    Works around the ``nats-py`` list-path bug documented in the module
+    docstring. Returns the input unchanged when:
+
+    * the URL already declares a port,
+    * the scheme is ``ws://`` / ``wss://`` (matches nats-py's carve-out
+      at ``client.py:1359`` — WebSocket transports use HTTP-style scheme
+      defaults that nats-py does not enforce), or
+    * the scheme is unknown (let validation surface elsewhere).
+
+    Userinfo and IPv6 brackets are preserved by appending the suffix to
+    the original string rather than reconstructing from ``urlparse``
+    parts.
+    """
+    if not server:
+        return server
+    with_scheme = server if "://" in server else f"nats://{server}"
+    try:
+        parsed = urlparse(with_scheme)
+    except ValueError:
+        return server
+    if parsed.port is not None:
+        return server
+    if parsed.scheme not in ("nats", "tls"):
+        return server
+    return f"{server}:{_DEFAULT_NATS_PORT}"
 
 
 def _expand_user(path: str) -> str:
@@ -244,6 +288,8 @@ def _expand_user(path: str) -> str:
 
 
 _SUPPORTED_URL_SCHEMES = ("nats", "tls", "ws", "wss")
+
+_DEFAULT_NATS_PORT = 4222
 
 
 def parse_nats_url(url: str) -> dict[str, Any]:
@@ -326,7 +372,12 @@ def _parse_single_nats_url(part: str, *, original: str) -> dict[str, Any]:
     # need them back to disambiguate `host:port`.
     host = parsed.hostname
     host_token = f"[{host}]" if ":" in host else host
-    netloc = f"{host_token}:{parsed.port}" if parsed.port is not None else host_token
+    if parsed.port is not None:
+        netloc = f"{host_token}:{parsed.port}"
+    elif parsed.scheme in ("nats", "tls"):
+        netloc = f"{host_token}:{_DEFAULT_NATS_PORT}"
+    else:
+        netloc = host_token
     server = f"{parsed.scheme}://{netloc}"
 
     out: dict[str, Any] = {"server": server}
