@@ -21,6 +21,7 @@ import {
   encodeHeartbeatPayload,
   formatHumanBytes,
   parseHumanBytes,
+  splitResponseText,
 } from "@synadia-ai/agents";
 import {
   ACK_KEEPALIVE_MS,
@@ -316,8 +317,20 @@ function buildPromptHandler(
       deliver: async (payload) => {
         const text = payload.text ?? "";
         if (!text) return;
-        // §6.3: each response chunk is a typed JSON object.
-        nc.publish(reply, encodeChunk({ type: "response", text }));
+        // §6.3: each response chunk is a typed JSON object. OpenClaw's
+        // streaming usually delivers small rendered blocks, but guard
+        // against an oversize block reaching the broker by encoding
+        // first, fast-pathing if it fits, and falling back to the SDK's
+        // UTF-8-safe splitter if not. Mirrors pi/claude-code so all
+        // three harnesses behave the same on long deliveries.
+        const bytes = encodeChunk({ type: "response", text });
+        if (bytes.byteLength <= maxPayloadBytes) {
+          nc.publish(reply, bytes);
+        } else {
+          for (const slice of splitResponseText(text, maxPayloadBytes)) {
+            nc.publish(reply, encodeChunk({ type: "response", text: slice }));
+          }
+        }
       },
       onRecordError: (err) => {
         ctx.log?.error?.(`nats: session record error: ${String(err)}`);

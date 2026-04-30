@@ -49,8 +49,10 @@ export interface NatsContextResolved {
  *
  * Synchronous I/O matches the existing call shape in `accounts.ts`.
  * The path-traversal guard mirrors what the SDK's `loadContextOptions`
- * applies — kept here so a misconfigured `$NATS_CONTEXT` fails fast
- * before we even hit the filesystem.
+ * applies — `$NATS_CONTEXT` is a deployer-set env var, so the threat
+ * model is "operator typo / shell mishap" rather than malicious input,
+ * but a clear error beats reading a surprise `.json` file from
+ * outside `~/.config/nats/context/` (e.g. somewhere under `/etc`).
  */
 export function loadNatsContextFromFile(name: string): NatsContextResolved {
   if (

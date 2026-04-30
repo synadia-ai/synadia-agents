@@ -82,6 +82,17 @@ openclaw gateway restart
 
 > **Migrating from v0.1:** the old `org` field has been renamed `owner` (§3.2 terminology). The old name is still accepted as an alias with a deprecation warning in logs.
 
+> **Auth — limitations of the openclaw adapter.** Only `.creds` files
+> (the `credentials` field) are honoured for NATS auth today. If you
+> point a `nats context add`-style context file at openclaw via the
+> `context` field or `NATS_CONTEXT`, openclaw's adapter currently
+> reads only `url` / `token` / `user` / `password` / `creds` — `nkey`,
+> `user_jwt` / `user_seed`, and the TLS triple `cert` / `key` / `ca`
+> are silently dropped. For NGS / decentralised-auth deployments, use a
+> `.creds` file (the SDK's full-context loader supports the rest, but
+> openclaw consumes only the narrow `{url, credentials}` shape — see
+> `src/nats/context-loader.ts`).
+
 ### Environment variables (Docker / containers)
 
 All fields can be overridden via env vars:
