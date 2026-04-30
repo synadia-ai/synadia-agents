@@ -12,7 +12,7 @@ When OpenClaw starts the channel:
 
 1. Connects to NATS using the configured URL and optional credentials.
 2. Registers a NATS micro service named `agents` with spec metadata (`agent`, `owner`, `session`, `protocol_version`).
-3. Adds a `prompt` endpoint at `agents.prompt.oc.<owner>.<agentName>` (verb-first §2 v0.3) advertising `max_payload: 1MB` and `attachments_ok: true`.
+3. Adds a `prompt` endpoint at `agents.prompt.oc.<owner>.<agentName>` (verb-first §2 v0.3) advertising the server-negotiated `max_payload` (read from `nc.info.max_payload` at connect, formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar — `1MB` against a default `nats-server`, more if the operator bumped `--max_payload`) and `attachments_ok: true`.
 4. Adds a `status` endpoint at `agents.status.oc.<owner>.<agentName>` (§8.7 (v0.3)) that replies with the same payload shape as a heartbeat.
 5. Publishes heartbeats on `agents.hb.oc.<owner>.<agentName>` (verb is the abbreviation `hb`, §8.1 v0.3) every 30 s.
 5. On each inbound prompt: decodes any attached files to `~/.openclaw/attachments/<agentName>/<uuid>/<filename>`, prepends their absolute paths to the prompt text, emits a `status: ack` chunk, dispatches the augmented prompt into OpenClaw's direct-DM pipeline, and streams each delivered block back as a typed `{type:"response",data}` chunk, terminating with the spec-mandated empty-body no-headers terminator.
@@ -191,7 +191,7 @@ Caller-side constraints (rejected with `400` if violated):
 
 - `content` must be strict RFC 4648 §4 base64 - standard alphabet, padded, no URL-safe, no whitespace.
 - `filename` must be a plain basename. Path separators (`/`, `\`), `..`, absolute paths, and NUL bytes are rejected rather than silently flattened.
-- Full encoded envelope must fit within `max_payload` (1 MB).
+- Full encoded envelope must fit within the advertised `max_payload` — the server-negotiated limit read at connect time. `1 MB` against a default `nats-server`; matches whatever `nc.info.max_payload` reports.
 
 Spec §5.5 reserves a future `attachments` endpoint at `agents.attachments.oc.<owner>.<agentName>` (v0.3 verb-first) for chunked large-file upload; that lands in a future protocol revision and will coexist with inline attachments.
 

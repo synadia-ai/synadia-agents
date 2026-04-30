@@ -39,6 +39,31 @@ def parse_human_bytes(value: str) -> int:
     return int(number) * multiplier
 
 
+# Largest unit first so a server-reported ``8388608`` formats back to ``"8MB"``,
+# not ``"8192KB"``.
+_FORMAT_UNITS: tuple[tuple[str, int], ...] = (
+    ("GB", 1024**3),
+    ("MB", 1024**2),
+    ("KB", 1024),
+)
+
+
+def format_human_bytes(byte_count: int) -> str:
+    """Format an integer byte count back into the §2.1 ``\\d+(B|KB|MB|GB)`` grammar.
+
+    Picks the largest unit that divides ``byte_count`` evenly so a
+    server-reported ``8 * 1024 * 1024`` round-trips cleanly to ``"8MB"``,
+    not ``"8192KB"``. Used by :class:`AgentService` to format a clamped
+    server-derived limit back into the spec's metadata grammar.
+    """
+    if byte_count < 0:
+        raise InvalidSizeError(str(byte_count), "byte count must be non-negative")
+    for unit, multiplier in _FORMAT_UNITS:
+        if byte_count >= multiplier and byte_count % multiplier == 0:
+            return f"{byte_count // multiplier}{unit}"
+    return f"{byte_count}B"
+
+
 def utf8_byte_length(text: str) -> int:
     """UTF-8 byte length of a Python string — pre-publish size check helper."""
     return len(text.encode("utf-8"))

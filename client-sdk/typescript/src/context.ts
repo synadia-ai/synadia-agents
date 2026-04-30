@@ -118,7 +118,7 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
  * - `tls://...`                      → same shapes, scheme preserved.
  *
  * Comma-separated multi-server URLs (`nats://a:4222,nats://b:4222`) are
- * split and userinfo is only honoured if it appears identically on every
+ * split and userinfo is only honored if it appears identically on every
  * server — otherwise this function throws (mixed credentials in a single
  * URL is almost certainly a bug; use a NATS context file for that case).
  *
@@ -144,14 +144,8 @@ export function parseNatsUrl(url: string): NodeConnectionOptions {
   // across servers can't be expressed in a single ConnectionOptions.
   const first = parsedAll[0]!;
   for (const p of parsedAll.slice(1)) {
-    if (
-      p.token !== first.token ||
-      p.user !== first.user ||
-      p.pass !== first.pass
-    ) {
-      throw new NatsContextError(
-        `NATS URL has mixed credentials across server entries: ${url}`,
-      );
+    if (p.token !== first.token || p.user !== first.user || p.pass !== first.pass) {
+      throw new NatsContextError(`NATS URL has mixed credentials across server entries: ${url}`);
     }
   }
 
@@ -190,9 +184,7 @@ function parseSingleNatsUrl(part: string, original: string): ParsedNatsUrl {
     );
   }
   if (!parsed.host) {
-    throw new NatsContextError(
-      `NATS URL ${JSON.stringify(original)} is missing a host`,
-    );
+    throw new NatsContextError(`NATS URL ${JSON.stringify(original)} is missing a host`);
   }
 
   const out: ParsedNatsUrl = { server: `${parsed.protocol}//${parsed.host}` };

@@ -41,7 +41,7 @@ spec to catch up.
 | `Agent.prompt(text, attachments=[...])`      | Adds `attachments: [{filename, content: <base64>}]` per RFC 4648 §4 (standard alphabet, padded). | §5.1, §5.2 |
 | Plain-text request shorthand                 | NOT emitted by this SDK; always JSON. Decoders accept it per §5.3.                    | §5.3       |
 | Pre-publish `attachments_ok` check           | `AttachmentsNotSupportedError` before any wire I/O.                                   | §5.4       |
-| Pre-publish `max_payload` check              | `PayloadTooLargeError(limit, actual)` before any wire I/O.                            | §5.4       |
+| Pre-publish `max_payload` check              | `PayloadTooLargeError(limit, actual)` before any wire I/O. Effective limit is `min(endpoint.max_payload_bytes, nc.max_payload)` — caller's broker cap binds when smaller. | §5.4       |
 | Empty prompt rejected pre-publish            | `PromptEmptyError` before any wire I/O.                                               | §5.1, §5.3 |
 | Endpoint subject resolution                  | Always `endpoints[].subject` from discovery; never constructed from identity.         | §4.3, §12  |
 | Unknown envelope fields                      | `Envelope` uses `extra="allow"`; decode → encode round-trips lossless per §5.6. A stray inbound `session` from a non-compliant peer rides this bag — under v0.3 the request subject IS the session, so `Envelope.session` is no longer a first-class field. | §5.6 |

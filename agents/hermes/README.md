@@ -86,7 +86,8 @@ Start the gateway and confirm registration:
 
 ```bash
 hermes gateway run
-# expect: "[Nats] Connected — subscribed at agents.prompt.hermes.yourname.demo (heartbeat=30s, max_payload=1MB, attachments_ok=True)"
+# expect: "[Nats] Connected — subscribed at agents.prompt.hermes.yourname.demo (heartbeat=30s, max_payload=<server>, attachments_ok=True)"
+# (max_payload defaults to nc.info.max_payload — 1MB on a default nats-server.)
 ```
 
 ## Configure
@@ -127,7 +128,7 @@ platforms:
       attachments_ok: true
       # Optional tuning (defaults shown):
       # agent: hermes                # 3rd subject token; rarely changed
-      # max_payload: "1MB"           # pattern \d+(B|KB|MB|GB)
+      # max_payload: "1MB"           # pattern \d+(B|KB|MB|GB); see "Config fields"
       # heartbeat_interval_s: 30
 ```
 
@@ -147,7 +148,7 @@ All fields live under `platforms.nats.extra` in `~/.hermes/config.yaml`.
 | `session_name` | yes | — | 5th subject token — fixed per service (multi-session = multi-profile) |
 | `agent` | no | `hermes` | 3rd subject token; rarely changed |
 | `attachments_ok` | no | `true` | Accept inline base64 attachments |
-| `max_payload` | no | `"1MB"` | Per-request limit; must match `\d+(B\|KB\|MB\|GB)` |
+| `max_payload` | no | server-negotiated | Per-request advertised limit; must match `\d+(B\|KB\|MB\|GB)`. Defaults to `nc.info.max_payload` (1 MB on a default `nats-server`). A configured value is honored up to the server limit; if it's larger, the SDK clamps the advertised value down to the server's limit and logs a warning — anything bigger would be rejected by the broker before reaching your handler. Set this only when you want to advertise a *smaller* cap to shed expensive prompts client-side. |
 | `heartbeat_interval_s` | no | `30` | Liveness beacon interval |
 
 ### Environment variables (optional)
@@ -273,7 +274,7 @@ When `hermes gateway run` starts with `platforms.nats.enabled = true`:
 
 1. Connects to NATS using a configured context (or `demo.nats.io` by default via `$NATS_URL`).
 2. Registers a NATS micro service named `agents` with v0.3 spec metadata (`agent`, `owner`, `protocol_version`).
-3. Adds a `prompt` endpoint at `agents.prompt.hermes.<owner>.<session_name>` advertising `max_payload: 1MB` and `attachments_ok: true`, and a `status` endpoint at `agents.status.hermes.<owner>.<session_name>` for on-demand liveness.
+3. Adds a `prompt` endpoint at `agents.prompt.hermes.<owner>.<session_name>` advertising the server-negotiated `max_payload` (read from `nc.info.max_payload` and formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar — `1MB` against a default `nats-server`; a YAML `max_payload` setting overrides this *down* but is clamped if larger than the server allows) and `attachments_ok: true`, and a `status` endpoint at `agents.status.hermes.<owner>.<session_name>` for on-demand liveness.
 4. Publishes heartbeats on `agents.hb.hermes.<owner>.<session_name>` every 30 s.
 5. On each inbound prompt: decodes any attached files to the gateway's attachment staging area, routes images through Hermes's `vision_analyze` tool so the agent actually sees them, emits a `status: ack` chunk, runs the full Hermes agent loop (tools, memory, skills, approvals) to completion, and streams model output back as typed `{type:"response","data":…}` chunks, terminating with the spec-mandated empty-body no-headers terminator.
 6. Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Internal failures return `500`.

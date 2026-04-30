@@ -72,6 +72,33 @@ class TestWithinMaxPayload:
         """No declared capability ⇒ skip local check (agent decides)."""
         assert_within_max_payload(10**9, None)
 
+    def test_connection_limit_alone_enforced(self) -> None:
+        """Endpoint silent, connection caps at 1KB ⇒ 2KB still rejected."""
+        with pytest.raises(PayloadTooLargeError) as excinfo:
+            assert_within_max_payload(2048, None, connection_max_payload=1024)
+        assert excinfo.value.limit == 1024
+        assert excinfo.value.actual == 2048
+
+    def test_smaller_of_endpoint_and_connection_wins(self) -> None:
+        """Agent advertises 8MB but caller's broker caps at 1MB ⇒ cap is 1MB."""
+        eight_mb = 8 * 1024 * 1024
+        one_mb = 1024 * 1024
+        # Within both
+        assert_within_max_payload(512, eight_mb, connection_max_payload=one_mb)
+        # Within agent, over connection
+        with pytest.raises(PayloadTooLargeError) as excinfo:
+            assert_within_max_payload(2 * one_mb, eight_mb, connection_max_payload=one_mb)
+        assert excinfo.value.limit == one_mb
+
+    def test_endpoint_smaller_than_connection_still_caps(self) -> None:
+        """Reverse direction: endpoint is the binding cap."""
+        with pytest.raises(PayloadTooLargeError) as excinfo:
+            assert_within_max_payload(2048, 1024, connection_max_payload=8 * 1024 * 1024)
+        assert excinfo.value.limit == 1024
+
+    def test_both_none_is_permissive(self) -> None:
+        assert_within_max_payload(10**9, None, connection_max_payload=None)
+
 
 def test_all_validation_errors_share_base() -> None:
     """Callers can `except ValidationError` to catch the whole family."""

@@ -49,6 +49,34 @@ export function parseHumanBytes(input: string): number {
   return bytes;
 }
 
+// Largest unit first so a server-reported `8388608` formats back to `"8MB"`,
+// not `"8192KB"`.
+const FORMAT_UNITS: ReadonlyArray<readonly [string, number]> = [
+  ["GB", 1024 ** 3],
+  ["MB", 1024 ** 2],
+  ["KB", 1024],
+];
+
+/**
+ * Format an integer byte count back into the §2.1 `\d+(B|KB|MB|GB)` grammar.
+ *
+ * Picks the largest unit that divides `bytes` evenly so a server-reported
+ * `8 * 1024 * 1024` round-trips cleanly to `"8MB"`, not `"8192KB"`. Used by
+ * {@link AgentService} (`./service.ts`) to format a clamped server-derived
+ * limit back into the spec's metadata grammar.
+ */
+export function formatHumanBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0 || !Number.isInteger(bytes)) {
+    throw new InvalidSizeError(String(bytes), "byte count must be a non-negative integer");
+  }
+  for (const [unit, multiplier] of FORMAT_UNITS) {
+    if (bytes >= multiplier && bytes % multiplier === 0) {
+      return `${bytes / multiplier}${unit}`;
+    }
+  }
+  return `${bytes}B`;
+}
+
 const TEXT_ENCODER = new TextEncoder();
 
 /** UTF-8 byte length of a JavaScript string. */

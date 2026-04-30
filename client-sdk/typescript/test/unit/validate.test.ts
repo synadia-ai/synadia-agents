@@ -53,4 +53,45 @@ describe("assertWithinMaxPayload", () => {
     const noLimit = buildEndpointInfo({ name: "prompt", subject: "agents.ref.alice.echo" });
     expect(() => assertWithinMaxPayload(100_000_000, noLimit)).not.toThrow();
   });
+
+  describe("connection limit", () => {
+    const noLimit = buildEndpointInfo({ name: "prompt", subject: "agents.ref.alice.echo" });
+    const eightMb = buildEndpointInfo({
+      name: "prompt",
+      subject: "agents.ref.alice.echo",
+      metadata: { max_payload: "8MB" },
+    });
+    const oneMb = 1024 * 1024;
+
+    it("uses connection limit alone when endpoint silent", () => {
+      expect(() => assertWithinMaxPayload(2 * oneMb, noLimit, oneMb)).toThrow(PayloadTooLargeError);
+    });
+
+    it("picks the smaller of endpoint and connection (connection is binding)", () => {
+      // Agent advertises 8MB but caller's broker caps at 1MB.
+      expect(() => assertWithinMaxPayload(2 * oneMb, eightMb, oneMb)).toThrow(PayloadTooLargeError);
+      try {
+        assertWithinMaxPayload(2 * oneMb, eightMb, oneMb);
+      } catch (err) {
+        expect((err as PayloadTooLargeError).limit).toBe(oneMb);
+      }
+    });
+
+    it("picks the smaller of endpoint and connection (endpoint is binding)", () => {
+      // Reverse: agent advertises 1KB, caller's broker would allow 8MB.
+      expect(() => assertWithinMaxPayload(2048, endpoint, 8 * 1024 * 1024)).toThrow(
+        PayloadTooLargeError,
+      );
+      try {
+        assertWithinMaxPayload(2048, endpoint, 8 * 1024 * 1024);
+      } catch (err) {
+        expect((err as PayloadTooLargeError).limit).toBe(1024);
+      }
+    });
+
+    it("connection 0 / undefined behaves as 'not declared'", () => {
+      expect(() => assertWithinMaxPayload(100_000_000, noLimit, 0)).not.toThrow();
+      expect(() => assertWithinMaxPayload(100_000_000, noLimit, undefined)).not.toThrow();
+    });
+  });
 });

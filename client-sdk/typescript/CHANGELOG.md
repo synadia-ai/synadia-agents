@@ -13,21 +13,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Caller-side §5.4 validation now considers **both** the agent's
+  advertised `max_payload` _and_ the caller's own
+  `nc.info.max_payload` (the broker holding the caller's
+  connection). The effective cap is the smaller of the two — in
+  multi-cluster / per-account deployments the caller's broker may
+  reject an oversized publish with `MAX_PAYLOAD_VIOLATION` before it
+  ever reaches the agent. `assertWithinMaxPayload(size, endpoint)`
+  gains an optional third `connectionMaxPayload?: number` parameter;
+  `Agent.prompt` passes `this.#nc.info?.max_payload` so callers fail
+  fast when their own connection is the binding constraint. Mirrors
+  the same change on the Python side.
+- `AgentService(maxPayload)` and `ReferenceAgent(maxPayload)` are now
+  clamped down to the connected server's negotiated limit
+  (`nc.info.max_payload`, populated from the NATS `INFO` block) at
+  `start()`. If the override is larger than the server allows, the
+  SDK `console.warn`s and advertises the server's value (formatted via
+  the new `formatHumanBytes` helper exported from `./bytes.js`).
+  Smaller overrides are still honored (use case: shed expensive
+  prompts before they reach the handler). When the server didn't
+  report a value (e.g. an INFO block without `max_payload`), the
+  override stands as configured. Mirrors the same clamp added to the
+  Python `AgentService`. Rationale: advertising larger than the
+  broker accepts only sets up callers for `MAX_PAYLOAD_VIOLATION`
+  rejections at publish time — the broker enforces the real cap, so
+  the metadata should match.
+
 ### Changed (wire-breaking)
 
 - **Wire moves to verb-first subjects (protocol v0.3).** The agent
   subject hierarchy gains a verb token directly after the root so each
   endpoint owns its own positional slot:
 
-  | endpoint  | v0.2 wire                       | v0.3 wire (this release)        |
-  | --------- | ------------------------------- | ------------------------------- |
-  | prompt    | `agents.{a}.{o}.{n}`            | `agents.prompt.{a}.{o}.{n}`     |
-  | heartbeat | `agents.{a}.{o}.{n}.heartbeat`  | `agents.hb.{a}.{o}.{n}` (verb abbreviated; heartbeats dominate per-account subject volume) |
-  | status    | —                               | `agents.status.{a}.{o}.{n}` (new) |
+  | endpoint  | v0.2 wire                      | v0.3 wire (this release)                                                                   |
+  | --------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
+  | prompt    | `agents.{a}.{o}.{n}`           | `agents.prompt.{a}.{o}.{n}`                                                                |
+  | heartbeat | `agents.{a}.{o}.{n}.heartbeat` | `agents.hb.{a}.{o}.{n}` (verb abbreviated; heartbeats dominate per-account subject volume) |
+  | status    | —                              | `agents.status.{a}.{o}.{n}` (new)                                                          |
 
   No back-compat shim — 0.x permits breaking changes per protocol §11.2,
   and silent talk-past between v0.2 and v0.3 callers is worse than a
   hard refusal at discovery time.
+
 - **`metadata.protocol_version` `"0.2"` → `"0.3"`.** Old v0.2 callers
   advertise `"0.2"` and therefore won't match a v0.3 agent's subjects;
   metadata-driven discovery filters make the mismatch a hard refusal.
@@ -55,7 +84,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   emitting chunks (`response.send(...)`) and mid-stream queries
   (`response.ask(prompt, {timeoutMs})`).
 - **`AgentSubject`** — verb-first subject builder. `AgentSubject.new(agent,
-  owner, name)` validates the three identifying tokens and exposes
+owner, name)` validates the three identifying tokens and exposes
   `.prompt` / `.heartbeat` / `.status` getters that build the v0.3
   subjects. Single source of truth across SDK, agent harnesses, and
   examples — the verb-first wire shape lives in exactly one place.

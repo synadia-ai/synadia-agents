@@ -13,13 +13,19 @@
 //
 //   bun test/smoke.mjs
 //
-// Prereq: nats-server on 127.0.0.1:4222.
+// Server: this test always spawns its own private nats-server (via
+// `test/nats-server.conf`, which pins `port: -1` so the kernel picks an
+// ephemeral port and `max_payload: 8MB` so the dynamic max_payload path is
+// exercised). The chosen port is read back from `--ports_file_dir` and the
+// server is killed on exit. Prereq: `nats-server` on PATH.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { connect } from "@nats-io/transport-node";
 import { createInbox } from "@nats-io/nats-core";
 import { Svcm } from "@nats-io/services";
@@ -29,12 +35,13 @@ import {
 	ATTACHMENTS_OK,
 	DEFAULT_SESSION,
 	HEARTBEAT_INTERVAL_S,
-	MAX_PAYLOAD_STR,
+	DEFAULT_MAX_PAYLOAD_STR,
 	PROMPT_QUEUE_GROUP,
 	PROTOCOL_VERSION,
 	SERVICE_NAME,
 	SERVICE_VERSION,
 	buildHeartbeatPayload,
+	formatMaxPayloadString,
 	heartbeatSubject,
 	parseEnvelope,
 	promptSubject,
@@ -67,8 +74,50 @@ function step(name, fn) {
 	};
 }
 
+// ── Spawn a private nats-server on an ephemeral port ──────────────────────
+// Avoids touching whatever the developer has running on 4222 — every smoke
+// run is fully isolated.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PORTS_DIR = mkdtempSync(join(tmpdir(), "nats-oc-smoke-ports-"));
+const NATS_CONF = join(__dirname, "nats-server.conf");
+const spawnedServer = spawn(
+	"nats-server",
+	["-c", NATS_CONF, "--ports_file_dir", PORTS_DIR],
+	{ stdio: "ignore" },
+);
+spawnedServer.on("error", (err) => {
+	console.error(`could not spawn nats-server: ${err.message}`);
+	console.error("install nats-server (https://nats.io) before re-running this smoke");
+	process.exit(2);
+});
+process.on("exit", () => {
+	if (spawnedServer && !spawnedServer.killed) spawnedServer.kill();
+	try {
+		rmSync(PORTS_DIR, { recursive: true, force: true });
+	} catch {}
+});
+
+// `nats-server --ports_file_dir <dir>` writes `<exe>_<pid>.ports` once it
+// finishes binding — poll for it.
+async function readBoundUrl() {
+	const deadline = Date.now() + 5000;
+	while (Date.now() < deadline) {
+		try {
+			const entries = readdirSync(PORTS_DIR).filter((f) => f.endsWith(".ports"));
+			if (entries.length > 0) {
+				const ports = JSON.parse(readFileSync(join(PORTS_DIR, entries[0]), "utf8"));
+				if (Array.isArray(ports.nats) && ports.nats.length > 0) return ports.nats[0];
+			}
+		} catch {}
+		await delay(50);
+	}
+	throw new Error("nats-server never wrote a ports file");
+}
+const SERVER_URL = await readBoundUrl();
+console.log(`  (spawned nats-server at ${SERVER_URL})`);
+
 // ── Observer connection (subscribes BEFORE service registers) ──────────────
-const obs = await connect({ servers: "nats://127.0.0.1:4222" });
+const obs = await connect({ servers: SERVER_URL });
 // v0.3 heartbeat wildcard: `agents.hb.<agent>.<owner>.<name>`.
 const hbSub = obs.subscribe("agents.hb.*.*.*");
 const heartbeats = [];
@@ -81,7 +130,11 @@ const heartbeats = [];
 })();
 
 // ── Gateway connection + minimal service ───────────────────────────────────
-const gw = await connect({ servers: "nats://127.0.0.1:4222" });
+const gw = await connect({ servers: SERVER_URL });
+// Match the gateway: derive the advertised max_payload from `nc.info`.
+const maxPayloadStr = gw.info?.max_payload
+	? formatMaxPayloadString(gw.info.max_payload)
+	: DEFAULT_MAX_PAYLOAD_STR;
 const svc = await new Svcm(gw).add({
 	name: SERVICE_NAME,
 	version: SERVICE_VERSION,
@@ -103,7 +156,7 @@ svc.addEndpoint("prompt", {
 	subject: SUBJECT,
 	queue: PROMPT_QUEUE_GROUP,
 	metadata: {
-		max_payload: MAX_PAYLOAD_STR,
+		max_payload: maxPayloadStr,
 		attachments_ok: ATTACHMENTS_OK ? "true" : "false",
 	},
 	handler: (err, msg) => {
@@ -215,7 +268,10 @@ await step("$SRV.INFO.agents returns spec-shaped metadata + prompt endpoint", as
 	assert.ok(ep, "prompt endpoint missing");
 	assert.equal(ep.subject, SUBJECT);
 	assert.equal(ep.queue_group, "agents", "prompt endpoint must register queue_group=agents (spec §3.3)");
-	assert.equal(ep.metadata?.max_payload, "1MB");
+	// max_payload is server-driven (`nc.info.max_payload`), so just verify it
+	// matches the §2.1 grammar and the value we registered with.
+	assert.match(ep.metadata?.max_payload ?? "", /^\d+(B|KB|MB|GB)$/);
+	assert.equal(ep.metadata?.max_payload, maxPayloadStr);
 	assert.equal(ep.metadata?.attachments_ok, "true");
 })();
 

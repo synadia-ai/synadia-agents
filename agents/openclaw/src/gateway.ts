@@ -11,8 +11,8 @@ import {
   ATTACHMENTS_OK,
   DEFAULT_SESSION,
   HEARTBEAT_INTERVAL_S,
-  MAX_PAYLOAD_BYTES,
-  MAX_PAYLOAD_STR,
+  DEFAULT_MAX_PAYLOAD_BYTES,
+  DEFAULT_MAX_PAYLOAD_STR,
   PROMPT_QUEUE_GROUP,
   PROTOCOL_VERSION,
   SERVICE_NAME,
@@ -21,6 +21,7 @@ import {
   buildHeartbeatPayload,
   connectToNats,
   drainConnection,
+  formatMaxPayloadString,
   heartbeatSubject,
   parseEnvelope,
   promptSubject,
@@ -107,6 +108,15 @@ export async function startNatsGateway(
   setActiveConnection(nc, agentName, owner);
   ctx.setStatus({ state: "running" });
 
+  // Server-negotiated max_payload (§2.1). Reflects this user/account's real
+  // limit, so we use it for endpoint metadata advertisement and §5.4
+  // local enforcement instead of a hard-coded 1MB.
+  const maxPayloadBytes = nc.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES;
+  const maxPayloadStr = nc.info?.max_payload
+    ? formatMaxPayloadString(maxPayloadBytes)
+    : DEFAULT_MAX_PAYLOAD_STR;
+  ctx.log?.info?.(`nats: server max_payload=${maxPayloadStr}`);
+
   // 2. Register the shared `agents` service (spec §3).
   const svc = new Svcm(nc);
   const service = await svc.add({
@@ -131,9 +141,9 @@ export async function startNatsGateway(
   service.addEndpoint("prompt", {
     subject,
     queue: PROMPT_QUEUE_GROUP,
-    handler: buildPromptHandler(ctx, nc, account, cfg, channelRuntime),
+    handler: buildPromptHandler(ctx, nc, account, cfg, channelRuntime, maxPayloadBytes, maxPayloadStr),
     metadata: {
-      max_payload: MAX_PAYLOAD_STR,
+      max_payload: maxPayloadStr,
       attachments_ok: ATTACHMENTS_OK ? "true" : "false",
     },
   });
@@ -215,13 +225,15 @@ function buildPromptHandler(
   account: ResolvedNatsAccount,
   cfg: Parameters<typeof dispatchInboundDirectDmWithRuntime>[0]["cfg"],
   channelRuntime: ChannelGatewayContext<ResolvedNatsAccount>["channelRuntime"],
+  maxPayloadBytes: number,
+  maxPayloadStr: string,
 ): ServiceHandler {
   return (err, msg) => {
     if (err || !msg.reply) return;
 
     // §5.4: enforce max_payload locally.
-    if (msg.data.byteLength > MAX_PAYLOAD_BYTES) {
-      respondWithError(nc, msg, 400, `payload exceeds max_payload (${MAX_PAYLOAD_STR})`);
+    if (msg.data.byteLength > maxPayloadBytes) {
+      respondWithError(nc, msg, 400, `payload exceeds max_payload (${maxPayloadStr})`);
       return;
     }
 

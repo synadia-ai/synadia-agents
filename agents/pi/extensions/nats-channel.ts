@@ -64,9 +64,21 @@ const PROTOCOL_VERSION = "0.3";
 const AGENT_ID = "pi";
 
 // Spec §2.1: endpoint capability metadata advertised on the `prompt` endpoint.
-const MAX_PAYLOAD_STR = "1MB";
-const MAX_PAYLOAD_BYTES = 1024 * 1024; // base-1024, matching NATS server convention
+// The actual values used at runtime come from `nc.info.max_payload` after
+// connect — that's the negotiated limit for this user/account, so it's also
+// what we advertise and enforce on inbound requests. These constants are
+// fallbacks for the (rare) case where `INFO` is unavailable.
+const DEFAULT_MAX_PAYLOAD_STR = "1MB";
+const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024; // base-1024, matching NATS server convention
 const ATTACHMENTS_OK = true;
+
+/** Format a byte count back into the §2.1 `\d+(B|KB|MB|GB)` grammar (base-1024). */
+function formatMaxPayloadString(bytes: number): string {
+	if (bytes >= 1024 ** 3 && bytes % 1024 ** 3 === 0) return `${bytes / 1024 ** 3}GB`;
+	if (bytes >= 1024 ** 2 && bytes % 1024 ** 2 === 0) return `${bytes / 1024 ** 2}MB`;
+	if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024}KB`;
+	return `${bytes}B`;
+}
 
 // Spec §8.2: default 30s cadence.
 const HEARTBEAT_INTERVAL_S = 30;
@@ -486,6 +498,10 @@ export default function (pi: ExtensionAPI) {
 	let piCtx: ExtensionContext | undefined;
 	let contextLabel: string | undefined;
 	let serverUrl: string | undefined;
+	// Filled in after connect from `nc.info?.max_payload`; falls back to the
+	// 1MB defaults if the server INFO block is unavailable.
+	let maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES;
+	let maxPayloadStr = DEFAULT_MAX_PAYLOAD_STR;
 
 	let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 	let ackTimer: ReturnType<typeof setInterval> | undefined;
@@ -597,8 +613,8 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// §5.4 local enforcement.
-		if (msg.data.byteLength > MAX_PAYLOAD_BYTES) {
-			respondWithError(msg, 400, `payload exceeds max_payload (${MAX_PAYLOAD_STR})`);
+		if (msg.data.byteLength > maxPayloadBytes) {
+			respondWithError(msg, 400, `payload exceeds max_payload (${maxPayloadStr})`);
 			return;
 		}
 
@@ -872,6 +888,10 @@ export default function (pi: ExtensionAPI) {
 			const opts = contextToConnectOpts(natsCtx);
 			opts.name = `pi-${owner}`;
 			nc = await connect(opts);
+			if (nc.info?.max_payload) {
+				maxPayloadBytes = nc.info.max_payload;
+				maxPayloadStr = formatMaxPayloadString(maxPayloadBytes);
+			}
 		} catch (e) {
 			ctx.ui.notify(
 				`NATS connection failed (${serverUrl}): ${(e as Error).message}`,
@@ -919,7 +939,7 @@ export default function (pi: ExtensionAPI) {
 				queue: PROMPT_QUEUE_GROUP,
 				handler: handleNatsMessage,
 				metadata: {
-					max_payload: MAX_PAYLOAD_STR,
+					max_payload: maxPayloadStr,
 					attachments_ok: ATTACHMENTS_OK ? "true" : "false",
 				},
 			});

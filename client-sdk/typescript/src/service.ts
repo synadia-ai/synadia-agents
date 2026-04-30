@@ -32,6 +32,7 @@
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";
 
+import { formatHumanBytes, parseHumanBytes } from "./bytes.js";
 import { ProtocolError } from "./errors.js";
 import { newInbox } from "./internal/inbox.js";
 import {
@@ -41,10 +42,7 @@ import {
   STATUS_QUEUE_GROUP,
 } from "./internal/service-name.js";
 import { PROMPT_ENDPOINT_NAME } from "./discovery/endpoint-info.js";
-import {
-  buildHeartbeatPayload,
-  encodeHeartbeatPayload,
-} from "./heartbeat/payload.js";
+import { buildHeartbeatPayload, encodeHeartbeatPayload } from "./heartbeat/payload.js";
 import {
   decodeEnvelope,
   encodeBase64,
@@ -104,7 +102,14 @@ export interface AgentServiceOptions {
   readonly description?: string;
   /** Harness semver (`service.version`). Defaults to `"0.0.1"`. */
   readonly version?: string;
-  /** §2.1 `max_payload`. Defaults to `"1MB"`. */
+  /**
+   * §2.1 `max_payload`. Defaults to `"1MB"`. Advertised verbatim **unless
+   * it exceeds** the connected server's negotiated limit
+   * (`nc.info.max_payload`); in that case `start()` clamps the
+   * advertised value down to the server's limit and `console.warn`s.
+   * Over-advertising would only break callers — the broker rejects
+   * oversized publishes before any handler sees them.
+   */
   readonly maxPayload?: string;
   /** §2.1 `attachments_ok`. Defaults to `true`. */
   readonly attachmentsOk?: boolean;
@@ -179,10 +184,7 @@ export class PromptResponse {
   ): Promise<RequestEnvelope> {
     const promptText = typeof prompt === "string" ? prompt : prompt.prompt;
     const baseAttachments = typeof prompt === "string" ? undefined : prompt.attachments;
-    const merged: RequestAttachment[] = [
-      ...(baseAttachments ?? []),
-      ...(opts.attachments ?? []),
-    ];
+    const merged: RequestAttachment[] = [...(baseAttachments ?? []), ...(opts.attachments ?? [])];
 
     const replySubject = newInbox();
     const sub = this.#nc.subscribe(replySubject, { max: 1 });
@@ -247,10 +249,14 @@ export class AgentService {
   constructor(options: AgentServiceOptions) {
     const heartbeatIntervalS = options.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S;
     if (heartbeatIntervalS <= 0) {
-      throw new Error("AgentService: heartbeatIntervalS must be > 0 (heartbeat is mandatory in v0.3)");
+      throw new Error(
+        "AgentService: heartbeatIntervalS must be > 0 (heartbeat is mandatory in v0.3)",
+      );
     }
     const keepaliveIntervalS =
-      options.keepaliveIntervalS === undefined ? DEFAULT_KEEPALIVE_INTERVAL_S : options.keepaliveIntervalS;
+      options.keepaliveIntervalS === undefined
+        ? DEFAULT_KEEPALIVE_INTERVAL_S
+        : options.keepaliveIntervalS;
     if (keepaliveIntervalS !== null && keepaliveIntervalS <= 0) {
       throw new Error(
         "AgentService: keepaliveIntervalS must be > 0 or null (null disables keep-alive)",
@@ -281,6 +287,30 @@ export class AgentService {
     this.#handler = handler;
   }
 
+  /**
+   * Compute the value to advertise in the prompt endpoint's `max_payload`
+   * metadata, clamping a too-large constructor override down to the
+   * server-negotiated limit. See the §2.1 commentary in {@link start}.
+   */
+  #effectiveMaxPayload(): string {
+    const override = this.#options.maxPayload ?? DEFAULT_MAX_PAYLOAD;
+    const overrideBytes = parseHumanBytes(override);
+    const serverBytes = this.#options.nc.info?.max_payload ?? 0;
+    if (serverBytes <= 0 || overrideBytes <= serverBytes) {
+      return override;
+    }
+    const clamped = formatHumanBytes(serverBytes);
+    // `console.warn` keeps the warning visible without taking an SDK-wide
+    // logger dependency; matches the Python SDK's `log.warning` level.
+    console.warn(
+      `AgentService: maxPayload=${override} (${overrideBytes} bytes) exceeds ` +
+        `server limit ${clamped} (${serverBytes} bytes); clamping advertised ` +
+        `value to ${clamped} — anything larger would be rejected by the ` +
+        `broker before reaching the handler`,
+    );
+    return clamped;
+  }
+
   async start(): Promise<void> {
     if (this.#handler === null) {
       throw new Error("AgentService.start: register a prompt handler via onPrompt() first");
@@ -308,6 +338,16 @@ export class AgentService {
       metadata,
     });
 
+    // §2.1: the broker enforces the *server-negotiated* `max_payload`
+    // (`nc.info.max_payload` from the INFO block). Advertising a larger
+    // value would set callers up for `MAX_PAYLOAD_VIOLATION` rejections
+    // at the broker without any local validation catching it first, so
+    // cap a constructor-supplied override down to the server limit.
+    // Smaller caps are honored (use case: shed expensive prompts before
+    // they reach the handler). When the server didn't report a value
+    // (e.g. an INFO block without `max_payload`), the override stands.
+    const maxPayloadStr = this.#effectiveMaxPayload();
+
     this.#service.addEndpoint(PROMPT_ENDPOINT_NAME, {
       subject: this.#subject.prompt,
       queue: PROMPT_QUEUE_GROUP,
@@ -316,7 +356,7 @@ export class AgentService {
         void this.#dispatchPrompt(msg);
       },
       metadata: {
-        max_payload: this.#options.maxPayload ?? DEFAULT_MAX_PAYLOAD,
+        max_payload: maxPayloadStr,
         attachments_ok: (this.#options.attachmentsOk ?? DEFAULT_ATTACHMENTS_OK) ? "true" : "false",
       },
     });

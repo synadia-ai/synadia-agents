@@ -180,29 +180,18 @@ describe("parseNatsUrl", () => {
 
   it("splits comma-separated multi-server URLs", () => {
     const opts = parseNatsUrl("nats://a:4222,nats://b:4222,nats://c:4222");
-    expect(opts.servers).toEqual([
-      "nats://a:4222",
-      "nats://b:4222",
-      "nats://c:4222",
-    ]);
+    expect(opts.servers).toEqual(["nats://a:4222", "nats://b:4222", "nats://c:4222"]);
     expect(opts.token).toBeUndefined();
   });
 
   it("accepts multi-server URLs when userinfo is identical on every entry", () => {
-    const opts = parseNatsUrl(
-      "nats://tok@a.example.com:4222,nats://tok@b.example.com:4222",
-    );
-    expect(opts.servers).toEqual([
-      "nats://a.example.com:4222",
-      "nats://b.example.com:4222",
-    ]);
+    const opts = parseNatsUrl("nats://tok@a.example.com:4222,nats://tok@b.example.com:4222");
+    expect(opts.servers).toEqual(["nats://a.example.com:4222", "nats://b.example.com:4222"]);
     expect(opts.token).toBe("tok");
   });
 
   it("throws when multi-server URLs have mixed credentials", () => {
-    expect(() =>
-      parseNatsUrl("nats://tok1@a:4222,nats://tok2@b:4222"),
-    ).toThrow(NatsContextError);
+    expect(() => parseNatsUrl("nats://tok1@a:4222,nats://tok2@b:4222")).toThrow(NatsContextError);
   });
 
   it("throws on empty / blank input", () => {
@@ -211,9 +200,7 @@ describe("parseNatsUrl", () => {
   });
 
   it("throws on unsupported scheme", () => {
-    expect(() => parseNatsUrl("http://nats.example.com:4222")).toThrow(
-      NatsContextError,
-    );
+    expect(() => parseNatsUrl("http://nats.example.com:4222")).toThrow(NatsContextError);
   });
 
   it("throws on hostless URL", () => {

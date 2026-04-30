@@ -71,7 +71,7 @@ Same concepts in each language; names adapt to each language's idioms.
 | Track liveness   | Watch an agent's heartbeat subject for up/down state without polling.                       |
 | Ping an agent    | On-demand ping of a specific agent instance.                                                |
 
-SDKs also validate envelopes locally - oversized payloads, unsupported attachments, invalid base64 - against the target agent's advertised `max_payload` and `attachments_ok`, so you catch those errors before a round-trip.
+SDKs also validate envelopes locally - oversized payloads, unsupported attachments, invalid base64 - against the target agent's advertised `max_payload` and `attachments_ok`, so you catch those errors before a round-trip. The size check uses the smaller of the agent's advertised `max_payload` and the caller's own `nc.info.max_payload`, so a caller against a smaller-cap broker (multi-cluster / per-account configs) fails fast instead of waiting for the broker's `MAX_PAYLOAD_VIOLATION`.
 
 <details>
 <summary>Adding a new language SDK</summary>

@@ -30,10 +30,8 @@ import {
   STATUS_QUEUE_GROUP,
 } from "../internal/service-name.js";
 import { PROMPT_ENDPOINT_NAME } from "../discovery/endpoint-info.js";
-import {
-  buildHeartbeatPayload,
-  encodeHeartbeatPayload,
-} from "../heartbeat/payload.js";
+import { buildHeartbeatPayload, encodeHeartbeatPayload } from "../heartbeat/payload.js";
+import { formatHumanBytes, parseHumanBytes } from "../bytes.js";
 import { AgentSubject } from "../subjects.js";
 import { SDK_PROTOCOL_VERSION } from "../version.js";
 
@@ -126,7 +124,10 @@ export class ReferenceAgent {
     });
 
     const attachmentsOk = this.#options.attachmentsOk ?? true;
-    const maxPayload = this.#options.maxPayload ?? DEFAULT_MAX_PAYLOAD;
+    // Same clamp behaviour as `AgentService` — see `src/service.ts`. The
+    // broker enforces `nc.info.max_payload`; advertising more would break
+    // callers without any local validation catching it first.
+    const maxPayload = this.#effectiveMaxPayload();
     const promptHandler = this.#options.promptHandler ?? defaultTerminatorHandler;
 
     this.#service.addEndpoint(PROMPT_ENDPOINT_NAME, {
@@ -186,6 +187,22 @@ export class ReferenceAgent {
       await this.#service.stop();
       this.#service = null;
     }
+  }
+
+  #effectiveMaxPayload(): string {
+    const override = this.#options.maxPayload ?? DEFAULT_MAX_PAYLOAD;
+    const overrideBytes = parseHumanBytes(override);
+    const serverBytes = this.#options.nc.info?.max_payload ?? 0;
+    if (serverBytes <= 0 || overrideBytes <= serverBytes) {
+      return override;
+    }
+    const clamped = formatHumanBytes(serverBytes);
+    console.warn(
+      `ReferenceAgent: maxPayload=${override} (${overrideBytes} bytes) exceeds ` +
+        `server limit ${clamped} (${serverBytes} bytes); clamping advertised ` +
+        `value to ${clamped}`,
+    );
+    return clamped;
   }
 
   #startHeartbeats(): void {

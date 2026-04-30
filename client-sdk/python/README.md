@@ -147,7 +147,7 @@ agents = Agents(nc=nc)
 
 `load_context_options(...)` reads
 `~/.config/nats/context/<name>.json` — URL, creds file, token,
-user/password, inbox prefix are all honoured. See
+user/password, inbox prefix are all honored. See
 [`CLAUDE.md`](CLAUDE.md#connecting-to-nats) for the full field-by-field
 table (including which NATS-context fields are not yet supported and
 fail fast rather than silently).

@@ -86,7 +86,7 @@ Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
        └─── streamed chunks ───────┘
 ```
 
-- **`client-sdk/*`** - produce envelopes, validate locally against agent metadata (`max_payload`, `attachments_ok`), parse streamed chunks.
+- **`client-sdk/*`** - produce envelopes, validate locally against agent metadata (`max_payload`, `attachments_ok`) and the caller's own `nc.info.max_payload` (the smaller of the two binds — the caller's broker rejects oversized publishes before they reach the agent), parse streamed chunks.
 - **`agents/*`** - register the `agents` micro service, drive the underlying AI harness, stream chunks back.
 - **`examples/*`** - demonstrate SDK usage end-to-end against real agents.
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { InvalidSizeError, parseHumanBytes, utf8ByteLength } from "../../src/bytes.js";
+import {
+  formatHumanBytes,
+  InvalidSizeError,
+  parseHumanBytes,
+  utf8ByteLength,
+} from "../../src/bytes.js";
 
 describe("parseHumanBytes", () => {
   it.each([
@@ -40,6 +45,39 @@ describe("parseHumanBytes", () => {
 
   it("rejects values that would overflow safe integer range", () => {
     expect(() => parseHumanBytes(`${Number.MAX_SAFE_INTEGER}GB`)).toThrow(InvalidSizeError);
+  });
+});
+
+describe("formatHumanBytes", () => {
+  it.each([
+    [0, "0B"],
+    [1, "1B"],
+    [512 * 1024, "512KB"],
+    [1024 * 1024, "1MB"],
+    [8 * 1024 * 1024, "8MB"],
+    [4 * 1024 * 1024 * 1024, "4GB"],
+  ])("%d → %s", (input, expected) => {
+    expect(formatHumanBytes(input)).toBe(expected);
+  });
+
+  it("picks the largest clean unit", () => {
+    // 8MB-worth of bytes formats to "8MB", not "8192KB".
+    expect(formatHumanBytes(8 * 1024 * 1024)).toBe("8MB");
+  });
+
+  it("falls back to bytes when no clean unit divides evenly", () => {
+    expect(formatHumanBytes(1500)).toBe("1500B");
+  });
+
+  it.each([0, 1, 512, 1024, 1024 * 1024, 8 * 1024 * 1024])(
+    "round-trips with parseHumanBytes: %d",
+    (n) => {
+      expect(parseHumanBytes(formatHumanBytes(n))).toBe(n);
+    },
+  );
+
+  it.each([-1, 1.5, NaN, Infinity])("rejects %s", (n) => {
+    expect(() => formatHumanBytes(n)).toThrow(InvalidSizeError);
   });
 });
 

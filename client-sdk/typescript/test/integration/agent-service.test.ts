@@ -1,12 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
 import { connect as natsConnect, type Msg } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
-import {
-  AgentService,
-  Agents,
-  decodeBase64,
-  type StreamMessage,
-} from "../../src/index.js";
+import { AgentService, Agents, decodeBase64, type StreamMessage } from "../../src/index.js";
 import { decodeHeartbeatPayload } from "../../src/heartbeat/payload.js";
 
 const natsUrl = inject("natsUrl");
@@ -155,9 +150,7 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     const envelopeBytes = new TextEncoder().encode(
       JSON.stringify({
         prompt: "x",
-        attachments: [
-          { filename: "../../etc/passwd", content: "QUJD" /* "ABC" base64 */ },
-        ],
+        attachments: [{ filename: "../../etc/passwd", content: "QUJD" /* "ABC" base64 */ }],
       }),
     );
     const reply = `_INBOX.agents.svc-test-${Math.random().toString(36).slice(2, 8)}`;
@@ -221,6 +214,51 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect(liveness).not.toBeNull();
     expect(liveness!.isOnline).toBe(true);
     expect(liveness!.intervalS).toBe(1);
+  });
+
+  it("clamps maxPayload down to nc.info.max_payload when over-advertised", async () => {
+    // Test broker is started with the nats-server default 1MB. A constructor
+    // override of 16MB should clamp down to "1MB" with a console.warn rather
+    // than advertising more than the broker would accept (which would only
+    // set up callers for `MAX_PAYLOAD_VIOLATION` rejections at publish).
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      const first = args[0];
+      warnings.push(typeof first === "string" ? first : "");
+    };
+    try {
+      const service = startService({ maxPayload: "16MB" });
+      service.onPrompt(async () => {});
+      await service.start();
+
+      const found = await client.discover({
+        timeoutMs: 1000,
+        filter: { agent: "svc-test", name: service.subject.name },
+      });
+      expect(found).toHaveLength(1);
+      const ep = found[0]!.endpoints.find((e) => e.name === "prompt");
+      expect(ep).toBeDefined();
+      expect(ep!.metadata["max_payload"]).toBe("1MB");
+      expect(warnings.some((w) => w.includes("clamping"))).toBe(true);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it("honours a maxPayload override smaller than the server limit", async () => {
+    const service = startService({ maxPayload: "256KB" });
+    service.onPrompt(async () => {});
+    await service.start();
+
+    const found = await client.discover({
+      timeoutMs: 1000,
+      filter: { agent: "svc-test", name: service.subject.name },
+    });
+    expect(found).toHaveLength(1);
+    const ep = found[0]!.endpoints.find((e) => e.name === "prompt");
+    expect(ep).toBeDefined();
+    expect(ep!.metadata["max_payload"]).toBe("256KB");
   });
 
   it("rejects construction with invalid heartbeat / keepalive intervals", () => {

@@ -12,7 +12,7 @@ On session start the extension:
 
 1. Connects to NATS using a configured context (or `demo.nats.io` by default).
 2. Registers a NATS micro service named `agents` with spec metadata (`agent`, `owner`, `session`, `protocol_version`).
-3. Adds a `prompt` endpoint at `agents.prompt.pi.<owner>.<session>` (verb-first §2 v0.3) advertising `max_payload: 1MB` and `attachments_ok: true`.
+3. Adds a `prompt` endpoint at `agents.prompt.pi.<owner>.<session>` (verb-first §2 v0.3) advertising the server-negotiated `max_payload` (read from `nc.info.max_payload` at connect, formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar — `1MB` against a default `nats-server`, more if the operator bumped `--max_payload`) and `attachments_ok: true`.
 4. Adds a `status` endpoint at `agents.status.pi.<owner>.<session>` (§8.7 (v0.3)) that replies with the same payload shape as a heartbeat.
 5. Begins publishing heartbeats on `agents.hb.pi.<owner>.<session>` (verb is the abbreviation `hb`, §8.1 v0.3) every 30 s.
 5. On each inbound prompt: decodes any attached files to `~/.pi/agent/attachments/<session>/<uuid>/<filename>`, prepends their absolute paths to the prompt text, emits a `status: ack` chunk, injects the augmented prompt into PI via `pi.sendUserMessage()`, streams `text_delta` events back as typed `{type:"response",data}` chunks, and closes with the spec-mandated empty-body no-headers terminator.
@@ -171,7 +171,7 @@ PI's model sees the list in the user message and can open the files with its fil
 Caller-side constraints (rejected at the wire with `400` if violated):
 - `content` must be strict RFC 4648 §4 base64 - standard alphabet, padded, no URL-safe, no whitespace.
 - `filename` must be a plain basename. Path separators (`/`, `\`), `..`, absolute paths, and NUL bytes are rejected rather than silently flattened.
-- Full encoded envelope must fit within `max_payload` (1 MB).
+- Full encoded envelope must fit within the advertised `max_payload` — the server-negotiated limit read at connect time. `1 MB` against a default `nats-server`; matches whatever `nc.info.max_payload` reports.
 
 Spec §5.5 reserves a future `attachments` endpoint at `agents.attachments.pi.<owner>.<session>` (v0.3 verb-first) for chunked large-file upload; that lands in a future protocol revision and will coexist with inline attachments.
 
