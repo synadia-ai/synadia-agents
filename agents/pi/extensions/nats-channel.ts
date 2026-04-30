@@ -68,12 +68,12 @@ const AGENT_ID = "pi";
 // connect — that's the negotiated limit for this user/account, so it's also
 // what we advertise and enforce on inbound requests. These constants are
 // fallbacks for the (rare) case where `INFO` is unavailable.
-const DEFAULT_MAX_PAYLOAD_STR = "1MB";
-const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024; // base-1024, matching NATS server convention
+export const DEFAULT_MAX_PAYLOAD_STR = "1MB";
+export const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024; // base-1024, matching NATS server convention
 const ATTACHMENTS_OK = true;
 
 /** Format a byte count back into the §2.1 `\d+(B|KB|MB|GB)` grammar (base-1024). */
-function formatMaxPayloadString(bytes: number): string {
+export function formatMaxPayloadString(bytes: number): string {
 	if (bytes >= 1024 ** 3 && bytes % 1024 ** 3 === 0) return `${bytes / 1024 ** 3}GB`;
 	if (bytes >= 1024 ** 2 && bytes % 1024 ** 2 === 0) return `${bytes / 1024 ** 2}MB`;
 	if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024}KB`;

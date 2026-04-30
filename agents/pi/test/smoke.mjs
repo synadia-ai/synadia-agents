@@ -110,7 +110,11 @@ process.env.NATS_CONTEXT = SMOKE_CONTEXT_NAME;
 process.env.NATS_SESSION_NAME = `smoke-${process.pid}`;
 process.env.USER = process.env.USER || "smoke";
 
-const channelFactory = (await import("../extensions/nats-channel.ts")).default;
+const {
+	default: channelFactory,
+	formatMaxPayloadString,
+	DEFAULT_MAX_PAYLOAD_STR,
+} = await import("../extensions/nats-channel.ts");
 
 let ok = 0;
 let fail = 0;
@@ -205,8 +209,6 @@ await step("$SRV.INFO returns spec-shaped service info", async () => {
 	assert.ok(ep, "prompt endpoint missing");
 	assert.equal(ep.subject, expectedSubject);
 	assert.equal(ep.queue_group, "agents", "prompt endpoint must register queue_group=agents (spec §3.3)");
-	// max_payload is server-driven (`nc.info.max_payload`), so just verify it
-	// matches the §2.1 `\d+(B|KB|MB|GB)` grammar.
 	// max_payload is server-driven (`nc.info.max_payload`), so verify it
 	// matches the §2.1 grammar AND the value our server is advertising.
 	const expectedMaxPayload = obs.info?.max_payload

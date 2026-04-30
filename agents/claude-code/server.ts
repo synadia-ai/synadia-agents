@@ -759,7 +759,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
 
         process.stderr.write(
-        const maxPayload = MAX_PAYLOAD_BYTES
+          `nats channel: replying to ${pending.replySubject} (request ${requestId}, done=${done}, bytes=${text.length})\n`,
         )
 
         const maxPayload = nc.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES
