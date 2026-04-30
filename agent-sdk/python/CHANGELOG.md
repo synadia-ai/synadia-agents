@@ -8,6 +8,24 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Fixed
+
+- `run_publisher` no longer propagates publish exceptions out of the
+  heartbeat task. A failed publish (e.g. `ConnectionClosedError`
+  after a broker restart) is logged and the publisher exits cleanly
+  so `AgentService.stop()` teardown stays deterministic instead of
+  re-raising mid-cleanup. `AgentService.stop()` now suppresses
+  `Exception` alongside `CancelledError` when awaiting the publisher
+  task as a belt-and-braces guard against unforeseen errors that
+  predate the catch in `run_publisher`. Surfaced by the Claude
+  reviewer bot on PR #45.
+- `test_run_publisher_emits_immediate_then_periodic` no longer
+  asserts a lower bound on heartbeat inter-arrival times.
+  `asyncio.wait_for(stop.wait(), ...)` can return slightly early on
+  a loaded event loop, and a tight lower bound flaked on contended
+  CI runners without protecting any caller-visible invariant; the
+  upper bound is the load-bearing liveness check.
+
 ## [0.1.0] - 2026-04-30
 
 Initial release. **Extracted from `synadia-ai-agents@0.5.0`** so the

@@ -355,7 +355,11 @@ class AgentService:
     async def stop(self) -> None:
         self._heartbeat_stop.set()
         if self._heartbeat_task is not None:
-            with contextlib.suppress(asyncio.CancelledError):
+            # The publisher catches its own exceptions and exits cleanly
+            # (see ``run_publisher``); broaden the suppress to ``Exception``
+            # anyway so a publisher that died of an unforeseen error before
+            # we got here can't break teardown.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._heartbeat_task
             self._heartbeat_task = None
         if self._service is not None:

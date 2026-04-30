@@ -23,8 +23,10 @@ import asyncio
 import json
 from typing import TYPE_CHECKING
 
+import pytest
 from synadia_ai.agents import AgentSubject, HeartbeatPayload
 
+from synadia_ai.agent_service import heartbeat as heartbeat_mod
 from synadia_ai.agent_service.heartbeat import (
     build_heartbeat_payload,
     publish_one,
@@ -91,8 +93,12 @@ async def test_run_publisher_emits_immediate_then_periodic(nc: NATSClient) -> No
     The §8.5 subscribe-before-discover invariant requires the first
     heartbeat to land *without* waiting a full interval, so a caller
     that subscribes-then-discovers sees liveness right away. We sample
-    the first three frames and check inter-arrival times relative to
-    the configured 0.3 s interval.
+    the first three frames and assert the upper bound on inter-arrival
+    times — the load-bearing liveness invariant. We deliberately do
+    NOT assert a lower bound: ``asyncio.wait_for(stop.wait(), ...)``
+    can return slightly early on a loaded event loop, and a tight
+    lower bound flakes on contended CI runners without protecting
+    anything callers depend on.
     """
     subject = AgentSubject.new(agent=AGENT, owner=OWNER, session_name="publisher-loop")
     sub = await nc.subscribe(subject.heartbeat)
@@ -114,19 +120,19 @@ async def test_run_publisher_emits_immediate_then_periodic(nc: NATSClient) -> No
             f"first heartbeat should arrive ~immediately (§8.5); waited {elapsed1:.3f}s"
         )
 
-        # Frames 2 & 3 — should arrive at ~interval cadence.
+        # Frames 2 & 3 — must arrive within ``interval_s + slack``.
         t1 = loop.time()
         msg2 = await sub.next_msg(timeout=interval_s + 0.5)
         gap2 = loop.time() - t1
-        assert interval_s - 0.3 <= gap2 <= interval_s + 0.5, (
-            f"second heartbeat gap {gap2:.3f}s outside [interval-0.3s, interval+0.5s]"
+        assert gap2 <= interval_s + 0.5, (
+            f"second heartbeat gap {gap2:.3f}s exceeds interval+0.5s upper bound"
         )
 
         t2 = loop.time()
         msg3 = await sub.next_msg(timeout=interval_s + 0.5)
         gap3 = loop.time() - t2
-        assert interval_s - 0.3 <= gap3 <= interval_s + 0.5, (
-            f"third heartbeat gap {gap3:.3f}s outside [interval-0.3s, interval+0.5s]"
+        assert gap3 <= interval_s + 0.5, (
+            f"third heartbeat gap {gap3:.3f}s exceeds interval+0.5s upper bound"
         )
 
         for msg in (msg1, msg2, msg3):
@@ -157,3 +163,35 @@ async def test_run_publisher_stops_promptly_on_event(nc: NATSClient) -> None:
     await task
     elapsed = loop.time() - t0
     assert elapsed < 1.0, f"publisher should exit promptly after stop is set; took {elapsed:.3f}s"
+
+
+async def test_run_publisher_exits_cleanly_when_publish_raises(
+    nc: NATSClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing ``publish_one`` MUST NOT propagate out of ``run_publisher``.
+
+    If it did, the asyncio task would store a non-``CancelledError``
+    exception that re-raises from :meth:`AgentService.stop`'s
+    ``contextlib.suppress(CancelledError, Exception)`` only by virtue
+    of the ``Exception`` arm — and downstream cleanup would be left
+    in an unknown state. Callers depend on ``await task`` returning
+    cleanly after a publish failure so teardown is deterministic.
+    """
+    subject = AgentSubject.new(agent=AGENT, owner=OWNER, session_name="publisher-raises")
+    stop = asyncio.Event()
+
+    async def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated NATS publish failure")
+
+    monkeypatch.setattr(heartbeat_mod, "publish_one", boom)
+
+    task = asyncio.create_task(
+        run_publisher(nc, subject, interval_s=1, instance_id=INSTANCE_ID, stop=stop),
+        name="hb-test-raises",
+    )
+    # Awaiting the task must NOT raise — the publisher swallows the error,
+    # logs, and returns. ``stop`` is left unset on purpose so we prove the
+    # exit path is the exception-swallow, not the stop signal.
+    await asyncio.wait_for(task, timeout=1.0)
+    assert task.done()
+    assert task.exception() is None

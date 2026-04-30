@@ -68,17 +68,30 @@ async def run_publisher(
     instance_id: str,
     stop: asyncio.Event,
 ) -> None:
-    """Periodically publish heartbeats until `stop` is set."""
+    """Periodically publish heartbeats until `stop` is set.
+
+    A failed publish (e.g. ``ConnectionClosedError`` after a broker
+    restart) MUST NOT crash the publisher task with a non-cancellation
+    exception: that would (a) make the agent go dark while the micro
+    service still appears registered, and (b) cause :meth:`AgentService.stop`
+    to re-raise on teardown. The publisher logs the failure and exits
+    cleanly so ``stop()`` can complete; the surrounding service decides
+    whether to recover.
+    """
     log.debug("heartbeat publisher starting for %s (interval=%ss)", subject.inbox, interval_s)
-    # Emit one heartbeat immediately so callers that subscribe-then-discover
-    # observe liveness without waiting a full interval (§8.5).
-    await publish_one(nc, subject, interval_s, instance_id)
-    while not stop.is_set():
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(stop.wait(), timeout=interval_s)
-        if stop.is_set():
-            break
+    try:
+        # Emit one heartbeat immediately so callers that subscribe-then-discover
+        # observe liveness without waiting a full interval (§8.5).
         await publish_one(nc, subject, interval_s, instance_id)
+        while not stop.is_set():
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=interval_s)
+            if stop.is_set():
+                break
+            await publish_one(nc, subject, interval_s, instance_id)
+    except Exception:
+        log.exception("heartbeat publisher failed for %s; exiting", subject.inbox)
+        return
     log.debug("heartbeat publisher stopped for %s", subject.inbox)
 
 
