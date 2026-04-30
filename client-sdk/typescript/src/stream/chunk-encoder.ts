@@ -73,6 +73,59 @@ function encodeResponse(chunk: ResponseChunk): Record<string, unknown> {
   };
 }
 
+/**
+ * UTF-8-safe split for a long response text into substrings small enough
+ * to ship as `{type:"response", data:<slice>}` chunks under a given
+ * NATS `max_payload`.
+ *
+ * Iterates by code-point so a multi-byte UTF-8 sequence or a UTF-16
+ * surrogate pair is never split mid-character. The per-slice budget
+ * is `(maxPayloadBytes - reserveBytes) / safetyDivisor`.
+ *
+ * **`safetyDivisor` selection.** The default `safetyDivisor = 2` is sized
+ * for natural-language text where JSON escaping is rare (typical LLM
+ * output: a handful of `"` / `\\` per chunk, ~1% expansion). It is **not**
+ * worst-case-safe: a string of ASCII control characters where every byte
+ * rewrites to `\uXXXX` (6 chars) can produce a JSON-encoded chunk up to
+ * ~3× `maxPayloadBytes`. Callers feeding arbitrary binary-ish content,
+ * mixed-encoding strings, or a high control-character density should pass
+ * `safetyDivisor: 6` (or higher) to guarantee the encoded chunk stays
+ * under `maxPayloadBytes` even under worst-case escaping.
+ *
+ * Designed to replace the identical `splitTextForChunks` /
+ * `publishResponseText` chunkers carried by the `agents/{claude-code,
+ * openclaw, pi}` harnesses.
+ */
+export function splitResponseText(
+  text: string,
+  maxPayloadBytes: number,
+  opts: { reserveBytes?: number; safetyDivisor?: number } = {},
+): string[] {
+  // 32 covers `{"type":"response","data":""}` (28 chars) plus a small margin.
+  const reserve = opts.reserveBytes ?? 32;
+  const safetyDivisor = opts.safetyDivisor ?? 2;
+  const budget = Math.max(64, Math.floor((maxPayloadBytes - reserve) / safetyDivisor));
+
+  if (text.length === 0) return [];
+  const out: string[] = [];
+  const encoder = new TextEncoder();
+  let buf = "";
+  let bufBytes = 0;
+
+  for (const cp of text) {
+    const cpBytes = encoder.encode(cp).byteLength;
+    if (bufBytes + cpBytes > budget && buf.length > 0) {
+      out.push(buf);
+      buf = "";
+      bufBytes = 0;
+    }
+    buf += cp;
+    bufBytes += cpBytes;
+  }
+  if (buf.length > 0) out.push(buf);
+  return out;
+}
+
 function encodeQuery(chunk: QueryChunk): Record<string, unknown> {
   const data: Record<string, unknown> = {
     id: chunk.id,

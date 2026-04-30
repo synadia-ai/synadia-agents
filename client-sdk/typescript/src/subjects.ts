@@ -74,6 +74,22 @@ export const RESERVED_VERBS: ReadonlySet<string> = new Set([
 const SUBJECT_TOKEN_COUNT = 5;
 
 /**
+ * Optional construction knobs for {@link AgentSubject.new}.
+ */
+export interface AgentSubjectOptions {
+  /**
+   * Override the wire token used in the subject's 3rd position. Defaults
+   * to `agent` (i.e. `metadata.agent` and the subject token are the same).
+   *
+   * Allows callers to advertise a long, canonical name in `metadata.agent`
+   * (e.g. `"claude-code"`, `"openclaw"`) while keeping the subject's 3rd
+   * token short for wire-economy reasons (e.g. `"cc"`, `"oc"`). Both
+   * tokens are validated against §2 MUST rules independently.
+   */
+  readonly subjectToken?: string;
+}
+
+/**
  * The three identifying tokens of an agent, validated against §2 MUST rules.
  *
  * Construct via {@link AgentSubject.new} — direct construction bypasses
@@ -84,34 +100,49 @@ export class AgentSubject {
     public readonly agent: string,
     public readonly owner: string,
     public readonly name: string,
+    public readonly subjectToken: string,
   ) {}
 
   /**
-   * Validate the three identifying tokens and return an {@link AgentSubject}.
+   * Validate the identifying tokens and return an {@link AgentSubject}.
    *
-   * Throws {@link InvalidSubjectTokenError} when any of `agent`, `owner`, or
-   * `name` violates §2 MUST rules.
+   * `agent` carries the canonical agent identifier (the value that goes
+   * into `$SRV.INFO` `metadata.agent`). `opts.subjectToken`, if given,
+   * is the wire token used in the subject's 3rd position; when omitted,
+   * the subject token equals `agent`.
+   *
+   * Throws {@link InvalidSubjectTokenError} when any token violates §2
+   * MUST rules.
    */
-  static new(agent: string, owner: string, name: string): AgentSubject {
+  static new(
+    agent: string,
+    owner: string,
+    name: string,
+    opts: AgentSubjectOptions = {},
+  ): AgentSubject {
     assertValidToken(agent, "agent");
     assertValidToken(owner, "owner");
     assertValidToken(name, "name");
-    return new AgentSubject(agent, owner, name);
+    const subjectToken = opts.subjectToken ?? agent;
+    if (subjectToken !== agent) {
+      assertValidToken(subjectToken, "subjectToken");
+    }
+    return new AgentSubject(agent, owner, name, subjectToken);
   }
 
-  /** The agent's prompt subject — `agents.prompt.{agent}.{owner}.{name}` (§2 v0.3). */
+  /** The agent's prompt subject — `agents.prompt.{subjectToken}.{owner}.{name}` (§2 v0.3). */
   get prompt(): string {
-    return `${SUBJECT_ROOT}.${VERB_PROMPT}.${this.agent}.${this.owner}.${this.name}`;
+    return `${SUBJECT_ROOT}.${VERB_PROMPT}.${this.subjectToken}.${this.owner}.${this.name}`;
   }
 
-  /** The agent's heartbeat subject — `agents.hb.{agent}.{owner}.{name}` (§8.1 v0.3). */
+  /** The agent's heartbeat subject — `agents.hb.{subjectToken}.{owner}.{name}` (§8.1 v0.3). */
   get heartbeat(): string {
-    return `${SUBJECT_ROOT}.${VERB_HEARTBEAT}.${this.agent}.${this.owner}.${this.name}`;
+    return `${SUBJECT_ROOT}.${VERB_HEARTBEAT}.${this.subjectToken}.${this.owner}.${this.name}`;
   }
 
-  /** The agent's status request/response subject — `agents.status.{agent}.{owner}.{name}` (§8.7 (v0.3)). */
+  /** The agent's status request/response subject — `agents.status.{subjectToken}.{owner}.{name}` (§8.7 (v0.3)). */
   get status(): string {
-    return `${SUBJECT_ROOT}.${VERB_STATUS}.${this.agent}.${this.owner}.${this.name}`;
+    return `${SUBJECT_ROOT}.${VERB_STATUS}.${this.subjectToken}.${this.owner}.${this.name}`;
   }
 }
 
@@ -135,6 +166,16 @@ export interface ParseAgentSubjectOptions {
  * Returns `null` when the subject has the wrong root, is the wrong verb
  * (default `prompt`), or fails token validation. Pass a different `verb`
  * to parse heartbeat / status subjects through the same helper.
+ *
+ * **Note on the canonical agent identifier.** The 3rd subject token is
+ * the *wire token* — for harnesses that set `subjectToken` to an
+ * abbreviation (e.g. `"cc"` for `claude-code`, `"oc"` for `openclaw`),
+ * `AgentSubject.agent` returned here is the abbreviation, **not** the
+ * canonical `metadata.agent` value. The canonical name only lives in
+ * `$SRV.INFO.metadata.agent`; callers that need it should use
+ * `Agents.lookupInstance(instanceId)` (or `Agents.discover()`) and read
+ * `AgentInfo.agent`. Filtering on `subject.agent` matches the wire token,
+ * filtering on `AgentInfo.agent` matches the canonical identifier.
  */
 export function parseAgentSubject(
   subject: string,

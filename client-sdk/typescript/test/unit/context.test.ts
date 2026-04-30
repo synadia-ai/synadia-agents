@@ -131,6 +131,86 @@ describe("loadContextOptions", () => {
     process.env["NATS_CONTEXT"] = "../escape";
     await expect(loadContextOptions("current")).rejects.toBeInstanceOf(NatsContextError);
   });
+
+  it("loads nkey file and sets authenticator", async () => {
+    const nkeyPath = join(baseDir, "user.nk");
+    // 32-byte stub seed bytes (real nkeys are base32 of an Ed25519 seed; the
+    // authenticator only needs the bytes here, the wire signing is exercised
+    // in integration tests).
+    await writeFile(nkeyPath, new Uint8Array(32));
+    await writeContext("with-nkey", {
+      url: "nats://localhost:4222",
+      nkey: nkeyPath,
+      token: "ignored",
+    });
+    const opts = await loadContextOptions("with-nkey");
+    expect(opts.authenticator).toBeDefined();
+    expect(opts.token).toBeUndefined();
+  });
+
+  it("uses inline user_jwt + user_seed when both are present", async () => {
+    await writeContext("with-jwt-seed", {
+      url: "nats://localhost:4222",
+      user_jwt: "eyJ0eXAiOiJKV1QifQ.payload.sig",
+      user_seed: "SUASTUBSEED",
+    });
+    const opts = await loadContextOptions("with-jwt-seed");
+    expect(opts.authenticator).toBeDefined();
+  });
+
+  it("falls back to jwt-only when no user_seed is provided", async () => {
+    await writeContext("with-jwt-only", {
+      url: "nats://localhost:4222",
+      user_jwt: "eyJ0eXAiOiJKV1QifQ.payload.sig",
+    });
+    const opts = await loadContextOptions("with-jwt-only");
+    expect(opts.authenticator).toBeDefined();
+  });
+
+  it("creds wins over nkey wins over user_jwt wins over user/pass/token", async () => {
+    const credsPath = join(baseDir, "user.creds");
+    await writeFile(credsPath, "stub-creds");
+    const nkeyPath = join(baseDir, "user.nk");
+    await writeFile(nkeyPath, new Uint8Array(32));
+    await writeContext("precedence", {
+      url: "nats://localhost:4222",
+      creds: credsPath,
+      nkey: nkeyPath,
+      user_jwt: "eyJ.x.y",
+      user: "alice",
+      password: "secret",
+      token: "tok",
+    });
+    const opts = await loadContextOptions("precedence");
+    // creds takes the authenticator slot; the other auth fields are dropped.
+    expect(opts.authenticator).toBeDefined();
+    expect(opts.user).toBeUndefined();
+    expect(opts.pass).toBeUndefined();
+    expect(opts.token).toBeUndefined();
+  });
+
+  it("populates the TLS triple when cert/key/ca/tls_first are present", async () => {
+    await writeContext("with-tls", {
+      url: "tls://nats.example.com:4222",
+      cert: "/etc/ssl/client.pem",
+      key: "/etc/ssl/client.key",
+      ca: "/etc/ssl/ca.pem",
+      tls_first: true,
+    });
+    const opts = await loadContextOptions("with-tls");
+    expect(opts.tls).toEqual({
+      certFile: "/etc/ssl/client.pem",
+      keyFile: "/etc/ssl/client.key",
+      caFile: "/etc/ssl/ca.pem",
+      handshakeFirst: true,
+    });
+  });
+
+  it("leaves TLS undefined when none of cert/key/ca/tls_first are set", async () => {
+    await writeContext("no-tls", { url: "nats://localhost:4222" });
+    const opts = await loadContextOptions("no-tls");
+    expect(opts.tls).toBeUndefined();
+  });
 });
 
 describe("parseNatsUrl", () => {

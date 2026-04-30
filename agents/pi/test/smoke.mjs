@@ -110,11 +110,8 @@ process.env.NATS_CONTEXT = SMOKE_CONTEXT_NAME;
 process.env.NATS_SESSION_NAME = `smoke-${process.pid}`;
 process.env.USER = process.env.USER || "smoke";
 
-const {
-	default: channelFactory,
-	formatMaxPayloadString,
-	DEFAULT_MAX_PAYLOAD_STR,
-} = await import("../extensions/nats-channel.ts");
+const { default: channelFactory } = await import("../extensions/nats-channel.ts");
+const { formatHumanBytes, DEFAULT_MAX_PAYLOAD } = await import("@synadia-ai/agents");
 
 let ok = 0;
 let fail = 0;
@@ -212,8 +209,8 @@ await step("$SRV.INFO returns spec-shaped service info", async () => {
 	// max_payload is server-driven (`nc.info.max_payload`), so verify it
 	// matches the §2.1 grammar AND the value our server is advertising.
 	const expectedMaxPayload = obs.info?.max_payload
-		? formatMaxPayloadString(obs.info.max_payload)
-		: DEFAULT_MAX_PAYLOAD_STR;
+		? formatHumanBytes(obs.info.max_payload)
+		: DEFAULT_MAX_PAYLOAD;
 	assert.match(ep.metadata?.max_payload ?? "", /^\d+(B|KB|MB|GB)$/);
 	assert.equal(ep.metadata?.max_payload, expectedMaxPayload);
 	assert.equal(ep.metadata?.attachments_ok, "true");

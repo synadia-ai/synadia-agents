@@ -35,37 +35,40 @@ import {
 } from '@nats-io/transport-node'
 import { Svcm } from '@nats-io/services'
 import type { ServiceMsg } from '@nats-io/services'
+import {
+  AgentSubject,
+  DEFAULT_ATTACHMENTS_OK,
+  DEFAULT_HEARTBEAT_INTERVAL_S,
+  DEFAULT_MAX_PAYLOAD,
+  PROMPT_QUEUE_GROUP,
+  ProtocolError,
+  SDK_PROTOCOL_VERSION,
+  SERVICE_NAME,
+  STATUS_QUEUE_GROUP,
+  buildHeartbeatPayload,
+  decodeEnvelope,
+  encodeChunk,
+  encodeHeartbeatPayload,
+  formatHumanBytes,
+  parseHumanBytes,
+  parseNatsUrl,
+  splitResponseText,
+} from '@synadia-ai/agents'
 import { readFileSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { homedir } from 'os'
 import { join, basename, dirname } from 'path'
 import { fileURLToPath } from 'url'
 
 // ── Constants ──────────────────────────────────────────────────────────
-const PROTOCOL_VERSION = '0.3'
 const AGENT_ID = 'claude-code'          // metadata.agent (canonical per Appendix C)
 const AGENT_SUBJECT_TOKEN = 'cc'        // 3rd subject token (abbreviation per Appendix C)
-const SERVICE_NAME = 'agents'           // §3.1 — the bare token, subject-safe as-is
-const PROMPT_QUEUE_GROUP = 'agents'     // §3.3 — queue group on the prompt endpoint
-const STATUS_QUEUE_GROUP = 'agents'     // §8.7 (v0.3) — same as prompt
-// Fallbacks used only when the server `INFO` block is unavailable. The real
-// values come from `nc.info.max_payload` after connect — that's the limit the
-// server will actually accept for this user/account, so it's also what we
-// advertise in endpoint metadata and enforce on inbound requests.
-const DEFAULT_MAX_PAYLOAD_STR = '1MB'
-const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024
-const ATTACHMENTS_OK = true
-
-/** Format a byte count back into the §2.1 `\d+(B|KB|MB|GB)` grammar, base-1024. */
-function formatMaxPayloadString(bytes: number): string {
-  if (bytes >= 1024 ** 3 && bytes % 1024 ** 3 === 0) return `${bytes / 1024 ** 3}GB`
-  if (bytes >= 1024 ** 2 && bytes % 1024 ** 2 === 0) return `${bytes / 1024 ** 2}MB`
-  if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024}KB`
-  return `${bytes}B`
-}
-const HEARTBEAT_INTERVAL_S = 30         // §8.2 recommended default
 const ACK_INTERVAL_MS = 30_000          // keep-alive cadence; caller inactivity timeout is 60s
 const PERMISSION_TIMEOUT_MS = 120_000   // query reply timeout for permission prompts
 const REQUEST_TTL_MS = 30 * 60 * 1000
+
+/** Fallback used only when `nc.info.max_payload` is unavailable. The live
+ *  cap comes from the broker after connect. */
+const DEFAULT_MAX_PAYLOAD_BYTES_FALLBACK = parseHumanBytes(DEFAULT_MAX_PAYLOAD)
 
 // ── State directories ──────────────────────────────────────────────────
 const STATE_DIR = process.env.NATS_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'nats')
@@ -163,66 +166,6 @@ function loadNatsContext(name: string): NatsContext {
   }
 }
 
-// Parse a NATS URL into a partial `NodeConnectionOptions`, extracting
-// credentials from `userinfo` if present. Without this, a URL like
-// `nats://TOKEN@host:port` would silently drop the token because
-// `@nats-io/transport-node` doesn't parse credentials from URLs (the
-// `nats` CLI does, which is the UX gap this closes). Inlined per the
-// repo CLAUDE.md "Agents do NOT depend on the SDK" rule —
-// byte-equivalent to `@synadia-ai/agents`'s `parseNatsUrl`. Supports
-// comma-separated cluster URLs (the form `@nats-io/transport-node`
-// accepts via `servers: string`).
-type ParsedSingle = { server: string; token?: string; user?: string; pass?: string }
-function parseSingleNatsUrl(part: string, original: string): ParsedSingle {
-  const withScheme = /^[a-z]+:\/\//i.test(part) ? part : `nats://${part}`
-  let parsed: URL
-  try {
-    parsed = new URL(withScheme)
-  } catch (e) {
-    throw new Error(`invalid NATS URL ${JSON.stringify(original)}: ${(e as Error).message}`)
-  }
-  if (!/^(nats|tls|ws|wss):$/.test(parsed.protocol)) {
-    throw new Error(`unsupported scheme "${parsed.protocol}" in NATS URL ${JSON.stringify(original)}`)
-  }
-  if (!parsed.host) {
-    throw new Error(`NATS URL ${JSON.stringify(original)} is missing a host`)
-  }
-  const out: ParsedSingle = { server: `${parsed.protocol}//${parsed.host}` }
-  // WHATWG `URL` squashes `nats://user@host` and `nats://user:@host` into
-  // `password === ""`; sniff raw input for a colon to recover the intent.
-  const userinfoMatch = withScheme.match(/^[a-z]+:\/\/([^/@]*)@/i)
-  const hasColonSeparator = (userinfoMatch?.[1] ?? '').includes(':')
-  if (hasColonSeparator) {
-    out.user = decodeURIComponent(parsed.username)
-    out.pass = decodeURIComponent(parsed.password)
-  } else if (parsed.username !== '') {
-    out.token = decodeURIComponent(parsed.username)
-  }
-  return out
-}
-function parseNatsUrl(url: string): { servers: string[]; token?: string; user?: string; pass?: string } {
-  const parts = url.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
-  if (parts.length === 0) {
-    throw new Error(`empty NATS URL: ${JSON.stringify(url)}`)
-  }
-  const parsedAll = parts.map((p) => parseSingleNatsUrl(p, url))
-  const first = parsedAll[0]!
-  // Mixed userinfo across cluster entries can't be expressed in one
-  // ConnectionOptions — fail loudly rather than silently drop credentials.
-  for (const p of parsedAll.slice(1)) {
-    if (p.token !== first.token || p.user !== first.user || p.pass !== first.pass) {
-      throw new Error(`NATS URL has mixed credentials across server entries: ${url}`)
-    }
-  }
-  const out: { servers: string[]; token?: string; user?: string; pass?: string } = {
-    servers: parsedAll.map((p) => p.server),
-  }
-  if (first.token !== undefined) out.token = first.token
-  if (first.user !== undefined) out.user = first.user
-  if (first.pass !== undefined) out.pass = first.pass
-  return out
-}
-
 function contextToConnectOpts(ctx: NatsContext): NodeConnectionOptions {
   const opts: NodeConnectionOptions = {
     name: 'claude-code-nats-channel',
@@ -307,92 +250,19 @@ async function resolveSessionName(nc: NatsConnection, base: string, owner: strin
   return candidate
 }
 
-// ── Request envelope parsing (§5) ──────────────────────────────────────
-
-type ParsedAttachment = { filename: string; bytes: Uint8Array }
-type ParseResult =
-  | { kind: 'ok'; prompt: string; attachments: ParsedAttachment[] }
-  | { kind: 'error'; code: number; description: string }
-
-const WHITESPACE = new Set([0x09, 0x0A, 0x0D, 0x20])
-const BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/
-
-function parseRequest(data: Uint8Array, maxPayloadBytes: number): ParseResult {
-  if (data.byteLength === 0) {
-    return { kind: 'error', code: 400, description: 'empty payload' }
-  }
-  if (data.byteLength > maxPayloadBytes) {
-    return { kind: 'error', code: 400, description: 'request exceeds max_payload' }
-  }
-
-  let start = 0
-  while (start < data.byteLength && WHITESPACE.has(data[start]!)) start++
-  if (start === data.byteLength) {
-    return { kind: 'error', code: 400, description: 'empty payload' }
-  }
-
-  if (data[start] !== 0x7B /* '{' */) {
-    // Plain-text shorthand (§5.3 step 3).
-    const prompt = new TextDecoder().decode(data)
-    if (prompt.length === 0) {
-      return { kind: 'error', code: 400, description: 'empty payload' }
-    }
-    return { kind: 'ok', prompt, attachments: [] }
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(new TextDecoder().decode(data))
-  } catch {
-    return { kind: 'error', code: 400, description: 'malformed JSON envelope' }
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return { kind: 'error', code: 400, description: 'envelope must be a JSON object' }
-  }
-  const env = parsed as Record<string, unknown>
-  if (typeof env.prompt !== 'string' || env.prompt.length === 0) {
-    return { kind: 'error', code: 400, description: 'envelope missing non-empty prompt string' }
-  }
-
-  const rawAttachments = env.attachments
-  const attachments: ParsedAttachment[] = []
-  if (rawAttachments !== undefined) {
-    if (!Array.isArray(rawAttachments)) {
-      return { kind: 'error', code: 400, description: 'attachments must be an array' }
-    }
-    for (const att of rawAttachments) {
-      if (typeof att !== 'object' || att === null) {
-        return { kind: 'error', code: 400, description: 'attachment must be an object' }
-      }
-      const a = att as Record<string, unknown>
-      if (typeof a.filename !== 'string' || a.filename.length === 0) {
-        return { kind: 'error', code: 400, description: 'attachment missing filename' }
-      }
-      if (typeof a.content !== 'string') {
-        return { kind: 'error', code: 400, description: `attachment ${a.filename} missing content` }
-      }
-      // Strict base64 per §5.2: standard alphabet, padded, no whitespace.
-      if (a.content.length % 4 !== 0 || !BASE64_PATTERN.test(a.content)) {
-        return { kind: 'error', code: 400, description: `attachment ${a.filename} has invalid base64` }
-      }
-      let bytes: Uint8Array
-      try {
-        bytes = Uint8Array.from(Buffer.from(a.content, 'base64'))
-      } catch {
-        return { kind: 'error', code: 400, description: `attachment ${a.filename} failed to decode` }
-      }
-      attachments.push({ filename: a.filename, bytes })
-    }
-  }
-
-  return { kind: 'ok', prompt: env.prompt, attachments }
-}
-
 // ── Attachment staging ─────────────────────────────────────────────────
+// Request envelope parsing now goes through the SDK's `decodeEnvelope`
+// (handles §5.1/§5.2/§5.3 + strict base64 + filename safety in one place).
+// The local `{filename, bytes}` shape is kept here only because the
+// staging helper writes the bytes verbatim — the adapter at the decode
+// boundary is one map().
 
 type StagedAttachment = { filename: string; path: string }
 
-function stageAttachments(requestId: string, attachments: ParsedAttachment[]): StagedAttachment[] {
+function stageAttachments(
+  requestId: string,
+  attachments: { filename: string; bytes: Uint8Array }[],
+): StagedAttachment[] {
   if (attachments.length === 0) return []
   const dir = join(ATTACHMENT_DIR, requestId)
   mkdirSync(dir, { recursive: true })
@@ -413,39 +283,6 @@ function cleanupAttachments(requestId: string): void {
   } catch {
     /* best-effort */
   }
-}
-
-// ── UTF-8-safe chunking of response text (§6.3, §6.6) ──────────────────
-
-/**
- * Split `text` into substrings whose JSON-encoded response-chunk envelope
- * ({type:"response", data:<slice>}) fits within maxPayload bytes.
- *
- * Uses code-point iteration so we never split inside a UTF-16 surrogate pair.
- * We include a conservative safety margin for JSON escaping (quotes, backslashes,
- * control characters) by budgeting the `data` string at half the remaining
- * payload — worst-case JSON escaping roughly doubles length.
- */
-function splitTextForChunks(text: string, maxPayload: number): string[] {
-  const WRAPPER_OVERHEAD = 32      // {"type":"response","data":""} + safety
-  const budget = Math.max(64, Math.floor((maxPayload - WRAPPER_OVERHEAD) / 2))
-  const out: string[] = []
-  let buf = ''
-  let bufBytes = 0
-  const encoder = new TextEncoder()
-
-  for (const cp of text) {
-    const cpBytes = encoder.encode(cp).byteLength
-    if (bufBytes + cpBytes > budget && buf.length > 0) {
-      out.push(buf)
-      buf = ''
-      bufBytes = 0
-    }
-    buf += cp
-    bufBytes += cpBytes
-  }
-  if (buf.length > 0) out.push(buf)
-  return out
 }
 
 // ── Safety nets ────────────────────────────────────────────────────────
@@ -513,10 +350,10 @@ process.stderr.write(`nats channel: connecting to ${natsCtx.url ?? 'default'} ($
 const nc = await connect(connectOpts)
 // Server-negotiated max_payload (§2.1). Reflects this user/account's real
 // limit, so we use it for both endpoint metadata and §5.4 enforcement.
-const MAX_PAYLOAD_BYTES = nc.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES
+const MAX_PAYLOAD_BYTES = nc.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES_FALLBACK
 const MAX_PAYLOAD_STR = nc.info?.max_payload
-  ? formatMaxPayloadString(MAX_PAYLOAD_BYTES)
-  : DEFAULT_MAX_PAYLOAD_STR
+  ? formatHumanBytes(MAX_PAYLOAD_BYTES)
+  : DEFAULT_MAX_PAYLOAD
 process.stderr.write(`nats channel: connected (max_payload=${MAX_PAYLOAD_STR})\n`)
 
 // ── Resolve session name and register micro service ────────────────────
@@ -528,10 +365,15 @@ const rawSessionName = (process.env.NATS_SESSION_NAME
   || 'default'
 
 const sessionName = await resolveSessionName(nc, rawSessionName, owner)
-// v0.3 verb-first subjects (§2): `agents.{verb}.{agent}.{owner}.{name}`.
-const subject = `agents.prompt.${AGENT_SUBJECT_TOKEN}.${owner}.${sessionName}`
-const heartbeatSubject = `agents.hb.${AGENT_SUBJECT_TOKEN}.${owner}.${sessionName}`
-const statusSubject = `agents.status.${AGENT_SUBJECT_TOKEN}.${owner}.${sessionName}`
+// `metadata.agent` carries the canonical "claude-code"; the wire subject's
+// 3rd token is the conventional abbreviation `cc` (Appendix C).
+// `AgentSubject.new(...)`'s `subjectToken` option owns this split.
+const agentSubject = AgentSubject.new(AGENT_ID, owner, sessionName, {
+  subjectToken: AGENT_SUBJECT_TOKEN,
+})
+const subject = agentSubject.prompt
+const heartbeatSubject = agentSubject.heartbeat
+const statusSubject = agentSubject.status
 
 const svcm = new Svcm(nc)
 const service = await svcm.add({
@@ -542,7 +384,7 @@ const service = await svcm.add({
     agent: AGENT_ID,
     owner,
     session: sessionName,
-    protocol_version: PROTOCOL_VERSION,
+    protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
   },
   queue: '',
 })
@@ -553,7 +395,7 @@ service.addEndpoint('prompt', {
   handler: (err, msg) => handleNatsMessage(err, msg),
   metadata: {
     max_payload: MAX_PAYLOAD_STR,
-    attachments_ok: ATTACHMENTS_OK ? 'true' : 'false',
+    attachments_ok: DEFAULT_ATTACHMENTS_OK ? 'true' : 'false',
   },
 })
 
@@ -562,15 +404,12 @@ const instanceId = service.info().id
 // §8.7 (v0.3): status request/response endpoint replies with a freshly-built
 // §8.3 heartbeat payload. Same shape as the periodic heartbeat, different
 // transport (request/response instead of pub/sub).
-function buildHeartbeatPayloadObject(): Record<string, unknown> {
-  return {
-    agent: AGENT_ID,
-    owner,
-    session: sessionName,
-    instance_id: instanceId,
-    ts: new Date().toISOString(),
-    interval_s: HEARTBEAT_INTERVAL_S,
-  }
+function buildHeartbeatBytes(): Uint8Array {
+  return encodeHeartbeatPayload(
+    buildHeartbeatPayload(agentSubject, DEFAULT_HEARTBEAT_INTERVAL_S, instanceId, {
+      session: sessionName,
+    }),
+  )
 }
 
 service.addEndpoint('status', {
@@ -579,7 +418,7 @@ service.addEndpoint('status', {
   handler: (err, msg: ServiceMsg) => {
     if (err) return
     try {
-      msg.respond(JSON.stringify(buildHeartbeatPayloadObject()))
+      msg.respond(buildHeartbeatBytes())
     } catch (e) {
       try {
         msg.respondError(500, `status handler error: ${(e as Error).message}`)
@@ -595,10 +434,10 @@ process.stderr.write(`nats channel: micro service registered (id=${instanceId}) 
 // ── Heartbeat loop (§8) ────────────────────────────────────────────────
 
 function publishHeartbeat(): void {
-  nc.publish(heartbeatSubject, JSON.stringify(buildHeartbeatPayloadObject()))
+  nc.publish(heartbeatSubject, buildHeartbeatBytes())
 }
 publishHeartbeat()
-const heartbeatTimer = setInterval(publishHeartbeat, HEARTBEAT_INTERVAL_S * 1000)
+const heartbeatTimer = setInterval(publishHeartbeat, DEFAULT_HEARTBEAT_INTERVAL_S * 1000)
 heartbeatTimer.unref()
 
 // ── MCP server ─────────────────────────────────────────────────────────
@@ -762,19 +601,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           `nats channel: replying to ${pending.replySubject} (request ${requestId}, done=${done}, bytes=${text.length})\n`,
         )
 
-        const maxPayload = MAX_PAYLOAD_BYTES
-
         if (text.length > 0) {
-          const envelope = JSON.stringify({ type: 'response', data: text })
-          const envBytes = new TextEncoder().encode(envelope)
-          if (envBytes.byteLength <= maxPayload) {
+          const envBytes = encodeChunk({ type: 'response', text })
+          if (envBytes.byteLength <= MAX_PAYLOAD_BYTES) {
             nc.publish(pending.replySubject, envBytes)
           } else {
-            for (const slice of splitTextForChunks(text, maxPayload)) {
-              nc.publish(
-                pending.replySubject,
-                new TextEncoder().encode(JSON.stringify({ type: 'response', data: slice })),
-              )
+            for (const slice of splitResponseText(text, MAX_PAYLOAD_BYTES)) {
+              nc.publish(pending.replySubject, encodeChunk({ type: 'response', text: slice }))
             }
           }
         }
@@ -821,25 +654,47 @@ function handleNatsMessage(err: Error | null, msg: ServiceMsg): void {
     return
   }
 
-  const parsed = parseRequest(msg.data, MAX_PAYLOAD_BYTES)
-  if (parsed.kind === 'error') {
-    process.stderr.write(`nats channel: rejecting request (${parsed.code} ${parsed.description})\n`)
-    msg.respondError(parsed.code, parsed.description)
+  // §5.4: enforce max_payload locally before envelope decode so we surface
+  // the dedicated "exceeds max_payload" error rather than a generic
+  // ProtocolError from the SDK decoder.
+  if (msg.data.byteLength > MAX_PAYLOAD_BYTES) {
+    msg.respondError(400, 'request exceeds max_payload')
+    nc.publish(replySubject, new Uint8Array(0))
+    return
+  }
+
+  // SDK's `decodeEnvelope` covers §5.1/§5.2/§5.3 plus strict base64 +
+  // filename safety in one place. Throws `ProtocolError` on violation; we
+  // map that to 400 (the previous `parseRequest` only ever produced 400s).
+  let envelope: ReturnType<typeof decodeEnvelope>
+  try {
+    envelope = decodeEnvelope(msg.data)
+  } catch (e) {
+    const code = e instanceof ProtocolError ? 400 : 500
+    const description = (e as Error).message
+    process.stderr.write(`nats channel: rejecting request (${code} ${description})\n`)
+    msg.respondError(code, description)
     nc.publish(replySubject, new Uint8Array(0))  // §9.3: error, then terminator
     return
   }
 
-  if (parsed.attachments.length > 0 && !ATTACHMENTS_OK) {
+  const sdkAttachments = envelope.attachments ?? []
+  if (sdkAttachments.length > 0 && !DEFAULT_ATTACHMENTS_OK) {
     msg.respondError(400, 'attachments not accepted by this endpoint')
     nc.publish(replySubject, new Uint8Array(0))
     return
   }
 
   const requestId = String(++requestCounter)
-  const staged = stageAttachments(requestId, parsed.attachments)
+  // SDK delivers attachments as `{filename, content: Uint8Array}`; the
+  // staging helper writes bytes verbatim under the legacy `bytes` key.
+  const staged = stageAttachments(
+    requestId,
+    sdkAttachments.map((a) => ({ filename: a.filename, bytes: a.content })),
+  )
 
   const ackTimer = setInterval(() => {
-    nc.publish(replySubject, JSON.stringify({ type: 'status', data: 'ack' }))
+    nc.publish(replySubject, encodeChunk({ type: 'status', status: 'ack' }))
   }, ACK_INTERVAL_MS)
   ackTimer.unref()
 
@@ -855,8 +710,8 @@ function handleNatsMessage(err: Error | null, msg: ServiceMsg): void {
   // view — the harness only serializes primitive values there. Attachment
   // paths are prepended to the prompt text so the model sees them inline.
   const content = staged.length > 0
-    ? `[Attachments available at the following absolute paths]\n${staged.map(s => `- ${s.path}`).join('\n')}\n\n${parsed.prompt}`
-    : parsed.prompt
+    ? `[Attachments available at the following absolute paths]\n${staged.map(s => `- ${s.path}`).join('\n')}\n\n${envelope.prompt}`
+    : envelope.prompt
 
   mcp.notification({
     method: 'notifications/claude/channel',

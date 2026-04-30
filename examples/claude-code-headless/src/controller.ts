@@ -44,7 +44,7 @@ export interface ControllerOptions {
   readonly logger?: (line: string) => void;
 }
 
-const DEFAULT_VERSION = "0.3.0";
+const DEFAULT_VERSION = "0.4.0";
 const DEFAULT_HEARTBEAT_INTERVAL_S = 30;
 
 const helpText = (

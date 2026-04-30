@@ -5,12 +5,16 @@
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
+import {
+  ProtocolError,
+  decodeEnvelope,
+  encodeChunk,
+  type RequestAttachment,
+} from "@synadia-ai/agents";
 import { ReferenceAgent } from "@synadia-ai/agents/testing";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 
 import { cleanupStaged, decorateWithAttachments, stageAttachments } from "./attachments.js";
-import { responseText, statusAck } from "./chunk-encoder.js";
-import { EnvelopeError, parseEnvelope, type ParsedAttachment } from "./envelope.js";
 import {
   sessionHeartbeatSubject,
   sessionPromptSubject,
@@ -106,7 +110,7 @@ export class ManagedSession {
       name: this.sessionId,
       session: this.sessionId,
       description: `pi-headless session ${this.sessionId} (${this.cwd})`,
-      version: "0.3.0",
+      version: "0.4.0",
       maxPayload: "1MB",
       attachmentsOk: true,
       heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
@@ -160,13 +164,13 @@ export class ManagedSession {
       return;
     }
 
-    let envelope;
+    let envelope: ReturnType<typeof decodeEnvelope>;
     try {
-      envelope = parseEnvelope(msg.data);
+      envelope = decodeEnvelope(msg.data);
     } catch (e) {
-      if (e instanceof EnvelopeError) {
+      if (e instanceof ProtocolError) {
         try {
-          msg.respondError(e.code, e.message);
+          msg.respondError(400, e.message);
         } catch {
           /* noop */
         }
@@ -182,10 +186,10 @@ export class ManagedSession {
 
     let stagedDir: string | undefined;
     let body = envelope.prompt;
-    const attachments = envelope.attachments;
-    if (attachments && attachments.length > 0) {
+    const attachments: ReadonlyArray<RequestAttachment> = envelope.attachments ?? [];
+    if (attachments.length > 0) {
       try {
-        const staged = await stageAttachments(this.sessionId, attachments as ParsedAttachment[]);
+        const staged = await stageAttachments(this.sessionId, attachments);
         stagedDir = staged.dir;
         body = decorateWithAttachments(body, staged.paths);
       } catch (e) {
@@ -229,7 +233,7 @@ export class ManagedSession {
     let unsubscribe: (() => void) | undefined;
     try {
       try {
-        pr.msg.respond(statusAck());
+        pr.msg.respond(encodeChunk({ type: "status", status: "ack" }));
       } catch {
         /* noop */
       }
@@ -238,7 +242,7 @@ export class ManagedSession {
         const delta = extractTextDelta(ev);
         if (delta !== undefined) {
           try {
-            pr.msg.respond(responseText(delta));
+            pr.msg.respond(encodeChunk({ type: "response", text: delta }));
           } catch {
             /* noop */
           }

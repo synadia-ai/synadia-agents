@@ -52,6 +52,7 @@ export {
   VERB_HEARTBEAT,
   VERB_PROMPT,
   VERB_STATUS,
+  type AgentSubjectOptions,
   type ParseAgentSubjectOptions,
 } from "./subjects.js";
 
@@ -74,7 +75,15 @@ export {
   buildHeartbeatPayload,
   encodeHeartbeatPayload,
 } from "./heartbeat/payload.js";
-export { type Liveness, DEFAULT_LIVENESS_SLACK, HEARTBEAT_SUBJECT } from "./heartbeat/tracker.js";
+export {
+  type Liveness,
+  DEFAULT_LIVENESS_SLACK,
+  HEARTBEAT_SUBJECT,
+  HeartbeatTracker,
+} from "./heartbeat/tracker.js";
+
+// Byte-size grammar helpers (§2.1 `\d+(B|KB|MB|GB)`).
+export { formatHumanBytes, parseHumanBytes, InvalidSizeError } from "./bytes.js";
 
 // Prompt + streaming
 export {
@@ -87,6 +96,7 @@ export {
 } from "./prompt/envelope.js";
 export {
   encodeChunk,
+  splitResponseText,
   type Chunk,
   type ResponseChunk,
   type StatusChunk,

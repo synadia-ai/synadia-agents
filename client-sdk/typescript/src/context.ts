@@ -24,11 +24,14 @@
 //     const nc = await connect(opts);
 //     const agents = new Agents({ nc });
 //
-// Supported context fields: `url`, `creds` (path), `user_jwt`,
-// `user`+`password`, `token`, `inbox_prefix`.
-// Skipped: `nkey`, TLS cert/key/ca, `nsc` integration.
+// Supported context fields: `url`, `creds` (path), `nkey` (path),
+// `user_jwt` (+ optional `user_seed` for nonce signing), `user`+`password`,
+// `token`, `inbox_prefix`, plus the TLS triple `cert`/`key`/`ca` and
+// `tls_first`.
+// Skipped: `nsc` integration.
 //
-// Precedence inside a context: `creds` > `user_jwt` > `user`/`password`/`token`.
+// Precedence inside a context: `creds` > `nkey` > `user_jwt` (+`user_seed`
+// when present) > `user`/`password` > `token`.
 //
 // `user_jwt` without an accompanying nkey seed leaves the CONNECT signature
 // empty, so it only works against servers that do not require nonce signing.
@@ -36,7 +39,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { credsAuthenticator, jwtAuthenticator } from "@nats-io/nats-core";
+import { credsAuthenticator, jwtAuthenticator, nkeyAuthenticator } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
 import { NatsContextError } from "./errors.js";
 
@@ -82,15 +85,31 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
   const opts: NodeConnectionOptions = { servers };
 
   const creds = str(parsed["creds"]);
+  const nkey = str(parsed["nkey"]);
   const userJwt = str(parsed["user_jwt"]);
+  const userSeed = str(parsed["user_seed"]);
   if (creds) {
-    const credsPath = creds.startsWith("~/") ? join(homedir(), creds.slice(2)) : creds;
-    const bytes = await readFile(credsPath);
+    const bytes = await readFile(expandHome(creds));
     opts.authenticator = credsAuthenticator(
       new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     );
+  } else if (nkey) {
+    // `nats context add` writes `nkey` as a path to a file containing the
+    // raw seed. Read it once and pass through `nkeyAuthenticator`, which
+    // signs the server nonce on each CONNECT.
+    const bytes = await readFile(expandHome(nkey));
+    opts.authenticator = nkeyAuthenticator(
+      new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    );
   } else if (userJwt) {
-    opts.authenticator = jwtAuthenticator(userJwt);
+    // Inline JWT + optional inline seed. When `user_seed` is present
+    // alongside `user_jwt` (the typical "decentralised auth without a
+    // .creds file" shape), pass the seed bytes so nonce signing works.
+    if (userSeed) {
+      opts.authenticator = jwtAuthenticator(userJwt, new TextEncoder().encode(userSeed));
+    } else {
+      opts.authenticator = jwtAuthenticator(userJwt);
+    }
   } else {
     const token = str(parsed["token"]);
     const user = str(parsed["user"]);
@@ -100,10 +119,30 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
     if (password) opts.pass = password;
   }
 
+  // Optional TLS triple. `nats context add --tlscert/--tlskey/--tlsca`
+  // writes file paths; `--tlsfirst` toggles handshake-first.
+  const cert = str(parsed["cert"]);
+  const key = str(parsed["key"]);
+  const ca = str(parsed["ca"]);
+  const tlsFirst = parsed["tls_first"];
+  if (cert || key || ca || tlsFirst === true) {
+    const tls: NonNullable<NodeConnectionOptions["tls"]> = {};
+    if (cert) tls.certFile = expandHome(cert);
+    if (key) tls.keyFile = expandHome(key);
+    if (ca) tls.caFile = expandHome(ca);
+    if (tlsFirst === true) tls.handshakeFirst = true;
+    opts.tls = tls;
+  }
+
   const inboxPrefix = str(parsed["inbox_prefix"]);
   if (inboxPrefix) opts.inboxPrefix = inboxPrefix;
 
   return opts;
+}
+
+/** Expand a leading `~/` to `$HOME/`. */
+function expandHome(path: string): string {
+  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }
 
 /**

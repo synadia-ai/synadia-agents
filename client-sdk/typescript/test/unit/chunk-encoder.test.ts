@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { encodeChunk } from "../../src/stream/chunk-encoder.js";
+import { encodeChunk, splitResponseText } from "../../src/stream/chunk-encoder.js";
 import { decodeChunk } from "../../src/stream/chunk-decoder.js";
 
 const decode = (bytes: Uint8Array): unknown => JSON.parse(new TextDecoder().decode(bytes));
@@ -86,5 +86,64 @@ describe("encodeChunk", () => {
       replySubject: "_INBOX.x",
       prompt: "go?",
     });
+  });
+});
+
+describe("splitResponseText", () => {
+  it("returns an empty array for empty input", () => {
+    expect(splitResponseText("", 1024)).toEqual([]);
+  });
+
+  it("returns the input unchanged when it fits within the budget", () => {
+    expect(splitResponseText("hello", 1024)).toEqual(["hello"]);
+  });
+
+  it("splits a long ASCII string into multiple slices that all fit", () => {
+    const text = "a".repeat(10_000);
+    const slices = splitResponseText(text, 1024);
+    expect(slices.length).toBeGreaterThan(1);
+    expect(slices.join("")).toBe(text);
+    // Each slice's UTF-8 size must fit the per-slice budget
+    // (default reserveBytes=32, safetyDivisor=2 → ~496 bytes for 1024 max).
+    for (const s of slices) {
+      expect(new TextEncoder().encode(s).byteLength).toBeLessThanOrEqual(496);
+    }
+  });
+
+  it("never splits inside a multi-byte UTF-8 sequence", () => {
+    // 4-byte emoji repeated — every code point is 4 bytes UTF-8.
+    const text = "🦀".repeat(500);
+    const slices = splitResponseText(text, 256);
+    expect(slices.length).toBeGreaterThan(1);
+    expect(slices.join("")).toBe(text);
+    // Every slice should re-decode without replacement chars.
+    for (const s of slices) {
+      const decoded = new TextDecoder("utf-8", { fatal: true }).decode(
+        new TextEncoder().encode(s),
+      );
+      expect(decoded).toBe(s);
+    }
+  });
+
+  it("never splits inside a UTF-16 surrogate pair", () => {
+    // Astral-plane character: surrogate pair on the JS string side.
+    const text = "🚀".repeat(200); // 🚀
+    const slices = splitResponseText(text, 256);
+    expect(slices.length).toBeGreaterThan(1);
+    for (const s of slices) {
+      // No lone surrogate at slice boundaries.
+      expect(s.charCodeAt(0)).not.toBeGreaterThanOrEqual(0xdc00);
+      expect(s.charCodeAt(s.length - 1)).not.toBeLessThanOrEqual(0xdbff);
+    }
+    expect(slices.join("")).toBe(text);
+  });
+
+  it("honours an explicit safetyDivisor override", () => {
+    const text = "a".repeat(10_000);
+    const conservative = splitResponseText(text, 1024); // default divisor=2 → ~496B/slice
+    const aggressive = splitResponseText(text, 1024, { safetyDivisor: 1 }); // ~992B/slice
+    expect(aggressive.length).toBeLessThan(conservative.length);
+    expect(conservative.join("")).toBe(text);
+    expect(aggressive.join("")).toBe(text);
   });
 });

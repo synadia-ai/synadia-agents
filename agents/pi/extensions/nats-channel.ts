@@ -42,46 +42,43 @@ import type { NodeConnectionOptions } from "@nats-io/transport-node";
 import { Svcm } from "@nats-io/services";
 import type { Service, ServiceMsg } from "@nats-io/services";
 
+import {
+	AgentSubject,
+	DEFAULT_ATTACHMENTS_OK,
+	DEFAULT_HEARTBEAT_INTERVAL_S,
+	DEFAULT_MAX_PAYLOAD,
+	PROMPT_QUEUE_GROUP,
+	ProtocolError,
+	SDK_PROTOCOL_VERSION,
+	SERVICE_NAME,
+	STATUS_QUEUE_GROUP,
+	buildHeartbeatPayload,
+	decodeEnvelope,
+	encodeChunk,
+	encodeHeartbeatPayload,
+	formatHumanBytes,
+	parseHumanBytes,
+	parseNatsUrl,
+	splitResponseText,
+} from "@synadia-ai/agents";
+
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Protocol constants (mirror @synadia-ai/agents spec)
+// PI-specific protocol constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Spec §3.1: the service name is the bare token `agents`. Subject-safe as-is,
-// so no compact/canonical split needed.
-const SERVICE_NAME = "agents";
-// Spec §3.3: the `prompt` endpoint MUST be registered with this queue group.
-const PROMPT_QUEUE_GROUP = "agents";
-// §8.7 (v0.3): the `status` endpoint shares the prompt's queue group so callers
-// load-balance to one responder per logical agent.
-const STATUS_QUEUE_GROUP = "agents";
-const SERVICE_VERSION = "0.3.0";
-const PROTOCOL_VERSION = "0.3";
+const SERVICE_VERSION = "0.4.0";
 
 // Spec §2, Appendix C: `pi` is both the canonical agent identifier and its
-// conventional subject abbreviation.
+// conventional subject abbreviation, so `metadata.agent` and the wire
+// subject's 3rd token are the same — no `subjectToken` override needed.
 const AGENT_ID = "pi";
 
-// Spec §2.1: endpoint capability metadata advertised on the `prompt` endpoint.
-// The actual values used at runtime come from `nc.info.max_payload` after
-// connect — that's the negotiated limit for this user/account, so it's also
-// what we advertise and enforce on inbound requests. These constants are
-// fallbacks for the (rare) case where `INFO` is unavailable.
-export const DEFAULT_MAX_PAYLOAD_STR = "1MB";
-export const DEFAULT_MAX_PAYLOAD_BYTES = 1024 * 1024; // base-1024, matching NATS server convention
-const ATTACHMENTS_OK = true;
-
-/** Format a byte count back into the §2.1 `\d+(B|KB|MB|GB)` grammar (base-1024). */
-export function formatMaxPayloadString(bytes: number): string {
-	if (bytes >= 1024 ** 3 && bytes % 1024 ** 3 === 0) return `${bytes / 1024 ** 3}GB`;
-	if (bytes >= 1024 ** 2 && bytes % 1024 ** 2 === 0) return `${bytes / 1024 ** 2}MB`;
-	if (bytes >= 1024 && bytes % 1024 === 0) return `${bytes / 1024}KB`;
-	return `${bytes}B`;
-}
-
-// Spec §8.2: default 30s cadence.
-const HEARTBEAT_INTERVAL_S = 30;
+/** Fallback values used only when `nc.info.max_payload` isn't available.
+ *  The live cap comes from the broker after connect — see `maxPayloadBytes`
+ *  / `maxPayloadStr` in the extension closure. */
+const DEFAULT_MAX_PAYLOAD_BYTES_FALLBACK = parseHumanBytes(DEFAULT_MAX_PAYLOAD);
 
 // Keep-alive `ack` status emitted during long tool runs so the caller's
 // inactivity timer (§6.6, typically 60s) doesn't fire before text_delta output.
@@ -129,6 +126,9 @@ type NatsContext = {
 	socks_proxy?: string;
 };
 
+/** Attachment shape used for staging — distinct from the SDK's
+ *  `RequestAttachment` so the staging step deals with already-vetted bytes
+ *  under a `bytes` key (legacy pi name). Adapter at the decode boundary. */
 type DecodedAttachment = {
 	filename: string; // sanitized basename
 	bytes: Uint8Array;
@@ -141,10 +141,6 @@ type PendingRequest = {
 	attachments: DecodedAttachment[];
 	createdAt: number;
 };
-
-type ParsedEnvelope =
-	| { ok: true; prompt: string; attachments: DecodedAttachment[] }
-	| { ok: false; code: 400; error: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure helpers
@@ -189,71 +185,13 @@ function loadNatsContext(name: string): NatsContext {
 	}
 }
 
-// Parse a NATS URL into a partial `NodeConnectionOptions`, extracting
-// credentials from `userinfo` if present. Without this, a URL like
-// `nats://TOKEN@host:port` would silently drop the token because
-// `@nats-io/transport-node` doesn't parse credentials from URLs (the
-// `nats` CLI does, which is the UX gap this closes). Inlined per the
-// repo CLAUDE.md "Agents do NOT depend on the SDK" rule —
-// byte-equivalent of `@synadia-ai/agents`'s `parseNatsUrl`. Supports
-// comma-separated cluster URLs (the form `@nats-io/transport-node`
-// accepts via `servers: string`).
-type ParsedSingle = { server: string; token?: string; user?: string; pass?: string };
-function parseSingleNatsUrl(part: string, original: string): ParsedSingle {
-	const withScheme = /^[a-z]+:\/\//i.test(part) ? part : `nats://${part}`;
-	let parsed: URL;
-	try {
-		parsed = new URL(withScheme);
-	} catch (e) {
-		throw new Error(`invalid NATS URL ${JSON.stringify(original)}: ${(e as Error).message}`);
-	}
-	if (!/^(nats|tls|ws|wss):$/.test(parsed.protocol)) {
-		throw new Error(`unsupported scheme "${parsed.protocol}" in NATS URL ${JSON.stringify(original)}`);
-	}
-	if (!parsed.host) {
-		throw new Error(`NATS URL ${JSON.stringify(original)} is missing a host`);
-	}
-	const out: ParsedSingle = { server: `${parsed.protocol}//${parsed.host}` };
-	// WHATWG `URL` squashes `nats://user@host` and `nats://user:@host` into
-	// `password === ""`; sniff raw input for a colon to recover the intent.
-	const userinfoMatch = withScheme.match(/^[a-z]+:\/\/([^/@]*)@/i);
-	const hasColonSeparator = (userinfoMatch?.[1] ?? "").includes(":");
-	if (hasColonSeparator) {
-		out.user = decodeURIComponent(parsed.username);
-		out.pass = decodeURIComponent(parsed.password);
-	} else if (parsed.username !== "") {
-		out.token = decodeURIComponent(parsed.username);
-	}
-	return out;
-}
-function parseNatsUrl(url: string): { servers: string[]; token?: string; user?: string; pass?: string } {
-	const parts = url.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-	if (parts.length === 0) {
-		throw new Error(`empty NATS URL: ${JSON.stringify(url)}`);
-	}
-	const parsedAll = parts.map((p) => parseSingleNatsUrl(p, url));
-	const first = parsedAll[0]!;
-	// Mixed userinfo across cluster entries can't be expressed in one
-	// ConnectionOptions — fail loudly rather than silently drop credentials.
-	for (const p of parsedAll.slice(1)) {
-		if (p.token !== first.token || p.user !== first.user || p.pass !== first.pass) {
-			throw new Error(`NATS URL has mixed credentials across server entries: ${url}`);
-		}
-	}
-	const out: { servers: string[]; token?: string; user?: string; pass?: string } = {
-		servers: parsedAll.map((p) => p.server),
-	};
-	if (first.token !== undefined) out.token = first.token;
-	if (first.user !== undefined) out.user = first.user;
-	if (first.pass !== undefined) out.pass = first.pass;
-	return out;
-}
-
 function contextToConnectOpts(ctx: NatsContext): NodeConnectionOptions {
 	const opts: NodeConnectionOptions = { name: "pi-nats-channel" };
 
 	// Parse the URL once; extracted userinfo serves as a fallback only when
 	// no explicit context-file auth field is set (precedence below).
+	// SDK's `parseNatsUrl` returns `NodeConnectionOptions` with `servers`,
+	// plus optional `token`/`user`/`pass` from URL userinfo.
 	const urlOpts = ctx.url ? parseNatsUrl(ctx.url) : null;
 	if (urlOpts) {
 		opts.servers = urlOpts.servers;
@@ -306,153 +244,12 @@ function saveConfig(cfg: PiNatsConfig): void {
 }
 
 /**
- * Strict RFC 4648 §4 base64 per spec §5.2: standard alphabet, padded, no
- * whitespace, no URL-safe. `Buffer.from(_, "base64")` is tolerant of all
- * three relaxations, so we validate the shape first and only decode if it
- * passes.
- */
-const STRICT_BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
-
-function decodeStrictBase64(s: string): Uint8Array | null {
-	if (s.length % 4 !== 0) return null;
-	if (!STRICT_BASE64.test(s)) return null;
-	return new Uint8Array(Buffer.from(s, "base64"));
-}
-
-/**
- * Validate a caller-supplied filename. Strict: rejects anything that isn't a
- * plain basename. We deliberately do NOT auto-normalize (`basename("../x")`
- * → `x`) because silently rewriting the name would hide the caller's intent
- * and let a buggy SDK ship structured paths we've quietly flattened.
- */
-function sanitizeFilename(raw: string): string | null {
-	if (raw.length === 0 || raw.length > 255) return null;
-	if (raw.includes("\0")) return null;
-	if (raw.includes("/") || raw.includes("\\")) return null;
-	if (raw === "." || raw === "..") return null;
-	// A name equal to its basename, not composed of only dots (e.g. "...").
-	if (basename(raw) !== raw) return null;
-	return raw;
-}
-
-/**
- * Parse a request payload per spec §5.1 / §5.3.
- *
- * 1. Zero-byte → 400.
- * 2. Skip leading UTF-8 whitespace (0x09/0x0A/0x0D/0x20).
- * 3. If the next byte is `{`: parse JSON; require a string `prompt` field.
- *    When `attachments_ok` is true, decode each attachment's base64 content
- *    and sanitize its filename here so the handler only deals with vetted,
- *    in-memory bytes.
- * 4. Otherwise: promote the raw payload to `{prompt: <payload>}`.
- *
- * Unknown envelope fields (e.g. `from`) are tolerated and silently ignored by
- * us — spec §5.6 requires decoders to preserve them on relay; since we don't
- * relay, we just don't inspect them.
- */
-function parseEnvelope(data: Uint8Array): ParsedEnvelope {
-	if (data.byteLength === 0) {
-		return { ok: false, code: 400, error: "empty payload" };
-	}
-
-	let i = 0;
-	while (
-		i < data.byteLength &&
-		(data[i] === 0x09 || data[i] === 0x0a || data[i] === 0x0d || data[i] === 0x20)
-	) {
-		i++;
-	}
-	if (i === data.byteLength) {
-		return { ok: false, code: 400, error: "empty payload after whitespace" };
-	}
-
-	if (data[i] === 0x7b /* '{' */) {
-		const text = new TextDecoder().decode(data);
-		let obj: unknown;
-		try {
-			obj = JSON.parse(text);
-		} catch {
-			return { ok: false, code: 400, error: "invalid JSON envelope" };
-		}
-		if (typeof obj !== "object" || obj === null || Array.isArray(obj)) {
-			return { ok: false, code: 400, error: "envelope must be a JSON object" };
-		}
-		const rec = obj as Record<string, unknown>;
-		if (typeof rec.prompt !== "string" || rec.prompt.length === 0) {
-			return { ok: false, code: 400, error: "envelope missing non-empty string 'prompt'" };
-		}
-
-		const decoded: DecodedAttachment[] = [];
-		if (rec.attachments !== undefined) {
-			if (!Array.isArray(rec.attachments)) {
-				return { ok: false, code: 400, error: "attachments must be an array" };
-			}
-			for (let idx = 0; idx < rec.attachments.length; idx++) {
-				const a = rec.attachments[idx];
-				if (typeof a !== "object" || a === null || Array.isArray(a)) {
-					return { ok: false, code: 400, error: `attachment[${idx}] must be an object` };
-				}
-				const ar = a as Record<string, unknown>;
-				if (typeof ar.filename !== "string") {
-					return { ok: false, code: 400, error: `attachment[${idx}] missing string 'filename'` };
-				}
-				if (typeof ar.content !== "string") {
-					return { ok: false, code: 400, error: `attachment[${idx}] missing string 'content'` };
-				}
-				const safeName = sanitizeFilename(ar.filename);
-				if (safeName === null) {
-					return {
-						ok: false,
-						code: 400,
-						error: `attachment[${idx}] has unsafe filename`,
-					};
-				}
-				const bytes = decodeStrictBase64(ar.content);
-				if (bytes === null) {
-					return {
-						ok: false,
-						code: 400,
-						error: `attachment[${idx}] has invalid base64 content`,
-					};
-				}
-				decoded.push({ filename: safeName, bytes });
-			}
-		}
-		return { ok: true, prompt: rec.prompt, attachments: decoded };
-	}
-
-	// Plain-text shorthand (§5.1).
-	const text = new TextDecoder().decode(data);
-	return { ok: true, prompt: text, attachments: [] };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Subject helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Subject helpers (§2 v0.3 — verb-first). Mirrors the SDK's `AgentSubject`
-// helper but inlined here per the agents/* convention of staying on raw
-// `@nats-io/*` rather than depending on `@synadia-ai/agents`.
-function buildPromptSubject(owner: string, name: string): string {
-	return `agents.prompt.${AGENT_ID}.${owner}.${name}`;
-}
-
-function buildHeartbeatSubject(owner: string, name: string): string {
-	return `agents.hb.${AGENT_ID}.${owner}.${name}`;
-}
-
-function buildStatusSubject(owner: string, name: string): string {
-	return `agents.status.${AGENT_ID}.${owner}.${name}`;
-}
-
-/**
  * Query existing `agents` service instances and pick the first candidate session
  * name whose `prompt` endpoint subject is free. Auto-suffixes `-2`, `-3`, …
  *
  * Only this owner/agent's subjects can collide with ours (different agent
  * identifiers don't share subjects), so we don't need to filter the discovery
- * response — `taken.has(buildPromptSubject(owner, candidate))` excludes other
- * namespaces naturally.
+ * response — `taken.has(...)` excludes other namespaces naturally.
  */
 async function resolveSessionName(
 	nc: NatsConnection,
@@ -476,7 +273,7 @@ async function resolveSessionName(
 
 	let candidate = base;
 	let suffix = 2;
-	while (taken.has(buildPromptSubject(owner, candidate))) {
+	while (taken.has(AgentSubject.new(AGENT_ID, owner, candidate).prompt)) {
 		candidate = `${base}-${suffix++}`;
 	}
 	return candidate;
@@ -499,9 +296,10 @@ export default function (pi: ExtensionAPI) {
 	let contextLabel: string | undefined;
 	let serverUrl: string | undefined;
 	// Filled in after connect from `nc.info?.max_payload`; falls back to the
-	// 1MB defaults if the server INFO block is unavailable.
-	let maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES;
-	let maxPayloadStr = DEFAULT_MAX_PAYLOAD_STR;
+	// SDK's `DEFAULT_MAX_PAYLOAD` (1MB) if the server INFO block is unavailable.
+	let maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES_FALLBACK;
+	let maxPayloadStr = DEFAULT_MAX_PAYLOAD;
+	let agentSubject: AgentSubject | undefined;
 
 	let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 	let ackTimer: ReturnType<typeof setInterval> | undefined;
@@ -525,42 +323,25 @@ export default function (pi: ExtensionAPI) {
 	// Chunk publishing (§6)
 	// ───────────────────────────────────────────────────────────────────────
 
-	/** Publish a typed chunk `{type, data}` to the reply subject (§6.2). */
-	function publishTypedChunk(replySubject: string, type: string, data: unknown): void {
+	/**
+	 * Publish a status chunk on the reply subject (§6.4). Thin wrapper over
+	 * the SDK's `encodeChunk` so the call sites stay legible.
+	 */
+	function publishStatus(replySubject: string, status: string): void {
 		if (!nc) return;
-		nc.publish(replySubject, JSON.stringify({ type, data }));
+		nc.publish(replySubject, encodeChunk({ type: "status", status }));
 	}
 
 	/**
 	 * Publish response text as one or more `{type:"response",data:<text>}`
-	 * chunks. If the encoded JSON would exceed the server's max_payload,
-	 * split the TEXT at UTF-8 codepoint boundaries and emit multiple chunks
-	 * — never split JSON mid-object.
+	 * chunks (§6.3). Uses the SDK's `splitResponseText` for the UTF-8-safe
+	 * split — `reserveBytes: 256` matches the historical pi reserve so chunk
+	 * granularity is unchanged from before the SDK migration.
 	 */
 	function publishResponseText(replySubject: string, text: string): void {
 		if (!nc || text.length === 0) return;
-		const serverMax = maxPayloadBytes;
-		// Reserve for the `{"type":"response","data":""}` wrapper + JSON escapes.
-		const reserve = 256;
-		const textBudget = Math.max(1, serverMax - reserve);
-
-		const bytes = new TextEncoder().encode(text);
-		if (bytes.byteLength <= textBudget) {
-			publishTypedChunk(replySubject, "response", text);
-			return;
-		}
-
-		let offset = 0;
-		while (offset < bytes.byteLength) {
-			let end = Math.min(offset + textBudget, bytes.byteLength);
-			// Back off to a UTF-8 codepoint boundary (continuation bytes are 10xxxxxx).
-			if (end < bytes.byteLength) {
-				while (end > offset && (bytes[end]! & 0xc0) === 0x80) end--;
-				if (end === offset) end = Math.min(offset + textBudget, bytes.byteLength);
-			}
-			const sub = new TextDecoder().decode(bytes.subarray(offset, end));
-			publishTypedChunk(replySubject, "response", sub);
-			offset = end;
+		for (const slice of splitResponseText(text, maxPayloadBytes, { reserveBytes: 256 })) {
+			nc.publish(replySubject, encodeChunk({ type: "response", text: slice }));
 		}
 	}
 
@@ -583,7 +364,7 @@ export default function (pi: ExtensionAPI) {
 		ackTimer = setInterval(() => {
 			if (!nc) return;
 			try {
-				publishTypedChunk(replySubject, "status", "ack");
+				publishStatus(replySubject, "ack");
 			} catch {
 				// best effort
 			}
@@ -618,23 +399,37 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		const parsed = parseEnvelope(msg.data);
-		if (!parsed.ok) {
-			respondWithError(msg, parsed.code, parsed.error);
+		// SDK's `decodeEnvelope` throws ProtocolError on §5.1/§5.2/§5.3
+		// violations (replaces the old `{ok:false, code, error}` shape).
+		let envelope: ReturnType<typeof decodeEnvelope>;
+		try {
+			envelope = decodeEnvelope(msg.data);
+		} catch (e) {
+			const code = e instanceof ProtocolError ? 400 : 500;
+			respondWithError(msg, code, (e as Error).message);
 			return;
 		}
 
-		if (parsed.attachments.length > 0 && !ATTACHMENTS_OK) {
+		const sdkAttachments = envelope.attachments ?? [];
+		if (sdkAttachments.length > 0 && !DEFAULT_ATTACHMENTS_OK) {
 			respondWithError(msg, 400, "this agent does not accept attachments (attachments_ok=false)");
 			return;
 		}
+
+		// Adapt the SDK's `RequestAttachment` (`{filename, content: Uint8Array}`)
+		// to pi's local `DecodedAttachment` (`{filename, bytes: Uint8Array}`)
+		// at the boundary so the staging code below stays unchanged.
+		const attachments: DecodedAttachment[] = sdkAttachments.map((a) => ({
+			filename: a.filename,
+			bytes: a.content,
+		}));
 
 		const requestId = String(++requestCounter);
 		pendingRequests.set(requestId, {
 			msg,
 			replySubject: msg.reply,
-			prompt: parsed.prompt,
-			attachments: parsed.attachments,
+			prompt: envelope.prompt,
+			attachments,
 			createdAt: Date.now(),
 		});
 		requestQueue.push(requestId);
@@ -686,7 +481,7 @@ export default function (pi: ExtensionAPI) {
 			try {
 				// Tell the caller work has been accepted — resets their inactivity
 				// timer before the first text_delta (§6.4).
-				publishTypedChunk(pending.replySubject, "status", "ack");
+				publishStatus(pending.replySubject, "ack");
 				startAckKeepalive(pending.replySubject);
 				pi.sendUserMessage(finalPrompt);
 				return;
@@ -735,15 +530,15 @@ export default function (pi: ExtensionAPI) {
 	// Heartbeat (§8)
 	// ───────────────────────────────────────────────────────────────────────
 
-	function heartbeatPayload(): string {
-		return JSON.stringify({
-			agent: AGENT_ID,
-			owner,
-			session: sessionName,
-			instance_id: instanceId,
-			ts: new Date().toISOString(),
-			interval_s: HEARTBEAT_INTERVAL_S,
-		});
+	function buildHeartbeatBytes(): Uint8Array {
+		if (!agentSubject || !instanceId) {
+			throw new Error("heartbeat called before service was registered");
+		}
+		return encodeHeartbeatPayload(
+			buildHeartbeatPayload(agentSubject, DEFAULT_HEARTBEAT_INTERVAL_S, instanceId, {
+				session: sessionName,
+			}),
+		);
 	}
 
 	/**
@@ -757,7 +552,7 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 		try {
-			msg.respond(heartbeatPayload());
+			msg.respond(buildHeartbeatBytes());
 		} catch (e) {
 			try {
 				msg.respondError(500, `status handler error: ${(e as Error).message}`);
@@ -773,14 +568,14 @@ export default function (pi: ExtensionAPI) {
 		const publish = (): void => {
 			if (!nc || !heartbeatSubject) return;
 			try {
-				nc.publish(heartbeatSubject, heartbeatPayload());
+				nc.publish(heartbeatSubject, buildHeartbeatBytes());
 			} catch {
 				// best effort — status loop surfaces real connectivity issues
 			}
 		};
 		// Emit one immediately so callers discovering us don't wait a full cadence.
 		publish();
-		heartbeatTimer = setInterval(publish, HEARTBEAT_INTERVAL_S * 1000);
+		heartbeatTimer = setInterval(publish, DEFAULT_HEARTBEAT_INTERVAL_S * 1000);
 		heartbeatTimer.unref?.();
 	}
 
@@ -890,7 +685,7 @@ export default function (pi: ExtensionAPI) {
 			nc = await connect(opts);
 			if (nc.info?.max_payload) {
 				maxPayloadBytes = nc.info.max_payload;
-				maxPayloadStr = formatMaxPayloadString(maxPayloadBytes);
+				maxPayloadStr = formatHumanBytes(maxPayloadBytes);
 			}
 		} catch (e) {
 			ctx.ui.notify(
@@ -913,9 +708,13 @@ export default function (pi: ExtensionAPI) {
 			await cleanup();
 			return;
 		}
-		promptSubject = buildPromptSubject(owner, sessionName);
-		heartbeatSubject = buildHeartbeatSubject(owner, sessionName);
-		statusSubject = buildStatusSubject(owner, sessionName);
+		// `pi` is both the canonical agent identifier AND its conventional
+		// subject abbreviation (Appendix C), so the SDK's default — wire token
+		// equals `agent` — is what we want; no `subjectToken` override needed.
+		agentSubject = AgentSubject.new(AGENT_ID, owner, sessionName);
+		promptSubject = agentSubject.prompt;
+		heartbeatSubject = agentSubject.heartbeat;
+		statusSubject = agentSubject.status;
 
 		// 5. Register the microservice instance (§3)
 		try {
@@ -928,7 +727,7 @@ export default function (pi: ExtensionAPI) {
 					agent: AGENT_ID,
 					owner,
 					session: sessionName,
-					protocol_version: PROTOCOL_VERSION,
+					protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
 					// Supplementary — preserved but not spec-normative.
 					cwd: ctx.cwd,
 				},
@@ -940,7 +739,7 @@ export default function (pi: ExtensionAPI) {
 				handler: handleNatsMessage,
 				metadata: {
 					max_payload: maxPayloadStr,
-					attachments_ok: ATTACHMENTS_OK ? "true" : "false",
+					attachments_ok: DEFAULT_ATTACHMENTS_OK ? "true" : "false",
 				},
 			});
 			// §8.7 (v0.3): status request/response endpoint. Replies with a
@@ -1019,7 +818,7 @@ export default function (pi: ExtensionAPI) {
 				`Server: ${serverUrl} (${contextLabel})`,
 				`Subject: ${promptSubject}`,
 				`Service: ${SERVICE_NAME} v${SERVICE_VERSION}`,
-				`Protocol: ${PROTOCOL_VERSION}`,
+				`Protocol: ${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
 				`Instance: ${instanceId ?? "?"}`,
 				`Session: ${sessionName}`,
 				`Owner: ${owner}`,
