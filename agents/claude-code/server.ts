@@ -762,7 +762,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           `nats channel: replying to ${pending.replySubject} (request ${requestId}, done=${done}, bytes=${text.length})\n`,
         )
 
-        const maxPayload = nc.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES
+        const maxPayload = MAX_PAYLOAD_BYTES
 
         if (text.length > 0) {
           const envelope = JSON.stringify({ type: 'response', data: text })
