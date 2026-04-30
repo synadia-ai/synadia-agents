@@ -73,6 +73,54 @@ function encodeResponse(chunk: ResponseChunk): Record<string, unknown> {
   };
 }
 
+/**
+ * UTF-8-safe split for a long response text into substrings small enough
+ * to ship as `{type:"response", data:<slice>}` chunks under a given
+ * NATS `max_payload`.
+ *
+ * Iterates by code-point so a multi-byte UTF-8 sequence or a UTF-16
+ * surrogate pair is never split mid-character. The per-slice budget
+ * defaults to half of `(maxPayloadBytes - reserveBytes)` to leave headroom
+ * for worst-case JSON escaping (every char rewritten to `\uXXXX`); pass
+ * a tighter `safetyDivisor` if the input is known to contain few escape
+ * candidates and the agent wants larger chunks.
+ *
+ * Designed to replace the identical `splitTextForChunks` /
+ * `publishResponseText` chunkers carried by the `agents/{claude-code,
+ * openclaw, pi}` harnesses.
+ */
+export function splitResponseText(
+  text: string,
+  maxPayloadBytes: number,
+  opts: { reserveBytes?: number; safetyDivisor?: number } = {},
+): string[] {
+  // 32 covers `{"type":"response","data":""}` (28 chars) plus a small margin.
+  const reserve = opts.reserveBytes ?? 32;
+  // Halve by default: worst-case JSON escaping (every char → `\uXXXX`) is 6×
+  // expansion, so 0.5× of the remaining budget is conservative-but-not-paranoid.
+  const safetyDivisor = opts.safetyDivisor ?? 2;
+  const budget = Math.max(64, Math.floor((maxPayloadBytes - reserve) / safetyDivisor));
+
+  if (text.length === 0) return [];
+  const out: string[] = [];
+  const encoder = new TextEncoder();
+  let buf = "";
+  let bufBytes = 0;
+
+  for (const cp of text) {
+    const cpBytes = encoder.encode(cp).byteLength;
+    if (bufBytes + cpBytes > budget && buf.length > 0) {
+      out.push(buf);
+      buf = "";
+      bufBytes = 0;
+    }
+    buf += cp;
+    bufBytes += cpBytes;
+  }
+  if (buf.length > 0) out.push(buf);
+  return out;
+}
+
 function encodeQuery(chunk: QueryChunk): Record<string, unknown> {
   const data: Record<string, unknown> = {
     id: chunk.id,

@@ -95,6 +95,7 @@ export {
 } from "./prompt/envelope.js";
 export {
   encodeChunk,
+  splitResponseText,
   type Chunk,
   type ResponseChunk,
   type StatusChunk,
