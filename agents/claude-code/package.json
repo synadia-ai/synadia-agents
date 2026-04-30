@@ -10,7 +10,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@nats-io/transport-node": "^3.0.0",
-    "@nats-io/services": "^3.0.0"
+    "@nats-io/services": "^3.0.0",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript"
   },
   "devDependencies": {
     "@types/node": "^25.6.0"
