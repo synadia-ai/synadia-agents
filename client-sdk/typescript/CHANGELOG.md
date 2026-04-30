@@ -13,8 +13,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `HeartbeatTracker` is now exported from the package root. Existing
+  internal usage by `Agents.onHeartbeat` is unchanged; consumers that
+  want the heartbeat-wildcard primitive directly (e.g.
+  `examples/agent-web-ui/server/bridge.ts`, agent harnesses adopting
+  the SDK) can now import it without reaching into the source tree.
+- `formatHumanBytes`, `parseHumanBytes`, and `InvalidSizeError` are
+  exported from the package root. They were added to `./bytes.js` for
+  the broker-derived `max_payload` clamp work but kept internal;
+  exporting them lets the agent harnesses replace identical
+  `formatMaxPayloadString` copies with one tested SDK helper.
+- `Agents.lookupInstance(instanceId, opts?)` — targeted
+  `$SRV.INFO.agents.<id>` lookup that materialises a single `Agent`
+  for an already-known instance id without running a full discovery
+  scan. Returns `null` on timeout, no-responders, or malformed
+  metadata. The returned `Agent` shares the parent client's
+  connection and close signal so in-flight streams are cancelled
+  alongside everything else when the client closes.
+- `splitResponseText(text, maxPayloadBytes, opts?)` — UTF-8-safe
+  chunker for long response payloads. Iterates by code-point so
+  multi-byte UTF-8 sequences and UTF-16 surrogate pairs are never
+  split mid-character. Replaces three near-identical
+  `splitTextForChunks` / `publishResponseText` helpers carried by
+  the `agents/{claude-code,openclaw,pi}` harnesses.
+- `AgentSubject` + `AgentService` accept an optional `subjectToken`
+  override. When set, the wire token in the subject's 3rd position is
+  the override; `metadata.agent` (in `$SRV.INFO`) keeps the canonical,
+  longer identifier. Default behaviour unchanged — both come from
+  `agent`. Lets harnesses like `claude-code` (`agent="claude-code"`,
+  `subjectToken="cc"`) and `openclaw` (`agent="openclaw"`,
+  `subjectToken="oc"`) adopt the SDK's `AgentSubject` / `AgentService`
+  while preserving their established subject layouts.
+
 ### Changed
 
+- `loadContextOptions` now honours the full set of fields written by
+  `nats context add`. `nkey` (file path) is read and passed through
+  `nkeyAuthenticator`; an inline `user_seed` paired with `user_jwt`
+  flows through `jwtAuthenticator(jwt, seed)` so nonce signing works;
+  the TLS triple `cert` / `key` / `ca` plus boolean `tls_first`
+  populate `opts.tls = { certFile, keyFile, caFile, handshakeFirst }`.
+  Auth precedence is now: `creds` > `nkey` > `user_jwt` (+ optional
+  `user_seed`) > inline `user`/`password` > inline `token`. Centralises
+  what `agents/pi`'s and `agents/claude-code`'s `contextToConnectOpts`
+  helpers have been doing in parallel.
 - Caller-side §5.4 validation now considers **both** the agent's
   advertised `max_payload` _and_ the caller's own
   `nc.info.max_payload` (the broker holding the caller's
