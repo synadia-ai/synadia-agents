@@ -8,20 +8,16 @@ import type { ServerWebSocket } from "bun";
 import {
   Agent,
   Agents,
-  buildAgentInfo,
+  HeartbeatTracker,
   decodeBase64,
   AttachmentsNotSupportedError,
-  HEARTBEAT_SUBJECT,
   PayloadTooLargeError,
-  SERVICE_NAME,
   ServiceError,
   StreamStalledError,
   type NatsConnection,
   type QueryEvent,
-  type RawServiceInfo,
   type RequestAttachment,
 } from "@synadia-ai/agents";
-import type { Subscription } from "@nats-io/nats-core";
 import type {
   CcExecSessionSummary,
   CcExecSpawnDescriptor,
@@ -42,7 +38,8 @@ export class Bridge {
   private activeStreams = new Map<string, ActiveStream>();
   private activeQueries = new Map<string, QueryEvent>();
   private heartbeatSubs = new Map<string, () => void>();
-  private heartbeatWildcardSub: Subscription | null = null;
+  private heartbeatTracker: HeartbeatTracker | null = null;
+  private heartbeatWatchUnsub: (() => void) | null = null;
   private pendingInstanceLookups = new Set<string>();
   private closed = false;
 
@@ -118,13 +115,13 @@ export class Bridge {
     this.activeQueries.clear();
     for (const unsub of this.heartbeatSubs.values()) unsub();
     this.heartbeatSubs.clear();
-    if (this.heartbeatWildcardSub) {
-      try {
-        this.heartbeatWildcardSub.unsubscribe();
-      } catch {
-        /* noop */
-      }
-      this.heartbeatWildcardSub = null;
+    if (this.heartbeatWatchUnsub) {
+      this.heartbeatWatchUnsub();
+      this.heartbeatWatchUnsub = null;
+    }
+    if (this.heartbeatTracker) {
+      void this.heartbeatTracker.stop();
+      this.heartbeatTracker = null;
     }
     this.pendingInstanceLookups.clear();
     this.ws = null;
@@ -540,58 +537,40 @@ export class Bridge {
   // ─── Auto-discovery via heartbeat wildcard ────────────────────────────────
 
   /**
-   * Subscribe to the protocol-fixed heartbeat wildcard so new agents are
-   * picked up as soon as they publish their first heartbeat — which
-   * `ReferenceAgent` does synchronously in `start()` (see
-   * `reference-agent.ts:173`), yielding sub-second latency for fresh
-   * instances. Unknown instance_ids trigger a direct `$SRV.INFO.agents.<id>`
-   * lookup so we add them to the map with full metadata.
+   * Use the SDK's {@link HeartbeatTracker} to listen for any heartbeat on
+   * `agents.hb.*.*.*`. New `instance_id`s trigger a targeted
+   * `Agents.lookupInstance(id)` so the bridge adds them to the map with
+   * full $SRV.INFO metadata as soon as their first heartbeat arrives —
+   * sub-second pickup, no waiting for the next `discover()` cycle.
    */
   private startHeartbeatWatch(): void {
-    if (this.heartbeatWildcardSub) return;
-    try {
-      this.heartbeatWildcardSub = this.nc.subscribe(HEARTBEAT_SUBJECT, {
-        callback: (err, msg) => {
-          if (err || this.closed) return;
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(msg.string());
-          } catch {
-            return;
-          }
-          if (!parsed || typeof parsed !== "object") return;
-          const instanceId = (parsed as { instance_id?: unknown }).instance_id;
-          if (typeof instanceId !== "string" || instanceId.length === 0) return;
-          if (this.agentsByInstanceId.has(instanceId)) return;
-          void this.ensureAgentKnown(instanceId);
-        },
-      });
-    } catch (e) {
-      console.warn("[bridge] heartbeat watch failed:", (e as Error).message);
-    }
+    if (this.heartbeatTracker) return;
+    const tracker = new HeartbeatTracker(this.nc);
+    this.heartbeatTracker = tracker;
+    void tracker.start().catch((e) => {
+      console.warn("[bridge] heartbeat watch failed to start:", (e as Error).message);
+    });
+    this.heartbeatWatchUnsub = tracker.onAnyHeartbeat((hb) => {
+      if (this.closed) return;
+      if (this.agentsByInstanceId.has(hb.instanceId)) return;
+      void this.ensureAgentKnown(hb.instanceId);
+    });
   }
 
   /**
-   * If `instanceId` isn't already in our map, fetch its `$SRV.INFO` record,
-   * build a `Agent`, and push it to the UI. Reentrant calls for
-   * the same id coalesce via `pendingInstanceLookups`.
+   * If `instanceId` isn't already in our map, fetch its `$SRV.INFO` record
+   * via `Agents.lookupInstance`, register the resulting `Agent`, and push
+   * it to the UI. Reentrant calls for the same id coalesce via
+   * `pendingInstanceLookups`.
    */
   private async ensureAgentKnown(instanceId: string): Promise<void> {
     if (this.agentsByInstanceId.has(instanceId)) return;
     if (this.pendingInstanceLookups.has(instanceId)) return;
     this.pendingInstanceLookups.add(instanceId);
     try {
-      const raw = await this.directServiceInfo(instanceId);
-      if (!raw) return;
+      const agent = await this.agents.lookupInstance(instanceId);
+      if (!agent) return;
       if (this.agentsByInstanceId.has(instanceId)) return; // raced
-      const info = buildAgentInfo(raw);
-      if (!info) return;
-      const agent = new Agent(
-        this.nc,
-        info,
-        this.agents.streamInactivityTimeoutMs,
-        this.agents.closeSignal,
-      );
       this.registerAgent(agent);
     } catch (e) {
       console.warn(
@@ -600,18 +579,6 @@ export class Bridge {
       );
     } finally {
       this.pendingInstanceLookups.delete(instanceId);
-    }
-  }
-
-  private async directServiceInfo(instanceId: string): Promise<RawServiceInfo | null> {
-    const subject = `$SRV.INFO.${SERVICE_NAME}.${instanceId}`;
-    try {
-      const rep = await this.nc.request(subject, "", { timeout: 2_000 });
-      const parsed = JSON.parse(rep.string()) as RawServiceInfo;
-      if (!parsed || typeof parsed !== "object") return null;
-      return parsed;
-    } catch {
-      return null;
     }
   }
 
