@@ -52,6 +52,7 @@ export {
   VERB_HEARTBEAT,
   VERB_PROMPT,
   VERB_STATUS,
+  type AgentSubjectOptions,
   type ParseAgentSubjectOptions,
 } from "./subjects.js";
 

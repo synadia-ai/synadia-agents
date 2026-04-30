@@ -97,6 +97,35 @@ describe("AgentSubject (§2 v0.3 — verb-first)", () => {
     const s = AgentSubject.new("my-agent_v2", "owner-1", "sess_42");
     expect(s.prompt).toBe("agents.prompt.my-agent_v2.owner-1.sess_42");
   });
+
+  describe("subjectToken override", () => {
+    it("defaults the subject's 3rd token to `agent` when no override is given", () => {
+      const s = AgentSubject.new("claude-code", "alice", "s1");
+      expect(s.agent).toBe("claude-code");
+      expect(s.subjectToken).toBe("claude-code");
+    });
+
+    it("uses the override on the wire while keeping `agent` for metadata", () => {
+      const s = AgentSubject.new("claude-code", "alice", "s1", { subjectToken: "cc" });
+      expect(s.agent).toBe("claude-code");
+      expect(s.subjectToken).toBe("cc");
+      expect(s.prompt).toBe("agents.prompt.cc.alice.s1");
+      expect(s.heartbeat).toBe("agents.hb.cc.alice.s1");
+      expect(s.status).toBe("agents.status.cc.alice.s1");
+    });
+
+    it("validates the override against §2 MUST rules", () => {
+      expect(() =>
+        AgentSubject.new("claude-code", "alice", "s1", { subjectToken: "" }),
+      ).toThrow(InvalidSubjectTokenError);
+      expect(() =>
+        AgentSubject.new("claude-code", "alice", "s1", { subjectToken: "$sys" }),
+      ).toThrow(InvalidSubjectTokenError);
+      expect(() =>
+        AgentSubject.new("claude-code", "alice", "s1", { subjectToken: "c.c" }),
+      ).toThrow(InvalidSubjectTokenError);
+    });
+  });
 });
 
 describe("parseAgentSubject", () => {

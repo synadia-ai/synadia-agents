@@ -92,6 +92,15 @@ export interface AgentServiceOptions {
   /** Instance name — 5th subject token (§2 v0.3). */
   readonly name: string;
   /**
+   * Optional override for the subject's 3rd token (the wire token).
+   * Defaults to `agent`. Use a short form here when `metadata.agent`
+   * carries a longer canonical name and the wire wants the abbreviation
+   * (e.g. `agent: "claude-code", subjectToken: "cc"` —
+   * `metadata.agent="claude-code"` is what callers filter on, while the
+   * subject reads `agents.prompt.cc.<owner>.<name>`).
+   */
+  readonly subjectToken?: string;
+  /**
    * Optional §5.6 envelope-level conversation label. Set when the agent
    * advertises a session label in `$SRV.INFO.metadata.session` and emits
    * it on every heartbeat — used by harnesses (e.g. Hermes) that
@@ -264,7 +273,12 @@ export class AgentService {
     }
 
     this.#options = options;
-    this.#subject = AgentSubject.new(options.agent, options.owner, options.name);
+    this.#subject = AgentSubject.new(
+      options.agent,
+      options.owner,
+      options.name,
+      options.subjectToken !== undefined ? { subjectToken: options.subjectToken } : {},
+    );
     this.#heartbeatIntervalS = heartbeatIntervalS;
     this.#keepaliveIntervalS = keepaliveIntervalS;
   }
