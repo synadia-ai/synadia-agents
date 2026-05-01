@@ -21,9 +21,7 @@
   "bugs": {
     "url": "https://github.com/synadia-ai/synadia-agents/issues"
   },
-  "publishConfig": {
-    "access": "restricted"
-  },
+  "private": true,
   "type": "module",
   "files": [
     "dist",
