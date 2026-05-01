@@ -10,10 +10,10 @@ For an example of *building* a fresh agent from scratch with the host SDK, see [
 
 | Path                | Type token | Underlying harness                          | Prompt subject (v0.3 verb-first)                              | `max_payload` | `attachments_ok` |
 | ------------------- | ---------- | ------------------------------------------- | ------------------------------------------------------------- | ------------- | ---------------- |
-| `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.prompt.pi.<owner>.<session>`                      | 1 MB / system-defined | true |
-| `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.prompt.oc.<owner>.<agentName>`                        | 1 MB / system-defined | true |
-| `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | 1 MB / system-defined | true |
-| `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | 1 MB / system-defined (config can request a smaller cap) | true |
+| `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.prompt.pi.<owner>.<session>`                      | server-negotiated | true |
+| `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.prompt.oc.<owner>.<agentName>`                        | server-negotiated | true |
+| `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | server-negotiated | true |
+| `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | server-negotiated (config can request a smaller cap) | true |
 
 `max_payload` is read from the NATS connection's `INFO` block at startup and advertised verbatim, formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar. A `nats-server` running the default 1 MB advertises `1MB`; bump `--max_payload 8MB` and the agents track it.
 
