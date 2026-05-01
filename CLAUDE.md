@@ -62,7 +62,7 @@ compatibility between the two SDKs.
 | `agents/claude-code/` | `claude-channel-nats` | npm (restricted) | Claude Code MCP plugin |
 | `agents/hermes/` | — | not in repo | README only; ships from upstream Hermes |
 | `examples/pi-headless/` | `@synadia-ai/nats-pi-headless` | npm (restricted) | depends on `@synadia-ai/agents@^0.1.x` |
-| `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | npm (restricted) | depends on `@synadia-ai/agents@^0.1.x` |
+| `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | github only | local-clone test client; `private: true` so it never publishes |
 | `examples/dspy/` | `@synadia-ai/nats-dspy-agent` | private | uses `file:` link to local SDK |
 
 **No root `package.json`, no workspace manager.** Each subtree manages
@@ -164,8 +164,8 @@ description.
 
 ## Release ladder for SDK changes that examples need
 
-The trap: examples (`pi-headless`, `agent-web-ui`) pin
-`@synadia-ai/agents@^0.1.x` from npm, not via `file:` links. A new SDK
+The trap: published examples (`pi-headless`, `claude-code-headless`) pin
+`@synadia-ai/agents@^0.4.x` from npm, not via `file:` links. A new SDK
 export does not exist for them until it is **published**. Don't try to
 land an example migration alongside an unpublished SDK change — typecheck
 will fail in CI, and you'll waste a force-push fixing it.
