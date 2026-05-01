@@ -33,9 +33,11 @@ the authoritative on-the-wire counterpart to the spec doc.
   via `@synadia-ai/agent-service/testing` (post-SDK-split — pre-split
   it lived under `@synadia-ai/agents/testing`). Runnable script:
   `client-sdk/typescript/examples/_run-reference-agent.ts`.
-- **Python**: `client-sdk/python/examples/_reference_agent.py` — a
+- **Python**: `agent-sdk/python/examples/_reference_agent.py` — a
   runnable echo agent with conversation memory, used as the test
   harness for the numbered demos and as a wire-compat counterparty.
+  (Moved with the host-side split into `synadia-ai-agent-service`; pre-
+  split it lived under `client-sdk/python/examples/`.)
 
 Each SDK also has a parallel set of numbered demo scripts that exercise
 discovery, prompting (text + attachments), mid-stream queries, and
@@ -241,7 +243,7 @@ and publish to PyPI via `uv publish`.
 - `README.md` — repo overview, layout, subject namespace, wire
   shape.
 - `agent-sdk/typescript/src/testing/reference-agent.ts` and
-  `client-sdk/python/examples/_reference_agent.py` — canonical
+  `agent-sdk/python/examples/_reference_agent.py` — canonical
   spec-compliant reference agents (see "Reference agents" section
   above). Read these before touching anything wire-shape-y.
 - `client-sdk/typescript/examples/` and `client-sdk/python/examples/`
