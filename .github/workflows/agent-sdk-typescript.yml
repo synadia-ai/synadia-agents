@@ -1,25 +1,25 @@
-name: CI — client-sdk/typescript
+name: CI — agent-sdk/typescript
 
 on:
   push:
     branches: [main]
     paths:
-      - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
-      - ".github/workflows/client-sdk-typescript.yml"
+      - "client-sdk/typescript/**"
+      - ".github/workflows/agent-sdk-typescript.yml"
   pull_request:
     paths:
-      - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
-      - ".github/workflows/client-sdk-typescript.yml"
+      - "client-sdk/typescript/**"
+      - ".github/workflows/agent-sdk-typescript.yml"
 
 concurrency:
-  group: ci-ts-${{ github.ref }}
+  group: ci-ts-host-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
   run:
-    working-directory: client-sdk/typescript
+    working-directory: agent-sdk/typescript
 
 jobs:
   lint-typecheck:
