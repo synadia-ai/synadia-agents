@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/nats-claude-code-headless",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Headless NATS agent host that spawns, prompts, and stops Claude Code sessions as first-class NATS Agent Protocol v0.3 instances. Each session registers as agents.prompt.cc.<owner>.<session_id>; a small controller service adds spawn/stop/list custom endpoints.",
   "keywords": [
     "nats",
@@ -26,15 +26,22 @@
     "access": "restricted"
   },
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "nats-claude-code-headless": "dist/index.js"
+  },
   "files": [
-    "src",
-    "scripts",
+    "dist",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "start": "bun run src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --banner:js='#!/usr/bin/env node' --outfile=dist/index.js && chmod +x dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "latest",
@@ -46,6 +53,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.6.0"
   }
 }

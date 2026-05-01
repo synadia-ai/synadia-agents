@@ -8,7 +8,41 @@ In short: one process, many PI sessions, all first-class NATS agents.
 
 Paired with [`examples/agent-web-ui/`](../agent-web-ui) you also get a browser-based **PI Exec** workspace that picks up spawned sessions automatically, surfaces lifetime/queue metadata, and includes a fan-out composer for running one prompt across many working directories in parallel.
 
-## Quickstart
+## Quickstart (run from npm)
+
+The package ships a `nats-pi-headless` CLI binary, so the simplest way to
+try it is via `npx` — no clone, no build:
+
+```bash
+# Pick a NATS target via context or URL; both are picked up via env or flag.
+NATS_CONTEXT=localhost npx @synadia-ai/nats-pi-headless
+# or:
+NATS_URL=nats://127.0.0.1:4222 npx @synadia-ai/nats-pi-headless
+# or:
+npx @synadia-ai/nats-pi-headless --context localhost
+```
+
+`npx` resolves the package, runs its bundled entry point under Node ≥ 20,
+and prints:
+
+```
+pi-headless: controller listening on agents.prompt.pi.<you>.exec
+pi-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
+```
+
+For a permanent install:
+
+```bash
+npm install -g @synadia-ai/nats-pi-headless
+nats-pi-headless --context localhost
+```
+
+PI auth / model registry comes from `~/.pi/agent/auth.json` (the same
+location `pi` uses) — independent of how you launched the host.
+
+## Quickstart (run from a local clone)
+
+When you're working on the SDK or this example itself:
 
 ```bash
 # 1. Build both SDKs (workspace siblings, referenced via file:). The
@@ -18,12 +52,10 @@ Paired with [`examples/agent-web-ui/`](../agent-web-ui) you also get a browser-b
 (cd ../../client-sdk/typescript && bun install && bun run build)
 (cd ../../agent-sdk/typescript  && bun install && bun run build)
 
-# 2. Run pi-headless.
+# 2. Run pi-headless against the local SDK source via bun.
 cd ../../examples/pi-headless
 bun install
 bun run start                # connects via $NATS_CONTEXT or NATS_URL
-# pi-headless: controller listening on agents.prompt.pi.<you>.exec
-# pi-headless: extra endpoints - …exec.spawn  …exec.stop  …exec.list
 
 # 3. Spawn a session + prompt + stop, from another shell.
 bun run scripts/spawn.ts --cwd /tmp/pi-sandbox --prompt "list the files here" --stop-after

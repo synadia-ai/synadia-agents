@@ -10,23 +10,54 @@ This example is the Claude Code analogue of [`examples/pi-headless/`](../pi-head
 
 > **Status.** Demo-quality reference. Streams text per-token, surfaces tool calls + results inline, asks for permission via protocol §7 query chunks, and tracks cost per session. See **Features** below for the wire shapes; **Roadmap** for what's still ahead.
 
-## Quickstart
+## Quickstart (run from npm)
+
+The package ships a `nats-claude-code-headless` CLI binary, so the
+simplest way to try it is via `npx` — no clone, no build:
 
 ```bash
-# 1. Build both SDKs (workspace siblings, referenced via file:). The
-#    extra `bun install` in agent-sdk re-copies the freshly-built
-#    caller dist into agent-sdk/node_modules/@synadia-ai/agents/, which
-#    is the path the host SDK's compiled output resolves at runtime.
+export ANTHROPIC_API_KEY=sk-...
+NATS_CONTEXT=localhost npx @synadia-ai/nats-claude-code-headless
+# or:
+NATS_URL=nats://127.0.0.1:4222 npx @synadia-ai/nats-claude-code-headless
+# or:
+npx @synadia-ai/nats-claude-code-headless --context localhost
+```
+
+`npx` resolves the package, runs its bundled entry point under Node ≥ 20,
+and prints:
+
+```
+claude-code-headless: controller listening on agents.prompt.cc.<you>.exec
+claude-code-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
+```
+
+For a permanent install:
+
+```bash
+npm install -g @synadia-ai/nats-claude-code-headless
+nats-claude-code-headless --context localhost
+```
+
+The Claude Code native binary is auto-detected via the Claude Agent
+SDK's resolution chain (`--claude-code-path` flag, env var, config file,
+`which claude`, then the SDK's bundled fallback). See
+[Claude Code binary](#claude-code-binary) below for overrides.
+
+## Quickstart (run from a local clone)
+
+When you're working on the SDK or this example itself:
+
+```bash
+# 1. Build both SDKs (workspace siblings, referenced via file:).
 (cd ../../client-sdk/typescript && bun install && bun run build)
 (cd ../../agent-sdk/typescript  && bun install && bun run build)
 
-# 2. Install + run claude-code-headless.
+# 2. Run claude-code-headless against the local SDK source via bun.
 cd ../../examples/claude-code-headless
 bun install
 export ANTHROPIC_API_KEY=sk-...
 bun run start                                    # connects via $NATS_CONTEXT or NATS_URL
-# claude-code-headless: controller listening on agents.prompt.cc.<you>.exec
-# claude-code-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
 
 # 3. Spawn a session + prompt + stop, from another shell.
 bun run scripts/spawn.ts \
