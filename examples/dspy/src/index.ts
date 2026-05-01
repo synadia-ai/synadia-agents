@@ -7,7 +7,8 @@ import path from "node:path";
 import process from "node:process";
 import { ai, ax } from "@ax-llm/ax";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { AgentService, parseNatsUrl } from "@synadia-ai/agents";
+import { parseNatsUrl } from "@synadia-ai/agents";
+import { AgentService } from "@synadia-ai/agent-service";
 import { makeFsTools } from "./tools.js";
 
 const NATS_URL = process.env["NATS_URL"] ?? "nats://127.0.0.1:4222";

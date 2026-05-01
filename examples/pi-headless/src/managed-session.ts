@@ -8,10 +8,10 @@ import type { ServiceMsg } from "@nats-io/services";
 import {
   ProtocolError,
   decodeEnvelope,
-  encodeChunk,
   type RequestAttachment,
 } from "@synadia-ai/agents";
-import { ReferenceAgent } from "@synadia-ai/agents/testing";
+import { encodeChunk } from "@synadia-ai/agent-service";
+import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 
 import { cleanupStaged, decorateWithAttachments, stageAttachments } from "./attachments.js";

@@ -111,7 +111,8 @@ process.env.NATS_SESSION_NAME = `smoke-${process.pid}`;
 process.env.USER = process.env.USER || "smoke";
 
 const { default: channelFactory } = await import("../extensions/nats-channel.ts");
-const { formatHumanBytes, DEFAULT_MAX_PAYLOAD } = await import("@synadia-ai/agents");
+const { formatHumanBytes } = await import("@synadia-ai/agents");
+const { DEFAULT_MAX_PAYLOAD } = await import("@synadia-ai/agent-service");
 
 let ok = 0;
 let fail = 0;

@@ -21,8 +21,8 @@ import {
   PROMPT_QUEUE_GROUP,
   STATUS_ENDPOINT_NAME,
   STATUS_QUEUE_GROUP,
-  encodeChunk,
 } from "@synadia-ai/agents";
+import { encodeChunk } from "@synadia-ai/agent-service";
 import {
   controllerHeartbeatSubject,
   controllerListSubject,
