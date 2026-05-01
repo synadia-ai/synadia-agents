@@ -95,18 +95,24 @@ user first.
 
 Two distinct version axes:
 
-- **Wire protocol version** — `0.2` everywhere right now.
-  - TS: `SDK_PROTOCOL_VERSION = { major: 0, minor: 2 }` in
+- **Wire protocol version** — `0.3` everywhere right now.
+  - TS: `SDK_PROTOCOL_VERSION = { major: 0, minor: 3 }` in
     `client-sdk/typescript/src/version.ts`.
-  - Python: `_PROTOCOL_VERSION = "0.2"` in
-    `client-sdk/python/src/synadia_ai/agents/service.py`.
-  - Agent harnesses hard-code the same string (e.g.
+  - Python: `_PROTOCOL_VERSION = "0.3"` in
+    `agent-sdk/python/src/synadia_ai/agent_service/service.py`
+    (host-side after the Python split landed in PR #45).
+  - Agent harnesses derive the string from the SDK's
+    `SDK_PROTOCOL_VERSION` rather than hard-coding it (see
     `agents/pi/extensions/nats-channel.ts`,
-    `agents/claude-code/server.ts`). If the spec ever bumps, all four
-    locations move in lockstep.
-- **Package version (npm/PyPI)** — independent per SDK.
-  - TS: `@synadia-ai/agents@0.1.x` on npm.
-  - Python: `synadia-ai-agents@0.x` — not yet published to PyPI.
+    `agents/claude-code/server.ts`,
+    `agents/openclaw/src/gateway.ts`). If the spec ever bumps, change
+    the SDK constants in both languages and the harnesses pick it up
+    automatically.
+- **Package version (npm/PyPI)** — independent per SDK pair.
+  - TS: `@synadia-ai/agents` + `@synadia-ai/agent-service` — both at
+    `0.4.0` in lockstep, neither published to npm yet.
+  - Python: `synadia-ai-agents` + `synadia-ai-agent-service` — not
+    yet published to PyPI.
 
 The package versions differ for historical reasons. They are **not** a
 protocol skew. The Python `tests/test_interop_e2e.py` runs the TS
