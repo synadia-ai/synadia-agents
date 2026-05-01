@@ -104,7 +104,11 @@ jobs:
           packages-dir: agent-sdk/python/dist/
 
       - name: Attach artifacts to GitHub release
-        if: ${{ !cancelled() }}
+        # success() (not !cancelled()) so a failed PyPI publish doesn't
+        # leave behind a misleading GitHub Release pointing at a version
+        # that doesn't exist on PyPI — uv build still produced the
+        # wheel/sdist locally, so the dist/ glob would match either way.
+        if: success()
         uses: softprops/action-gh-release@v2
         # `files:` globs resolve from $GITHUB_WORKSPACE (defaults.run.working-directory
         # does not apply to action inputs), so paths are given from the repo root.
