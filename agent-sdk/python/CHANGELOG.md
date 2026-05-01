@@ -8,19 +8,24 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [0.1.0] - 2026-04-30
 
-Initial release. **Extracted from `synadia-ai-agents@0.5.0`** so the
-agent-host surface ships as a focused dependency for harness authors
-while callers can install just the client SDK.
+Initial release. **Carved out of `synadia-ai-agents` at the 0.5.0
+cut**: through 0.4.x the agent-host surface lived inside
+`synadia-ai-agents`; the 0.5.0 release removed it there and shipped
+it here as 0.1.0. Both packages were cut together —
+`synadia-ai-agents@0.5.0` is the first PyPI version that no longer
+carries this surface. Harness authors get a focused dependency;
+callers install just the client SDK.
 
 ### Added
 
 - `synadia_ai.agent_service.AgentService` — service registration,
   prompt endpoint, status endpoint, heartbeat publisher loop, and
   mid-stream `ask` per the §12 implementation checklist. Sourced
-  from `synadia-ai-agents@0.5.0`'s `service.py` (which carries the
-  full lineage including the post-0.3.0 server-`max_payload` clamp
-  and the v0.3 verb-first wire); rewired to import shared wire
-  types (`Envelope`, `HeartbeatPayload`, `AgentSubject`, error
+  from `synadia-ai-agents`'s pre-0.5.0 `service.py` (the file moved
+  here at the split — `synadia-ai-agents@0.5.0` no longer carries
+  it; the lineage includes the post-0.3.0 server-`max_payload`
+  clamp and the v0.3 verb-first wire); rewired to import shared
+  wire types (`Envelope`, `HeartbeatPayload`, `AgentSubject`, error
   classes, discovery constants) from `synadia_ai.agents`.
 - `synadia_ai.agent_service.PromptStream` — emit response chunks /
   ask mid-stream queries / observe terminator semantics.

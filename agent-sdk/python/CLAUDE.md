@@ -3,8 +3,10 @@
 This file provides guidance to Claude Code (claude.ai/code) when working
 with code in this repository.
 
-> **Status (2026-04-30).** Extracted from
-> `synadia-ai-agents@0.5.0`; this package now hosts `AgentService`,
+> **Status (2026-04-30).** Carved out of `synadia-ai-agents` at
+> the 0.5.0 cut (the surface previously lived in `synadia-ai-agents`
+> through 0.4.x; `synadia-ai-agents@0.5.0` is the first PyPI version
+> that no longer carries it). This package now hosts `AgentService`,
 > the heartbeat publisher, the status handler, and the reference
 > agent. Shared wire primitives (`Envelope`, `HeartbeatPayload`,
 > `AgentSubject`, error classes, discovery constants,
@@ -451,8 +453,11 @@ them to success or frustrates them.
 
 ## Alignment milestones
 
-- **2026-04-30 — package extracted from `synadia-ai-agents@0.5.0`.**
-  `service.py`, the publisher half of `heartbeat.py`, the status
+- **2026-04-30 — package carved out of `synadia-ai-agents` at the
+  0.5.0 cut.** The surface (`AgentService` and friends) lived in
+  `synadia-ai-agents` through 0.4.x; at 0.5.0 it was removed there
+  and shipped here as 0.1.0. `service.py`, the publisher half of
+  `heartbeat.py`, the status
   handler, `examples/_reference_agent.py`, and the agent-side e2e
   tests all moved here under `synadia_ai.agent_service`; imports
   were rewired to pull shared primitives from `synadia_ai.agents`
