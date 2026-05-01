@@ -193,14 +193,26 @@ and publish to PyPI via `uv publish`.
 
 - **Per-SDK workflows** under `.github/workflows/`:
   - `client-sdk-typescript.yml` — lint, typecheck, unit + integration
-    tests across Node 20/22/24 and Bun 1.2/latest. Triggers on TS
-    caller-SDK changes.
-  - `agent-sdk-typescript.yml` — same matrix, scoped to the host SDK
-    (`agent-sdk/typescript/`); also triggers on `client-sdk/typescript/`
-    changes since the host package depends on the caller.
+    tests across Node 20/22/24 and Bun 1.2/latest; runs jobs in
+    `client-sdk/typescript/`.
+  - `agent-sdk-typescript.yml` — same matrix; runs jobs in
+    `agent-sdk/typescript/`.
+  - Both TS workflows fire on changes under **either**
+    `client-sdk/typescript/**` or `agent-sdk/typescript/**`, since the
+    host package depends on the caller and the two are kept in lockstep.
   - `client-sdk-python.yml` — ruff, mypy, pytest across Python
-    3.11/3.12/3.13.
-  - `release-python.yml` — tag-triggered PyPI publish.
+    3.11/3.12/3.13 in `client-sdk/python/`. Triggers only on
+    `client-sdk/python/**`.
+  - `client-sdk-python-agent-service.yml` (filename prefix is
+    historical) — same matrix in `agent-sdk/python/`. Triggers on
+    `agent-sdk/python/**` *and* `client-sdk/python/**`, because the
+    agent-sdk's tests resolve `synadia-ai-agents` to the local
+    client-sdk checkout via `[tool.uv.sources]`.
+  - `release-python.yml` — publishes `synadia-ai-agents` to PyPI on
+    `python-v*` tags.
+  - `release-python-agent-service.yml` — publishes
+    `synadia-ai-agent-service` to PyPI on `python-agent-service-v*`
+    tags.
 - **No automated TS publish workflow.** TS releases are manual (see
   release ladder).
 - **`claude.yml`** runs the Claude reviewer bot on PRs. Treat its

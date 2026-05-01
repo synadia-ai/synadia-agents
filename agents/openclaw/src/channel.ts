@@ -77,7 +77,7 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
         },
         {
           inputKey: "owner",
-          message: "Owner (3rd subject token — the operator/account namespace; defaults to \"default\")",
+          message: "Owner (4th subject token — the operator/account namespace; defaults to \"default\")",
           placeholder: "default",
           required: false,
           currentValue: ({ cfg, accountId }: Record<string, unknown>) => {
