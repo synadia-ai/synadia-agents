@@ -187,11 +187,33 @@ Sequence:
    verify `bun run typecheck` in each example.
 5. Merge the example-migration PR.
 
-The same shape applies to the Python SDK, except releases are
-tag-driven (`python-v*` tag in `.github/workflows/release-python.yml`)
-and publish to PyPI via `pypa/gh-action-pypi-publish` with PyPI
-trusted publishing — no long-lived API token; the workflow runs in
-the `pypi` GitHub Environment, which is gated to `python-v*` tags.
+The same shape applies to each Python SDK. Releases are tag-driven
+and publish to PyPI via `pypa/gh-action-pypi-publish` (trusted
+publishing — no long-lived API token):
+
+- `python-v*` → `synadia-ai-agents` via `release-python.yml`
+- `python-agent-service-v*` → `synadia-ai-agent-service` via
+  `release-python-agent-service.yml`
+
+Both workflows run in the `pypi` GitHub Environment, whose
+tag-deployment policy gates them to those two prefixes. **Gotcha
+when adding a new tag-triggered release workflow:** the `pypi` env
+policy must be extended to cover the new tag prefix, or the
+publish job fails with *"Tag X is not allowed to deploy to pypi
+due to environment protection rules"* before OIDC ever runs. Add
+it via:
+
+```sh
+gh api -X POST repos/synadia-ai/synadia-agents/environments/pypi/deployment-branch-policies \
+  -f name='new-prefix-v*' -f type=tag
+```
+
+(Repo Admin required. Sanity check:
+`gh api repos/synadia-ai/synadia-agents --jq '.permissions.admin'`
+should print exactly `true`. Anything else means no admin in the
+current auth context — `false` is a real "you don't have it,"
+while `null` typically means a fine-grained PAT or GitHub App
+token that doesn't surface the permissions sub-object at all.)
 
 ## CI and the Claude reviewer bot
 
