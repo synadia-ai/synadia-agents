@@ -134,6 +134,87 @@ CI runs the same shape — see
 [`.github/workflows/client-sdk-typescript.yml`](.github/workflows/client-sdk-typescript.yml)
 and [`.github/workflows/agent-sdk-typescript.yml`](.github/workflows/agent-sdk-typescript.yml).
 
+## Releasing the SDKs
+
+`main` keeps `file:` links between consumers and the SDK packages so
+contributors editing the SDK see their changes live in the
+agents/examples without any flip step. That's also why a fresh `npm
+publish` of any consumer would ship `file:` refs that break for npm
+users — published tarballs need `^semver` instead. The
+[`devtools/devmode.sh`](devtools/devmode.sh) script bridges the two
+states.
+
+```sh
+./devtools/devmode.sh status        # what's currently flipped where
+./devtools/devmode.sh off           # flip every tracked consumer to ^semver
+./devtools/devmode.sh on            # flip back to file: (the default state)
+./devtools/devmode.sh check-release # exit 0 iff every dep is at its SDK's ^semver
+```
+
+The script discovers consumers automatically — every `package.json`
+under `examples/`, `agents/`, `client-sdk/`, and `agent-sdk/` that
+depends on a tracked SDK gets flipped. Names listed in
+`devtools/.devmodeignore` are skipped (currently just `dspy`, which
+lives on `file:` permanently).
+
+### The release ladder (one cycle)
+
+Order matters: caller `@synadia-ai/agents` first because the host SDK
+declares `^0.4.x` against it; agent harnesses and headless examples
+follow once both SDKs are on npm. Each `npm publish` is a separate
+user-approval gate — read the dry-run output before pulling the
+trigger.
+
+```sh
+# 1. Pre-flight: confirm versions, identity, and tarball shape.
+git status                                       # tree must be clean
+jq -r '.version' client-sdk/typescript/package.json
+jq -r '.version' agent-sdk/typescript/package.json
+npm whoami                                       # the @synadia-ai publish identity
+
+# 2. Build dist/ artifacts fresh.
+(cd client-sdk/typescript && bun install && bun run build)
+(cd agent-sdk/typescript  && bun install && bun run build)
+
+# 3. Flip to release mode.
+./devtools/devmode.sh off
+
+# 4. Publish caller, then host. Inspect each dry-run before publishing.
+(cd client-sdk/typescript && npm publish --dry-run && npm publish)
+(cd agent-sdk/typescript  && npm publish --dry-run && npm publish)
+
+# 5. Publish each consumer that needs to ship.
+#    Bundled (agents/openclaw, agents/pi) — `bun install` first so
+#    bundleDependencies can copy the SDKs into the tarball.
+(cd agents/openclaw && bun install && npm publish --dry-run && npm publish)
+(cd agents/pi       && bun install && npm publish --dry-run && npm publish)
+#    Plain (examples/pi-headless, examples/claude-code-headless) — the
+#    `prepack` hook builds dist/ on its own.
+(cd examples/pi-headless           && npm publish --dry-run && npm publish)
+(cd examples/claude-code-headless  && npm publish --dry-run && npm publish)
+
+# 6. Flip back to dev mode and commit any non-empty diff.
+./devtools/devmode.sh on
+git status
+```
+
+### Gotchas the script accounts for (so you don't trip over them)
+
+- **`agent-sdk/typescript`'s self-dep on caller.** Discovery scans
+  `agent-sdk/` and `client-sdk/` in addition to `examples/` and
+  `agents/`. Without that, the host SDK would publish with a `file:`
+  ref to caller, which breaks every npm consumer of the host.
+- **`bun install --silent` can spin on `agents/openclaw`.** Its
+  `peerDependencies: { openclaw: "" }` (empty version range) sends bun
+  into a 100%-CPU walk. Each per-consumer `bun install` is wrapped in
+  `timeout 60` (override with `BUN_INSTALL_TIMEOUT=…`); the script
+  prints a `⏱ timed out` line and continues.
+- **`^semver` `bun install` failures pre-publish are normal.** Before
+  the SDK pair is on npm, `devmode.sh off` flips the deps but the
+  follow-on `bun install` can't resolve `^0.4.0` against an empty
+  registry. The script treats those as best-effort; the package.json
+  flips themselves succeed and that's what `npm publish` reads.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -142,6 +223,8 @@ and [`.github/workflows/agent-sdk-typescript.yml`](.github/workflows/agent-sdk-t
 | `Cannot find module '.../agent-sdk/typescript/node_modules/@synadia-ai/agents/dist/index.cjs'` | Caller's `dist/` not present in agent-sdk's nested install | `(cd client-sdk/typescript && bun run build) && (cd agent-sdk/typescript && bun install)` |
 | Edits to SDK source aren't reflected when running an example or extension | Consumer's `node_modules` carries a stale copy | Rebuild the SDK(s) and re-`bun install` in the consumer |
 | `Failed to resolve entry for package "@synadia-ai/agents"` from vitest | Stale CI-style install without sibling SDK source | `bun install` in the sibling SDK directory |
+| `./devtools/devmode.sh off` hangs on `agents/openclaw` | bun's empty-string peer-dep walk | The script auto-times-out at 60 s; kill manually if you ran an older version |
+| `./devtools/devmode.sh off` reports `bun install` failures with `404` / `No version matching ^x.y.z` | Pre-publish — the SDKs aren't on npm yet | Expected; the package.json flips succeeded. Run again after `npm publish` to refresh lockfiles. |
 
 ## Why not workspaces?
 
