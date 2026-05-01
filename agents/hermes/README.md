@@ -39,35 +39,6 @@ The `[nats]` extra resolves two PyPI distributions:
 
 Without these, Hermes logs `NATS: synadia-ai-agents / synadia-ai-agent-service SDKs not installed` at startup and skips registering the NATS adapter.
 
-<details>
-<summary><b>Monorepo development</b> — clone alongside <code>synadia-agents/</code> to hack on the SDKs and Hermes together.</summary>
-
-Hermes-agent's `pyproject.toml` declares a `[tool.uv.sources]` block that points both SDKs at a sibling `synadia-agents/` checkout. With the layout below, `uv sync --all-extras --locked` resolves the SDKs as editable installs against your local checkout instead of PyPI — useful when you're iterating on SDK changes that Hermes consumes.
-
-```
-parent/
-├── synadia-agents/                    ← you're reading this inside here
-│   ├── agents/hermes/README.md
-│   ├── client-sdk/python/             ← synadia-ai-agents (wire types)
-│   └── agent-sdk/python/              ← synadia-ai-agent-service (host)
-└── hermes-agent/                      ← clone the fork here
-    └── venv/                          ← created by ./setup-hermes.sh
-```
-
-If you don't have the sibling checkout, `uv sync` falls through to `uv pip install -e ".[all]"`, which resolves both SDKs from PyPI normally. Plain `pip install hermes-agent[nats]` (once Hermes itself is on PyPI) ignores `[tool.uv.sources]` entirely.
-
-To verify which copies are loaded:
-
-```bash
-venv/bin/python -c "import synadia_ai.agents, synadia_ai.agent_service; \
-  print('client:', synadia_ai.agents.__file__); \
-  print('agent: ', synadia_ai.agent_service.__file__)"
-```
-
-Sibling-checkout paths resolve inside `synadia-agents/`; PyPI installs resolve inside `venv/lib/python*/site-packages/`.
-
-</details>
-
 ### 2. Configure the gateway
 
 Edit `~/.hermes/config.yaml` and add the `platforms.nats` block. The `owner` and `session_name` fields determine your subject — `agents.prompt.hermes.<owner>.<session_name>`.
@@ -219,9 +190,9 @@ The CLI prints only the first response chunk — for the full streamed body, use
 Hermes routes images through its `vision_analyze` tool, so the model actually sees the picture. The Hermes repo ships a small banner (`website/static/img/hermes-agent-banner.png`, ~12 KB — well under the 1 MB payload limit):
 
 ```bash
-# from synadia-agents/client-sdk/python; the ../../../hermes-agent/... path
-# assumes the sibling clone layout shown in the "Monorepo development"
-# block above. With a non-sibling checkout, point at any local image.
+# from synadia-agents/client-sdk/python. The ../../../hermes-agent/...
+# path assumes hermes-agent is cloned as a sibling of synadia-agents;
+# any local image works otherwise.
 uv run python examples/03-prompt-attachment.py \
     --context hermes-local \
     --session local \
@@ -353,7 +324,7 @@ Current deferrals (candidates for future phases, not bugs):
 
 ## Troubleshooting
 
-- **`NATS: synadia-ai-agents / synadia-ai-agent-service SDKs not installed` at gateway startup.** The `[nats]` extra wasn't installed. Run `uv sync --all-extras --locked` from the hermes-agent clone (resolves from PyPI by default, or from sibling `synadia-agents/` checkout if you have one — see the "Monorepo development" block above). If `setup-hermes.sh` should have done this for you, it's a packaging bug — file an issue.
+- **`NATS: synadia-ai-agents / synadia-ai-agent-service SDKs not installed` at gateway startup.** The `[nats]` extra wasn't installed. Re-run `./setup-hermes.sh`, or `uv sync --all-extras --locked` from the hermes-agent clone. If `setup-hermes.sh` should have done this for you, it's a packaging bug — file an issue.
 - **Gateway not discovered / `nats micro list` returns nothing.** Gateway didn't register. Check `platforms.nats.enabled: true`, that the NATS URL/context resolves, and look for `[Nats] Connected — subscribed at …` in the gateway log. If another Hermes instance already holds the same `(agent, owner, session_name)` on this host, the log shows `NATS agent identity hermes:<owner>:<session_name> already in use (PID …)`.
 - **Stale platform lock blocks restart.** Lives at `~/.local/state/hermes/gateway-locks/nats-<hash>.lock`. Verify the recorded PID is dead (`ps -p <PID>`), then `rm` the file.
 - **`nats req` returns only one chunk.** That's expected — `nats request` shows the first reply. For the full streamed body use `examples/02-prompt-text.py` (or any caller iterating the SDK's async iterator).
