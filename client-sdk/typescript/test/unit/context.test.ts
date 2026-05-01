@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadContextOptions } from "../../src/context.js";
+import { loadContextOptions, parseNatsUrl } from "../../src/context.js";
 import { NatsContextError } from "../../src/errors.js";
 
 describe("loadContextOptions", () => {
@@ -130,5 +130,185 @@ describe("loadContextOptions", () => {
   it("rejects traversal names resolved via $NATS_CONTEXT", async () => {
     process.env["NATS_CONTEXT"] = "../escape";
     await expect(loadContextOptions("current")).rejects.toBeInstanceOf(NatsContextError);
+  });
+
+  it("loads nkey file and sets authenticator", async () => {
+    const nkeyPath = join(baseDir, "user.nk");
+    // 32-byte stub seed bytes (real nkeys are base32 of an Ed25519 seed; the
+    // authenticator only needs the bytes here, the wire signing is exercised
+    // in integration tests).
+    await writeFile(nkeyPath, new Uint8Array(32));
+    await writeContext("with-nkey", {
+      url: "nats://localhost:4222",
+      nkey: nkeyPath,
+      token: "ignored",
+    });
+    const opts = await loadContextOptions("with-nkey");
+    expect(opts.authenticator).toBeDefined();
+    expect(opts.token).toBeUndefined();
+  });
+
+  it("uses inline user_jwt + user_seed when both are present", async () => {
+    await writeContext("with-jwt-seed", {
+      url: "nats://localhost:4222",
+      user_jwt: "eyJ0eXAiOiJKV1QifQ.payload.sig",
+      user_seed: "SUASTUBSEED",
+    });
+    const opts = await loadContextOptions("with-jwt-seed");
+    expect(opts.authenticator).toBeDefined();
+  });
+
+  it("falls back to jwt-only when no user_seed is provided", async () => {
+    await writeContext("with-jwt-only", {
+      url: "nats://localhost:4222",
+      user_jwt: "eyJ0eXAiOiJKV1QifQ.payload.sig",
+    });
+    const opts = await loadContextOptions("with-jwt-only");
+    expect(opts.authenticator).toBeDefined();
+  });
+
+  it("creds wins over nkey wins over user_jwt wins over user/pass/token", async () => {
+    const credsPath = join(baseDir, "user.creds");
+    await writeFile(credsPath, "stub-creds");
+    const nkeyPath = join(baseDir, "user.nk");
+    await writeFile(nkeyPath, new Uint8Array(32));
+    await writeContext("precedence", {
+      url: "nats://localhost:4222",
+      creds: credsPath,
+      nkey: nkeyPath,
+      user_jwt: "eyJ.x.y",
+      user: "alice",
+      password: "secret",
+      token: "tok",
+    });
+    const opts = await loadContextOptions("precedence");
+    // creds takes the authenticator slot; the other auth fields are dropped.
+    expect(opts.authenticator).toBeDefined();
+    expect(opts.user).toBeUndefined();
+    expect(opts.pass).toBeUndefined();
+    expect(opts.token).toBeUndefined();
+  });
+
+  it("populates the TLS triple when cert/key/ca/tls_first are present", async () => {
+    await writeContext("with-tls", {
+      url: "tls://nats.example.com:4222",
+      cert: "/etc/ssl/client.pem",
+      key: "/etc/ssl/client.key",
+      ca: "/etc/ssl/ca.pem",
+      tls_first: true,
+    });
+    const opts = await loadContextOptions("with-tls");
+    expect(opts.tls).toEqual({
+      certFile: "/etc/ssl/client.pem",
+      keyFile: "/etc/ssl/client.key",
+      caFile: "/etc/ssl/ca.pem",
+      handshakeFirst: true,
+    });
+  });
+
+  it("leaves TLS undefined when none of cert/key/ca/tls_first are set", async () => {
+    await writeContext("no-tls", { url: "nats://localhost:4222" });
+    const opts = await loadContextOptions("no-tls");
+    expect(opts.tls).toBeUndefined();
+  });
+});
+
+describe("parseNatsUrl", () => {
+  it("returns bare servers with no auth for a plain URL", () => {
+    const opts = parseNatsUrl("nats://nats.example.com:4222");
+    expect(opts).toEqual({ servers: ["nats://nats.example.com:4222"] });
+    expect(opts.token).toBeUndefined();
+    expect(opts.user).toBeUndefined();
+    expect(opts.pass).toBeUndefined();
+  });
+
+  it("treats single userinfo component as a token (mirrors `nats` CLI)", () => {
+    const opts = parseNatsUrl("nats://abc123def@nats.example.com:4222");
+    expect(opts).toEqual({
+      servers: ["nats://nats.example.com:4222"],
+      token: "abc123def",
+    });
+  });
+
+  it("splits user:password userinfo into user + pass", () => {
+    const opts = parseNatsUrl("nats://alice:s3cret@nats.example.com:4222");
+    expect(opts).toEqual({
+      servers: ["nats://nats.example.com:4222"],
+      user: "alice",
+      pass: "s3cret",
+    });
+  });
+
+  it("URL-decodes userinfo so tokens with reserved characters round-trip", () => {
+    // "%2B" → "+", "%40" → "@"
+    const opts = parseNatsUrl("nats://to%2Bken%40v1@nats.example.com:4222");
+    expect(opts.token).toBe("to+ken@v1");
+  });
+
+  it("preserves the scheme for tls:// (and similar)", () => {
+    const opts = parseNatsUrl("tls://abc@nats.example.com:4443");
+    expect(opts).toEqual({
+      servers: ["tls://nats.example.com:4443"],
+      token: "abc",
+    });
+  });
+
+  it("accepts scheme-less host:port (treats as nats://)", () => {
+    const opts = parseNatsUrl("nats.example.com:4222");
+    expect(opts.servers).toEqual(["nats://nats.example.com:4222"]);
+  });
+
+  it("splits comma-separated multi-server URLs", () => {
+    const opts = parseNatsUrl("nats://a:4222,nats://b:4222,nats://c:4222");
+    expect(opts.servers).toEqual(["nats://a:4222", "nats://b:4222", "nats://c:4222"]);
+    expect(opts.token).toBeUndefined();
+  });
+
+  it("accepts multi-server URLs when userinfo is identical on every entry", () => {
+    const opts = parseNatsUrl("nats://tok@a.example.com:4222,nats://tok@b.example.com:4222");
+    expect(opts.servers).toEqual(["nats://a.example.com:4222", "nats://b.example.com:4222"]);
+    expect(opts.token).toBe("tok");
+  });
+
+  it("throws when multi-server URLs have mixed credentials", () => {
+    expect(() => parseNatsUrl("nats://tok1@a:4222,nats://tok2@b:4222")).toThrow(NatsContextError);
+  });
+
+  it("throws on empty / blank input", () => {
+    expect(() => parseNatsUrl("")).toThrow(NatsContextError);
+    expect(() => parseNatsUrl("   ,  ")).toThrow(NatsContextError);
+  });
+
+  it("throws on unsupported scheme", () => {
+    expect(() => parseNatsUrl("http://nats.example.com:4222")).toThrow(NatsContextError);
+  });
+
+  it("throws on hostless URL", () => {
+    expect(() => parseNatsUrl("nats://")).toThrow(NatsContextError);
+  });
+
+  it("treats `user:` (explicit colon, empty password) as user:password, not token", () => {
+    // WHATWG URL squashes both `nats://user@host` and `nats://user:@host`
+    // into `password === ""`, so the implementation re-sniffs the raw
+    // input to recover the colon's intent. An empty password is
+    // semantically meaningless to the NATS server, but we preserve the
+    // structural distinction so this URL form maps where the user expected.
+    const opts = parseNatsUrl("nats://alice:@nats.example.com:4222");
+    expect(opts).toEqual({
+      servers: ["nats://nats.example.com:4222"],
+      user: "alice",
+      pass: "",
+    });
+    expect(opts.token).toBeUndefined();
+  });
+
+  it("accepts ws:// and wss:// schemes (with userinfo)", () => {
+    const ws = parseNatsUrl("ws://tok@host:9222");
+    expect(ws).toEqual({ servers: ["ws://host:9222"], token: "tok" });
+    const wss = parseNatsUrl("wss://tok@host:9222");
+    expect(wss).toEqual({ servers: ["wss://host:9222"], token: "tok" });
+    // bare ws/wss without userinfo
+    const wsBare = parseNatsUrl("ws://host:9222");
+    expect(wsBare).toEqual({ servers: ["ws://host:9222"] });
   });
 });

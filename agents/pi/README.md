@@ -1,6 +1,6 @@
 # @synadia-ai/nats-pi-channel
 
-NATS channel for [PI Agent](https://github.com/badlogic/pi-mono), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0**.
+NATS channel for [PI Agent](https://github.com/badlogic/pi-mono), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.3** (verb-first subjects + `status` endpoint).
 
 Every PI session becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) - can enumerate running PI sessions, prompt them, and stream responses back.
 
@@ -12,8 +12,9 @@ On session start the extension:
 
 1. Connects to NATS using a configured context (or `demo.nats.io` by default).
 2. Registers a NATS micro service named `agents` with spec metadata (`agent`, `owner`, `session`, `protocol_version`).
-3. Adds a `prompt` endpoint at `agents.pi.<owner>.<session>` advertising `max_payload: 1MB` and `attachments_ok: true`.
-4. Begins publishing heartbeats on `agents.pi.<owner>.<session>.heartbeat` every 30 s.
+3. Adds a `prompt` endpoint at `agents.prompt.pi.<owner>.<session>` (verb-first §2 v0.3) advertising the server-negotiated `max_payload` (read from `nc.info.max_payload` at connect, formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar — `1MB` against a default `nats-server`, more if the operator bumped `--max_payload`) and `attachments_ok: true`.
+4. Adds a `status` endpoint at `agents.status.pi.<owner>.<session>` (§8.7 (v0.3)) that replies with the same payload shape as a heartbeat.
+5. Begins publishing heartbeats on `agents.hb.pi.<owner>.<session>` (verb is the abbreviation `hb`, §8.1 v0.3) every 30 s.
 5. On each inbound prompt: decodes any attached files to `~/.pi/agent/attachments/<session>/<uuid>/<filename>`, prepends their absolute paths to the prompt text, emits a `status: ack` chunk, injects the augmented prompt into PI via `pi.sendUserMessage()`, streams `text_delta` events back as typed `{type:"response",data}` chunks, and closes with the spec-mandated empty-body no-headers terminator.
 6. Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Staging failures (disk full, permission denied) return `500`.
 
@@ -25,7 +26,9 @@ Multiple PI sessions on the same host register as distinct instances of the same
 # From npm
 pi install npm:@synadia-ai/nats-pi-channel
 
-# From a local clone during development
+# From a local clone during development. Both SDKs need a current
+# dist/ for pi's loader to resolve the file: links — see
+# ../../README-DEV.md at the repo root for the build sequence.
 pi install /absolute/path/to/nats-pi-channel
 ```
 
@@ -35,7 +38,7 @@ Then start PI normally:
 pi
 ```
 
-You should see `Connected to NATS (<server>) as agents.pi.<you>.<session>` and a footer status `NATS: agents.pi.<you>.<session>`.
+You should see `Connected to NATS (<server>) as agents.prompt.pi.<you>.<session>` and a footer status `NATS: agents.prompt.pi.<you>.<session>`.
 
 ## Configure
 
@@ -58,7 +61,7 @@ Environment variables take precedence over the file:
 | Variable | Overrides | Default |
 | --- | --- | --- |
 | `NATS_CONTEXT` | NATS CLI context name | `demo.nats.io` |
-| `NATS_SESSION_NAME` | Session name (4th token in `agents.pi.<owner>.<session>`) | sanitized basename of CWD |
+| `NATS_SESSION_NAME` | Session name (5th token in `agents.prompt.pi.<owner>.<session>`) | sanitized basename of CWD |
 
 ### In-PI commands
 
@@ -77,8 +80,9 @@ The spec reserves the subject structure for protocol use; there is no `org` segm
 ## Subject hierarchy
 
 ```
-agents.pi.<owner>.<session>             # prompt endpoint (spec §2, §5)
-agents.pi.<owner>.<session>.heartbeat   # liveness beacon (spec §8)
+agents.prompt.pi.<owner>.<session>      # prompt endpoint (spec §2, §5 — v0.3 verb-first)
+agents.hb.pi.<owner>.<session>          # liveness beacon (spec §8.1 — verb `hb`)
+agents.status.pi.<owner>.<session>      # status request/response (§8.7 (v0.3))
 ```
 
 - `pi` is both `metadata.agent` and its subject abbreviation (Appendix C).
@@ -94,10 +98,10 @@ Any caller speaking the protocol - a spec-compliant SDK or the `nats` CLI - can:
 nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
 
 # Send a plain-text prompt
-nats req agents.pi.<owner>.<session> "What files are in the current directory?" --wait-for-empty --timeout 120s
+nats req agents.prompt.pi.<owner>.<session> "What files are in the current directory?" --wait-for-empty --timeout 120s
 
 # Or a JSON envelope
-nats req agents.pi.<owner>.<session> '{"prompt":"What files are here?"}' --wait-for-empty --timeout 120s
+nats req agents.prompt.pi.<owner>.<session> '{"prompt":"What files are here?"}' --wait-for-empty --timeout 120s
 ```
 
 With the TypeScript SDK:
@@ -140,7 +144,7 @@ nats micro list           # shows all agents instances
 nats micro info agents
 
 # Heartbeats - track liveness without polling
-nats sub 'agents.*.*.*.heartbeat'
+nats sub 'agents.hb.*.*.*'
 ```
 
 ## Concurrency
@@ -169,9 +173,9 @@ PI's model sees the list in the user message and can open the files with its fil
 Caller-side constraints (rejected at the wire with `400` if violated):
 - `content` must be strict RFC 4648 §4 base64 - standard alphabet, padded, no URL-safe, no whitespace.
 - `filename` must be a plain basename. Path separators (`/`, `\`), `..`, absolute paths, and NUL bytes are rejected rather than silently flattened.
-- Full encoded envelope must fit within `max_payload` (1 MB).
+- Full encoded envelope must fit within the advertised `max_payload` — the server-negotiated limit read at connect time. `1 MB` against a default `nats-server`; matches whatever `nc.info.max_payload` reports.
 
-Spec §5.5 reserves a future `attachments` endpoint at `agents.pi.<owner>.<session>.attachments` for chunked large-file upload; that lands in protocol 0.2 and will coexist with inline attachments.
+Spec §5.5 reserves a future `attachments` endpoint at `agents.attachments.pi.<owner>.<session>` (v0.3 verb-first) for chunked large-file upload; that lands in a future protocol revision and will coexist with inline attachments.
 
 ## Limitations
 

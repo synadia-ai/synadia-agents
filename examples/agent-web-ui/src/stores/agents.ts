@@ -81,3 +81,87 @@ export const ccexecControllers = computed<DiscoveredAgentDTO[]>(() =>
 export const ccexecSessions = computed<DiscoveredAgentDTO[]>(() =>
   agentsState.list.filter((a) => a.metadata?.["spawner"] === "claude-code-headless"),
 );
+
+/**
+ * Coarse classification used by the agent grid to group cards. Order maps 1:1
+ * with `BUCKET_ORDER` below.
+ */
+export const BUCKETS = {
+  PI_EXEC_SESSION: "pi-exec-session",
+  PI_EXEC_CONTROL: "pi-exec-control",
+  CC_EXEC_SESSION: "cc-exec-session",
+  CC_EXEC_CONTROL: "cc-exec-control",
+  PI_AGENT: "pi-agent",
+  CC_AGENT: "cc-agent",
+  OPENCLAW: "openclaw",
+  HERMES: "hermes",
+  OTHER: "other",
+} as const;
+
+export type Bucket = (typeof BUCKETS)[keyof typeof BUCKETS];
+
+export const BUCKET_ORDER: Bucket[] = [
+  BUCKETS.PI_EXEC_SESSION,
+  BUCKETS.PI_EXEC_CONTROL,
+  BUCKETS.CC_EXEC_SESSION,
+  BUCKETS.CC_EXEC_CONTROL,
+  BUCKETS.PI_AGENT,
+  BUCKETS.CC_AGENT,
+  BUCKETS.OPENCLAW,
+  BUCKETS.HERMES,
+  BUCKETS.OTHER,
+];
+
+export const BUCKET_LABELS: Record<Bucket, string> = {
+  // "Headless" matches the canonical protocol vocabulary used in
+  // metadata.role / metadata.spawner ("pi-headless-controller",
+  // "claude-code-headless"); aligning UI labels keeps users one term away
+  // from the docs they'll read next.
+  [BUCKETS.PI_EXEC_SESSION]: "PI Headless Sessions",
+  [BUCKETS.PI_EXEC_CONTROL]: "PI Headless Controllers",
+  [BUCKETS.CC_EXEC_SESSION]: "Claude Code Headless Sessions",
+  [BUCKETS.CC_EXEC_CONTROL]: "Claude Code Headless Controllers",
+  [BUCKETS.PI_AGENT]: "PI Interactive",
+  [BUCKETS.CC_AGENT]: "Claude Code",
+  [BUCKETS.OPENCLAW]: "OpenClaw",
+  [BUCKETS.HERMES]: "Hermes",
+  [BUCKETS.OTHER]: "Other",
+};
+
+export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
+  const role = agent.metadata?.["role"];
+  const spawner = agent.metadata?.["spawner"];
+  if (spawner === "pi-headless") return BUCKETS.PI_EXEC_SESSION;
+  if (spawner === "claude-code-headless") return BUCKETS.CC_EXEC_SESSION;
+  if (role === "pi-headless-controller") return BUCKETS.PI_EXEC_CONTROL;
+  if (role === "claude-code-headless-controller") return BUCKETS.CC_EXEC_CONTROL;
+  // `agent.agent` carries the value of `metadata.agent` (per Appendix C of
+  // the spec). Each runtime publishes its own canonical token — match the
+  // actual values the runtimes set, plus the legacy short aliases that
+  // some deployments still use (cc/ccc/oc).
+  if (agent.agent === "pi") return BUCKETS.PI_AGENT;
+  if (agent.agent === "claude-code" || agent.agent === "cc" || agent.agent === "ccc") {
+    return BUCKETS.CC_AGENT;
+  }
+  if (agent.agent === "openclaw" || agent.agent === "oc") return BUCKETS.OPENCLAW;
+  if (agent.agent === "hermes") return BUCKETS.HERMES;
+  return BUCKETS.OTHER;
+}
+
+/** Returns sorted-by-bucket groups; empty buckets are omitted. */
+export const agentsByBucket = computed<{ bucket: Bucket; label: string; agents: DiscoveredAgentDTO[] }[]>(() => {
+  const map = new Map<Bucket, DiscoveredAgentDTO[]>();
+  for (const b of BUCKET_ORDER) map.set(b, []);
+  for (const agent of agentsState.list) {
+    const list = map.get(bucketOf(agent));
+    if (list) list.push(agent);
+  }
+  for (const list of map.values()) sortAgents(list).forEach(() => {}); // sortAgents returns a copy
+  const out: { bucket: Bucket; label: string; agents: DiscoveredAgentDTO[] }[] = [];
+  for (const b of BUCKET_ORDER) {
+    const raw = map.get(b) ?? [];
+    if (raw.length === 0) continue;
+    out.push({ bucket: b, label: BUCKET_LABELS[b], agents: sortAgents(raw) });
+  }
+  return out;
+});

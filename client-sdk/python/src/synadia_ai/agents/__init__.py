@@ -9,10 +9,16 @@ Public API entry points:
   live :class:`Agent` instances from :meth:`Agents.discover`.
 * :class:`Agent` — a discovered agent with flat ``$SRV.INFO`` metadata
   fields and a :meth:`Agent.prompt` method.
-* :class:`AgentService` — server-side; what agent harnesses (Hermes,
-  claude-code, pi, openclaw) embed to register themselves on the bus.
 * :func:`load_context_options` — translate a ``nats`` CLI context into
   kwargs for :func:`nats.connect`.
+* :func:`parse_nats_url` — parse a NATS URL (with optional userinfo
+  for token / user:password) into kwargs for :func:`nats.connect`.
+
+The agent-host surface (``AgentService``, ``PromptStream``,
+``PromptHandler``) lives in the sibling package
+:mod:`synadia_ai.agent_service` (distribution
+``synadia-ai-agent-service``); install that package alongside this one
+when authoring an agent harness.
 
 The SDK does NOT open NATS connections — callers build a
 :class:`~nats.aio.client.Client` and hand it to :class:`Agents`. This
@@ -29,7 +35,7 @@ from .agent import (
     StreamMessage,
 )
 from .agents import Agents
-from .context import load_context_options
+from .context import load_context_options, parse_nats_url
 from .discovery import (
     DEFAULT_DISCOVER_MAX_WAIT_S,
     DEFAULT_DISCOVER_STALL_S,
@@ -63,23 +69,12 @@ from .heartbeat import (
     Liveness,
 )
 from .messages import Chunk, QueryChunk, ResponseChunk, StatusChunk
-from .service import (
-    DEFAULT_ATTACHMENTS_OK,
-    DEFAULT_KEEPALIVE_INTERVAL_S,
-    DEFAULT_MAX_PAYLOAD,
-    AgentService,
-    PromptHandler,
-    PromptStream,
-)
 from .subjects import AgentSubject
 
 __all__ = [
-    "DEFAULT_ATTACHMENTS_OK",
     "DEFAULT_DISCOVER_MAX_WAIT_S",
     "DEFAULT_DISCOVER_STALL_S",
-    "DEFAULT_KEEPALIVE_INTERVAL_S",
     "DEFAULT_LIVENESS_SLACK",
-    "DEFAULT_MAX_PAYLOAD",
     "DEFAULT_STREAM_INACTIVITY_TIMEOUT_S",
     "HEARTBEAT_SUBJECT",
     "PROMPT_ENDPOINT_NAME",
@@ -90,7 +85,6 @@ __all__ = [
     "Agent",
     "AgentInfo",
     "AgentNotFound",
-    "AgentService",
     "AgentSubject",
     "Agents",
     "Attachment",
@@ -106,8 +100,6 @@ __all__ = [
     "NatsContextError",
     "PayloadTooLargeError",
     "PromptEmptyError",
-    "PromptHandler",
-    "PromptStream",
     "ProtocolError",
     "Query",
     "QueryChunk",
@@ -120,4 +112,5 @@ __all__ = [
     "decode",
     "encode",
     "load_context_options",
+    "parse_nats_url",
 ]

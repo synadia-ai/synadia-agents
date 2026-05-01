@@ -3,7 +3,7 @@ import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm } from "@nats-io/services";
 import { Agents } from "../../src/index.js";
-import { ReferenceAgent } from "../../src/testing/reference-agent.js";
+import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 
 const natsUrl = inject("natsUrl");
 
@@ -52,7 +52,7 @@ describe.skipIf(!natsUrl)("Agents.discover", () => {
     expect(match).toBeDefined();
     expect(match!.agent).toBe("ref-agent");
     expect(match!.owner).toBe("testers");
-    expect(match!.protocolVersion).toBe("0.2");
+    expect(match!.protocolVersion).toBe("0.3");
     expect(match!.promptEndpoint.subject).toBe(agent.promptSubject);
     expect(match!.promptEndpoint.queueGroup).toBe("agents");
     expect(match!.promptEndpoint.maxPayloadBytes).toBe(1024 * 1024);

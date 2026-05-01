@@ -1,18 +1,25 @@
-// Heartbeat payload per spec §8.3.
+// Heartbeat payload per spec §8.3 — caller-side type + decoder.
 //
-// Wire shape:
+// Wire shape (v0.3):
 //   {
 //     "agent": "claude-code",
 //     "owner": "aconnolly",
-//     "session": "synadia-com-2",
+//     "session": "alice",                          // optional, §5.6
 //     "instance_id": "VMKS6MHK71PCPWGY38A7N5",
 //     "ts": "2026-04-21T14:23:01Z",
 //     "interval_s": 30
 //   }
 //
-// The instance name is NOT in the payload — receivers extract it from the
-// 4th token of the subject (§8.3). Callers MUST tolerate additional unknown
-// fields (§8.3, §12).
+// Published on `agents.hb.{agent}.{owner}.{name}` (§8.1 v0.3) — the
+// instance name is NOT in the payload; receivers extract it from the 5th
+// subject token. The optional `session` field carries the §5.6 envelope-
+// level conversation label for harnesses that multiplex over a single
+// subject (e.g. Hermes). Callers MUST tolerate additional unknown fields
+// (§8.3, §12).
+//
+// The encoder side (`buildHeartbeatPayload`, `encodeHeartbeatPayload`)
+// lives in the host SDK (`@synadia-ai/agent-service`) — both packages
+// share the {@link HeartbeatPayload} type from here.
 
 export interface HeartbeatPayload {
   readonly agent: string;

@@ -17,8 +17,8 @@ export interface Liveness {
 /** Default offline threshold multiplier: online iff last seen within `3 × interval_s` (§8.2). */
 export const DEFAULT_LIVENESS_SLACK = 3;
 
-/** Heartbeat wildcard (§8.1): `agents.<type>.<owner>.<instance>.heartbeat`. */
-export const HEARTBEAT_SUBJECT = "agents.*.*.*.heartbeat";
+/** Heartbeat wildcard (§8.1 v0.3): `agents.hb.<agent>.<owner>.<name>`. */
+export const HEARTBEAT_SUBJECT = "agents.hb.*.*.*";
 
 type HeartbeatListener = (payload: HeartbeatPayload) => void;
 
@@ -87,7 +87,10 @@ export class HeartbeatTracker {
     const entry = this.entries.get(instanceId);
     if (!entry) return null;
     const ageS = (now.getTime() - entry.lastSeen.getTime()) / 1000;
-    const isOnline = ageS < DEFAULT_LIVENESS_SLACK * entry.payload.intervalS;
+    // Inclusive boundary (§8.2): a heartbeat that arrived exactly
+    // `slack * interval_s` seconds ago is considered online — matches the
+    // Python SDK's `Liveness.is_online` and the docstring's "within" wording.
+    const isOnline = ageS <= DEFAULT_LIVENESS_SLACK * entry.payload.intervalS;
     return Object.freeze({
       instanceId,
       lastSeen: entry.lastSeen,

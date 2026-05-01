@@ -13,10 +13,14 @@ implementations - [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-c
 
 ## Features
 
-- **Chat mode** — default view. Live agent list + per-agent chat surface with streaming responses, attachments, mid-stream query replies, tool-call cards, and per-turn cost annotations.
-- **PI Exec mode** — appears in the header as soon as a `pi-headless` controller is discovered. Spawn PI sessions (cwd, model, thinking level, max lifetime), prompt them, and fan out one prompt across N working directories in parallel.
-- **CC Exec mode** — appears in the header as soon as a `claude-code-headless` controller is discovered. Spawn Claude Code sessions (cwd, model, allowed tools, permission mode, max turns, max lifetime), watch tool calls + results render inline as collapsible cards, approve/deny permission requests with a single click, see per-turn and cumulative cost on every bubble.
-- **Auto-discovery** — new agents appear in the list as soon as they publish their first heartbeat. `ReferenceAgent` fires that synchronously on `start()`, so a fresh session shows up in ~one NATS round-trip — no need to hit Refresh after spawning.
+- **Unified agent grid** — every discovered agent, controller, and session shows up as a card in a single grouped grid (PI Headless Sessions · PI Headless · Claude Code Headless Sessions · Claude Code Headless · PI Interactive · Claude Code · OpenClaw · Other). No mode switching.
+- **Context-aware right panel** — click a card and the right pane adapts:
+  - regular agent or session → live **chat** surface (streaming responses, attachments, mid-stream queries, tool-call cards, per-turn cost)
+  - `pi-headless` controller → **New Session** + **Fan-out** tabs
+  - `claude-code-headless` controller → **New Session** form
+- **Spawn** — fill in `cwd` + optional model / thinking-level / allowed-tools / permission-mode / lifetime and a fresh session appears in the grid the moment it heartbeats; the right panel auto-focuses it for chat.
+- **Fan-out** — one prompt, an `+ add directory` list of cwds, parallel spawn-prompt-stop, per-run cards with live streaming and abort.
+- **Auto-discovery** — new agents appear in the grid as soon as they publish their first heartbeat. `ReferenceAgent` fires that synchronously on `start()`, so a fresh session shows up in ~one NATS round-trip — no need to hit Refresh after spawning.
 - **Mid-stream queries** — agents can pause a response to ask a permission or clarification question; the UI renders these inline with shortcut allow/deny buttons and a free-text reply box. Both PI tooling prompts and Claude Code permission requests use this same primitive.
 - **Tool call rendering** — `tool_use` / `tool_result` chunks (emitted by claude-code-headless as prefix-tagged status payloads) are translated by the bridge into typed events and rendered as collapsible cards showing tool name, input JSON, and result output (with success/error glyph).
 - **Local validation** — oversized envelopes and unsupported attachments are caught before any wire traffic, with the SDK's typed errors surfaced in the UI.
@@ -78,17 +82,27 @@ bun run server/index.ts [--port 3300] [--context current] [--servers nats://...]
 | `--servers <url>` | `NATS_URL` | - | Raw NATS URL (overrides context if given) |
 | `--dev` | - | off | Skip static serving; requires `bun run vite` alongside |
 
-## PI Exec mode
+## Spawning sessions and fan-out
 
-When the UI discovers at least one [`pi-headless`](../pi-headless) controller, a
-**PI Exec** toggle lights up in the header next to **Chat**. The workspace is a
-three-column layout:
+When a [`pi-headless`](../pi-headless) or [`claude-code-headless`](../claude-code-headless)
+controller is discovered, it shows up in the grid under **PI Headless** /
+**Claude Code Headless** with a slightly different (purple-tinted) card style.
+Click it and the right panel switches from "chat" to a small workspace:
 
-- **Left** — spawn form (`cwd`, model, thinking level, max lifetime, optional `session_id`) + a live list of currently-spawned sessions showing lifetime countdown, queue depth, running/idle status, and model/thinking metadata. Click a session to chat with it; hit ✕ to stop it.
-- **Middle** — the same chat surface Chat mode uses, but pointed at whichever session is selected. Streaming chunks, attachments, and mid-stream queries all work identically.
-- **Right** — **Fan-out composer**. Enter one prompt and a list of working directories; the UI spawns N sessions in parallel, streams each into its own card, and (optionally) disposes them when the prompt completes. Per-card abort plus a global clear.
+- **New Session** — `cwd` (required) + optional `session_id`, `model`,
+  `thinking_level` / `allowed_tools` / `permission_mode` / `max_turns`, and
+  `max_lifetime_s`. Hit Spawn; the new session appears as a card in the
+  grid and the right panel auto-focuses it for chat.
+- **Fan-out** _(pi-headless only)_ — one prompt, a list of cwds (use
+  `+ add directory` and the `×` button to manage rows), and a checkbox to
+  auto-stop sessions when their prompt finishes. The UI spawns N sessions
+  in parallel, streams each into its own result card, and offers per-card
+  abort plus a global clear.
 
-Spawned sessions are first-class NATS agents: discovery sees them, Chat mode lists them, and anything speaking the protocol can prompt them directly. PI Exec mode is just an ergonomic front door for the spawn / prompt / stop / fan-out flow.
+Spawned sessions are first-class NATS agents: they appear under **PI Headless
+Sessions** / **Claude Code Headless Sessions** in the grid, the chat surface works against
+them like any other agent, and lifetime / queue-depth / cost are shown
+live on each card via 5s polling of the controller's `list` endpoint.
 
 ## Mid-stream queries
 
@@ -118,7 +132,7 @@ cd ../../examples/agent-web-ui && bun run build && bun run start
 
 Open the UI, pick `pi` in the agent list, prompt, attach a file, watch it stream.
 
-**Against `pi-headless` (PI Exec mode):**
+**Against `pi-headless`:**
 
 ```bash
 # Terminal 1: controller
@@ -128,5 +142,5 @@ cd ../pi-headless && bun run start
 cd ../../examples/agent-web-ui && bun run build && bun run start
 ```
 
-The PI Exec toggle appears. Spawn a session in `/tmp`, prompt it, then try a
-fan-out across a few sandbox directories in parallel.
+A **PI Headless** card appears in the grid. Click it, spawn a session in
+`/tmp`, then try a fan-out across a few sandbox directories in parallel.

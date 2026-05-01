@@ -1,4 +1,4 @@
-// Typed-chunk helpers for the v0.2.0-draft response wire (§6).
+// Typed-chunk helpers for the response wire (spec §6).
 //
 // Every non-terminating chunk is `{"type": "...", "data": ...}`; the
 // stream ends with an empty-body no-headers message (§6.5). Errors are

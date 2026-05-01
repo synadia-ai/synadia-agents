@@ -1,8 +1,8 @@
 # claude-code-headless
 
-A headless NATS agent host that spawns [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions on demand via the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and exposes each one as a first-class NATS Agent Protocol v0.2.0-draft instance.
+A headless NATS agent host that spawns [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions on demand via the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and exposes each one as a first-class NATS Agent Protocol **v0.3** instance (verb-first subjects + `status` endpoint). Built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `ReferenceAgent`).
 
-Each spawned session registers as its own NATS agent under `agents.cc.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.cc.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text).
+Each spawned session registers as its own NATS agent under `agents.prompt.cc.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.cc.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
 
 In short: one process, many Claude Code sessions, all first-class NATS agents.
 
@@ -10,21 +10,54 @@ This example is the Claude Code analogue of [`examples/pi-headless/`](../pi-head
 
 > **Status.** Demo-quality reference. Streams text per-token, surfaces tool calls + results inline, asks for permission via protocol §7 query chunks, and tracks cost per session. See **Features** below for the wire shapes; **Roadmap** for what's still ahead.
 
-## Quickstart
+## Quickstart (run from npm)
+
+The package ships a `nats-claude-code-headless` CLI binary, so the
+simplest way to try it is via `npx` — no clone, no build:
 
 ```bash
-# 1. Build the SDK once (workspace sibling, referenced via file:).
-cd ../../client-sdk/typescript
-bun install
-bun run build
+export ANTHROPIC_API_KEY=sk-...
+NATS_CONTEXT=localhost npx @synadia-ai/nats-claude-code-headless
+# or:
+NATS_URL=nats://127.0.0.1:4222 npx @synadia-ai/nats-claude-code-headless
+# or:
+npx @synadia-ai/nats-claude-code-headless --context localhost
+```
 
-# 2. Install + run claude-code-headless.
+`npx` resolves the package, runs its bundled entry point under Node ≥ 20,
+and prints:
+
+```
+claude-code-headless: controller listening on agents.prompt.cc.<you>.exec
+claude-code-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
+```
+
+For a permanent install:
+
+```bash
+npm install -g @synadia-ai/nats-claude-code-headless
+nats-claude-code-headless --context localhost
+```
+
+The Claude Code native binary is auto-detected via the Claude Agent
+SDK's resolution chain (`--claude-code-path` flag, env var, config file,
+`which claude`, then the SDK's bundled fallback). See
+[Claude Code binary](#claude-code-binary) below for overrides.
+
+## Quickstart (run from a local clone)
+
+When you're working on the SDK or this example itself:
+
+```bash
+# 1. Build both SDKs (workspace siblings, referenced via file:).
+(cd ../../client-sdk/typescript && bun install && bun run build)
+(cd ../../agent-sdk/typescript  && bun install && bun run build)
+
+# 2. Run claude-code-headless against the local SDK source via bun.
 cd ../../examples/claude-code-headless
 bun install
 export ANTHROPIC_API_KEY=sk-...
 bun run start                                    # connects via $NATS_CONTEXT or NATS_URL
-# claude-code-headless: controller listening on agents.cc.<you>.exec
-# claude-code-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
 
 # 3. Spawn a session + prompt + stop, from another shell.
 bun run scripts/spawn.ts \
@@ -33,6 +66,10 @@ bun run scripts/spawn.ts \
   --allowed-tools "Read,Glob,Grep" \
   --stop-after
 ```
+
+See [`README-DEV.md`](../../README-DEV.md) at the repo root for a fuller
+walk-through of the build / install dance, including how to pick up SDK
+edits without rebooting everything.
 
 ## Configuration
 
@@ -113,14 +150,16 @@ The out-of-the-box defaults are deliberately conservative for a public reference
 ## Subject layout
 
 ```
-agents.cc.<owner>.<name>                    ← controller prompt endpoint (help text)
-agents.cc.<owner>.<name>.spawn              ← POST JSON → session descriptor
-agents.cc.<owner>.<name>.stop               ← POST { session_id } → { ok: true }
-agents.cc.<owner>.<name>.list               ← (empty) → { sessions: [...] }
-agents.cc.<owner>.<name>.heartbeat          ← §8 heartbeat (30s)
+agents.prompt.cc.<owner>.<name>             ← controller prompt endpoint (help text)
+agents.status.cc.<owner>.<name>             ← controller status (§8.7 (v0.3); replies with heartbeat-shaped payload)
+agents.hb.cc.<owner>.<name>                 ← controller heartbeat (§8.1 v0.3, 30 s)
+agents.cc.<owner>.<name>.spawn              ← POST JSON → session descriptor (custom; non-verb-first)
+agents.cc.<owner>.<name>.stop               ← POST { session_id } → { ok: true }    (custom)
+agents.cc.<owner>.<name>.list               ← (empty) → { sessions: [...] }          (custom)
 
-agents.cc.<owner>.<session_id>              ← spawned session prompt (§5/§6)
-agents.cc.<owner>.<session_id>.heartbeat    ← §8 heartbeat (30s)
+agents.prompt.cc.<owner>.<session_id>       ← spawned session prompt (§5/§6, v0.3)
+agents.status.cc.<owner>.<session_id>       ← spawned session status (§8.7 (v0.3))
+agents.hb.cc.<owner>.<session_id>           ← spawned session heartbeat (§8.1 v0.3, 30 s)
 ```
 
 The `cc` token is shared with [`agents/claude-code/`](../../agents/claude-code), which speaks the inverse direction (Claude Code as MCP-driven NATS *client*). They co-exist because the controller name and per-session ids disambiguate the 4th subject token.
@@ -133,13 +172,13 @@ The `cc` token is shared with [`agents/claude-code/`](../../agents/claude-code),
 nats req agents.cc.$USER.exec.spawn \
   '{"cwd":"/tmp/cc-sandbox","model":"claude-sonnet-4-6","allowed_tools":["Read","Glob","Grep","Edit"],"permission_mode":"acceptEdits","max_lifetime_s":900}' \
   --timeout=15s
-# → { "session_id":"sess-a1b2c3d4", "subject":"agents.cc.$USER.sess-a1b2c3d4", ... }
+# → { "session_id":"sess-a1b2c3d4", "subject":"agents.prompt.cc.$USER.sess-a1b2c3d4", "status_subject":"agents.status.cc.$USER.sess-a1b2c3d4", ... }
 ```
 
 ### Prompt (protocol-standard — no custom format)
 
 ```bash
-nats req agents.cc.$USER.sess-a1b2c3d4 \
+nats req agents.prompt.cc.$USER.sess-a1b2c3d4 \
   'list the files here and summarise what you see' --replies=0 --timeout=120s
 # → {"type":"status","data":"ack"}
 # → {"type":"response","data":"There are three files: …"}

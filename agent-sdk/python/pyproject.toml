@@ -1,0 +1,91 @@
+[project]
+name = "synadia-ai-agent-service"
+version = "0.1.0"
+description = "Python agent-host SDK for the NATS Agent Protocol — register and serve spec-compliant agents over NATS"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Synadia" }]
+keywords = ["nats", "agents", "ai", "sdk", "rpc", "streaming"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Networking",
+    "Typing :: Typed",
+]
+dependencies = [
+    "nats-py>=2.7",
+    "pydantic>=2.5",
+    "synadia-ai-agents>=0.5",
+]
+
+[project.urls]
+Homepage = "https://github.com/synadia-ai/synadia-agents/tree/main/agent-sdk/python"
+Repository = "https://github.com/synadia-ai/synadia-agents"
+Changelog = "https://github.com/synadia-ai/synadia-agents/blob/main/agent-sdk/python/CHANGELOG.md"
+Issues = "https://github.com/synadia-ai/synadia-agents/issues"
+
+[tool.uv.sources]
+# Resolve `synadia-ai-agents` to the local sibling checkout during
+# `uv sync`. This affects monorepo developers only — it is dev-time
+# config and is NOT persisted into the built wheel's METADATA, so an
+# external user installing `synadia-ai-agent-service` from PyPI gets
+# the declared dep (`synadia-ai-agents>=0.5`) from PyPI as normal.
+synadia-ai-agents = { path = "../../client-sdk/python", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/synadia_ai"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PL", "RUF"]
+ignore = [
+    "PLR0913", # too many arguments — AgentService constructor is a config object
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004"] # magic values in tests are fine
+"scripts/**" = ["PLR0915"] # diagnostic one-shots may run long linear setups
+"examples/**" = ["PLR0915"] # demo scripts may run long linear setups
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
+packages = ["synadia_ai.agent_service"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "nats.*"
+ignore_missing_imports = true
+implicit_reexport = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-ra"
+testpaths = ["tests"]

@@ -1,6 +1,6 @@
 # @synadia-ai/nats-channel
 
-NATS channel plugin for [OpenClaw](https://openclaw.ai), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.2.0**.
+NATS channel plugin for [OpenClaw](https://openclaw.ai), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.3** (verb-first subjects + `status` endpoint).
 
 Every configured OpenClaw agent becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) - can enumerate running OpenClaw agents, prompt them, and stream responses back.
 
@@ -12,10 +12,11 @@ When OpenClaw starts the channel:
 
 1. Connects to NATS using the configured URL and optional credentials.
 2. Registers a NATS micro service named `agents` with spec metadata (`agent`, `owner`, `session`, `protocol_version`).
-3. Adds a `prompt` endpoint at `agents.oc.<owner>.<agentName>` advertising `max_payload: 1MB` and `attachments_ok: true`.
-4. Publishes heartbeats on `agents.oc.<owner>.<agentName>.heartbeat` every 30 s.
+3. Adds a `prompt` endpoint at `agents.prompt.oc.<owner>.<agentName>` (verb-first §2 v0.3) advertising the server-negotiated `max_payload` (read from `nc.info.max_payload` at connect, formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar — `1MB` against a default `nats-server`, more if the operator bumped `--max_payload`) and `attachments_ok: true`.
+4. Adds a `status` endpoint at `agents.status.oc.<owner>.<agentName>` (§8.7 (v0.3)) that replies with the same payload shape as a heartbeat.
+5. Publishes heartbeats on `agents.hb.oc.<owner>.<agentName>` (verb is the abbreviation `hb`, §8.1 v0.3) every 30 s.
 5. On each inbound prompt: decodes any attached files to `~/.openclaw/attachments/<agentName>/<uuid>/<filename>`, prepends their absolute paths to the prompt text, emits a `status: ack` chunk, dispatches the augmented prompt into OpenClaw's direct-DM pipeline, and streams each delivered block back as a typed `{type:"response",data}` chunk, terminating with the spec-mandated empty-body no-headers terminator.
-6. Agent-initiated messages (the old `sendText` outbound path) still publish to `agents.oc.<owner>.<agentName>.outbound` - an OpenClaw-specific extension, not part of the spec.
+6. Agent-initiated messages (the old `sendText` outbound path) still publish to `agents.oc.<owner>.<agentName>.outbound` - an OpenClaw-specific extension, NOT part of the v0.3 verb-first scheme. Stays on the v0.2-style subject because it's an application extension, not a protocol endpoint.
 
 Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Staging and dispatch failures return `500`.
 
@@ -74,12 +75,23 @@ openclaw gateway restart
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `url` | no | `nats://localhost:4222` | NATS server URL |
-| `agentName` | yes | - | 4th subject token (`agents.oc.<owner>.<agentName>`) |
+| `agentName` | yes | - | 5th subject token (`agents.prompt.oc.<owner>.<agentName>`) |
 | `description` | no | `OpenClaw agent <agentName>` | Shown via `$SRV.INFO` |
 | `credentials` | no | - | Path to `.creds` file for NATS authentication |
-| `owner` | no | `default` | 3rd subject token - operator/account namespace. Spec §2 requires a 4-token subject. |
+| `owner` | no | `default` | 4th subject token - operator/account namespace, per §2 (v0.3) verb-first scheme. |
 
 > **Migrating from v0.1:** the old `org` field has been renamed `owner` (§3.2 terminology). The old name is still accepted as an alias with a deprecation warning in logs.
+
+> **Auth — limitations of the openclaw adapter.** Only `.creds` files
+> (the `credentials` field) are honoured for NATS auth today. If you
+> point a `nats context add`-style context file at openclaw via the
+> `context` field or `NATS_CONTEXT`, openclaw's adapter currently
+> reads only `url` / `token` / `user` / `password` / `creds` — `nkey`,
+> `user_jwt` / `user_seed`, and the TLS triple `cert` / `key` / `ca`
+> are silently dropped. For NGS / decentralised-auth deployments, use a
+> `.creds` file (the SDK's full-context loader supports the rest, but
+> openclaw consumes only the narrow `{url, credentials}` shape — see
+> `src/nats/context-loader.ts`).
 
 ### Environment variables (Docker / containers)
 
@@ -116,7 +128,7 @@ nats micro list
 nats micro info agents
 
 # Watch heartbeats
-nats sub 'agents.*.*.*.heartbeat'
+nats sub 'agents.hb.*.*.*'
 ```
 
 ## Talking to a running OpenClaw agent
@@ -125,13 +137,13 @@ Any caller speaking the protocol - a spec-compliant SDK or the `nats` CLI - can:
 
 ```bash
 # Plain text prompt
-nats req agents.oc.<owner>.<agentName> "Hello!" --wait-for-empty --timeout 60s
+nats req agents.prompt.oc.<owner>.<agentName> "Hello!" --wait-for-empty --timeout 60s
 
 # JSON envelope (the SDK form)
-nats req agents.oc.<owner>.<agentName> '{"prompt":"Hello!"}' --wait-for-empty --timeout 60s
+nats req agents.prompt.oc.<owner>.<agentName> '{"prompt":"Hello!"}' --wait-for-empty --timeout 60s
 
 # With an attachment
-nats req agents.oc.<owner>.<agentName> '{
+nats req agents.prompt.oc.<owner>.<agentName> '{
   "prompt": "describe this image",
   "attachments": [{"filename":"pic.png","content":"<base64>"}]
 }' --wait-for-empty --timeout 120s
@@ -190,9 +202,9 @@ Caller-side constraints (rejected with `400` if violated):
 
 - `content` must be strict RFC 4648 §4 base64 - standard alphabet, padded, no URL-safe, no whitespace.
 - `filename` must be a plain basename. Path separators (`/`, `\`), `..`, absolute paths, and NUL bytes are rejected rather than silently flattened.
-- Full encoded envelope must fit within `max_payload` (1 MB).
+- Full encoded envelope must fit within the advertised `max_payload` — the server-negotiated limit read at connect time. `1 MB` against a default `nats-server`; matches whatever `nc.info.max_payload` reports.
 
-Spec §5.5 reserves a future `attachments` endpoint at `agents.oc.<owner>.<agentName>.attachments` for chunked large-file upload; that lands in protocol 0.2 and will coexist with inline attachments.
+Spec §5.5 reserves a future `attachments` endpoint at `agents.attachments.oc.<owner>.<agentName>` (v0.3 verb-first) for chunked large-file upload; that lands in a future protocol revision and will coexist with inline attachments.
 
 ## Agent-initiated messages (OpenClaw-specific)
 
@@ -229,6 +241,8 @@ bun run test:smoke     # wire-level smoke against nats-server on 127.0.0.1:4222
 ```
 
 The smoke test drives a minimal spec-compliant service assembled from the repo's own `protocol.ts` + `attachments.ts` and verifies `$SRV.INFO` shape, heartbeat fields, four 400 paths, the `ack → response → terminator` cycle, and attachment staging + cleanup.
+
+The plugin pulls both `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side encoders / heartbeat helpers) via `file:` links to the sibling SDK checkouts. See [`README-DEV.md`](../../README-DEV.md) at the repo root for the build / install dance when iterating locally.
 
 ## License
 

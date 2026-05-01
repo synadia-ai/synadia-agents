@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/nats-dspy-agent",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "NATS Agent Protocol host powered by ax-llm (DSPy-style) with a ReAct loop and sandboxed filesystem tools.",
@@ -12,7 +12,8 @@
     "@ax-llm/ax": "^19.0.45",
     "@nats-io/services": "^3.3.1",
     "@nats-io/transport-node": "^3.3.1",
-    "@synadia-ai/agents": "file:../../client-sdk/typescript"
+    "@synadia-ai/agents": "file:../../client-sdk/typescript",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
   },
   "devDependencies": {
     "@types/bun": "latest",

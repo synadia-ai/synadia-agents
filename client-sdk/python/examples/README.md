@@ -1,15 +1,14 @@
 # Examples
 
-Runnable demos ported from the [TypeScript SDK](https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/typescript),
-plus a Python-only interactive chat REPL. Start the reference agent in
+Client-side demos ported from the [TypeScript SDK](https://github.com/synadia-ai/synadia-agents/tree/main/client-sdk/typescript),
+plus a Python-only interactive chat REPL. Start the reference agent
+from the [`agent-sdk/python/`](../../../agent-sdk/python/) sibling in
 one terminal, then point the numbered demos at it from another. A user
-comparing the two SDKs should find the same demo set on both sides.
+comparing the two SDKs should find the same client-side demo set on
+both sides; the host-side reference agent now ships with the
+`synadia-ai-agent-service` distribution.
 
 ## The scripts
-
-Client-side examples lead. The reference agent (`_reference_agent.py`)
-appears at the bottom — it is a test harness for the demos, not itself a
-demo.
 
 | File | What it does |
 | --- | --- |
@@ -20,13 +19,19 @@ demo.
 | [`05-liveness.py`](05-liveness.py) | Per-instance heartbeat listener + periodic liveness snapshot. |
 | [`06-chat.py`](06-chat.py) | Interactive chat REPL with a `rich`-powered TUI. Requires `uv sync --extra examples`. |
 | [`_connect_cli.py`](_connect_cli.py) | (internal plumbing; not a demo) - shared `--context` / `--url` / `$NATS_URL` resolver. |
-| [`_reference_agent.py`](_reference_agent.py) | Test harness for the examples - a spec-compliant echo agent. Run this first so the numbered demos have something to talk to. Keeps a small conversation memory (capped at 20 turns) so multi-turn chats across invocations feel alive. |
+
+The reference agent (`_reference_agent.py`) lives in the agent-sdk
+sibling at
+[`../../../agent-sdk/python/examples/_reference_agent.py`](../../../agent-sdk/python/examples/_reference_agent.py)
+— the same spec-compliant echo agent used by the agent-sdk's tests,
+runnable directly from there.
 
 ## Start here
 
 ```shell
-# terminal 1 - start the reference agent
-uv run python examples/_reference_agent.py --url nats://127.0.0.1:4222
+# terminal 1 - start the reference agent (from the agent-sdk sibling)
+uv run --directory ../../agent-sdk/python python examples/_reference_agent.py \
+  --url nats://127.0.0.1:4222
 
 # terminal 2 - discover it and prompt it
 uv run python examples/01-discover.py --url nats://127.0.0.1:4222
@@ -60,11 +65,13 @@ matches. Run two reference agents under different session names to host
 two independent conversations:
 
 ```shell
-# terminal 1 - alice's session
-uv run python examples/_reference_agent.py --session-name alice
+# terminal 1 - alice's session (reference agent ships with the agent-sdk)
+uv run --directory ../../agent-sdk/python python examples/_reference_agent.py \
+  --session-name alice
 # terminal 2 - bob's session
-uv run python examples/_reference_agent.py --session-name bob
-# terminal 3 - drive each via discovery filter
+uv run --directory ../../agent-sdk/python python examples/_reference_agent.py \
+  --session-name bob
+# terminal 3 - drive each via discovery filter (this dist)
 uv run python examples/02-prompt-text.py --session alice "hi from alice"
 uv run python examples/02-prompt-text.py --session bob   "hi from bob"
 ```

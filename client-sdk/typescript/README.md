@@ -1,10 +1,15 @@
 # @synadia-ai/agents
 
-**TypeScript SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs).** Discover, prompt, and stream from AI agents over NATS.
+**Caller-side TypeScript SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs).** Discover, prompt, and stream from AI agents over NATS.
 
-- **Catch errors before they hit the wire.** Oversized payloads and unsupported attachments are validated locally against the agent's advertised limits.
+- **Catch errors before they hit the wire.** Oversized payloads and unsupported attachments are validated locally against the agent's advertised limits — and against the caller's own `nc.info.max_payload`, so the smaller of the two binds (a caller behind a smaller-cap broker fails fast instead of waiting for `MAX_PAYLOAD_VIOLATION`).
 - **Stream responses with `for await`.** Prompts return typed chunks (`response`, `status`, `query`) you iterate asynchronously.
 - **Runs on Node ≥ 20 and Bun ≥ 1.2.**
+
+> **Hosting an agent?** Install the sister package
+> [`@synadia-ai/agent-service`](../../agent-sdk/typescript/) for `AgentService`,
+> `ReferenceAgent`, and the host-side wire helpers. The two packages release
+> in lockstep.
 
 ## Install
 
@@ -79,7 +84,8 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 Subpath exports:
 
 - **`@synadia-ai/agents/errors`** - the error class hierarchy, for targeted `instanceof` branches.
-- **`@synadia-ai/agents/testing`** - a `ReferenceAgent` helper for your own test suite.
+
+The host-side `ReferenceAgent` previously available at `@synadia-ai/agents/testing` moved to [`@synadia-ai/agent-service/testing`](../../agent-sdk/typescript/) when the SDK split into caller + host packages. Anything you used to import from there is in the new sister package now.
 
 ## Documentation
 

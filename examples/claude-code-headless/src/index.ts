@@ -4,13 +4,14 @@
 // starts the ClaudeSessionManager and Controller, and wires graceful
 // shutdown on SIGINT/SIGTERM.
 
-import { existsSync } from "node:fs";
+import { accessSync, constants as fsc, existsSync } from "node:fs";
+import { delimiter as pathDelimiter, join as joinPath } from "node:path";
 import process from "node:process";
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { loadContextOptions } from "@synadia-ai/agents";
+import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 
 import { ClaudeSessionManager } from "./claude-session-manager.js";
 import { Controller } from "./controller.js";
@@ -28,7 +29,9 @@ async function resolveNatsOptions(
     return { ...(await loadContextOptions(context)), name: "claude-code-headless" };
   }
   if (natsUrl) {
-    return { servers: natsUrl, name: "claude-code-headless" };
+    // `parseNatsUrl` extracts userinfo (token / user:password) — without it
+    // `nats://TOKEN@host:port` would silently drop the token.
+    return { ...parseNatsUrl(natsUrl), name: "claude-code-headless" };
   }
 
   throw new Error("no NATS target configured (context / NATS_URL / --url)");
@@ -142,6 +145,32 @@ async function main(): Promise<void> {
   })();
 }
 
+/**
+ * `which` for the current process's PATH. Returns the absolute path of an
+ * executable named `name` if one is reachable, or `null` otherwise. Works
+ * under both Node (via `npx` / `npm install -g`) and Bun (via `bun run`).
+ */
+function whichSync(name: string): string | null {
+  const pathEnv = process.env["PATH"] ?? "";
+  const exts =
+    process.platform === "win32"
+      ? (process.env["PATHEXT"] ?? ".COM;.EXE;.BAT;.CMD").split(";")
+      : [""];
+  for (const dir of pathEnv.split(pathDelimiter)) {
+    if (!dir) continue;
+    for (const ext of exts) {
+      const candidate = joinPath(dir, name + ext);
+      try {
+        accessSync(candidate, fsc.X_OK);
+        return candidate;
+      } catch {
+        /* not here, try next */
+      }
+    }
+  }
+  return null;
+}
+
 async function resolveClaudeCodePath(configured: string | undefined): Promise<string | undefined> {
   if (configured) {
     if (!existsSync(configured)) {
@@ -151,9 +180,8 @@ async function resolveClaudeCodePath(configured: string | undefined): Promise<st
     }
     return configured;
   }
-  // Bun.which is the cross-platform PATH lookup. Returns null when not found.
-  const found = Bun.which("claude");
-  return found ?? undefined;
+  // Walk PATH ourselves — runtime-portable across Node and Bun.
+  return whichSync("claude") ?? undefined;
 }
 
 main().catch((err) => {

@@ -1,40 +1,65 @@
 // Subject builders + session-id sanitizer for pi-headless.
 //
-// The controller lives at `agents.pi.<owner>.<name>` with three extra
-// endpoints on `.spawn`, `.stop`, `.list`. Each spawned session lives at
-// its own subject `agents.pi.<owner>.<session_id>` (registered by a
-// `ReferenceAgent` from the SDK's testing subpath), which means callers
-// can discover and prompt sessions using nothing but the standard
-// protocol.
+// The protocol subjects (`agents.{verb}.pi.<owner>.<token>`) are built via
+// the SDK's `AgentSubject` so the wire layout has one source of truth across
+// the SDK, agent harnesses, and examples. The `pi` subject token equals
+// `metadata.agent` here (Appendix C: `pi` is both the canonical id and the
+// conventional abbreviation), so `AgentSubject.new(...)` without a
+// `subjectToken` override produces the right wire shape.
+//
+// Custom endpoints (spawn / stop / list) stay on a non-verb-first form so
+// they're clearly application extensions, not protocol endpoints.
+
+import { AgentSubject } from "@synadia-ai/agents";
 
 export const AGENT_TOKEN = "pi";
 
+function controllerSubject(owner: string, name: string): AgentSubject {
+  return AgentSubject.new(AGENT_TOKEN, owner, name);
+}
+
 export function controllerPromptSubject(owner: string, name: string): string {
-  return `agents.${AGENT_TOKEN}.${owner}.${name}`;
-}
-
-export function controllerSpawnSubject(owner: string, name: string): string {
-  return `${controllerPromptSubject(owner, name)}.spawn`;
-}
-
-export function controllerStopSubject(owner: string, name: string): string {
-  return `${controllerPromptSubject(owner, name)}.stop`;
-}
-
-export function controllerListSubject(owner: string, name: string): string {
-  return `${controllerPromptSubject(owner, name)}.list`;
+  return controllerSubject(owner, name).prompt;
 }
 
 export function controllerHeartbeatSubject(owner: string, name: string): string {
-  return `${controllerPromptSubject(owner, name)}.heartbeat`;
+  return controllerSubject(owner, name).heartbeat;
+}
+
+export function controllerStatusSubject(owner: string, name: string): string {
+  return controllerSubject(owner, name).status;
+}
+
+/** Custom endpoints — application-specific, NOT part of the v0.3 verb-first scheme. */
+const customSubjectRoot = (owner: string, name: string): string =>
+  `agents.${AGENT_TOKEN}.${owner}.${name}`;
+
+export function controllerSpawnSubject(owner: string, name: string): string {
+  return `${customSubjectRoot(owner, name)}.spawn`;
+}
+
+export function controllerStopSubject(owner: string, name: string): string {
+  return `${customSubjectRoot(owner, name)}.stop`;
+}
+
+export function controllerListSubject(owner: string, name: string): string {
+  return `${customSubjectRoot(owner, name)}.list`;
+}
+
+function sessionSubject(owner: string, sessionId: string): AgentSubject {
+  return AgentSubject.new(AGENT_TOKEN, owner, sessionId);
 }
 
 export function sessionPromptSubject(owner: string, sessionId: string): string {
-  return `agents.${AGENT_TOKEN}.${owner}.${sessionId}`;
+  return sessionSubject(owner, sessionId).prompt;
 }
 
 export function sessionHeartbeatSubject(owner: string, sessionId: string): string {
-  return `${sessionPromptSubject(owner, sessionId)}.heartbeat`;
+  return sessionSubject(owner, sessionId).heartbeat;
+}
+
+export function sessionStatusSubject(owner: string, sessionId: string): string {
+  return sessionSubject(owner, sessionId).status;
 }
 
 // Tokens MUST follow §2.2: [a-z0-9_-], not starting with $, 1..63 chars.
@@ -69,9 +94,6 @@ export function validateSessionId(
 
 /** Generate a short session id prefixed with `sess-`. URL-safe, 8 hex chars. */
 export function generateSessionId(): string {
-  // crypto.getRandomValues is uniformly distributed and available in Bun and
-  // Node ≥ 19 without an import. Math.random would give the same nominal 32
-  // bits but with a biased distribution, so use the Web Crypto API instead.
   const bytes = new Uint8Array(4);
   globalThis.crypto.getRandomValues(bytes);
   const rand = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");

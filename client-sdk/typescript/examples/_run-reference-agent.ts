@@ -4,7 +4,7 @@
 
 import type { ServiceMsg } from "@nats-io/services";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { ReferenceAgent } from "@synadia-ai/agents/testing";
+import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 
 async function main(): Promise<void> {
   const nc = await natsConnect({ servers: process.env["NATS_URL"] ?? "nats://127.0.0.1:4222" });

@@ -8,6 +8,16 @@ SDKs and for reviewers auditing this one. The Python SDK currently ships
 for the verb-first-shape and `status`-endpoint additions waiting on the
 spec to catch up.
 
+> **Note.** As of `synadia-ai-agents@0.5.0` the agent-host surface
+> (`AgentService`, `PromptStream`, `PromptHandler`, the heartbeat
+> publisher) ships in the sibling distribution
+> [`synadia-ai-agent-service`](../../../agent-sdk/python/) (import path
+> `synadia_ai.agent_service`). The host-side rows in the tables below
+> still describe real, spec-compliant behavior — they just import from
+> the agent-sdk now. The shared wire primitives (`Envelope`,
+> `HeartbeatPayload`, `AgentSubject`, error classes, discovery
+> constants) stay in this distribution.
+
 ## Discovery (§4)
 
 | SDK                                      | Wire behaviour                                                                         | Spec ref   |
@@ -30,7 +40,7 @@ spec to catch up.
 | `protocol_version` value   | `"0.3"` - MAJOR.MINOR only (§11.1).                                                             | §3.2, §11.1 |
 | Endpoint `prompt` metadata | `{max_payload, attachments_ok}`. Boolean serialised as `"true"`/`"false"` on the wire.          | §2.1       |
 | `prompt` queue group       | `"agents"` - pinned explicitly; framework defaults differ between SDKs and would break interop. | §3.3       |
-| `status` endpoint          | Registered alongside `prompt` with subject `agents.status.{a}.{o}.{session_name}` and queue group `"agents"` (v0.3, §-TBD). Replies with a freshly-built `HeartbeatPayload` (§8.3 shape). | v0.3 §-TBD |
+| `status` endpoint          | Registered alongside `prompt` with subject `agents.status.{a}.{o}.{session_name}` and queue group `"agents"` (v0.3, §8.7). Replies with a freshly-built `HeartbeatPayload` (§8.3 shape). | §8.7 (v0.3) |
 | Subject layout             | `agents.{verb}.{agent}.{owner}.{session_name}` (v0.3 verb-first; token 5 IS the session); the SDK doesn't allow overrides today. | §2, §2.3   |
 
 ## Request envelope (§5)
@@ -41,7 +51,7 @@ spec to catch up.
 | `Agent.prompt(text, attachments=[...])`      | Adds `attachments: [{filename, content: <base64>}]` per RFC 4648 §4 (standard alphabet, padded). | §5.1, §5.2 |
 | Plain-text request shorthand                 | NOT emitted by this SDK; always JSON. Decoders accept it per §5.3.                    | §5.3       |
 | Pre-publish `attachments_ok` check           | `AttachmentsNotSupportedError` before any wire I/O.                                   | §5.4       |
-| Pre-publish `max_payload` check              | `PayloadTooLargeError(limit, actual)` before any wire I/O.                            | §5.4       |
+| Pre-publish `max_payload` check              | `PayloadTooLargeError(limit, actual)` before any wire I/O. Effective limit is `min(endpoint.max_payload_bytes, nc.max_payload)` — caller's broker cap binds when smaller. | §5.4       |
 | Empty prompt rejected pre-publish            | `PromptEmptyError` before any wire I/O.                                               | §5.1, §5.3 |
 | Endpoint subject resolution                  | Always `endpoints[].subject` from discovery; never constructed from identity.         | §4.3, §12  |
 | Unknown envelope fields                      | `Envelope` uses `extra="allow"`; decode → encode round-trips lossless per §5.6. A stray inbound `session` from a non-compliant peer rides this bag — under v0.3 the request subject IS the session, so `Envelope.session` is no longer a first-class field. | §5.6 |
@@ -136,7 +146,7 @@ mirror the TypeScript SDK so the two stay in lockstep.
    This SDK registers a NATS micro endpoint named `status` on
    `agents.status.{a}.{o}.{session_name}` (queue group `"agents"`) that
    replies with the §8.3 heartbeat payload, freshly built per request.
-   Anticipated to land in the spec as a §-TBD section once the verb-
+   Anticipated to land in the spec as a §8.7 section once the verb-
    first PR settles.
 6. **Token 5 is the session name (`name` + `session` collapse).** The
    SDK collapses the previous `name` (5th subject token) and `session`

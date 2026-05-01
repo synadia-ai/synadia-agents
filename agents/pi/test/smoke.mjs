@@ -1,36 +1,118 @@
 // Spec-compliance smoke test for extensions/nats-channel.ts.
 //
 // Drives the extension with a minimal mock of PI's ExtensionAPI, connects
-// to a local nats-server, and asserts protocol 0.1 behaviour:
+// to a local nats-server, and asserts protocol v0.3 behaviour:
 //
 //   1. Service registers under `agents` with spec metadata.
-//   2. The `prompt` endpoint has `max_payload` / `attachments_ok` metadata.
-//   3. Heartbeats arrive on `agents.pi.{owner}.{name}.heartbeat`.
-//   4. Empty payload → 400 + terminator.
-//   5. Plain-text prompt yields a `status: ack` chunk, text chunks via the
+//   2. The `prompt` endpoint has `max_payload` / `attachments_ok` metadata
+//      and lives at `agents.prompt.pi.{owner}.{name}` (verb-first §2 v0.3).
+//   3. Heartbeats arrive on `agents.hb.pi.{owner}.{name}` (§8.1 v0.3).
+//   4. The `status` endpoint at `agents.status.pi.{owner}.{name}` replies
+//      with a heartbeat-shaped payload (§8.7 (v0.3)).
+//   5. Empty payload → 400 + terminator.
+//   6. Plain-text prompt yields a `status: ack` chunk, text chunks via the
 //      mock emitter, and an empty-body no-headers terminator.
-//   6. Request with attachments → 400 + terminator.
+//   7. Request with attachments → 400 + terminator.
 //
 // Run with:
 //   bun test/smoke.mjs
-// Prereq: nats-server on 127.0.0.1:4222.
+// Server: this test always spawns its own private nats-server (via
+// `test/nats-server.conf`, which pins `port: -1` so the kernel picks an
+// ephemeral port and `max_payload: 8MB` so the dynamic max_payload path is
+// exercised). The chosen port is read back from `--ports_file_dir` and the
+// server is killed on exit. Prereq: `nats-server` on PATH.
 //
 // Exit code is non-zero on any failed assertion.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	readdirSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { connect } from "@nats-io/transport-node";
 import { createInbox } from "@nats-io/nats-core";
 import { Svcm } from "@nats-io/services";
 
-import channelFactory from "../extensions/nats-channel.ts";
+// ── Spawn a private nats-server on an ephemeral port ──────────────────────
+// Avoids touching whatever the developer has running on 4222 — every smoke
+// run is fully isolated. We must do this BEFORE importing the channel
+// factory below: the factory reads `NATS_URL` at activation time, and we
+// want it pointing at our private server rather than at the user's
+// `localhost` context.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PORTS_DIR = mkdtempSync(join(tmpdir(), "nats-pi-smoke-ports-"));
+const NATS_CONF = join(__dirname, "nats-server.conf");
+const spawnedServer = spawn(
+	"nats-server",
+	["-c", NATS_CONF, "--ports_file_dir", PORTS_DIR],
+	{ stdio: "ignore" },
+);
+spawnedServer.on("error", (err) => {
+	console.error(`could not spawn nats-server: ${err.message}`);
+	console.error("install nats-server (https://nats.io) before re-running this smoke");
+	process.exit(2);
+});
+process.on("exit", () => {
+	if (spawnedServer && !spawnedServer.killed) spawnedServer.kill();
+	try {
+		rmSync(PORTS_DIR, { recursive: true, force: true });
+	} catch {}
+});
 
-process.env.NATS_CONTEXT = "localhost";
+async function readBoundUrl() {
+	const deadline = Date.now() + 5000;
+	while (Date.now() < deadline) {
+		try {
+			const entries = readdirSync(PORTS_DIR).filter((f) => f.endsWith(".ports"));
+			if (entries.length > 0) {
+				const ports = JSON.parse(readFileSync(join(PORTS_DIR, entries[0]), "utf8"));
+				if (Array.isArray(ports.nats) && ports.nats.length > 0) return ports.nats[0];
+			}
+		} catch {}
+		await delay(50);
+	}
+	throw new Error("nats-server never wrote a ports file");
+}
+const SERVER_URL = await readBoundUrl();
+console.log(`  (spawned nats-server at ${SERVER_URL})`);
+
+// The harness's resolution chain is `NATS_CONTEXT > config.context >
+// NATS_URL > default`. The PI agent's persisted config (e.g. a developer's
+// `~/.pi/agent/nats-channel.json` pointing at NGS) beats `NATS_URL`, so
+// `NATS_URL` alone isn't enough to redirect the harness here. Write a
+// throwaway NATS context file with the spawned server's URL and point
+// `NATS_CONTEXT` at it — that wins unconditionally.
+const NATS_CONTEXT_DIR = join(homedir(), ".config", "nats", "context");
+mkdirSync(NATS_CONTEXT_DIR, { recursive: true });
+const SMOKE_CONTEXT_NAME = `pi-smoke-${process.pid}`;
+const SMOKE_CONTEXT_PATH = join(NATS_CONTEXT_DIR, `${SMOKE_CONTEXT_NAME}.json`);
+writeFileSync(
+	SMOKE_CONTEXT_PATH,
+	JSON.stringify({ url: SERVER_URL, description: "pi smoke ephemeral" }),
+);
+process.on("exit", () => {
+	try {
+		rmSync(SMOKE_CONTEXT_PATH, { force: true });
+	} catch {}
+});
+
+process.env.NATS_CONTEXT = SMOKE_CONTEXT_NAME;
 process.env.NATS_SESSION_NAME = `smoke-${process.pid}`;
 process.env.USER = process.env.USER || "smoke";
+
+const { default: channelFactory } = await import("../extensions/nats-channel.ts");
+const { formatHumanBytes } = await import("@synadia-ai/agents");
+const { DEFAULT_MAX_PAYLOAD } = await import("@synadia-ai/agent-service");
 
 let ok = 0;
 let fail = 0;
@@ -75,10 +157,11 @@ function emit(event, ...args) {
 }
 
 // ── Observer NATS connection (separate from the one the extension opens) ──
-const obs = await connect({ servers: "nats://127.0.0.1:4222" });
+const obs = await connect({ servers: SERVER_URL });
 
 // Subscribe to heartbeats BEFORE the extension registers — §8.5.
-const hbSub = obs.subscribe("agents.*.*.*.heartbeat");
+// v0.3 wildcard: `agents.hb.<agent>.<owner>.<name>`.
+const hbSub = obs.subscribe("agents.hb.*.*.*");
 const heartbeats = [];
 (async () => {
 	for await (const m of hbSub) {
@@ -100,7 +183,8 @@ const owner = (process.env.USER ?? "smoke")
 	.toLowerCase()
 	.replace(/^-+|-+$/g, "");
 const session = process.env.NATS_SESSION_NAME;
-const expectedSubject = `agents.pi.${owner}.${session}`;
+const expectedSubject = `agents.prompt.pi.${owner}.${session}`;
+const expectedStatusSubject = `agents.status.pi.${owner}.${session}`;
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -116,18 +200,24 @@ await step("$SRV.INFO returns spec-shaped service info", async () => {
 	assert.ok(mine, `no agents-service instance with session=${session} found`);
 	assert.equal(mine.metadata.agent, "pi");
 	assert.equal(mine.metadata.owner, owner);
-	assert.equal(mine.metadata.protocol_version, "0.2");
+	assert.equal(mine.metadata.protocol_version, "0.3");
 	assert.ok(mine.metadata.session.length > 0);
 
 	const ep = mine.endpoints?.find((e) => e.name === "prompt");
 	assert.ok(ep, "prompt endpoint missing");
 	assert.equal(ep.subject, expectedSubject);
 	assert.equal(ep.queue_group, "agents", "prompt endpoint must register queue_group=agents (spec §3.3)");
-	assert.equal(ep.metadata?.max_payload, "1MB");
+	// max_payload is server-driven (`nc.info.max_payload`), so verify it
+	// matches the §2.1 grammar AND the value our server is advertising.
+	const expectedMaxPayload = obs.info?.max_payload
+		? formatHumanBytes(obs.info.max_payload)
+		: DEFAULT_MAX_PAYLOAD;
+	assert.match(ep.metadata?.max_payload ?? "", /^\d+(B|KB|MB|GB)$/);
+	assert.equal(ep.metadata?.max_payload, expectedMaxPayload);
 	assert.equal(ep.metadata?.attachments_ok, "true");
 })();
 
-await step("heartbeat published on agents.pi.{owner}.{session}.heartbeat", async () => {
+await step("heartbeat published on agents.hb.pi.{owner}.{session}", async () => {
 	const mine = heartbeats.find(
 		(hb) => hb.agent === "pi" && hb.session === session && hb.owner === owner,
 	);
@@ -135,6 +225,17 @@ await step("heartbeat published on agents.pi.{owner}.{session}.heartbeat", async
 	assert.equal(typeof mine.instance_id, "string");
 	assert.equal(typeof mine.ts, "string");
 	assert.equal(mine.interval_s, 30);
+})();
+
+await step("status endpoint replies with a heartbeat-shaped payload", async () => {
+	const reply = await obs.request(expectedStatusSubject, "", { timeout: 2000 });
+	const body = JSON.parse(new TextDecoder().decode(reply.data));
+	assert.equal(body.agent, "pi");
+	assert.equal(body.owner, owner);
+	assert.equal(body.session, session);
+	assert.equal(typeof body.instance_id, "string");
+	assert.equal(typeof body.ts, "string");
+	assert.equal(body.interval_s, 30);
 })();
 
 // Helper — consume a stream until terminator, capturing chunks + error.

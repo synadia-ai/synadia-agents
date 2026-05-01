@@ -1,26 +1,39 @@
-"""``nats`` CLI context loader for callers that own their NATS connection.
+"""``nats`` CLI context loader and URL parser.
 
-:func:`load_context_options` reads context files written by ``nats context
-add`` / ``nats context select`` under ``~/.config/nats`` (or
-``$NATS_CONFIG_HOME`` / ``$XDG_CONFIG_HOME/nats``) and translates them
-into kwargs ready to splat into :func:`nats.connect`::
+Two entry points produce kwargs ready to splat into :func:`nats.connect`:
+
+* :func:`load_context_options` reads context files written by ``nats
+  context add`` / ``nats context select`` under ``~/.config/nats`` (or
+  ``$NATS_CONFIG_HOME`` / ``$XDG_CONFIG_HOME/nats``).
+* :func:`parse_nats_url` parses a single NATS URL and extracts
+  credentials from ``userinfo`` if present (token, or user:password).
+  ``nats-py``'s ``nats.connect(servers=url)`` does NOT parse userinfo
+  on its own — it expects credentials as separate kwargs — but the
+  ``nats`` CLI does, which causes a confusing UX gap. Use this helper
+  to bridge the two.
+
+Both return a dict you can splat::
 
     import nats
-    from synadia_ai.agents import Agents, load_context_options
+    from synadia_ai.agents import Agents, load_context_options, parse_nats_url
 
     nc = await nats.connect(**load_context_options("prod"))
+    # or:
+    nc = await nats.connect(**parse_nats_url("nats://TOKEN@nats.example.com:4222"))
+
     agents = Agents(nc=nc)
 
-Mirrors the TS SDK's ``loadContextOptions`` (PR #7 follow-up) — same
+Mirrors the TS SDK's ``loadContextOptions`` / ``parseNatsUrl`` — same
 context-file layout, same auth precedence, same unsupported-field
-failures. The SDK itself does NOT open NATS connections; the caller
-owns ``nc`` and is responsible for closing it.
+failures, same URL-parsing semantics. The SDK itself does NOT open
+NATS connections; the caller owns ``nc`` and is responsible for
+closing it.
 
-Supports: ``url``, ``token``, ``user``/``password``, ``creds`` (with
-``~`` expansion), ``user_jwt``, ``inbox_prefix``.
+Supported context fields: ``url``, ``token``, ``user``/``password``,
+``creds`` (with ``~`` expansion), ``user_jwt``, ``inbox_prefix``.
 
-Auth precedence: ``creds`` > ``user_jwt`` > inline ``token`` /
-``user``+``password``.
+Auth precedence inside a context: ``creds`` > ``user_jwt`` > inline
+``token`` / ``user``+``password``.
 
 Unsupported fields raise :class:`~synadia_ai.agents.errors.NatsContextError`
 with an actionable message: ``nkey``, TLS triple (``cert`` / ``key`` /
@@ -29,6 +42,20 @@ with an actionable message: ``nkey``, TLS triple (``cert`` / ``key`` /
 Ignored (present in JSON but irrelevant to the SDK): ``jetstream_*``,
 ``socks_proxy``, ``color_scheme``, ``windows_*``, ``user_seed`` (only
 meaningful with ``nkey``), ``tls_first``.
+
+Both helpers normalise each server URL by defaulting a missing port to
+``4222`` for ``nats://`` / ``tls://`` schemes (``ws://`` / ``wss://``
+left alone, mirroring ``nats-py``'s own carve-out). This works around
+an asymmetric ``nats-py`` URL-parsing bug: in
+``nats/aio/client.py::_setup_server_pool``, the single-string path
+defaults missing ports via ``_parse_server_uri``, but the list path
+(``servers=[...]``) just calls ``urlparse`` per entry and leaves
+``Srv(uri).uri.port`` as ``None``, so the asyncio TCP connect lands on
+port 0 and the kernel rejects with ``EADDRNOTAVAIL``. The ``nats``
+CLI papers over the missing port internally, so context files written
+by ``nats context add`` routinely contain entries like
+``tls://connect.ngs.global``; without this defaulting, those would
+silently fail at connect time with a confusing kernel error.
 """
 
 from __future__ import annotations
@@ -37,6 +64,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from .errors import NatsContextError
 
@@ -212,7 +240,37 @@ def _resolve_current_context_name() -> str:
 
 def _split_urls(url: str) -> list[str]:
     """Split a context's ``url`` field into individual server URLs."""
-    return [part.strip() for part in url.split(",") if part.strip()]
+    return [_ensure_default_port(part.strip()) for part in url.split(",") if part.strip()]
+
+
+def _ensure_default_port(server: str) -> str:
+    """Append ``:4222`` to a server URL that's missing a port (nats/tls only).
+
+    Works around the ``nats-py`` list-path bug documented in the module
+    docstring. Returns the input unchanged when:
+
+    * the URL already declares a port,
+    * the scheme is ``ws://`` / ``wss://`` (matches nats-py's carve-out
+      at ``client.py:1359`` — WebSocket transports use HTTP-style scheme
+      defaults that nats-py does not enforce), or
+    * the scheme is unknown (let validation surface elsewhere).
+
+    Userinfo and IPv6 brackets are preserved by appending the suffix to
+    the original string rather than reconstructing from ``urlparse``
+    parts.
+    """
+    if not server:
+        return server
+    with_scheme = server if "://" in server else f"nats://{server}"
+    try:
+        parsed = urlparse(with_scheme)
+    except ValueError:
+        return server
+    if parsed.port is not None:
+        return server
+    if parsed.scheme not in ("nats", "tls"):
+        return server
+    return f"{server}:{_DEFAULT_NATS_PORT}"
 
 
 def _expand_user(path: str) -> str:
@@ -229,4 +287,109 @@ def _expand_user(path: str) -> str:
     return path
 
 
-__all__ = ["load_context_options"]
+_SUPPORTED_URL_SCHEMES = ("nats", "tls", "ws", "wss")
+
+_DEFAULT_NATS_PORT = 4222
+
+
+def parse_nats_url(url: str) -> dict[str, Any]:
+    """Parse a NATS URL into ``nats.connect`` kwargs, extracting userinfo.
+
+    Bridges a UX gap between the ``nats`` CLI (which parses userinfo from
+    URLs) and ``nats-py`` (which does not). Mirrors the TS SDK's
+    :func:`parseNatsUrl`.
+
+    Behaviour:
+
+    * ``nats://host:port`` → ``{"servers": [...]}`` (no auth)
+    * ``nats://TOKEN@host:port`` → ``{"servers": [...], "token": ...}``
+      — a single userinfo component is treated as a token, mirroring the
+      ``nats`` CLI.
+    * ``nats://USER:PASS@host:port`` → ``{"servers": [...], "user": ...,
+      "password": ...}``
+    * ``tls://...``, ``ws://...``, ``wss://...`` schemes preserved on
+      output; scheme-less ``host:port`` accepted (treated as
+      ``nats://``), matching ``nats-py``'s server-list semantics.
+    * Comma-separated multi-server URLs supported when userinfo is
+      *identical* across every entry. Mixed userinfo across servers
+      cannot be expressed in a single connect-kwargs dict and raises
+      :class:`NatsContextError` so the caller fails loudly instead of
+      silently dropping all but the first set.
+    * URL-decodes userinfo so tokens with reserved chars (``+``, ``@``,
+      ``%``) round-trip correctly.
+
+    Raises :class:`NatsContextError` on empty input, unsupported scheme,
+    or missing host.
+
+    Example::
+
+        import nats
+        from synadia_ai.agents import parse_nats_url
+
+        nc = await nats.connect(**parse_nats_url("nats://abc123@nats.example.com:4222"))
+    """
+    parts = [p.strip() for p in url.split(",") if p.strip()]
+    if not parts:
+        raise NatsContextError(f"empty NATS URL: {url!r}")
+
+    parsed_all = [_parse_single_nats_url(p, original=url) for p in parts]
+
+    # All servers must agree on userinfo (or all be bare). Mixed userinfo
+    # across servers can't be expressed in one connect-kwargs dict.
+    first = parsed_all[0]
+    for p in parsed_all[1:]:
+        if (
+            p.get("token") != first.get("token")
+            or p.get("user") != first.get("user")
+            or p.get("password") != first.get("password")
+        ):
+            raise NatsContextError(f"NATS URL has mixed credentials across server entries: {url}")
+
+    out: dict[str, Any] = {"servers": [p["server"] for p in parsed_all]}
+    for k in ("token", "user", "password"):
+        if k in first:
+            out[k] = first[k]
+    return out
+
+
+def _parse_single_nats_url(part: str, *, original: str) -> dict[str, Any]:
+    # Tolerate scheme-less entries (`host:port`) by prepending nats://,
+    # mirroring nats-py's internal server-list handling.
+    with_scheme = part if "://" in part else f"nats://{part}"
+
+    try:
+        parsed = urlparse(with_scheme)
+    except ValueError as exc:
+        raise NatsContextError(f"invalid NATS URL {original!r}: {exc}") from exc
+
+    if parsed.scheme not in _SUPPORTED_URL_SCHEMES:
+        raise NatsContextError(f"unsupported scheme {parsed.scheme!r} in NATS URL {original!r}")
+    if not parsed.hostname:
+        raise NatsContextError(f"NATS URL {original!r} is missing a host")
+
+    # Reconstruct the server URL without userinfo. Re-bracket IPv6 hosts —
+    # urlparse strips the brackets but `nats-py` (and most other tools)
+    # need them back to disambiguate `host:port`.
+    host = parsed.hostname
+    host_token = f"[{host}]" if ":" in host else host
+    if parsed.port is not None:
+        netloc = f"{host_token}:{parsed.port}"
+    elif parsed.scheme in ("nats", "tls"):
+        netloc = f"{host_token}:{_DEFAULT_NATS_PORT}"
+    else:
+        netloc = host_token
+    server = f"{parsed.scheme}://{netloc}"
+
+    out: dict[str, Any] = {"server": server}
+    if parsed.password is not None:
+        # user:password (password may be empty if URL is `nats://user:@host`,
+        # but we still treat it as the user/password form rather than a token).
+        out["user"] = unquote(parsed.username or "")
+        out["password"] = unquote(parsed.password)
+    elif parsed.username:
+        # Single userinfo component → token (matches `nats` CLI behaviour).
+        out["token"] = unquote(parsed.username)
+    return out
+
+
+__all__ = ["load_context_options", "parse_nats_url"]

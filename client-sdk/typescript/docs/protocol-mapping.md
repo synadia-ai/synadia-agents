@@ -1,6 +1,6 @@
 # Protocol mapping
 
-Every SDK call mapped to its NATS Agent Protocol section, for implementers of other SDKs or reviewers auditing this one. Section numbers refer to `core-protocol.md` at version `0.2.0-draft`.
+Every SDK call mapped to its NATS Agent Protocol section, for implementers of other SDKs or reviewers auditing this one. Section numbers refer to `core-protocol.md`.
 
 ## Discovery (§4)
 
@@ -18,16 +18,16 @@ Every SDK call mapped to its NATS Agent Protocol section, for implementers of ot
 
 ## Request envelope (§5)
 
-| SDK                                  | Wire behaviour                                                                       | Spec ref   |
-| ------------------------------------ | ------------------------------------------------------------------------------------ | ---------- |
-| `remote.prompt(text)`                | Publishes JSON envelope `{"prompt":"..."}` to the prompt endpoint subject.           | §5.1       |
-| `remote.prompt(text, {attachments})` | Adds `attachments: [{filename, content: <base64>}]` per RFC 4648 §4.                 | §5.1, §5.2 |
-| Plain-text shorthand                 | **Not emitted.** SDK always sends JSON (spec allows but doesn't require plain text). | §5.1       |
-| Pre-publish `attachments_ok`         | Throws `AttachmentsNotSupportedError` locally - no wire traffic.                     | §5.4       |
-| Pre-publish `max_payload`            | Throws `PayloadTooLargeError` on serialized UTF-8 byte length.                       | §5.4       |
-| Empty prompt                         | Throws `PromptEmptyError` locally.                                                   | §5.1, §5.3 |
-| Endpoint subject resolution          | Always `endpoints[].subject` from the discovery record - never constructed.          | §4.3, §12  |
-| Unknown envelope fields              | Preserved by decoders; the SDK's reference agent passes them through.                | §5.6       |
+| SDK                                  | Wire behaviour                                                                                                                                                                    | Spec ref   |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `remote.prompt(text)`                | Publishes JSON envelope `{"prompt":"..."}` to the prompt endpoint subject.                                                                                                        | §5.1       |
+| `remote.prompt(text, {attachments})` | Adds `attachments: [{filename, content: <base64>}]` per RFC 4648 §4.                                                                                                              | §5.1, §5.2 |
+| Plain-text shorthand                 | **Not emitted.** SDK always sends JSON (spec allows but doesn't require plain text).                                                                                              | §5.1       |
+| Pre-publish `attachments_ok`         | Throws `AttachmentsNotSupportedError` locally - no wire traffic.                                                                                                                  | §5.4       |
+| Pre-publish `max_payload`            | Throws `PayloadTooLargeError` on serialized UTF-8 byte length. Effective limit is `min(endpoint.maxPayloadBytes, nc.info?.max_payload)` — caller's broker cap binds when smaller. | §5.4       |
+| Empty prompt                         | Throws `PromptEmptyError` locally.                                                                                                                                                | §5.1, §5.3 |
+| Endpoint subject resolution          | Always `endpoints[].subject` from the discovery record - never constructed.                                                                                                       | §4.3, §12  |
+| Unknown envelope fields              | Preserved by decoders; the SDK's reference agent passes them through.                                                                                                             | §5.6       |
 
 ## Response streaming (§6)
 

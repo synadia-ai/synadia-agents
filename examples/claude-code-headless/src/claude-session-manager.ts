@@ -40,6 +40,7 @@ export interface SpawnDescriptor {
   readonly session_id: string;
   readonly subject: string;
   readonly heartbeat_subject: string;
+  readonly status_subject: string;
   readonly cwd: string;
   readonly model: string;
   readonly allowed_tools: ReadonlyArray<string>;
@@ -233,6 +234,7 @@ export class ClaudeSessionManager {
       session_id: sessionId,
       subject: managed.subject,
       heartbeat_subject: managed.heartbeatSubject,
+      status_subject: managed.statusSubject,
       cwd: managed.cwd,
       model: managed.model,
       allowed_tools: managed.allowedTools,

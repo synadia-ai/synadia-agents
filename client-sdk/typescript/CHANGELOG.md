@@ -13,12 +13,257 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-30
+
+> **Note:** `0.3.0` was tagged in code (verb-first wire bump + max_payload
+> work) but never published to npm — the changeset moved through `file:`
+> dev-cycle PRs only. `0.4.0` bundles the 0.3.0 wire changes together
+> with the agent + example SDK adoption work and the new public surface
+> listed below.
+
+### Added
+
+- `HeartbeatTracker` is now exported from the package root. Existing
+  internal usage by `Agents.onHeartbeat` is unchanged; consumers that
+  want the heartbeat-wildcard primitive directly (e.g.
+  `examples/agent-web-ui/server/bridge.ts`, agent harnesses adopting
+  the SDK) can now import it without reaching into the source tree.
+- `formatHumanBytes`, `parseHumanBytes`, and `InvalidSizeError` are
+  exported from the package root. They were added to `./bytes.js` for
+  the broker-derived `max_payload` clamp work but kept internal;
+  exporting them lets the agent harnesses replace identical
+  `formatMaxPayloadString` copies with one tested SDK helper.
+- `Agents.lookupInstance(instanceId, opts?)` — targeted
+  `$SRV.INFO.agents.<id>` lookup that materialises a single `Agent`
+  for an already-known instance id without running a full discovery
+  scan. Returns `null` on timeout, no-responders, or malformed
+  metadata. The returned `Agent` shares the parent client's
+  connection and close signal so in-flight streams are cancelled
+  alongside everything else when the client closes.
+- `splitResponseText(text, maxPayloadBytes, opts?)` — UTF-8-safe
+  chunker for long response payloads. Iterates by code-point so
+  multi-byte UTF-8 sequences and UTF-16 surrogate pairs are never
+  split mid-character. Replaces three near-identical
+  `splitTextForChunks` / `publishResponseText` helpers carried by
+  the `agents/{claude-code,openclaw,pi}` harnesses.
+- `AgentSubject` + `AgentService` accept an optional `subjectToken`
+  override. When set, the wire token in the subject's 3rd position is
+  the override; `metadata.agent` (in `$SRV.INFO`) keeps the canonical,
+  longer identifier. Default behaviour unchanged — both come from
+  `agent`. Lets harnesses like `claude-code` (`agent="claude-code"`,
+  `subjectToken="cc"`) and `openclaw` (`agent="openclaw"`,
+  `subjectToken="oc"`) adopt the SDK's `AgentSubject` / `AgentService`
+  while preserving their established subject layouts.
+
+### Changed (breaking — host-side surface moved out)
+
+- `AgentService`, `PromptResponse`, `PromptHandler`, `AgentServiceOptions`,
+  `ReferenceAgent`, `encodeChunk`, `splitResponseText`, the
+  `Chunk` / `ResponseChunk` / `StatusChunk` / `QueryChunk` types,
+  `buildHeartbeatPayload`, `encodeHeartbeatPayload`,
+  `BuildHeartbeatPayloadOptions`, and the `DEFAULT_ATTACHMENTS_OK` /
+  `DEFAULT_HEARTBEAT_INTERVAL_S` / `DEFAULT_KEEPALIVE_INTERVAL_S` /
+  `DEFAULT_MAX_PAYLOAD` constants moved to a new sibling package
+  `@synadia-ai/agent-service`. Caller-side imports
+  (`Agents`, `Agent`, `AgentSubject`, `decodeEnvelope`,
+  `decodeHeartbeatPayload`, the error hierarchy, etc.) are unchanged.
+- The `./testing` subpath (`@synadia-ai/agents/testing`,
+  `ReferenceAgent`) moved to `@synadia-ai/agent-service/testing`.
+- Hosting an agent now requires installing both
+  `@synadia-ai/agents` (caller-side primitives) **and**
+  `@synadia-ai/agent-service` (server-side helpers). Caller-only
+  consumers (e.g. `examples/agent-web-ui`) need no code changes.
+- `decodeChunk` plus the `DecodedChunk` / `DecodedQuery` /
+  `DecodedResponse` / `DecodedStatus` types are now exported from the
+  package root. Previously only `DecodedAttachment` was surfaced; the
+  full decoder side is now part of the documented caller API and
+  consumed by `@synadia-ai/agent-service`'s round-trip tests.
+- `newInbox` is exported with `@internal` JSDoc — re-used by
+  `@synadia-ai/agent-service` so caller and host share the same
+  `_INBOX.agents.>` reply-subject prefix.
+
+### Changed
+
+- `loadContextOptions` now honours the full set of fields written by
+  `nats context add`. `nkey` (file path) is read and passed through
+  `nkeyAuthenticator`; an inline `user_seed` paired with `user_jwt`
+  flows through `jwtAuthenticator(jwt, seed)` so nonce signing works;
+  the TLS triple `cert` / `key` / `ca` plus boolean `tls_first`
+  populate `opts.tls = { certFile, keyFile, caFile, handshakeFirst }`.
+  Auth precedence is now: `creds` > `nkey` > `user_jwt` (+ optional
+  `user_seed`) > inline `user`/`password` > inline `token`. Centralises
+  what `agents/pi`'s and `agents/claude-code`'s `contextToConnectOpts`
+  helpers have been doing in parallel.
+- Caller-side §5.4 validation now considers **both** the agent's
+  advertised `max_payload` _and_ the caller's own
+  `nc.info.max_payload` (the broker holding the caller's
+  connection). The effective cap is the smaller of the two — in
+  multi-cluster / per-account deployments the caller's broker may
+  reject an oversized publish with `MAX_PAYLOAD_VIOLATION` before it
+  ever reaches the agent. `assertWithinMaxPayload(size, endpoint)`
+  gains an optional third `connectionMaxPayload?: number` parameter;
+  `Agent.prompt` passes `this.#nc.info?.max_payload` so callers fail
+  fast when their own connection is the binding constraint. Mirrors
+  the same change on the Python side.
+- `AgentService(maxPayload)` and `ReferenceAgent(maxPayload)` are now
+  clamped down to the connected server's negotiated limit
+  (`nc.info.max_payload`, populated from the NATS `INFO` block) at
+  `start()`. If the override is larger than the server allows, the
+  SDK `console.warn`s and advertises the server's value (formatted via
+  the new `formatHumanBytes` helper exported from `./bytes.js`).
+  Smaller overrides are still honored (use case: shed expensive
+  prompts before they reach the handler). When the server didn't
+  report a value (e.g. an INFO block without `max_payload`), the
+  override stands as configured. Mirrors the same clamp added to the
+  Python `AgentService`. Rationale: advertising larger than the
+  broker accepts only sets up callers for `MAX_PAYLOAD_VIOLATION`
+  rejections at publish time — the broker enforces the real cap, so
+  the metadata should match.
+
+### Changed (wire-breaking)
+
+- **Wire moves to verb-first subjects (protocol v0.3).** The agent
+  subject hierarchy gains a verb token directly after the root so each
+  endpoint owns its own positional slot:
+
+  | endpoint  | v0.2 wire                      | v0.3 wire (this release)                                                                   |
+  | --------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
+  | prompt    | `agents.{a}.{o}.{n}`           | `agents.prompt.{a}.{o}.{n}`                                                                |
+  | heartbeat | `agents.{a}.{o}.{n}.heartbeat` | `agents.hb.{a}.{o}.{n}` (verb abbreviated; heartbeats dominate per-account subject volume) |
+  | status    | —                              | `agents.status.{a}.{o}.{n}` (new)                                                          |
+
+  No back-compat shim — 0.x permits breaking changes per protocol §11.2,
+  and silent talk-past between v0.2 and v0.3 callers is worse than a
+  hard refusal at discovery time.
+
+- **`metadata.protocol_version` `"0.2"` → `"0.3"`.** Old v0.2 callers
+  advertise `"0.2"` and therefore won't match a v0.3 agent's subjects;
+  metadata-driven discovery filters make the mismatch a hard refusal.
+- **Heartbeat tracker subscribes to `agents.hb.*.*.*`** (the exported
+  `HEARTBEAT_SUBJECT` constant). The tracker still keys on
+  `payload.instance_id` per §8.3.
+- **`AgentInfo.name` now derives from the 5th token** of the prompt
+  endpoint subject (was the 4th under v0.2). `AgentInfo.session` continues
+  to surface `metadata.session` when the agent advertises a §5.6
+  conversation label — the two fields stay distinct: the name is the
+  per-instance subject identity, the session is an envelope-level label.
+
+### Added
+
+- **`AgentService` (new server-side helper).** Mirrors the Python SDK's
+  `AgentService` — registers as the `agents` micro service with
+  protocol-required metadata, adds `prompt` + `status` endpoints with
+  queue group `"agents"`, runs the §8.1 heartbeat publisher loop, runs a
+  per-request keep-alive task while the prompt handler is in flight, and
+  emits the §6.5 stream terminator on every completion path. Replaces
+  the boilerplate every agent harness used to roll by hand. Constructor:
+  `new AgentService({nc, agent, owner, name, ...})`; register a handler
+  via `service.onPrompt((envelope, response) => ...)`; `start()` /
+  `stop()`. Comes with `PromptResponse` (server-side stream handle) for
+  emitting chunks (`response.send(...)`) and mid-stream queries
+  (`response.ask(prompt, {timeoutMs})`).
+- **`AgentSubject`** — verb-first subject builder. `AgentSubject.new(agent,
+owner, name)` validates the three identifying tokens and exposes
+  `.prompt` / `.heartbeat` / `.status` getters that build the v0.3
+  subjects. Single source of truth across SDK, agent harnesses, and
+  examples — the verb-first wire shape lives in exactly one place.
+- **Verb constants** (`VERB_PROMPT="prompt"`, `VERB_HEARTBEAT="hb"`,
+  `VERB_STATUS="status"`, `VERB_ATTACHMENTS="attachments"`,
+  `RESERVED_VERBS`, `SUBJECT_ROOT="agents"`) and helpers
+  (`parseAgentSubject(subject, {verb})`, `isHeartbeatSubject(subject)`).
+- **`status` request/response endpoint (§8.7 (v0.3)).** Every
+  `AgentService` (and `ReferenceAgent`) registers an additional NATS
+  micro endpoint named `status` on `agents.status.{a}.{o}.{n}` (queue
+  group `"agents"`). Replies with the same JSON payload shape as a
+  heartbeat (`HeartbeatPayload`, §8.3) constructed fresh on each
+  request. Future PRs can extend the response with richer agent
+  metadata in one place — both the heartbeat publisher and the status
+  handler share the new `buildHeartbeatPayload(...)` helper. Exported
+  sibling constants: `STATUS_ENDPOINT_NAME`, `STATUS_QUEUE_GROUP`.
+- **`buildHeartbeatPayload(subject, intervalS, instanceId, options?)`** —
+  pure helper that returns a `HeartbeatPayload` with the §8.3 fields
+  populated. Optional `session` and `extras` for §5.6 / §6.6 forward-
+  compat fields.
+- **`encodeHeartbeatPayload(payload)`** — encode a `HeartbeatPayload`
+  to the wire-shape JSON bytes (snake_case keys per §8.3). `extras` are
+  splatted alongside the known fields so `decode → build → encode`
+  round-trips preserve forward-compat fields.
+- **Agent-side envelope decoder** (`decodeEnvelope`) — parses an
+  inbound `Uint8Array` into a validated `RequestEnvelope`, performs
+  §5.2 strict base64 decoding (rejects URL-safe / unpadded /
+  whitespace), enforces filename safety (rejects path separators, NUL,
+  `.`/`..`), and falls back to the §5.3 plain-text shorthand on JSON
+  parse failure. Throws `ProtocolError` for malformed input — agent
+  services translate this into a `Nats-Service-Error-Code: 400`
+  response. Replaces the hand-rolled decoder duplicated across
+  `agents/pi/`, `agents/claude-code/`, `agents/openclaw/`.
+- **Strict base64 helper** (`decodeStrictBase64`) — RFC 4648 §4
+  decoder that rejects non-strict input. Sibling of the existing
+  tolerant `decodeBase64`.
+- **Chunk encoder module** (`encodeChunk`, types `Chunk`, `ResponseChunk`,
+  `StatusChunk`, `QueryChunk`) — pure encoder mirroring the existing
+  `chunk-decoder.ts`. Used by `AgentService` to push response / status /
+  query chunks back to the caller.
+- **`parseNatsUrl(url)`** — sibling of `loadContextOptions` that converts
+  a NATS URL into `NodeConnectionOptions`, extracting credentials from
+  `userinfo` if present:
+  - `nats://TOKEN@host:port` → `{ servers, token }`
+  - `nats://USER:PASS@host:port` → `{ servers, user, pass }`
+  - `nats://a:4222,nats://b:4222` (multi-server) supported; mixed
+    credentials across entries throw `NatsContextError`.
+
+  Bridges a UX gap: the `nats` CLI parses userinfo from URLs, but
+  `@nats-io/transport-node` does not — meaning every example in this
+  repo that accepted `--url URL` silently dropped the token when given
+  the URL form, even though the same URL worked with `nats` CLI /
+  `nats context save`. Every example's `--url` path now goes through
+  `parseNatsUrl` (`agent-web-ui`, `pi-headless`, `claude-code-headless`,
+  `dspy`).
+
 ### Changed
 
 - Reply-inbox prefix for prompt streams is now fixed at `_INBOX.agents`
   (was `_INBOX`). The prefix is held constant across language SDKs so a
   single NATS permission (`_INBOX.agents.>`) covers caller-side reply
   traffic regardless of language. Not user-overridable.
+- `Liveness.isOnline` boundary tightened from `<` (exclusive) to `<=`
+  (inclusive) — a heartbeat that arrived exactly `slack * interval_s`
+  seconds ago is now considered online, matching the docstring's "within"
+  wording and the Python SDK's behaviour.
+- `ReferenceAgent` (testing) rebased on `AgentSubject` and the new helper
+  module. Now also registers a `status` endpoint, so SDK integration
+  tests that exercise it cover the new endpoint automatically. The
+  `subjectAgentToken` option is gone — agents declare a single
+  `agent` token used in both metadata and the subject.
+- `DEFAULT_DISCOVER_STALL_MS` bumped from `200` → `750` so the default
+  `discover()` (stall strategy) survives a transcontinental NATS
+  round-trip — e.g. demo.nats.io reports ~315 ms RTT from a non-US
+  client, which previously caused `discover()` to return an empty
+  list before the first reply arrived. Snappy on LAN brokers stays
+  true at 750 ms (still well under one perceptible UI tick); callers
+  wanting a tighter window can pass `timeoutMs` (timer strategy) or
+  the lower-level `stallMs`. Fixes [#31].
+
+### Anticipated companion work (this release)
+
+This SDK release coordinates with refactors of every agent harness and
+example in the monorepo to v0.3:
+
+- **`agents/pi/`, `agents/claude-code/`, `agents/openclaw/`** adopt the
+  new `AgentService`, dropping their hand-rolled service registration,
+  heartbeat loops, status endpoint scaffolding, and envelope decoders.
+- **`examples/pi-headless/`, `examples/claude-code-headless/`,
+  `examples/dspy/`, `examples/agent-web-ui/`** pick up the new wire
+  shape transparently — `pi-headless` and `claude-code-headless` switch
+  their managed-session implementations from `ReferenceAgent` to
+  `AgentService`; `dspy` continues on `ReferenceAgent` (test-fixture
+  pattern stays appropriate for the demo agent).
+- **READMEs + CLAUDE.md** across the monorepo update their subject
+  layouts (root, `agents/README.md`, `examples/README.md`, every
+  per-agent and per-example README).
+- **Spec docs** at `synadia-ai/nats-agent-sdk-docs` get the v0.3
+  verb-first subject hierarchy + `status` endpoint section in a
+  follow-up PR.
 
 ## [0.1.1] - 2026-04-25
 

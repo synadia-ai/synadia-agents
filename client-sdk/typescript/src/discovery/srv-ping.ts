@@ -10,12 +10,23 @@ import {
 import { Svcm } from "@nats-io/services";
 import { Agent } from "../agent.js";
 import { SERVICE_NAME } from "../internal/service-name.js";
-import { buildAgentInfo, type AgentInfo } from "./agent-info.js";
+import { assertValidToken } from "../subjects.js";
+import { buildAgentInfo, type AgentInfo, type RawServiceInfo } from "./agent-info.js";
 
 /** Absolute safety cap when using the stall strategy (no explicit timeoutMs). */
 export const DEFAULT_DISCOVER_MAX_WAIT_MS = 2000;
-/** Idle window after the last reply before the stall strategy returns. */
-export const DEFAULT_DISCOVER_STALL_MS = 200;
+/**
+ * Idle window after the last reply before the stall strategy returns.
+ *
+ * Sized to comfortably absorb a transcontinental NATS round-trip
+ * (e.g. demo.nats.io reports ~315 ms RTT from a non-US client). At 750 ms
+ * we still return well under one perceptible UI tick on a LAN, but no
+ * longer time out before the first reply arrives on a WAN — the
+ * symptom that issue #31 surfaced. Callers who want a snappier scan on
+ * a known-fast broker can still pass `timeoutMs` (timer strategy) or
+ * call the lower-level helpers with their own `stall_s` / `stallMs`.
+ */
+export const DEFAULT_DISCOVER_STALL_MS = 750;
 
 export interface DiscoveryFilter {
   readonly agent?: string;
@@ -89,6 +100,49 @@ export function matchesFilter(info: AgentInfo, filter?: DiscoveryFilter): boolea
     return false;
   }
   return true;
+}
+
+/**
+ * Targeted `$SRV.INFO.agents.<instanceId>` lookup — the single-instance
+ * counterpart to {@link discoverAgents}. Used when a caller already has an
+ * `instance_id` (e.g. from a heartbeat) and wants the full $SRV.INFO record
+ * to materialise an {@link Agent} without re-running discovery.
+ *
+ * Returns `null` on timeout, no-responders, malformed JSON, or metadata that
+ * fails the agent-shape validator. Otherwise returns a constructed `Agent`
+ * that shares the caller's `NatsConnection` and abort signal.
+ */
+export async function lookupAgentInstance(
+  nc: NatsConnection,
+  instanceId: string,
+  defaultInactivityTimeoutMs: number,
+  closeSignal: AbortSignal,
+  opts: { timeoutMs?: number } = {},
+): Promise<Agent | null> {
+  const timeout = opts.timeoutMs ?? 2000;
+  // §2 MUST rules — instanceIds are normally server-generated UUIDs, but a
+  // crafted heartbeat payload could supply something with `.`, `*`, `>`, or
+  // whitespace which would either silently address an unintended subject or
+  // be rejected by the broker. Treat invalid ids as "not present".
+  try {
+    assertValidToken(instanceId, "instanceId");
+  } catch {
+    return null;
+  }
+  const subject = `$SRV.INFO.${SERVICE_NAME}.${instanceId}`;
+  let raw: RawServiceInfo;
+  try {
+    const rep = await nc.request(subject, "", { timeout });
+    raw = JSON.parse(rep.string()) as RawServiceInfo;
+  } catch (err) {
+    if (err instanceof NoRespondersError) return null;
+    // Malformed JSON / request timeout — treat as "instance not present".
+    return null;
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const info = buildAgentInfo(raw);
+  if (!info) return null;
+  return new Agent(nc, info, defaultInactivityTimeoutMs, closeSignal);
 }
 
 /** On-demand reachability check for a single instance (§8.4). */

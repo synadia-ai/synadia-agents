@@ -1,0 +1,13 @@
+# devmode.sh — consumers to exclude from auto-discovery.
+# One name per line; '#' starts a comment. Match is by directory name
+# under any tracked subtree ($REPO/examples/, $REPO/agents/, etc).
+
+# Private dev example — stays on file: link permanently, never published,
+# so it has nothing to toggle.
+dspy
+
+# Claude Code MCP plugin — installed via the plugin marketplace, which
+# only ships the agents/claude-code/ subtree. file: links can't resolve
+# in that install layout, so this consumer must stay on ^semver pins to
+# the published @synadia-ai/* SDKs (npm). Devmode must not flip it.
+claude-code

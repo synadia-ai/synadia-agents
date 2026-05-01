@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "paths": {
+      "@synadia-ai/agents": ["../../client-sdk/typescript/dist/index.d.ts"],
+      "@synadia-ai/agents/errors": ["../../client-sdk/typescript/dist/errors.d.ts"],
+      "@synadia-ai/agents/testing": ["../../client-sdk/typescript/dist/testing.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "coverage", "test", "examples"]
+}

@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/nats-ai-testui",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Bun + Vue 3 web test client for the @synadia-ai/agents SDK — prompt NATS agents with optional attachments and stream responses.",
   "keywords": [
     "nats",
@@ -21,9 +21,7 @@
   "bugs": {
     "url": "https://github.com/synadia-ai/synadia-agents/issues"
   },
-  "publishConfig": {
-    "access": "restricted"
-  },
+  "private": true,
   "type": "module",
   "files": [
     "dist",
@@ -41,7 +39,7 @@
   },
   "dependencies": {
     "@nats-io/transport-node": "^3.3.1",
-    "@synadia-ai/agents": "^0.1.1"
+    "@synadia-ai/agents": "file:../../client-sdk/typescript"
   },
   "devDependencies": {
     "@types/bun": "latest",

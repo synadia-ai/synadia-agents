@@ -19,6 +19,40 @@ the GitHub URL when reasoning about wire shape. Local
 `docs/protocol-mapping.md` files inside each SDK translate spec → impl;
 they are not the spec itself.
 
+## Reference agents — canonical implementations
+
+Every SDK in this repo ships a spec-compliant **reference agent** that
+implements the full §12 agent-checklist (service registration, prompt
+endpoint, status endpoint, heartbeats on `agents.hb.*.*.*`, terminator
+semantics). When reasoning about wire shape, expected on-the-wire
+behaviour, or testing a new SDK / agent, read these first — they are
+the authoritative on-the-wire counterpart to the spec doc.
+
+- **TypeScript**: `agent-sdk/typescript/src/testing/reference-agent.ts`
+  — the `ReferenceAgent` class, importable from third-party packages
+  via `@synadia-ai/agent-service/testing` (post-SDK-split — pre-split
+  it lived under `@synadia-ai/agents/testing`). Runnable script:
+  `client-sdk/typescript/examples/_run-reference-agent.ts`.
+- **Python**: `agent-sdk/python/examples/_reference_agent.py` — a
+  runnable echo agent with conversation memory, used as the test
+  harness for the numbered demos and as a wire-compat counterparty.
+  (Moved with the host-side split into `synadia-ai-agent-service`; pre-
+  split it lived under `client-sdk/python/examples/`.)
+
+Each SDK also has a parallel set of numbered demo scripts that exercise
+discovery, prompting (text + attachments), mid-stream queries, and
+liveness against the reference agent — useful both as documentation
+and as a smoke surface:
+
+- TS: `client-sdk/typescript/examples/01-discover.ts` … `05-liveness.ts`.
+- Python: `client-sdk/python/examples/01-discover.py` … `05-liveness.py`,
+  plus `06-chat.py` (interactive REPL). See
+  `client-sdk/python/examples/README.md` for the full table.
+
+The Python interop test (`client-sdk/python/tests/test_interop_e2e.py`)
+runs the TS reference agent as a subprocess and validates wire
+compatibility between the two SDKs.
+
 ## Repository layout (and what's published)
 
 | Path | Package | Published as | Notes |
@@ -30,7 +64,7 @@ they are not the spec itself.
 | `agents/claude-code/` | `claude-channel-nats` | npm (restricted) | Claude Code MCP plugin |
 | `agents/hermes/` | — | not in repo | README only; ships from upstream Hermes |
 | `examples/pi-headless/` | `@synadia-ai/nats-pi-headless` | npm (restricted) | depends on `@synadia-ai/agents@^0.1.x` |
-| `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | npm (restricted) | depends on `@synadia-ai/agents@^0.1.x` |
+| `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | github only | local-clone test client; `private: true` so it never publishes |
 | `examples/dspy/` | `@synadia-ai/nats-dspy-agent` | private | uses `file:` link to local SDK |
 
 **No root `package.json`, no workspace manager.** Each subtree manages
@@ -38,30 +72,50 @@ its own deps and tooling. Examples that ship to npm pin the SDK by
 semver range (`^0.1.x`); private/dev-only examples (currently just
 `dspy`) use `file:../../client-sdk/typescript`.
 
-**Agents do _not_ depend on the SDK package.** They use
-`@nats-io/transport-node` and `@nats-io/services` directly because they
-implement the server side of the protocol — the SDK is for callers.
-Don't propose adding `@synadia-ai/agents` to an agent's `package.json`
-just because it has a useful helper; either inline the equivalent logic
-(see `agents/pi/extensions/nats-channel.ts` and
-`agents/claude-code/server.ts` for prior art) or copy the helper.
+**Agents _should_ reuse the SDK package where it helps.** The SDK
+(primarily the TS one) has accumulated meaningful shared logic —
+framing, validation, helpers — and the direction of travel is an SDK
+that covers **both client and agent sides** of the protocol. If an
+agent harness needs functionality the SDK already provides, prefer
+adding `@synadia-ai/agents` to its `package.json` and importing from
+there over inlining or copy-pasting.
+
+This is a reversal of the prior rule that agents must stay on raw
+`@nats-io/*`. That rule no longer applies — duplicated hand-written
+code in the agent harnesses is now technical debt, not a deliberate
+boundary.
+
+Caveat: this is a forward-looking rule, not a retroactive sweep. The
+existing agents (`agents/pi/extensions/nats-channel.ts`,
+`agents/claude-code/server.ts`, `agents/openclaw/`) still use
+`@nats-io/transport-node` and `@nats-io/services` directly. Migrating
+them is opportunistic — do it when you're already in the file for
+another reason, or when the duplication actively bites. Don't open a
+standalone "convert agent X to the SDK" PR without checking with the
+user first.
 
 ## Protocol vs package versions — don't read skew
 
 Two distinct version axes:
 
-- **Wire protocol version** — `0.2` everywhere right now.
-  - TS: `SDK_PROTOCOL_VERSION = { major: 0, minor: 2 }` in
+- **Wire protocol version** — `0.3` everywhere right now.
+  - TS: `SDK_PROTOCOL_VERSION = { major: 0, minor: 3 }` in
     `client-sdk/typescript/src/version.ts`.
-  - Python: `_PROTOCOL_VERSION = "0.2"` in
-    `client-sdk/python/src/synadia_ai/agents/service.py`.
-  - Agent harnesses hard-code the same string (e.g.
+  - Python: `_PROTOCOL_VERSION = "0.3"` in
+    `agent-sdk/python/src/synadia_ai/agent_service/service.py`
+    (host-side after the Python split landed in PR #45).
+  - Agent harnesses derive the string from the SDK's
+    `SDK_PROTOCOL_VERSION` rather than hard-coding it (see
     `agents/pi/extensions/nats-channel.ts`,
-    `agents/claude-code/server.ts`). If the spec ever bumps, all four
-    locations move in lockstep.
-- **Package version (npm/PyPI)** — independent per SDK.
-  - TS: `@synadia-ai/agents@0.1.x` on npm.
-  - Python: `synadia-ai-agents@0.x` — not yet published to PyPI.
+    `agents/claude-code/server.ts`,
+    `agents/openclaw/src/gateway.ts`). If the spec ever bumps, change
+    the SDK constants in both languages and the harnesses pick it up
+    automatically.
+- **Package version (npm/PyPI)** — independent per SDK pair.
+  - TS: `@synadia-ai/agents` + `@synadia-ai/agent-service` — both at
+    `0.4.0` in lockstep, neither published to npm yet.
+  - Python: `synadia-ai-agents` + `synadia-ai-agent-service` — not
+    yet published to PyPI.
 
 The package versions differ for historical reasons. They are **not** a
 protocol skew. The Python `tests/test_interop_e2e.py` runs the TS
@@ -112,8 +166,8 @@ description.
 
 ## Release ladder for SDK changes that examples need
 
-The trap: examples (`pi-headless`, `agent-web-ui`) pin
-`@synadia-ai/agents@^0.1.x` from npm, not via `file:` links. A new SDK
+The trap: published examples (`pi-headless`, `claude-code-headless`) pin
+`@synadia-ai/agents@^0.4.x` from npm, not via `file:` links. A new SDK
 export does not exist for them until it is **published**. Don't try to
 land an example migration alongside an unpublished SDK change — typecheck
 will fail in CI, and you'll waste a force-push fixing it.
@@ -143,11 +197,26 @@ the `pypi` GitHub Environment, which is gated to `python-v*` tags.
 
 - **Per-SDK workflows** under `.github/workflows/`:
   - `client-sdk-typescript.yml` — lint, typecheck, unit + integration
-    tests across Node 20/22/24 and Bun 1.2/latest. Triggers on TS SDK
-    changes.
+    tests across Node 20/22/24 and Bun 1.2/latest; runs jobs in
+    `client-sdk/typescript/`.
+  - `agent-sdk-typescript.yml` — same matrix; runs jobs in
+    `agent-sdk/typescript/`.
+  - Both TS workflows fire on changes under **either**
+    `client-sdk/typescript/**` or `agent-sdk/typescript/**`, since the
+    host package depends on the caller and the two are kept in lockstep.
   - `client-sdk-python.yml` — ruff, mypy, pytest across Python
-    3.11/3.12/3.13.
-  - `release-python.yml` — tag-triggered PyPI publish.
+    3.11/3.12/3.13 in `client-sdk/python/`. Triggers only on
+    `client-sdk/python/**`.
+  - `client-sdk-python-agent-service.yml` (filename prefix is
+    historical) — same matrix in `agent-sdk/python/`. Triggers on
+    `agent-sdk/python/**` *and* `client-sdk/python/**`, because the
+    agent-sdk's tests resolve `synadia-ai-agents` to the local
+    client-sdk checkout via `[tool.uv.sources]`.
+  - `release-python.yml` — publishes `synadia-ai-agents` to PyPI on
+    `python-v*` tags.
+  - `release-python-agent-service.yml` — publishes
+    `synadia-ai-agent-service` to PyPI on `python-agent-service-v*`
+    tags.
 - **No automated TS publish workflow.** TS releases are manual (see
   release ladder).
 - **`claude.yml`** runs the Claude reviewer bot on PRs. Treat its
@@ -175,8 +244,17 @@ the `pypi` GitHub Environment, which is gated to `python-v*` tags.
 
 - `README.md` — repo overview, layout, subject namespace, wire
   shape.
+- `agent-sdk/typescript/src/testing/reference-agent.ts` and
+  `agent-sdk/python/examples/_reference_agent.py` — canonical
+  spec-compliant reference agents (see "Reference agents" section
+  above). Read these before touching anything wire-shape-y.
+- `client-sdk/typescript/examples/` and `client-sdk/python/examples/`
+  — parallel numbered demo scripts (`01-discover` …) that exercise
+  the SDKs end-to-end against the reference agent.
 - `client-sdk/typescript/CHANGELOG.md`, `client-sdk/python/CHANGELOG.md`
   — recent API moves (Keep a Changelog format).
 - `client-sdk/python/CLAUDE.md` — package-specific deep guide; mirror
   it if you need the same depth on the TS side.
 - `agents/*/README.md` — per-agent config, subject layout, install.
+- `examples/README.md` — runnable end-to-end demos in the monorepo
+  (browser test client, headless controllers, DSPy ReAct).

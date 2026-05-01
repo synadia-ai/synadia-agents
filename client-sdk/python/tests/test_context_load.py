@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from synadia_ai.agents import NatsContextError, load_context_options
+from synadia_ai.agents import NatsContextError, load_context_options, parse_nats_url
 
 
 def _point_env_at(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -120,6 +120,53 @@ def test_split_urls_comma_separated(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     _write_context(base, "multi", {"url": "nats://a:4222,nats://b:4222 , ,nats://c:4222"})
     opts = load_context_options("multi")
     assert opts["servers"] == ["nats://a:4222", "nats://b:4222", "nats://c:4222"]
+
+
+def test_split_urls_defaults_port_for_bare_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _point_env_at(tmp_path, monkeypatch)
+    _write_context(base, "bare", {"url": "nats://nats.example.com"})
+    opts = load_context_options("bare")
+    assert opts["servers"] == ["nats://nats.example.com:4222"]
+
+
+def test_split_urls_defaults_port_for_ngs_style_tls_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: `nats context add` writes `tls://connect.ngs.global` (no port).
+
+    Without port-defaulting, nats-py's list path leaves ``Srv.uri.port``
+    as ``None`` and the asyncio TCP connect lands on port 0 →
+    ``EADDRNOTAVAIL``.
+    """
+    base = _point_env_at(tmp_path, monkeypatch)
+    _write_context(base, "ngs", {"url": "tls://connect.ngs.global"})
+    opts = load_context_options("ngs")
+    assert opts["servers"] == ["tls://connect.ngs.global:4222"]
+
+
+def test_split_urls_mixed_port_and_bare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit ports survive untouched; bare hosts get :4222 appended."""
+    base = _point_env_at(tmp_path, monkeypatch)
+    _write_context(base, "mixed", {"url": "nats://a:5222,nats://b,tls://c,tls://d:7777"})
+    opts = load_context_options("mixed")
+    assert opts["servers"] == [
+        "nats://a:5222",
+        "nats://b:4222",
+        "tls://c:4222",
+        "tls://d:7777",
+    ]
+
+
+def test_split_urls_passes_ws_and_wss_through_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``ws://`` / ``wss://`` mirror nats-py's carve-out at client.py:1359."""
+    base = _point_env_at(tmp_path, monkeypatch)
+    _write_context(base, "ws", {"url": "ws://host,wss://host"})
+    opts = load_context_options("ws")
+    assert opts["servers"] == ["ws://host", "wss://host"]
 
 
 def test_field_mapping_full_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -278,3 +325,160 @@ def test_current_honours_env_over_selection_file(
 
     opts = load_context_options("current")
     assert opts["servers"] == ["nats://env:4222"]
+
+
+# --- parse_nats_url ----------------------------------------------------
+
+
+def test_parse_url_no_userinfo_returns_servers_only() -> None:
+    opts = parse_nats_url("nats://nats.example.com:4222")
+    assert opts == {"servers": ["nats://nats.example.com:4222"]}
+    assert "token" not in opts
+    assert "user" not in opts
+    assert "password" not in opts
+
+
+def test_parse_url_single_userinfo_is_token() -> None:
+    """Mirrors the ``nats`` CLI: one userinfo component is treated as a token."""
+    opts = parse_nats_url("nats://abc123def@nats.example.com:4222")
+    assert opts == {
+        "servers": ["nats://nats.example.com:4222"],
+        "token": "abc123def",
+    }
+
+
+def test_parse_url_user_password_split() -> None:
+    opts = parse_nats_url("nats://alice:s3cret@nats.example.com:4222")
+    assert opts == {
+        "servers": ["nats://nats.example.com:4222"],
+        "user": "alice",
+        "password": "s3cret",
+    }
+
+
+def test_parse_url_decodes_percent_encoded_userinfo() -> None:
+    # %2B → "+", %40 → "@"
+    opts = parse_nats_url("nats://to%2Bken%40v1@nats.example.com:4222")
+    assert opts["token"] == "to+ken@v1"
+
+
+def test_parse_url_preserves_tls_scheme() -> None:
+    opts = parse_nats_url("tls://abc@nats.example.com:4443")
+    assert opts == {
+        "servers": ["tls://nats.example.com:4443"],
+        "token": "abc",
+    }
+
+
+def test_parse_url_accepts_schemeless_host_port() -> None:
+    opts = parse_nats_url("nats.example.com:4222")
+    assert opts["servers"] == ["nats://nats.example.com:4222"]
+
+
+def test_parse_url_splits_comma_separated_multiserver() -> None:
+    opts = parse_nats_url("nats://a:4222,nats://b:4222,nats://c:4222")
+    assert opts["servers"] == [
+        "nats://a:4222",
+        "nats://b:4222",
+        "nats://c:4222",
+    ]
+    assert "token" not in opts
+
+
+def test_parse_url_multiserver_with_identical_userinfo() -> None:
+    opts = parse_nats_url("nats://tok@a.example.com:4222,nats://tok@b.example.com:4222")
+    assert opts["servers"] == [
+        "nats://a.example.com:4222",
+        "nats://b.example.com:4222",
+    ]
+    assert opts["token"] == "tok"
+
+
+def test_parse_url_multiserver_mixed_credentials_rejected() -> None:
+    with pytest.raises(NatsContextError, match="mixed credentials"):
+        parse_nats_url("nats://tok1@a:4222,nats://tok2@b:4222")
+
+
+def test_parse_url_empty_input_rejected() -> None:
+    with pytest.raises(NatsContextError, match="empty NATS URL"):
+        parse_nats_url("")
+    with pytest.raises(NatsContextError, match="empty NATS URL"):
+        parse_nats_url("   ,  ")
+
+
+def test_parse_url_unsupported_scheme_rejected() -> None:
+    with pytest.raises(NatsContextError, match="unsupported scheme"):
+        parse_nats_url("http://nats.example.com:4222")
+
+
+def test_parse_url_hostless_url_rejected() -> None:
+    with pytest.raises(NatsContextError, match="missing a host"):
+        parse_nats_url("nats://")
+
+
+def test_parse_url_ipv6_host_rebracketed() -> None:
+    """``urlparse`` strips IPv6 brackets — we must put them back."""
+    opts = parse_nats_url("nats://[::1]:4222")
+    assert opts["servers"] == ["nats://[::1]:4222"]
+    opts_with_token = parse_nats_url("nats://tok@[::1]:4222")
+    assert opts_with_token["servers"] == ["nats://[::1]:4222"]
+    assert opts_with_token["token"] == "tok"
+
+
+def test_parse_url_user_with_explicit_colon_empty_password() -> None:
+    """`nats://user:@host` is structurally user:password (even if pass is empty).
+
+    Python's ``urlparse`` natively distinguishes ``password is None`` (no
+    colon, single-userinfo → token) from ``password == ""`` (colon
+    present, empty password → user:password form). The TS sibling
+    re-sniffs the raw input for the colon to achieve the same result.
+    """
+    opts = parse_nats_url("nats://alice:@nats.example.com:4222")
+    assert opts == {
+        "servers": ["nats://nats.example.com:4222"],
+        "user": "alice",
+        "password": "",
+    }
+    assert "token" not in opts
+
+
+def test_parse_url_ws_and_wss_schemes() -> None:
+    """``ws://`` and ``wss://`` schemes are accepted (NATS WebSocket transports)."""
+    ws = parse_nats_url("ws://tok@host:9222")
+    assert ws == {"servers": ["ws://host:9222"], "token": "tok"}
+    wss = parse_nats_url("wss://tok@host:9222")
+    assert wss == {"servers": ["wss://host:9222"], "token": "tok"}
+    # bare ws/wss without userinfo
+    ws_bare = parse_nats_url("ws://host:9222")
+    assert ws_bare == {"servers": ["ws://host:9222"]}
+
+
+def test_parse_url_defaults_port_for_bare_nats_host() -> None:
+    opts = parse_nats_url("nats://host")
+    assert opts == {"servers": ["nats://host:4222"]}
+
+
+def test_parse_url_defaults_port_for_bare_tls_host_with_token() -> None:
+    """Port defaulted, userinfo stripped onto kwargs, scheme preserved."""
+    opts = parse_nats_url("tls://tok@host")
+    assert opts == {"servers": ["tls://host:4222"], "token": "tok"}
+
+
+def test_parse_url_defaults_port_for_bare_ipv6_host() -> None:
+    """IPv6 brackets are preserved alongside the default port."""
+    opts = parse_nats_url("nats://[::1]")
+    assert opts == {"servers": ["nats://[::1]:4222"]}
+
+
+def test_parse_url_defaults_port_and_scheme_for_bare_host() -> None:
+    """Schemeless + portless: both defaults applied."""
+    opts = parse_nats_url("host")
+    assert opts == {"servers": ["nats://host:4222"]}
+
+
+def test_parse_url_does_not_default_port_for_ws_scheme() -> None:
+    """``ws://`` / ``wss://`` carve-out applies to parse_nats_url too."""
+    opts = parse_nats_url("ws://host")
+    assert opts == {"servers": ["ws://host"]}
+    opts_wss = parse_nats_url("wss://host")
+    assert opts_wss == {"servers": ["wss://host"]}

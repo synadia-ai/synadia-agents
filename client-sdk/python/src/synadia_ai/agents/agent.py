@@ -5,7 +5,8 @@ Wraps a parsed :class:`~synadia_ai.agents.discovery.AgentInfo` with the
 SDK's ``Agent`` class (PR #7): every field flat / read-only, ``prompt()``
 is the one method that actually does I/O.
 
-The server-side counterpart is :class:`~synadia_ai.agents.service.AgentService`.
+The server-side counterpart (``AgentService``) ships in the sibling
+distribution :mod:`synadia_ai.agent_service`.
 """
 
 from __future__ import annotations
@@ -241,7 +242,13 @@ class Agent:
         assert_prompt_non_empty(envelope.prompt)
         ep = self._info.prompt_endpoint
         assert_attachments_allowed(bool(envelope.attachments), ep.attachments_ok)
-        assert_within_max_payload(len(encoded), ep.max_payload_bytes)
+        # The caller's own broker may enforce a smaller `max_payload` than
+        # the agent advertises (multi-cluster / per-account configs); pass
+        # `nc.max_payload` so the validator picks the smaller of the two.
+        # Treat 0 / missing as "not declared" — the agent's value (or
+        # nothing) governs.
+        conn_limit = getattr(self._nc, "max_payload", 0) or None
+        assert_within_max_payload(len(encoded), ep.max_payload_bytes, conn_limit)
 
         effective_timeout = timeout if timeout is not None else self._default_inactivity_timeout
         return self._stream_prompt(envelope, encoded, effective_timeout)

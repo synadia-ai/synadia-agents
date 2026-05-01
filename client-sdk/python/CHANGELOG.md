@@ -8,8 +8,107 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-30
+
+### Removed
+
+- **`AgentService`, `PromptStream`, `PromptHandler` — extracted to a
+  separate distribution.** The agent-host surface now lives in
+  `synadia-ai-agent-service` (PyPI; import path
+  `synadia_ai.agent_service`). Callers that only consume agents no
+  longer pull host machinery; agent harness authors (Hermes,
+  claude-code, openclaw, pi, …) take a focused dependency. The shared
+  primitives (`Envelope`, `Attachment`, `HeartbeatPayload`,
+  `AgentSubject`, error classes, discovery constants,
+  `load_context_options`, `parse_nats_url`, …) stay here and are
+  imported from `synadia_ai.agents` by the agent-sdk. Migration:
+
+  ```diff
+  - from synadia_ai.agents import AgentService, PromptStream, PromptHandler
+  + from synadia_ai.agent_service import AgentService, PromptStream, PromptHandler
+  + # Envelope / Attachment / Chunk types continue to import from synadia_ai.agents.
+  ```
+- **`DEFAULT_MAX_PAYLOAD`, `DEFAULT_KEEPALIVE_INTERVAL_S`,
+  `DEFAULT_ATTACHMENTS_OK`** — the three agent-side defaults move with
+  `AgentService` to `synadia_ai.agent_service`.
+- **Heartbeat publisher helpers** — `build_heartbeat_payload`,
+  `run_publisher`, `publish_one` move to
+  `synadia_ai.agent_service.heartbeat`. `HeartbeatPayload`,
+  `HeartbeatTracker`, `Liveness`, `HeartbeatListener`,
+  `HEARTBEAT_SUBJECT`, `DEFAULT_LIVENESS_SLACK`, and `now_iso` stay
+  here — both sides need the shapes and the tracker is caller-side.
+- **`examples/_reference_agent.py`** moves to
+  `agent-sdk/python/examples/_reference_agent.py`. The numbered
+  client-side demos (`01-discover.py` … `06-chat.py`) and
+  `_connect_cli.py` stay here unchanged.
+- **`scripts/demo_echo.py`** (the one-shot dev-diagnostic echo agent
+  used for `nats` CLI poking) moves to
+  `agent-sdk/python/scripts/demo_echo.py` — same destination dist
+  as `_reference_agent.py`, since it constructs an `AgentService`.
+  The client-side `scripts/smoke_ping.py` stays here.
+
 ### Changed
 
+- **Package description narrowed** to "Python client SDK …" since the
+  host surface now ships separately. No code change.
+- Caller-side §5.4 validation now considers **both** the agent's
+  advertised `max_payload` *and* the caller's own
+  `nc.max_payload` (the broker holding the caller's connection).
+  The effective cap is the smaller of the two — in multi-cluster /
+  per-account deployments the caller's broker may reject an
+  oversized publish with `MAX_PAYLOAD_VIOLATION` before it ever
+  reaches the agent. `assert_within_max_payload(payload_size,
+  max_payload_bytes)` gains an optional third
+  `connection_max_payload` parameter (defaults to `None` =
+  not-declared); `Agent.prompt` passes `nc.max_payload` so callers
+  fail fast when their own connection is the binding constraint.
+  Mirrors the same change on the TS side.
+- `AgentService(max_payload=...)` is now clamped down to the connected
+  server's negotiated `max_payload` (`nc.max_payload`, populated from
+  the NATS server's `INFO` block) at `start()`. If the override is
+  larger than the server allows, the SDK logs a warning and advertises
+  the server's value formatted via the new `_bytes.format_human_bytes`
+  helper. Smaller overrides are still honored (use case: shed
+  expensive prompts before they reach the handler). When the server
+  didn't report a value (unconnected client / INFO without
+  `max_payload`), the override stands as configured. Mirrors the same
+  clamp added to the TS `AgentService` and `ReferenceAgent`. Rationale:
+  advertising larger than the broker accepts only sets up callers for
+  `MAX_PAYLOAD_VIOLATION` rejections at publish time, with no
+  local-validation path catching it first.
+- `load_context_options(...)` and `parse_nats_url(...)` now default a
+  missing port to `4222` for `nats://` / `tls://` server entries
+  (`ws://` / `wss://` left alone, mirroring nats-py's own carve-out at
+  `nats/aio/client.py:1359`). Works around an asymmetric nats-py
+  URL-parsing bug: in `nats/aio/client.py::_setup_server_pool`, the
+  single-string path applies port defaulting via `_parse_server_uri`,
+  but the list path (`servers=[...]` — what both helpers feed)
+  `urlparse`s each entry and leaves `Srv(uri).uri.port` as `None`, so
+  the asyncio TCP connect lands on port 0 and the kernel rejects with
+  `EADDRNOTAVAIL` (see `nats/aio/client.py:1373-1376`). The `nats` CLI
+  papers over the missing port internally, so context files written by
+  `nats context add` routinely carry entries like
+  `tls://connect.ngs.global` (no port); previously these silently
+  failed at connect time with a confusing kernel error. Python-only
+  fix; the TypeScript SDK uses a different transport and is not
+  affected. Filing the upstream bug against nats-py is out of scope
+  here — TODO follow-up.
+- Reply-inbox prefix for prompt streams, mid-stream queries, and
+  internal `$SRV.INFO` discovery is now fixed at `_INBOX.agents` (was
+  the connection's default `_INBOX`). The prefix is held constant
+  across language SDKs so a single NATS permission
+  (`_INBOX.agents.>`) covers caller-side reply traffic regardless of
+  language. The connection's `inbox_prefix` is no longer consulted for
+  agents-SDK reply subjects; not user-overridable.
+- `DEFAULT_DISCOVER_STALL_S` bumped from `0.2` → `0.75` so the default
+  `discover()` (stall strategy) survives a transcontinental NATS
+  round-trip — e.g. demo.nats.io reports ~315 ms RTT from a non-US
+  client, which previously caused `discover()` to return an empty
+  list before the first reply arrived. Snappy on LAN brokers stays
+  true at 750 ms (still well under one perceptible UI tick); callers
+  wanting a tighter window can pass `stall=` to `agents.discover()` /
+  `discover_agents()`. Fixes [#31]. Mirrors the same constant change
+  in the TypeScript SDK so cross-SDK defaults stay aligned.
 - **Release plumbing moved to PyPI [trusted publishing][tp].** The
   `release-python.yml` workflow no longer references
   `secrets.PYPI_API_TOKEN`; publishes go through
@@ -28,13 +127,33 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   [tp]: https://docs.pypi.org/trusted-publishers/
   [tp-pending]: https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/
 
-- Reply-inbox prefix for prompt streams, mid-stream queries, and
-  internal `$SRV.INFO` discovery is now fixed at `_INBOX.agents` (was
-  the connection's default `_INBOX`). The prefix is held constant
-  across language SDKs so a single NATS permission
-  (`_INBOX.agents.>`) covers caller-side reply traffic regardless of
-  language. The connection's `inbox_prefix` is no longer consulted for
-  agents-SDK reply subjects; not user-overridable.
+### Added
+
+- New `parse_nats_url(url)` helper exported from `synadia_ai.agents`.
+  Sibling of `load_context_options` — both produce kwargs ready to
+  splat into `nats.connect(...)`. Extracts credentials from `userinfo`
+  if present:
+  - `nats://TOKEN@host:port` → `{"servers": [...], "token": ...}`
+    (single userinfo component is treated as a token, mirroring the
+    `nats` CLI)
+  - `nats://USER:PASS@host:port` → `{"servers": [...], "user": ...,
+    "password": ...}`
+  - `tls://`, `ws://`, `wss://` schemes preserved on output;
+    scheme-less `host:port` accepted; comma-separated multi-server
+    URLs supported (mixed credentials across entries throw
+    `NatsContextError`).
+  - URL-decodes percent-encoded userinfo, brackets IPv6 hosts back
+    correctly after `urllib`-strip.
+
+  Closes a UX gap: `nats-py`'s `connect(servers=url)` does NOT parse
+  userinfo (the bare `nats` CLI does), so a user copy-pasting a token
+  URL silently lost the token and got `Authorization Violation`.
+  Mirrors the TS SDK's `parseNatsUrl` (same PR — cross-SDK helper
+  defaults stay aligned).
+- `examples/_connect_cli.py` now routes `--url` and `$NATS_URL`
+  through `parse_nats_url`, so every numbered demo (`01-discover.py`
+  … `06-chat.py`) accepts `nats://TOKEN@host:port` URLs identically
+  to the `nats` CLI.
 
 ### Changed (breaking, public API)
 
@@ -109,7 +228,7 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
-- **`status` request/response endpoint (v0.3 §-TBD).** Every
+- **`status` request/response endpoint (§8.7 (v0.3)).** Every
   `AgentService` registers an additional NATS micro endpoint named
   `status` on `agents.status.{a}.{o}.{n}` (queue group `"agents"`).
   Replies with the same JSON payload shape as a heartbeat

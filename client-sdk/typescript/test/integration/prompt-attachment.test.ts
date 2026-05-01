@@ -12,7 +12,7 @@ import {
   PayloadTooLargeError,
   type StreamMessage,
 } from "../../src/index.js";
-import { ReferenceAgent } from "../../src/testing/reference-agent.js";
+import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 
 const natsUrl = inject("natsUrl");
 

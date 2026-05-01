@@ -5,13 +5,21 @@
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
-import { ReferenceAgent } from "@synadia-ai/agents/testing";
+import {
+  ProtocolError,
+  decodeEnvelope,
+  type RequestAttachment,
+} from "@synadia-ai/agents";
+import { encodeChunk } from "@synadia-ai/agent-service";
+import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 
 import { cleanupStaged, decorateWithAttachments, stageAttachments } from "./attachments.js";
-import { responseText, statusAck } from "./chunk-encoder.js";
-import { EnvelopeError, parseEnvelope, type ParsedAttachment } from "./envelope.js";
-import { sessionHeartbeatSubject, sessionPromptSubject } from "./subjects.js";
+import {
+  sessionHeartbeatSubject,
+  sessionPromptSubject,
+  sessionStatusSubject,
+} from "./subjects.js";
 
 export interface ManagedSessionOptions {
   readonly nc: NatsConnection;
@@ -28,6 +36,7 @@ export interface SessionSummary {
   readonly session_id: string;
   readonly subject: string;
   readonly heartbeat_subject: string;
+  readonly status_subject: string;
   readonly cwd: string;
   readonly model: string | undefined;
   readonly thinking_level: string | undefined;
@@ -58,6 +67,7 @@ export class ManagedSession {
   readonly createdAt: number;
   readonly subject: string;
   readonly heartbeatSubject: string;
+  readonly statusSubject: string;
 
   private readonly nc: NatsConnection;
   private readonly owner: string;
@@ -83,6 +93,7 @@ export class ManagedSession {
     this.lastActivity = this.createdAt;
     this.subject = sessionPromptSubject(this.owner, this.sessionId);
     this.heartbeatSubject = sessionHeartbeatSubject(this.owner, this.sessionId);
+    this.statusSubject = sessionStatusSubject(this.owner, this.sessionId);
 
     const extraMetadata: Record<string, string> = {
       spawner: "pi-headless",
@@ -99,7 +110,7 @@ export class ManagedSession {
       name: this.sessionId,
       session: this.sessionId,
       description: `pi-headless session ${this.sessionId} (${this.cwd})`,
-      version: "0.1.0",
+      version: "0.4.0",
       maxPayload: "1MB",
       attachmentsOk: true,
       heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
@@ -128,6 +139,7 @@ export class ManagedSession {
       session_id: this.sessionId,
       subject: this.subject,
       heartbeat_subject: this.heartbeatSubject,
+      status_subject: this.statusSubject,
       cwd: this.cwd,
       model: this.model,
       thinking_level: this.thinkingLevel,
@@ -152,13 +164,13 @@ export class ManagedSession {
       return;
     }
 
-    let envelope;
+    let envelope: ReturnType<typeof decodeEnvelope>;
     try {
-      envelope = parseEnvelope(msg.data);
+      envelope = decodeEnvelope(msg.data);
     } catch (e) {
-      if (e instanceof EnvelopeError) {
+      if (e instanceof ProtocolError) {
         try {
-          msg.respondError(e.code, e.message);
+          msg.respondError(400, e.message);
         } catch {
           /* noop */
         }
@@ -174,10 +186,10 @@ export class ManagedSession {
 
     let stagedDir: string | undefined;
     let body = envelope.prompt;
-    const attachments = envelope.attachments;
-    if (attachments && attachments.length > 0) {
+    const attachments: ReadonlyArray<RequestAttachment> = envelope.attachments ?? [];
+    if (attachments.length > 0) {
       try {
-        const staged = await stageAttachments(this.sessionId, attachments as ParsedAttachment[]);
+        const staged = await stageAttachments(this.sessionId, attachments);
         stagedDir = staged.dir;
         body = decorateWithAttachments(body, staged.paths);
       } catch (e) {
@@ -221,7 +233,7 @@ export class ManagedSession {
     let unsubscribe: (() => void) | undefined;
     try {
       try {
-        pr.msg.respond(statusAck());
+        pr.msg.respond(encodeChunk({ type: "status", status: "ack" }));
       } catch {
         /* noop */
       }
@@ -230,7 +242,7 @@ export class ManagedSession {
         const delta = extractTextDelta(ev);
         if (delta !== undefined) {
           try {
-            pr.msg.respond(responseText(delta));
+            pr.msg.respond(encodeChunk({ type: "response", text: delta }));
           } catch {
             /* noop */
           }
