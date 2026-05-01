@@ -78,7 +78,7 @@ openclaw gateway restart
 | `agentName` | yes | - | 5th subject token (`agents.prompt.oc.<owner>.<agentName>`) |
 | `description` | no | `OpenClaw agent <agentName>` | Shown via `$SRV.INFO` |
 | `credentials` | no | - | Path to `.creds` file for NATS authentication |
-| `owner` | no | `default` | 3rd subject token - operator/account namespace. Spec §2 requires a 4-token subject. |
+| `owner` | no | `default` | 4th subject token - operator/account namespace, per §2 (v0.3) verb-first scheme. |
 
 > **Migrating from v0.1:** the old `org` field has been renamed `owner` (§3.2 terminology). The old name is still accepted as an alias with a deprecation warning in logs.
 

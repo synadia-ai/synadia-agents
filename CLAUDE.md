@@ -193,8 +193,11 @@ and publish to PyPI via `uv publish`.
 
 - **Per-SDK workflows** under `.github/workflows/`:
   - `client-sdk-typescript.yml` — lint, typecheck, unit + integration
-    tests across Node 20/22/24 and Bun 1.2/latest. Triggers on TS SDK
-    changes.
+    tests across Node 20/22/24 and Bun 1.2/latest. Triggers on TS
+    caller-SDK changes.
+  - `agent-sdk-typescript.yml` — same matrix, scoped to the host SDK
+    (`agent-sdk/typescript/`); also triggers on `client-sdk/typescript/`
+    changes since the host package depends on the caller.
   - `client-sdk-python.yml` — ruff, mypy, pytest across Python
     3.11/3.12/3.13.
   - `release-python.yml` — tag-triggered PyPI publish.

@@ -45,7 +45,7 @@ Both SDKs ship a **spec-compliant reference agent** plus a parallel set of numbe
 | SDK | Reference agent | Demo scripts |
 | --- | --- | --- |
 | TypeScript | `ReferenceAgent` class — [`agent-sdk/typescript/src/testing/reference-agent.ts`](agent-sdk/typescript/src/testing/reference-agent.ts), importable as `@synadia-ai/agent-service/testing`. Runnable script: [`client-sdk/typescript/examples/_run-reference-agent.ts`](client-sdk/typescript/examples/_run-reference-agent.ts). | [`client-sdk/typescript/examples/`](client-sdk/typescript/examples/) — `01-discover.ts`, `02-prompt-text.ts`, `03-prompt-attachment.ts`, `04-query-reply.ts`, `05-liveness.ts`. |
-| Python | Runnable echo agent (with conversation memory) — [`client-sdk/python/examples/_reference_agent.py`](client-sdk/python/examples/_reference_agent.py). | [`client-sdk/python/examples/`](client-sdk/python/examples/) — `01-discover.py` through `05-liveness.py`, plus `06-chat.py` (interactive REPL). See the [examples README](client-sdk/python/examples/README.md). |
+| Python | Runnable echo agent (with conversation memory) — [`agent-sdk/python/examples/_reference_agent.py`](agent-sdk/python/examples/_reference_agent.py). | [`client-sdk/python/examples/`](client-sdk/python/examples/) — `01-discover.py` through `05-liveness.py`, plus `06-chat.py` (interactive REPL). See the [examples README](client-sdk/python/examples/README.md). |
 
 The Python side also has [`tests/test_interop_e2e.py`](client-sdk/python/tests/test_interop_e2e.py), which runs the TS reference agent as a subprocess and validates wire compatibility between the two SDKs.
 
