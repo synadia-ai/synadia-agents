@@ -24,16 +24,18 @@
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";
 import {
+  AgentSubject,
+  formatHumanBytes,
+  parseHumanBytes,
+  PROMPT_ENDPOINT_NAME,
   PROMPT_QUEUE_GROUP,
+  SDK_PROTOCOL_VERSION,
   SERVICE_NAME,
   STATUS_ENDPOINT_NAME,
   STATUS_QUEUE_GROUP,
-} from "../internal/service-name.js";
-import { PROMPT_ENDPOINT_NAME } from "../discovery/endpoint-info.js";
+} from "@synadia-ai/agents";
+
 import { buildHeartbeatPayload, encodeHeartbeatPayload } from "../heartbeat/payload.js";
-import { formatHumanBytes, parseHumanBytes } from "../bytes.js";
-import { AgentSubject } from "../subjects.js";
-import { SDK_PROTOCOL_VERSION } from "../version.js";
 
 export type ReferenceAgentPromptHandler = (msg: ServiceMsg) => void | Promise<void>;
 

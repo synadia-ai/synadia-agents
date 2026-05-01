@@ -1,8 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
 import { connect as natsConnect, type Msg } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
-import { AgentService, Agents, decodeBase64, type StreamMessage } from "../../src/index.js";
-import { decodeHeartbeatPayload } from "../../src/heartbeat/payload.js";
+import {
+  Agents,
+  decodeBase64,
+  decodeHeartbeatPayload,
+  type StreamMessage,
+} from "@synadia-ai/agents";
+import { AgentService } from "../../src/service.js";
 
 const natsUrl = inject("natsUrl");
 

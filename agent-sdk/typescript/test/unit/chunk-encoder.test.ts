@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { encodeChunk, splitResponseText } from "../../src/stream/chunk-encoder.js";
-import { decodeChunk } from "../../src/stream/chunk-decoder.js";
+import { decodeChunk } from "@synadia-ai/agents";
 
 const decode = (bytes: Uint8Array): unknown => JSON.parse(new TextDecoder().decode(bytes));
 
@@ -118,9 +118,7 @@ describe("splitResponseText", () => {
     expect(slices.join("")).toBe(text);
     // Every slice should re-decode without replacement chars.
     for (const s of slices) {
-      const decoded = new TextDecoder("utf-8", { fatal: true }).decode(
-        new TextEncoder().encode(s),
-      );
+      const decoded = new TextDecoder("utf-8", { fatal: true }).decode(new TextEncoder().encode(s));
       expect(decoded).toBe(s);
     }
   });

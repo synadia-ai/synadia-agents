@@ -10,7 +10,7 @@
 //   - status:   `{type:"status",   data: <status string>}` (§6.4)
 //   - query:    `{type:"query",    data:{id, reply_subject, prompt, attachments?}}` (§7)
 
-import type { DecodedAttachment } from "./chunk-decoder.js";
+import type { DecodedAttachment } from "@synadia-ai/agents";
 
 export interface ResponseChunk {
   readonly type: "response";

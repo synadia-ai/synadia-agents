@@ -32,32 +32,31 @@
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";
 
-import { formatHumanBytes, parseHumanBytes } from "./bytes.js";
-import { ProtocolError } from "./errors.js";
-import { newInbox } from "./internal/inbox.js";
 import {
+  AgentSubject,
+  decodeEnvelope,
+  encodeBase64,
+  formatHumanBytes,
+  newInbox,
+  parseHumanBytes,
+  PROMPT_ENDPOINT_NAME,
   PROMPT_QUEUE_GROUP,
+  ProtocolError,
+  SDK_PROTOCOL_VERSION,
   SERVICE_NAME,
   STATUS_ENDPOINT_NAME,
   STATUS_QUEUE_GROUP,
-} from "./internal/service-name.js";
-import { PROMPT_ENDPOINT_NAME } from "./discovery/endpoint-info.js";
-import { buildHeartbeatPayload, encodeHeartbeatPayload } from "./heartbeat/payload.js";
-import {
-  decodeEnvelope,
-  encodeBase64,
-  encodeEnvelope,
   type RequestAttachment,
   type RequestEnvelope,
-} from "./prompt/envelope.js";
+} from "@synadia-ai/agents";
+
+import { buildHeartbeatPayload, encodeHeartbeatPayload } from "./heartbeat/payload.js";
 import {
   encodeChunk,
   type Chunk,
   type QueryChunk,
   type StatusChunk,
 } from "./stream/chunk-encoder.js";
-import { AgentSubject } from "./subjects.js";
-import { SDK_PROTOCOL_VERSION } from "./version.js";
 
 /** §3.2 + §11.1: `metadata.protocol_version` is MAJOR.MINOR only. */
 const PROTOCOL_VERSION_STRING = `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`;
@@ -528,9 +527,3 @@ function sanitizeErrorDesc(desc: string): string {
   }
   return flat;
 }
-
-// Re-export for `service.ts` consumers — agent authors typically import
-// envelope/chunk types from here rather than from the deeper paths.
-export type { RequestEnvelope, RequestAttachment } from "./prompt/envelope.js";
-export type { Chunk, ResponseChunk, StatusChunk, QueryChunk } from "./stream/chunk-encoder.js";
-export { encodeEnvelope };

@@ -68,13 +68,10 @@ export {
   type PromptHandler,
 } from "./service.js";
 
-// Liveness
-export {
-  type BuildHeartbeatPayloadOptions,
-  type HeartbeatPayload,
-  buildHeartbeatPayload,
-  encodeHeartbeatPayload,
-} from "./heartbeat/payload.js";
+// Liveness — caller-side type + decoder. The encoder side
+// (`buildHeartbeatPayload`, `encodeHeartbeatPayload`) lives in the host
+// SDK at `@synadia-ai/agent-service`.
+export { type HeartbeatPayload, decodeHeartbeatPayload } from "./heartbeat/payload.js";
 export {
   type Liveness,
   DEFAULT_LIVENESS_SLACK,
@@ -114,7 +111,14 @@ export {
   type ResponseAttachment,
 } from "./stream/prompt-stream.js";
 export { type QueryEvent, QueryAlreadyRepliedError } from "./query/query-event.js";
-export { type DecodedAttachment } from "./stream/chunk-decoder.js";
+export {
+  type DecodedAttachment,
+  type DecodedChunk,
+  type DecodedQuery,
+  type DecodedResponse,
+  type DecodedStatus,
+  decodeChunk,
+} from "./stream/chunk-decoder.js";
 
 // Errors
 export {
@@ -132,6 +136,16 @@ export {
 
 // Logging
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";
+
+/**
+ * Reply-inbox factory. Re-exported for `@synadia-ai/agent-service` so the
+ * host-side `PromptResponse.ask` round-trip uses the same `_INBOX.agents.>`
+ * prefix as caller-side prompts. Internal contract — not part of the
+ * documented caller API; subject to change without a major bump.
+ *
+ * @internal
+ */
+export { newInbox } from "./internal/inbox.js";
 
 // NATS CLI context loader + URL parser (both produce NodeConnectionOptions)
 export { loadContextOptions, parseNatsUrl } from "./context.js";
