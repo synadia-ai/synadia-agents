@@ -3,7 +3,7 @@ import { createInbox, type NatsConnection } from "@nats-io/nats-core";
 import type { ServiceMsg } from "@nats-io/services";
 import { connect as natsConnect } from "@nats-io/transport-node";
 import { Agents, type QueryEvent, type StreamMessage } from "../../src/index.js";
-import { ReferenceAgent } from "../../src/testing/reference-agent.js";
+import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 
 const natsUrl = inject("natsUrl");
 

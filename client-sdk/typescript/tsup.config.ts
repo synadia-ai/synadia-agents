@@ -4,7 +4,6 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     errors: "src/errors.ts",
-    testing: "src/testing/index.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

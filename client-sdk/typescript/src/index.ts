@@ -5,17 +5,19 @@
 //   - {@link Agents.discover}     — enumerate agents; returns a live `Agent[]`.
 //   - {@link Agent.prompt}        — stream a prompt to an agent.
 //
-// Public API for agent authors (v0.3):
-//   - {@link AgentService}        — register a protocol-compliant agent
-//                                   (prompt + status endpoints, heartbeat
-//                                   loop, per-request keep-alive, terminator).
+// Shared building blocks (used by both callers and agent authors):
 //   - {@link AgentSubject}        — verb-first subject builder shared
 //                                   between SDK, agent harnesses, and
 //                                   examples.
+//   - {@link HeartbeatTracker}    — wildcard liveness watcher.
+//   - Wire codecs (decoder side), envelope helpers, error hierarchy.
 //
 // Subpath entry points:
 //   - `@synadia-ai/agents/errors`  — error class hierarchy for `instanceof`.
-//   - `@synadia-ai/agents/testing` — spec-compliant reference agent for tests.
+//
+// Hosting an agent? Install the sister package
+// `@synadia-ai/agent-service` for `AgentService`, `ReferenceAgent`, and
+// the host-side wire helpers.
 
 export { Agents, DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS, type AgentsOptions } from "./agents.js";
 
@@ -56,18 +58,6 @@ export {
   type ParseAgentSubjectOptions,
 } from "./subjects.js";
 
-// Agent service (server-side helper for agent authors)
-export {
-  AgentService,
-  PromptResponse,
-  DEFAULT_ATTACHMENTS_OK,
-  DEFAULT_HEARTBEAT_INTERVAL_S,
-  DEFAULT_KEEPALIVE_INTERVAL_S,
-  DEFAULT_MAX_PAYLOAD,
-  type AgentServiceOptions,
-  type PromptHandler,
-} from "./service.js";
-
 // Liveness — caller-side type + decoder. The encoder side
 // (`buildHeartbeatPayload`, `encodeHeartbeatPayload`) lives in the host
 // SDK at `@synadia-ai/agent-service`.
@@ -91,14 +81,6 @@ export {
   encodeBase64,
   decodeBase64,
 } from "./prompt/envelope.js";
-export {
-  encodeChunk,
-  splitResponseText,
-  type Chunk,
-  type ResponseChunk,
-  type StatusChunk,
-  type QueryChunk,
-} from "./stream/chunk-encoder.js";
 export {
   type AttachmentInput,
   normalizeAttachment,

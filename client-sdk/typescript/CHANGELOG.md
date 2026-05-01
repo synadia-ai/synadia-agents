@@ -55,6 +55,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `subjectToken="oc"`) adopt the SDK's `AgentSubject` / `AgentService`
   while preserving their established subject layouts.
 
+### Changed (breaking — host-side surface moved out)
+
+- `AgentService`, `PromptResponse`, `PromptHandler`, `AgentServiceOptions`,
+  `ReferenceAgent`, `encodeChunk`, `splitResponseText`, the
+  `Chunk` / `ResponseChunk` / `StatusChunk` / `QueryChunk` types,
+  `buildHeartbeatPayload`, `encodeHeartbeatPayload`,
+  `BuildHeartbeatPayloadOptions`, and the `DEFAULT_ATTACHMENTS_OK` /
+  `DEFAULT_HEARTBEAT_INTERVAL_S` / `DEFAULT_KEEPALIVE_INTERVAL_S` /
+  `DEFAULT_MAX_PAYLOAD` constants moved to a new sibling package
+  `@synadia-ai/agent-service`. Caller-side imports
+  (`Agents`, `Agent`, `AgentSubject`, `decodeEnvelope`,
+  `decodeHeartbeatPayload`, the error hierarchy, etc.) are unchanged.
+- The `./testing` subpath (`@synadia-ai/agents/testing`,
+  `ReferenceAgent`) moved to `@synadia-ai/agent-service/testing`.
+- Hosting an agent now requires installing both
+  `@synadia-ai/agents` (caller-side primitives) **and**
+  `@synadia-ai/agent-service` (server-side helpers). Caller-only
+  consumers (e.g. `examples/agent-web-ui`) need no code changes.
+- `decodeChunk` plus the `DecodedChunk` / `DecodedQuery` /
+  `DecodedResponse` / `DecodedStatus` types are now exported from the
+  package root. Previously only `DecodedAttachment` was surfaced; the
+  full decoder side is now part of the documented caller API and
+  consumed by `@synadia-ai/agent-service`'s round-trip tests.
+- `newInbox` is exported with `@internal` JSDoc — re-used by
+  `@synadia-ai/agent-service` so caller and host share the same
+  `_INBOX.agents.>` reply-subject prefix.
+
 ### Changed
 
 - `loadContextOptions` now honours the full set of fields written by

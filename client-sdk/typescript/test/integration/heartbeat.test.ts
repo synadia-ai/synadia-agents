@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, i
 import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Agents, type HeartbeatPayload } from "../../src/index.js";
-import { ReferenceAgent } from "../../src/testing/reference-agent.js";
+import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 
 const natsUrl = inject("natsUrl");
 
