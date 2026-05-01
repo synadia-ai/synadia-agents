@@ -161,14 +161,17 @@ fi
 # one doesn't block the whole flip. Override with BUN_INSTALL_TIMEOUT
 # if your machine is slow on a clean install.
 BUN_INSTALL_TIMEOUT="${BUN_INSTALL_TIMEOUT:-60}"
+if ! [[ "$BUN_INSTALL_TIMEOUT" =~ ^[0-9]+$ ]]; then
+  err "BUN_INSTALL_TIMEOUT must be a non-negative integer of seconds (got: $BUN_INSTALL_TIMEOUT)"
+  exit 64
+fi
 
 # ---------- SDK pair ------------------------------------------------------
 
 # Parallel arrays describing every SDK package devmode tracks. Adding a
-# third SDK later is a matter of appending to all four arrays.
+# third SDK later is a matter of appending to all three arrays.
 SDK_NAMES=("@synadia-ai/agents"     "@synadia-ai/agent-service")
 SDK_DIRS=( "client-sdk/typescript"  "agent-sdk/typescript")
-SDK_FILE_REFS=()
 SDK_VERSIONS=()
 SDK_SEMVER_REFS=()
 
@@ -181,9 +184,24 @@ for ((i=0; i<${#SDK_NAMES[@]}; i++)); do
   fi
   ver="$(jq -r .version "$pkg")"
   SDK_VERSIONS+=("$ver")
-  SDK_FILE_REFS+=("file:../../${SDK_DIRS[$i]}")
   SDK_SEMVER_REFS+=("^${ver}")
 done
+
+# Build the `file:` ref for ($consumer, $sdk_index). Counts the depth of
+# the consumer relative to repo root so a future consumer at any depth
+# (e.g. `examples/foo/bar/baz/`) gets the right number of `../`s. The
+# discovery glob currently only matches depth-2 consumers, but this
+# keeps the path computation honest if that invariant ever changes.
+file_ref_for() {
+  local consumer="$1" idx="$2" slashes prefix=""
+  slashes="$(printf '%s' "$consumer" | tr -cd '/' | wc -c | tr -d ' ')"
+  local depth=$((slashes + 1))
+  while (( depth > 0 )); do
+    prefix="../$prefix"
+    depth=$((depth - 1))
+  done
+  printf 'file:%s%s' "$prefix" "${SDK_DIRS[$idx]}"
+}
 
 # Best-effort branch lookup. Empty if synadia-agents isn't a git checkout
 # or git isn't on PATH.
@@ -217,7 +235,12 @@ read_ignored() {
   done < "$f"
 }
 
-mapfile -t IGNORED < <(read_ignored)
+# `mapfile -t` would be cleaner but ships only with bash 4+; stock macOS
+# is bash 3.2. Use a portable while-read loop instead.
+IGNORED=()
+while IFS= read -r line; do
+  IGNORED+=("$line")
+done < <(read_ignored)
 
 # True if a consumer (path "kind/name") references at least one tracked SDK
 # in its dependencies OR devDependencies block. devDependencies match so
@@ -264,7 +287,10 @@ discover_consumers() {
   fi
 }
 
-mapfile -t CONSUMERS < <(discover_consumers)
+CONSUMERS=()
+while IFS= read -r line; do
+  CONSUMERS+=("$line")
+done < <(discover_consumers)
 
 if (( ${#CONSUMERS[@]} == 0 )); then
   err "no consumers discovered under $REPO/{examples,agents}/"
@@ -296,14 +322,22 @@ get_block() {
 }
 
 # Updates the SDK ref in whichever block already holds it (preserves the
-# `dependencies` vs `devDependencies` placement).
+# `dependencies` vs `devDependencies` placement). Cleans up the .tmp
+# write file on either jq or mv failure so a partial write doesn't sit
+# next to the original.
 set_ref() {
-  local pkg="$1" name="$2" ref="$3" block
+  local pkg="$1" name="$2" ref="$3" block tmp
+  tmp="$pkg.tmp"
   block="$(get_block "$pkg" "$name")"
   [[ -z "$block" ]] && return 0
-  jq --arg n "$name" --arg r "$ref" --arg b "$block" \
-    '.[$b][$n] = $r' "$pkg" \
-    > "$pkg.tmp" && mv "$pkg.tmp" "$pkg"
+  if jq --arg n "$name" --arg r "$ref" --arg b "$block" \
+       '.[$b][$n] = $r' "$pkg" > "$tmp" \
+       && mv "$tmp" "$pkg"; then
+    return 0
+  fi
+  rm -f "$tmp"
+  err "failed to write $pkg (jq or mv error)"
+  return 1
 }
 
 # Classify a (sdk_index, ref) pair. Echoes:
@@ -569,7 +603,7 @@ apply_state() {
       [[ -z "$ref" ]] && continue   # consumer doesn't list this dep
 
       case "$target_state" in
-        dev)     target="${SDK_FILE_REFS[$idx]}" ;;
+        dev)     target="$(file_ref_for "$rel" "$idx")" ;;
         release) target="${SDK_SEMVER_REFS[$idx]}" ;;
       esac
       before="$ref"
