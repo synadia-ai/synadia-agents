@@ -265,6 +265,11 @@ export class PromptResponse {
           `query ${queryChunk.id} reply subscription closed before any reply arrived`,
         );
       })();
+      // When `timed` wins the race, the `finally` block calls
+      // `sub.unsubscribe()` which closes the iterator and makes `next`
+      // reject with no awaiter — Node would log it as
+      // `UnhandledPromiseRejection`. Suppress that path explicitly.
+      next.catch(() => {});
       const timed = new Promise<never>((_, reject) => {
         timer = setTimeout(
           () =>
@@ -512,7 +517,8 @@ export class AgentService {
       msg.respond(encodeHeartbeatPayload(payload));
     } catch (err) {
       try {
-        msg.respondError(500, sanitizeErrorDesc(`status handler error: ${(err as Error).message}`));
+        const desc = err instanceof Error ? err.message : String(err);
+        msg.respondError(500, sanitizeErrorDesc(`status handler error: ${desc}`));
       } catch {
         /* connection may already be gone */
       }
@@ -573,7 +579,8 @@ export class AgentService {
       // race in between the error and the terminator.
       stopKeepalive();
       try {
-        msg.respondError(500, sanitizeErrorDesc(`handler error: ${(err as Error).message}`));
+        const desc = err instanceof Error ? err.message : String(err);
+        msg.respondError(500, sanitizeErrorDesc(`handler error: ${desc}`));
       } catch {
         /* connection may already be gone */
       }

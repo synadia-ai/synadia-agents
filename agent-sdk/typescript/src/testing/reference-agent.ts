@@ -229,5 +229,8 @@ export class ReferenceAgent {
 
 function defaultTerminatorHandler(msg: ServiceMsg): void {
   // Spec §6.5: empty body + no headers is the stream terminator.
-  msg.respond("");
+  // Match `AgentService.tryRespondTerminator` — both produce the same
+  // wire bytes, but the explicit `Uint8Array(0)` makes "empty body"
+  // unambiguous on inspection.
+  msg.respond(new Uint8Array(0));
 }
