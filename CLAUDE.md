@@ -189,7 +189,9 @@ Sequence:
 
 The same shape applies to the Python SDK, except releases are
 tag-driven (`python-v*` tag in `.github/workflows/release-python.yml`)
-and publish to PyPI via `uv publish`.
+and publish to PyPI via `pypa/gh-action-pypi-publish` with PyPI
+trusted publishing — no long-lived API token; the workflow runs in
+the `pypi` GitHub Environment, which is gated to `python-v*` tags.
 
 ## CI and the Claude reviewer bot
 

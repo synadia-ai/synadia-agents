@@ -109,6 +109,23 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   wanting a tighter window can pass `stall=` to `agents.discover()` /
   `discover_agents()`. Fixes [#31]. Mirrors the same constant change
   in the TypeScript SDK so cross-SDK defaults stay aligned.
+- **Release plumbing moved to PyPI [trusted publishing][tp].** The
+  `release-python.yml` workflow no longer references
+  `secrets.PYPI_API_TOKEN`; publishes go through
+  `pypa/gh-action-pypi-publish@release/v1`, with the GitHub-issued OIDC
+  token exchanged for a short-lived PyPI credential. The `pypi`
+  GitHub Environment has a `python-v*` tag protection rule, so a
+  publish can only fire from a release tag. A pending publisher on
+  PyPI binds `synadia-ai-agents` to this exact workflow + environment;
+  the project materializes on PyPI on the first successful OIDC
+  publish. **A pending publisher does *not* reserve the project name**
+  ([PyPI docs][tp-pending]) — if anyone else registers
+  `synadia-ai-agents` on PyPI before our first publish, the pending
+  publisher is invalidated and would have to be re-created against the
+  new owner's project. No user-visible API change.
+
+  [tp]: https://docs.pypi.org/trusted-publishers/
+  [tp-pending]: https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/
 
 ### Added
 
