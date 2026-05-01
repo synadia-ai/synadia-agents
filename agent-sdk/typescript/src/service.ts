@@ -30,34 +30,33 @@
 // — wire-equivalent behaviour, idiomatic TS API.
 
 import type { NatsConnection } from "@nats-io/nats-core";
-import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";
+import { Svcm, type Service, type ServiceHandler, type ServiceMsg } from "@nats-io/services";
 
-import { formatHumanBytes, parseHumanBytes } from "./bytes.js";
-import { ProtocolError } from "./errors.js";
-import { newInbox } from "./internal/inbox.js";
 import {
+  AgentSubject,
+  decodeEnvelope,
+  encodeBase64,
+  formatHumanBytes,
+  newInbox,
+  parseHumanBytes,
+  PROMPT_ENDPOINT_NAME,
   PROMPT_QUEUE_GROUP,
+  ProtocolError,
+  SDK_PROTOCOL_VERSION,
   SERVICE_NAME,
   STATUS_ENDPOINT_NAME,
   STATUS_QUEUE_GROUP,
-} from "./internal/service-name.js";
-import { PROMPT_ENDPOINT_NAME } from "./discovery/endpoint-info.js";
-import { buildHeartbeatPayload, encodeHeartbeatPayload } from "./heartbeat/payload.js";
-import {
-  decodeEnvelope,
-  encodeBase64,
-  encodeEnvelope,
   type RequestAttachment,
   type RequestEnvelope,
-} from "./prompt/envelope.js";
+} from "@synadia-ai/agents";
+
+import { buildHeartbeatPayload, encodeHeartbeatPayload } from "./heartbeat/payload.js";
 import {
   encodeChunk,
   type Chunk,
   type QueryChunk,
   type StatusChunk,
 } from "./stream/chunk-encoder.js";
-import { AgentSubject } from "./subjects.js";
-import { SDK_PROTOCOL_VERSION } from "./version.js";
 
 /** §3.2 + §11.1: `metadata.protocol_version` is MAJOR.MINOR only. */
 const PROTOCOL_VERSION_STRING = `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`;
@@ -132,6 +131,46 @@ export interface AgentServiceOptions {
   readonly keepaliveIntervalS?: number | null;
   /** Extra metadata keys merged into the service metadata (forward-compat). */
   readonly extraMetadata?: Readonly<Record<string, string>>;
+  /**
+   * Custom endpoints registered on the same `agents` micro service
+   * alongside `prompt` and `status`. Use this for harness-specific
+   * endpoints (e.g. a controller's `spawn` / `stop` / `list`). Endpoints
+   * are added in array order, after `prompt` and `status`, before the
+   * first heartbeat is published.
+   *
+   * Names MUST NOT collide with the protocol-required endpoints
+   * (`prompt`, `status`) or with another entry in this list — `start()`
+   * throws on collision before any registration happens. Names that
+   * shadow future-reserved spec verbs are NOT validated here, but
+   * harnesses SHOULD avoid them.
+   *
+   * Subjects are advertised verbatim — `AgentService` does not prefix
+   * them. A harness that wants its custom endpoint to appear under the
+   * protocol's `agents.*` namespace is responsible for assembling the
+   * full subject (e.g. `agents.spawn.<agent>.<owner>.<name>`).
+   *
+   * For runtime-dynamic endpoints that can't be expressed at construction
+   * time, use the {@link AgentService.service} getter as an escape hatch.
+   */
+  readonly extraEndpoints?: ReadonlyArray<AgentServiceExtraEndpoint>;
+}
+
+/**
+ * Configuration for a custom endpoint added to the agent's micro service
+ * alongside `prompt` and `status`. See
+ * {@link AgentServiceOptions.extraEndpoints}.
+ */
+export interface AgentServiceExtraEndpoint {
+  /** NATS micro endpoint name. MUST NOT collide with `prompt` or `status`. */
+  readonly name: string;
+  /** Full subject the endpoint listens on. AgentService does NOT prefix. */
+  readonly subject: string;
+  /** NATS queue group. Defaults to no queue group (undefined). */
+  readonly queue?: string;
+  /** Endpoint handler. Same shape as `service.addEndpoint(...)`'s handler. */
+  readonly handler: ServiceHandler;
+  /** Per-endpoint metadata advertised on `$SRV.INFO`. */
+  readonly metadata?: Record<string, string>;
 }
 
 export type PromptHandler = (
@@ -226,6 +265,11 @@ export class PromptResponse {
           `query ${queryChunk.id} reply subscription closed before any reply arrived`,
         );
       })();
+      // When `timed` wins the race, the `finally` block calls
+      // `sub.unsubscribe()` which closes the iterator and makes `next`
+      // reject with no awaiter — Node would log it as
+      // `UnhandledPromiseRejection`. Suppress that path explicitly.
+      next.catch(() => {});
       const timed = new Promise<never>((_, reject) => {
         timer = setTimeout(
           () =>
@@ -296,6 +340,24 @@ export class AgentService {
     return this.#service.info().id;
   }
 
+  /**
+   * Underlying `@nats-io/services` `Service` — escape hatch for
+   * runtime-dynamic endpoint registration that
+   * {@link AgentServiceOptions.extraEndpoints} (locked at construction)
+   * can't express. Throws before {@link start} because the service
+   * doesn't exist yet.
+   *
+   * Direct calls to `service.addEndpoint(...)` bypass the duplicate-name
+   * guard that `extraEndpoints` applies — prefer `extraEndpoints` for
+   * any endpoint whose name and subject are known at startup.
+   */
+  get service(): Service {
+    if (!this.#service) {
+      throw new Error("AgentService.service: service not started — call start() first");
+    }
+    return this.#service;
+  }
+
   /** Register the prompt handler. Must be called before {@link start}. */
   onPrompt(handler: PromptHandler): void {
     this.#handler = handler;
@@ -331,6 +393,23 @@ export class AgentService {
     }
     if (this.#service !== null) {
       throw new Error("AgentService.start: already started");
+    }
+
+    // Validate extraEndpoints names BEFORE any service registration so a
+    // collision doesn't leave us with a half-registered service that
+    // then fails to clean up.
+    const extraEndpoints = this.#options.extraEndpoints ?? [];
+    if (extraEndpoints.length > 0) {
+      const seen = new Set<string>([PROMPT_ENDPOINT_NAME, STATUS_ENDPOINT_NAME]);
+      for (const ep of extraEndpoints) {
+        if (seen.has(ep.name)) {
+          throw new Error(
+            `AgentService.start: extraEndpoints[].name=${JSON.stringify(ep.name)} ` +
+              `collides with a protocol-reserved or already-listed endpoint name`,
+          );
+        }
+        seen.add(ep.name);
+      }
     }
 
     const svcm = new Svcm(this.#options.nc);
@@ -384,6 +463,15 @@ export class AgentService {
       },
     });
 
+    for (const ep of extraEndpoints) {
+      this.#service.addEndpoint(ep.name, {
+        subject: ep.subject,
+        ...(ep.queue !== undefined ? { queue: ep.queue } : {}),
+        handler: ep.handler,
+        ...(ep.metadata !== undefined ? { metadata: ep.metadata } : {}),
+      });
+    }
+
     this.#startHeartbeats();
   }
 
@@ -429,7 +517,8 @@ export class AgentService {
       msg.respond(encodeHeartbeatPayload(payload));
     } catch (err) {
       try {
-        msg.respondError(500, sanitizeErrorDesc(`status handler error: ${(err as Error).message}`));
+        const desc = err instanceof Error ? err.message : String(err);
+        msg.respondError(500, sanitizeErrorDesc(`status handler error: ${desc}`));
       } catch {
         /* connection may already be gone */
       }
@@ -490,7 +579,8 @@ export class AgentService {
       // race in between the error and the terminator.
       stopKeepalive();
       try {
-        msg.respondError(500, sanitizeErrorDesc(`handler error: ${(err as Error).message}`));
+        const desc = err instanceof Error ? err.message : String(err);
+        msg.respondError(500, sanitizeErrorDesc(`handler error: ${desc}`));
       } catch {
         /* connection may already be gone */
       }
@@ -528,9 +618,3 @@ function sanitizeErrorDesc(desc: string): string {
   }
   return flat;
 }
-
-// Re-export for `service.ts` consumers — agent authors typically import
-// envelope/chunk types from here rather than from the deeper paths.
-export type { RequestEnvelope, RequestAttachment } from "./prompt/envelope.js";
-export type { Chunk, ResponseChunk, StatusChunk, QueryChunk } from "./stream/chunk-encoder.js";
-export { encodeEnvelope };

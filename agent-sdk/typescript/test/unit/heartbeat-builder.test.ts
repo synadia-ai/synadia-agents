@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildHeartbeatPayload,
-  decodeHeartbeatPayload,
-  encodeHeartbeatPayload,
-  type HeartbeatPayload,
-} from "../../src/heartbeat/payload.js";
-import { AgentSubject } from "../../src/subjects.js";
+import { buildHeartbeatPayload, encodeHeartbeatPayload } from "../../src/heartbeat/payload.js";
+import { AgentSubject, decodeHeartbeatPayload, type HeartbeatPayload } from "@synadia-ai/agents";
 
 describe("buildHeartbeatPayload (§8.3)", () => {
   it("populates the required fields from the subject + arguments", () => {

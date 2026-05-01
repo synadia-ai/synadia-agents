@@ -39,7 +39,8 @@
     "paths": {
       "@synadia-ai/agents": ["./src/index.ts"],
       "@synadia-ai/agents/errors": ["./src/errors.ts"],
-      "@synadia-ai/agents/testing": ["./src/testing/index.ts"]
+      "@synadia-ai/agent-service": ["../../agent-sdk/typescript/src/index.ts"],
+      "@synadia-ai/agent-service/testing": ["../../agent-sdk/typescript/src/testing/index.ts"]
     }
   },
   "include": [

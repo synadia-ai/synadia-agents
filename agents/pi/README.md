@@ -26,7 +26,9 @@ Multiple PI sessions on the same host register as distinct instances of the same
 # From npm
 pi install npm:@synadia-ai/nats-pi-channel
 
-# From a local clone during development
+# From a local clone during development. Both SDKs need a current
+# dist/ for pi's loader to resolve the file: links — see
+# ../../README-DEV.md at the repo root for the build sequence.
 pi install /absolute/path/to/nats-pi-channel
 ```
 

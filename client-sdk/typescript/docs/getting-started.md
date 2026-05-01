@@ -6,11 +6,11 @@
 
 - Node.js ≥ 20 **or** Bun ≥ 1.2
 - A running `nats-server` reachable from the client.
-- At least one protocol-compliant agent registered on the NATS system. The `@synadia-ai/agents/testing` subpath ships a spec-compliant reference agent you can run locally:
+- At least one protocol-compliant agent registered on the NATS system. The host SDK [`@synadia-ai/agent-service`](../../../agent-sdk/typescript/) (the sister package to this one — install both) ships a spec-compliant reference agent you can run locally:
 
   ```ts
   import { connect as natsConnect } from "@nats-io/transport-node";
-  import { ReferenceAgent } from "@synadia-ai/agents/testing";
+  import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 
   const nc = await natsConnect({ servers: "nats://localhost:4222" });
   const agent = new ReferenceAgent({
@@ -26,7 +26,11 @@
 ## Install
 
 ```sh
+# Caller side only (this guide):
 bun add @synadia-ai/agents     # or: npm install @synadia-ai/agents
+
+# Hosting an agent? Install both:
+bun add @synadia-ai/agents @synadia-ai/agent-service
 ```
 
 ## Connect + discover + prompt

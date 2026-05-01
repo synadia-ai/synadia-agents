@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.DS_Store
+test/_evidence/
+.env
+.env.local
+*.log
+package-lock.json
+
+# Editor / tool-local
+.claude/settings.local.json
+.idea/
+.vscode/
+
+# Local scratch
+plan1.txt
+tmp/

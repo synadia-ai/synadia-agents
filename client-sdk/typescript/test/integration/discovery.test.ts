@@ -3,7 +3,7 @@ import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm } from "@nats-io/services";
 import { Agents } from "../../src/index.js";
-import { ReferenceAgent } from "../../src/testing/reference-agent.js";
+import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 
 const natsUrl = inject("natsUrl");
 

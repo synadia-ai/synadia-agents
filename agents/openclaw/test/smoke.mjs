@@ -32,19 +32,21 @@ import { Svcm } from "@nats-io/services";
 
 import {
 	AgentSubject,
-	DEFAULT_ATTACHMENTS_OK,
-	DEFAULT_HEARTBEAT_INTERVAL_S,
-	DEFAULT_MAX_PAYLOAD,
 	PROMPT_QUEUE_GROUP,
 	ProtocolError,
 	SDK_PROTOCOL_VERSION,
 	SERVICE_NAME,
-	buildHeartbeatPayload,
 	decodeEnvelope,
-	encodeChunk,
-	encodeHeartbeatPayload,
 	formatHumanBytes,
 } from "@synadia-ai/agents";
+import {
+	DEFAULT_ATTACHMENTS_OK,
+	DEFAULT_HEARTBEAT_INTERVAL_S,
+	DEFAULT_MAX_PAYLOAD,
+	buildHeartbeatPayload,
+	encodeChunk,
+	encodeHeartbeatPayload,
+} from "@synadia-ai/agent-service";
 import {
 	AGENT_ID,
 	DEFAULT_SESSION,

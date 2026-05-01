@@ -37,23 +37,25 @@ import { Svcm } from '@nats-io/services'
 import type { ServiceMsg } from '@nats-io/services'
 import {
   AgentSubject,
-  DEFAULT_ATTACHMENTS_OK,
-  DEFAULT_HEARTBEAT_INTERVAL_S,
-  DEFAULT_MAX_PAYLOAD,
   PROMPT_QUEUE_GROUP,
   ProtocolError,
   SDK_PROTOCOL_VERSION,
   SERVICE_NAME,
   STATUS_QUEUE_GROUP,
-  buildHeartbeatPayload,
   decodeEnvelope,
-  encodeChunk,
-  encodeHeartbeatPayload,
   formatHumanBytes,
   parseHumanBytes,
   parseNatsUrl,
-  splitResponseText,
 } from '@synadia-ai/agents'
+import {
+  DEFAULT_ATTACHMENTS_OK,
+  DEFAULT_HEARTBEAT_INTERVAL_S,
+  DEFAULT_MAX_PAYLOAD,
+  buildHeartbeatPayload,
+  encodeChunk,
+  encodeHeartbeatPayload,
+  splitResponseText,
+} from '@synadia-ai/agent-service'
 import { readFileSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { homedir } from 'os'
 import { join, basename, dirname } from 'path'

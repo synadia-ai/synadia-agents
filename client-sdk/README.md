@@ -11,6 +11,13 @@ Caller-side libraries that speak the **NATS Agent Protocol**. They discover agen
 
 Go and other languages are planned.
 
+> **Hosting an agent?** The server-side counterparts —
+> `@synadia-ai/agent-service` (TypeScript), `synadia-ai-agent-service`
+> (Python) — live next door at [`../agent-sdk/`](../agent-sdk/). Caller-only
+> consumers (browser test clients, scripts that prompt existing agents)
+> need only the packages on this page; agent harness authors install
+> both halves of their language's pair.
+
 ## Quickstart
 
 **TypeScript**
@@ -78,7 +85,7 @@ SDKs also validate envelopes locally - oversized payloads, unsupported attachmen
 
 1. Create `client-sdk/<lang>/` with the language's standard project layout.
 2. Implement the capabilities above. The `typescript/test/` vectors make useful cross-language fixtures.
-3. Verify against the `ReferenceAgent` helper (TypeScript ships one; other languages can translate it).
+3. Verify against the host-side `ReferenceAgent` (TypeScript ships one in [`agent-sdk/typescript/`](../agent-sdk/typescript/), exposed via `@synadia-ai/agent-service/testing`; other languages can translate it).
 4. Add a row to the table above and note any language-idiomatic divergences.
 
 The wire is the contract - agents can be driven by any SDK interchangeably.

@@ -1,6 +1,6 @@
 # pi-headless
 
-A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia-ai/agents` and conforming to the NATS Agent Protocol **v0.3** (verb-first subjects + `status` endpoint).
+A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `ReferenceAgent`) and conforming to the NATS Agent Protocol **v0.3** (verb-first subjects + `status` endpoint).
 
 Each spawned PI session registers as its own NATS agent instance under `agents.prompt.pi.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
 
@@ -11,10 +11,12 @@ Paired with [`examples/agent-web-ui/`](../agent-web-ui) you also get a browser-b
 ## Quickstart
 
 ```bash
-# 1. Build the SDK once (workspace sibling, referenced via file:).
-cd ../../client-sdk/typescript
-bun install
-bun run build
+# 1. Build both SDKs (workspace siblings, referenced via file:). The
+#    extra `bun install` in agent-sdk re-copies the freshly-built
+#    caller dist into agent-sdk/node_modules/@synadia-ai/agents/, which
+#    is the path the host SDK's compiled output resolves at runtime.
+(cd ../../client-sdk/typescript && bun install && bun run build)
+(cd ../../agent-sdk/typescript  && bun install && bun run build)
 
 # 2. Run pi-headless.
 cd ../../examples/pi-headless
@@ -26,6 +28,10 @@ bun run start                # connects via $NATS_CONTEXT or NATS_URL
 # 3. Spawn a session + prompt + stop, from another shell.
 bun run scripts/spawn.ts --cwd /tmp/pi-sandbox --prompt "list the files here" --stop-after
 ```
+
+See [`README-DEV.md`](../../README-DEV.md) at the repo root for a fuller
+walk-through of the build / install dance, including how to pick up SDK
+edits without rebooting everything.
 
 ## Configuration
 

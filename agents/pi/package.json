@@ -42,10 +42,12 @@
   "dependencies": {
     "@nats-io/transport-node": "^3.3.0",
     "@nats-io/services": "^3.3.0",
-    "@synadia-ai/agents": "file:../../client-sdk/typescript"
+    "@synadia-ai/agents": "file:../../client-sdk/typescript",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
   },
   "bundleDependencies": [
-    "@synadia-ai/agents"
+    "@synadia-ai/agents",
+    "@synadia-ai/agent-service"
   ],
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*"

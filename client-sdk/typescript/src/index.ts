@@ -5,17 +5,19 @@
 //   - {@link Agents.discover}     — enumerate agents; returns a live `Agent[]`.
 //   - {@link Agent.prompt}        — stream a prompt to an agent.
 //
-// Public API for agent authors (v0.3):
-//   - {@link AgentService}        — register a protocol-compliant agent
-//                                   (prompt + status endpoints, heartbeat
-//                                   loop, per-request keep-alive, terminator).
+// Shared building blocks (used by both callers and agent authors):
 //   - {@link AgentSubject}        — verb-first subject builder shared
 //                                   between SDK, agent harnesses, and
 //                                   examples.
+//   - {@link HeartbeatTracker}    — wildcard liveness watcher.
+//   - Wire codecs (decoder side), envelope helpers, error hierarchy.
 //
 // Subpath entry points:
 //   - `@synadia-ai/agents/errors`  — error class hierarchy for `instanceof`.
-//   - `@synadia-ai/agents/testing` — spec-compliant reference agent for tests.
+//
+// Hosting an agent? Install the sister package
+// `@synadia-ai/agent-service` for `AgentService`, `ReferenceAgent`, and
+// the host-side wire helpers.
 
 export { Agents, DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS, type AgentsOptions } from "./agents.js";
 
@@ -56,25 +58,10 @@ export {
   type ParseAgentSubjectOptions,
 } from "./subjects.js";
 
-// Agent service (server-side helper for agent authors)
-export {
-  AgentService,
-  PromptResponse,
-  DEFAULT_ATTACHMENTS_OK,
-  DEFAULT_HEARTBEAT_INTERVAL_S,
-  DEFAULT_KEEPALIVE_INTERVAL_S,
-  DEFAULT_MAX_PAYLOAD,
-  type AgentServiceOptions,
-  type PromptHandler,
-} from "./service.js";
-
-// Liveness
-export {
-  type BuildHeartbeatPayloadOptions,
-  type HeartbeatPayload,
-  buildHeartbeatPayload,
-  encodeHeartbeatPayload,
-} from "./heartbeat/payload.js";
+// Liveness — caller-side type + decoder. The encoder side
+// (`buildHeartbeatPayload`, `encodeHeartbeatPayload`) lives in the host
+// SDK at `@synadia-ai/agent-service`.
+export { type HeartbeatPayload, decodeHeartbeatPayload } from "./heartbeat/payload.js";
 export {
   type Liveness,
   DEFAULT_LIVENESS_SLACK,
@@ -95,14 +82,6 @@ export {
   decodeBase64,
 } from "./prompt/envelope.js";
 export {
-  encodeChunk,
-  splitResponseText,
-  type Chunk,
-  type ResponseChunk,
-  type StatusChunk,
-  type QueryChunk,
-} from "./stream/chunk-encoder.js";
-export {
   type AttachmentInput,
   normalizeAttachment,
   normalizeAttachments,
@@ -114,7 +93,14 @@ export {
   type ResponseAttachment,
 } from "./stream/prompt-stream.js";
 export { type QueryEvent, QueryAlreadyRepliedError } from "./query/query-event.js";
-export { type DecodedAttachment } from "./stream/chunk-decoder.js";
+export {
+  type DecodedAttachment,
+  type DecodedChunk,
+  type DecodedQuery,
+  type DecodedResponse,
+  type DecodedStatus,
+  decodeChunk,
+} from "./stream/chunk-decoder.js";
 
 // Errors
 export {
@@ -132,6 +118,16 @@ export {
 
 // Logging
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";
+
+/**
+ * Reply-inbox factory. Re-exported for `@synadia-ai/agent-service` so the
+ * host-side `PromptResponse.ask` round-trip uses the same `_INBOX.agents.>`
+ * prefix as caller-side prompts. Internal contract — not part of the
+ * documented caller API; subject to change without a major bump.
+ *
+ * @internal
+ */
+export { newInbox } from "./internal/inbox.js";
 
 // NATS CLI context loader + URL parser (both produce NodeConnectionOptions)
 export { loadContextOptions, parseNatsUrl } from "./context.js";

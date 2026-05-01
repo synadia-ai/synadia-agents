@@ -1,8 +1,13 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, inject, it } from "vitest";
 import { connect as natsConnect, type Msg } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
-import { AgentService, Agents, decodeBase64, type StreamMessage } from "../../src/index.js";
-import { decodeHeartbeatPayload } from "../../src/heartbeat/payload.js";
+import {
+  Agents,
+  decodeBase64,
+  decodeHeartbeatPayload,
+  type StreamMessage,
+} from "@synadia-ai/agents";
+import { AgentService } from "../../src/service.js";
 
 const natsUrl = inject("natsUrl");
 
@@ -306,5 +311,125 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     // separately in test/unit/decode-envelope.test.ts; this test pins the
     // base64 alphabet itself.
     void original;
+  });
+
+  describe("extraEndpoints + .service extension points", () => {
+    it("registers extraEndpoints in array order alongside prompt + status", async () => {
+      const calls: string[] = [];
+      const service = startService({
+        extraEndpoints: [
+          {
+            name: "spawn",
+            subject: "agents.spawn.svc-test.testers.controller",
+            queue: "controllers",
+            metadata: { role: "controller" },
+            handler: (err, m) => {
+              if (err) return;
+              calls.push("spawn");
+              m.respond(new TextEncoder().encode("spawned"));
+            },
+          },
+          {
+            name: "list",
+            subject: "agents.list.svc-test.testers.controller",
+            handler: (err, m) => {
+              if (err) return;
+              calls.push("list");
+              m.respond(new TextEncoder().encode("[]"));
+            },
+          },
+        ],
+      });
+      service.onPrompt(() => {
+        // unused
+      });
+      await service.start();
+
+      const info = service.service.info();
+      const names = info.endpoints.map((e) => e.name);
+      // Order is implementation-defined within the underlying service but
+      // every registered endpoint must be present.
+      expect(names).toContain("prompt");
+      expect(names).toContain("status");
+      expect(names).toContain("spawn");
+      expect(names).toContain("list");
+
+      const spawnEp = info.endpoints.find((e) => e.name === "spawn");
+      expect(spawnEp?.subject).toBe("agents.spawn.svc-test.testers.controller");
+      expect(spawnEp?.queue_group).toBe("controllers");
+      expect(spawnEp?.metadata).toMatchObject({ role: "controller" });
+
+      const listEp = info.endpoints.find((e) => e.name === "list");
+      expect(listEp?.subject).toBe("agents.list.svc-test.testers.controller");
+
+      // Round-trip a request to each extra endpoint to confirm the handler is wired.
+      const spawnReply = await nc.request(spawnEp!.subject, new Uint8Array(0), { timeout: 1000 });
+      expect(new TextDecoder().decode(spawnReply.data)).toBe("spawned");
+      const listReply = await nc.request(listEp!.subject, new Uint8Array(0), { timeout: 1000 });
+      expect(new TextDecoder().decode(listReply.data)).toBe("[]");
+      expect(calls).toEqual(["spawn", "list"]);
+    });
+
+    it("rejects an extraEndpoint name that collides with `prompt`", async () => {
+      const service = startService({
+        extraEndpoints: [
+          {
+            name: "prompt",
+            subject: "agents.custom.svc-test.testers.x",
+            handler: () => {},
+          },
+        ],
+      });
+      service.onPrompt(() => {});
+      await expect(service.start()).rejects.toThrow(/extraEndpoints.*name.*prompt/);
+    });
+
+    it("rejects an extraEndpoint name that collides with `status`", async () => {
+      const service = startService({
+        extraEndpoints: [
+          {
+            name: "status",
+            subject: "agents.custom.svc-test.testers.x",
+            handler: () => {},
+          },
+        ],
+      });
+      service.onPrompt(() => {});
+      await expect(service.start()).rejects.toThrow(/extraEndpoints.*name.*status/);
+    });
+
+    it("rejects duplicate names within the extraEndpoints array", async () => {
+      const service = startService({
+        extraEndpoints: [
+          {
+            name: "spawn",
+            subject: "agents.spawn.svc-test.testers.x",
+            handler: () => {},
+          },
+          {
+            name: "spawn",
+            subject: "agents.spawn.svc-test.testers.y",
+            handler: () => {},
+          },
+        ],
+      });
+      service.onPrompt(() => {});
+      await expect(service.start()).rejects.toThrow(/extraEndpoints.*name.*spawn/);
+    });
+
+    it("`.service` getter throws before start()", () => {
+      const service = startService();
+      expect(() => service.service).toThrow(/not started/);
+    });
+
+    it("`.service` getter returns the underlying service after start()", async () => {
+      const service = startService();
+      service.onPrompt(() => {});
+      await service.start();
+
+      const info = service.service.info();
+      expect(info.id).toBe(service.instanceId);
+      expect(info.endpoints.map((e) => e.name).sort()).toEqual(["prompt", "status"]);
+    });
   });
 });
