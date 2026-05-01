@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-05-XX
+## [0.4.0] - 2026-05-01
 
 Initial release. Sister package to `@synadia-ai/agents` 0.4.0 — agent
 harness authors install both. Created by splitting the host-side

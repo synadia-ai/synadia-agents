@@ -29,9 +29,9 @@ const nc = await connect({ servers: "nats://localhost:4222" });
 
 const service = new AgentService({
   nc,
-  agent: "echo",        // metadata.agent — canonical harness identifier
-  owner: "demo",        // metadata.owner — operator / account namespace
-  name: "main",         // 5th subject token — instance name
+  agent: "echo", // metadata.agent — canonical harness identifier
+  owner: "demo", // metadata.owner — operator / account namespace
+  name: "main", // 5th subject token — instance name
   description: "Echo agent demo",
   heartbeatIntervalS: 30,
 });
@@ -68,7 +68,10 @@ const spawn: AgentServiceExtraEndpoint = {
 };
 
 const service = new AgentService({
-  nc, agent: "echo", owner: "demo", name: "main",
+  nc,
+  agent: "echo",
+  owner: "demo",
+  name: "main",
   extraEndpoints: [spawn /*, stop, list, … */],
 });
 ```
@@ -79,7 +82,9 @@ For runtime-dynamic registration, use the `.service` getter as an escape hatch:
 
 ```ts
 await service.start();
-service.service.addEndpoint("late-bound", { /* … */ });
+service.service.addEndpoint("late-bound", {
+  /* … */
+});
 ```
 
 The getter throws if accessed before `start()`, and direct calls bypass `extraEndpoints`'s duplicate-name guard — prefer the declarative form.
@@ -88,13 +93,13 @@ The getter throws if accessed before `start()`, and direct calls bypass `extraEn
 
 The SDK exports the chunk and heartbeat encoders for harnesses that need them outside the `AgentService` flow (e.g. an event-driven streamer that doesn't fit the closed-handler shape):
 
-| Export                                         | Purpose                                                                                |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `encodeChunk(chunk)`                           | Encode a typed chunk (`response` / `status` / `query`) to wire JSON bytes.             |
-| `splitResponseText(text, maxBytes, opts?)`     | UTF-8-safe chunker for long response payloads.                                         |
-| `buildHeartbeatPayload(subject, intervalS, instanceId, opts?)` | Build a §8.3 heartbeat / status payload.                       |
-| `encodeHeartbeatPayload(payload)`              | Encode that payload to wire JSON bytes.                                                |
-| `DEFAULT_MAX_PAYLOAD` / `DEFAULT_*` constants  | Fallback values when no broker `INFO.max_payload` is reported, etc.                    |
+| Export                                                         | Purpose                                                                    |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `encodeChunk(chunk)`                                           | Encode a typed chunk (`response` / `status` / `query`) to wire JSON bytes. |
+| `splitResponseText(text, maxBytes, opts?)`                     | UTF-8-safe chunker for long response payloads.                             |
+| `buildHeartbeatPayload(subject, intervalS, instanceId, opts?)` | Build a §8.3 heartbeat / status payload.                                   |
+| `encodeHeartbeatPayload(payload)`                              | Encode that payload to wire JSON bytes.                                    |
+| `DEFAULT_MAX_PAYLOAD` / `DEFAULT_*` constants                  | Fallback values when no broker `INFO.max_payload` is reported, etc.        |
 
 The `agents/openclaw`, `agents/pi`, and `agents/claude-code` harnesses in this monorepo use these primitives directly today; the controller agents in `examples/pi-headless` and `examples/claude-code-headless` are the obvious migration candidates for `AgentService`.
 
@@ -106,7 +111,10 @@ import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 
 const nc = await connect({ servers: "nats://localhost:4222" });
 const ref = new ReferenceAgent({
-  nc, agent: "echo", owner: "demo", name: "ref",
+  nc,
+  agent: "echo",
+  owner: "demo",
+  name: "ref",
   heartbeatIntervalS: 1,
 });
 await ref.start();
@@ -118,17 +126,17 @@ The caller SDK's integration tests use `ReferenceAgent` as their agent counterpa
 
 ## What's in the box
 
-| API                                                     | Purpose                                                                  |
-| ------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `new AgentService({ nc, agent, owner, name, ... })`     | Register and run a protocol-compliant agent.                             |
-| `service.onPrompt(handler)`                             | Wire up the `prompt` handler. `(envelope, response) => …`.               |
-| `service.start()` / `service.stop()`                    | Lifecycle.                                                               |
-| `service.subject` / `service.instanceId` / `.service`   | Inspection: subject builder, service id, underlying micro service.       |
-| `extraEndpoints` option                                 | Declarative custom endpoints.                                            |
-| `PromptResponse.send` / `.ask`                          | Stream chunks back; `.ask` round-trips a §7 mid-stream query.            |
-| `ReferenceAgent` (`/testing`)                           | Spec-compliant counterparty for tests.                                   |
-| `encodeChunk`, `splitResponseText`, `buildHeartbeatPayload`, `encodeHeartbeatPayload` | Wire primitives. |
-| `DEFAULT_ATTACHMENTS_OK`, `DEFAULT_HEARTBEAT_INTERVAL_S`, `DEFAULT_KEEPALIVE_INTERVAL_S`, `DEFAULT_MAX_PAYLOAD` | Server-side defaults. |
+| API                                                                                                             | Purpose                                                            |
+| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `new AgentService({ nc, agent, owner, name, ... })`                                                             | Register and run a protocol-compliant agent.                       |
+| `service.onPrompt(handler)`                                                                                     | Wire up the `prompt` handler. `(envelope, response) => …`.         |
+| `service.start()` / `service.stop()`                                                                            | Lifecycle.                                                         |
+| `service.subject` / `service.instanceId` / `.service`                                                           | Inspection: subject builder, service id, underlying micro service. |
+| `extraEndpoints` option                                                                                         | Declarative custom endpoints.                                      |
+| `PromptResponse.send` / `.ask`                                                                                  | Stream chunks back; `.ask` round-trips a §7 mid-stream query.      |
+| `ReferenceAgent` (`/testing`)                                                                                   | Spec-compliant counterparty for tests.                             |
+| `encodeChunk`, `splitResponseText`, `buildHeartbeatPayload`, `encodeHeartbeatPayload`                           | Wire primitives.                                                   |
+| `DEFAULT_ATTACHMENTS_OK`, `DEFAULT_HEARTBEAT_INTERVAL_S`, `DEFAULT_KEEPALIVE_INTERVAL_S`, `DEFAULT_MAX_PAYLOAD` | Server-side defaults.                                              |
 
 Subpath exports:
 

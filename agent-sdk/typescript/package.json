@@ -72,10 +72,10 @@
   "dependencies": {
     "@nats-io/nats-core": "^3.3.0",
     "@nats-io/services": "^3.3.0",
-    "@nats-io/transport-node": "^3.3.0",
     "@synadia-ai/agents": "file:../../client-sdk/typescript"
   },
   "devDependencies": {
+    "@nats-io/transport-node": "^3.3.0",
     "@types/node": "^20.16.0",
     "@vitest/coverage-v8": "^3.2.0",
     "eslint": "^9.0.0",
