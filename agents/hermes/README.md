@@ -32,13 +32,6 @@ cd hermes-agent
 
 After this you can run `hermes --help` from anywhere. User state lives in `~/.hermes/`.
 
-The `[nats]` extra resolves two PyPI distributions:
-
-- **`synadia-ai-agents`** (≥ 0.5) — wire-types client SDK (import root `synadia_ai.agents`).
-- **`synadia-ai-agent-service`** (≥ 0.1) — host-side agent SDK (import root `synadia_ai.agent_service`, provides `AgentService` / `PromptStream`).
-
-Without these, Hermes logs `NATS: synadia-ai-agents / synadia-ai-agent-service SDKs not installed` at startup and skips registering the NATS adapter.
-
 ### 2. Configure the gateway
 
 Edit `~/.hermes/config.yaml` and add the `platforms.nats` block. The `owner` and `session_name` fields determine your subject — `agents.prompt.hermes.<owner>.<session_name>`.
