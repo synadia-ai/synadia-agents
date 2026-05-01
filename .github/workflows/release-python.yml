@@ -65,7 +65,7 @@ jobs:
     # to GitHub for the trusted-publishing exchange with PyPI.
     environment: pypi
     permissions:
-      contents: read
+      contents: write  # softprops/action-gh-release creates the tag's GitHub Release
       id-token: write  # mints the OIDC token PyPI exchanges for a credential
     steps:
       - uses: actions/checkout@v4
