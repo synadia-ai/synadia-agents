@@ -30,6 +30,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The caller's tsconfig path-aliases `@synadia-ai/agent-service`
+      # to host source so caller-side integration tests can import the
+      # `ReferenceAgent` directly. tsc therefore needs the host's
+      # transitive deps resolvable from the host's checkout.
+      - name: Install host deps
+        working-directory: agent-sdk/typescript
+        run: npm install
       - run: npm install
       - run: npm run typecheck
       - run: npm run lint
@@ -61,6 +68,9 @@ jobs:
       - name: Install nats-server (macOS)
         if: runner.os == 'macOS'
         run: brew install nats-server
+      - name: Install host deps
+        working-directory: agent-sdk/typescript
+        run: npm install
       - run: npm install
       - run: npm run test:unit
       - run: npm run test:integration
@@ -83,6 +93,9 @@ jobs:
           tar -xzf nats-server.tar.gz --strip-components=1
           sudo mv nats-server /usr/local/bin/
           nats-server --version
+      - name: Install host deps
+        working-directory: agent-sdk/typescript
+        run: bun install
       - run: bun install
       - run: bun x vitest run test/unit
       - run: bun x vitest run test/integration
