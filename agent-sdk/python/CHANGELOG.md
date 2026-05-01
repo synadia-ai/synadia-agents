@@ -6,45 +6,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
 the 0.x line is explicitly unstable per protocol spec §11.2.
 
-## [Unreleased]
-
-### Fixed
-
-- `run_publisher` no longer propagates publish exceptions out of the
-  heartbeat task. A failed publish (e.g. `ConnectionClosedError`
-  after a broker restart) is logged and the publisher exits cleanly
-  so `AgentService.stop()` teardown stays deterministic instead of
-  re-raising mid-cleanup. `AgentService.stop()` now suppresses
-  `Exception` alongside `CancelledError` when awaiting the publisher
-  task as a belt-and-braces guard against unforeseen errors that
-  predate the catch in `run_publisher`. Surfaced by the Claude
-  reviewer bot on PR #45.
-- `test_run_publisher_emits_immediate_then_periodic` no longer
-  asserts a lower bound on heartbeat inter-arrival times.
-  `asyncio.wait_for(stop.wait(), ...)` can return slightly early on
-  a loaded event loop, and a tight lower bound flaked on contended
-  CI runners without protecting any caller-visible invariant; the
-  upper bound is the load-bearing liveness check.
-
-### Removed
-
-- Dropped the unused `utf8_byte_length` helper from the private
-  `synadia_ai.agent_service._bytes` module. It was copied wholesale
-  from the client-sdk during the 0.1.0 extraction but has no caller
-  in the agent-sdk — it's a caller-side pre-publish size check used
-  inside `synadia-ai-agents` only.
-
-### CI
-
-- The "Install nats-server" steps in
-  `client-sdk-python-agent-service.yml` and
-  `release-python-agent-service.yml` now extract the tarball into
-  `${{ runner.temp }}` instead of inheriting
-  `defaults.run.working-directory: agent-sdk/python`. Stops every
-  run from leaving an empty `nats-server-v*-linux-amd64/` parent
-  dir in `agent-sdk/python/` after the binary is `mv`'d to
-  `/usr/local/bin/`. Cosmetic only — no behavior change.
-
 ## [0.1.0] - 2026-04-30
 
 Initial release. **Extracted from `synadia-ai-agents@0.5.0`** so the
@@ -80,6 +41,32 @@ while callers can install just the client SDK.
   manual `nats` CLI poking. Moved from
   `client-sdk/python/scripts/`.
 
+### Removed
+
+- Dropped the unused `utf8_byte_length` helper from the private
+  `synadia_ai.agent_service._bytes` module. It was copied wholesale
+  from the client-sdk during the 0.1.0 extraction but has no caller
+  in the agent-sdk — it's a caller-side pre-publish size check used
+  inside `synadia-ai-agents` only.
+
+### Fixed
+
+- `run_publisher` no longer propagates publish exceptions out of the
+  heartbeat task. A failed publish (e.g. `ConnectionClosedError`
+  after a broker restart) is logged and the publisher exits cleanly
+  so `AgentService.stop()` teardown stays deterministic instead of
+  re-raising mid-cleanup. `AgentService.stop()` now suppresses
+  `Exception` alongside `CancelledError` when awaiting the publisher
+  task as a belt-and-braces guard against unforeseen errors that
+  predate the catch in `run_publisher`. Surfaced by the Claude
+  reviewer bot on PR #45.
+- `test_run_publisher_emits_immediate_then_periodic` no longer
+  asserts a lower bound on heartbeat inter-arrival times.
+  `asyncio.wait_for(stop.wait(), ...)` can return slightly early on
+  a loaded event loop, and a tight lower bound flaked on contended
+  CI runners without protecting any caller-visible invariant; the
+  upper bound is the load-bearing liveness check.
+
 ### Wire compatibility
 
 Same protocol version as the client-sdk:
@@ -103,3 +90,14 @@ For agent harness code that imported the host surface directly:
 
 The constructor signature, behavior, and wire emission are
 unchanged.
+
+### CI
+
+- The "Install nats-server" steps in
+  `client-sdk-python-agent-service.yml` and
+  `release-python-agent-service.yml` now extract the tarball into
+  `${{ runner.temp }}` instead of inheriting
+  `defaults.run.working-directory: agent-sdk/python`. Stops every
+  run from leaving an empty `nats-server-v*-linux-amd64/` parent
+  dir in `agent-sdk/python/` after the binary is `mv`'d to
+  `/usr/local/bin/`. Cosmetic only — no behavior change.
