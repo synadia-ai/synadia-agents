@@ -4,32 +4,39 @@ One home for everything built on the **NATS Agent Protocol** - the SDKs that spe
 
 Every AI agent in this repo (Claude Code, OpenClaw, PI, DSPy-ReAct, …) registers as a NATS micro service named `agents`. Callers discover, prompt, and stream from it using any language's SDK - same wire format everywhere.
 
-The TypeScript SDK, the OpenClaw and PI channel plugins, and three runnable examples ship to npm under the **`@synadia-ai/*`** scope — see each package's `package.json` for its published identity.
+The two TypeScript SDKs, the OpenClaw and PI channel plugins, and three runnable examples ship to npm under the **`@synadia-ai/*`** scope — see each package's `package.json` for its published identity.
 
 ## Repository layout
 
 ```
 synadia-agents/
 ├── README.md              ← you are here
-├── client-sdk/            ← language SDKs (callers)
+├── README-DEV.md          ← local-development build / install recipes
+├── client-sdk/            ← caller-side language SDKs (discover · prompt · stream)
 │   ├── README.md
 │   ├── typescript/        ← @synadia-ai/agents (TypeScript/Node/Bun)
 │   └── python/            ← synadia-ai-agents (Python ≥ 3.11)
+├── agent-sdk/             ← host-side language SDKs (host an agent)
+│   ├── README.md
+│   ├── typescript/        ← @synadia-ai/agent-service (TypeScript/Node/Bun)
+│   └── python/            ← synadia-ai-agent-service (Python ≥ 3.11)
 ├── agents/                ← plugins that put existing AI harnesses on NATS
 │   ├── README.md
 │   ├── hermes/            ← Hermes Agent NATS gateway 
 │   ├── pi/                ← PI Agent channel
 │   ├── openclaw/          ← OpenClaw plugin
 │   └── claude-code/       ← Claude Code MCP plugin
-└── examples/              ← apps built with the SDK (callers and agents)
+└── examples/              ← apps built with the SDKs (callers and agents)
     ├── README.md
     ├── agent-web-ui/             ← Vue 3 + Bun browser client
     ├── claude-code-headless/     ← spawn/stop many Claude Code sessions, each as its own NATS agent
-    ├── dspy/                     ← standalone agent built from scratch with the SDK (ax-llm ReAct)
+    ├── dspy/                     ← standalone agent built from scratch with the SDKs (ax-llm ReAct)
     └── pi-headless/              ← spawn/stop many PI sessions, each as its own NATS agent
 ```
 
-Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`, `agents/README.md`, `examples/README.md`) describe what lives at each level.
+Each subtree has its own `README.md`. The index READMEs (`client-sdk/README.md`, `agent-sdk/README.md`, `agents/README.md`, `examples/README.md`) describe what lives at each level.
+
+The TypeScript SDK is split across two packages — `@synadia-ai/agents` for callers and `@synadia-ai/agent-service` for hosts — both versioned in lockstep. The Python side mirrors the same split (`synadia-ai-agents` + `synadia-ai-agent-service`). Caller-only consumers install just the caller package; agent harness authors install both halves of their language's pair. See [`README-DEV.md`](README-DEV.md) for the local-dev build / install recipes.
 
 ## Reference agents and demo scripts
 
@@ -37,7 +44,7 @@ Both SDKs ship a **spec-compliant reference agent** plus a parallel set of numbe
 
 | SDK | Reference agent | Demo scripts |
 | --- | --- | --- |
-| TypeScript | `ReferenceAgent` class — [`client-sdk/typescript/src/testing/reference-agent.ts`](client-sdk/typescript/src/testing/reference-agent.ts), importable as `@synadia-ai/agents/testing`. Runnable script: [`client-sdk/typescript/examples/_run-reference-agent.ts`](client-sdk/typescript/examples/_run-reference-agent.ts). | [`client-sdk/typescript/examples/`](client-sdk/typescript/examples/) — `01-discover.ts`, `02-prompt-text.ts`, `03-prompt-attachment.ts`, `04-query-reply.ts`, `05-liveness.ts`. |
+| TypeScript | `ReferenceAgent` class — [`agent-sdk/typescript/src/testing/reference-agent.ts`](agent-sdk/typescript/src/testing/reference-agent.ts), importable as `@synadia-ai/agent-service/testing`. Runnable script: [`client-sdk/typescript/examples/_run-reference-agent.ts`](client-sdk/typescript/examples/_run-reference-agent.ts). | [`client-sdk/typescript/examples/`](client-sdk/typescript/examples/) — `01-discover.ts`, `02-prompt-text.ts`, `03-prompt-attachment.ts`, `04-query-reply.ts`, `05-liveness.ts`. |
 | Python | Runnable echo agent (with conversation memory) — [`client-sdk/python/examples/_reference_agent.py`](client-sdk/python/examples/_reference_agent.py). | [`client-sdk/python/examples/`](client-sdk/python/examples/) — `01-discover.py` through `05-liveness.py`, plus `06-chat.py` (interactive REPL). See the [examples README](client-sdk/python/examples/README.md). |
 
 The Python side also has [`tests/test_interop_e2e.py`](client-sdk/python/tests/test_interop_e2e.py), which runs the TS reference agent as a subprocess and validates wire compatibility between the two SDKs.
@@ -86,9 +93,10 @@ Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
        └─── streamed chunks ───────┘
 ```
 
-- **`client-sdk/*`** - produce envelopes, validate locally against agent metadata (`max_payload`, `attachments_ok`) and the caller's own `nc.info.max_payload` (the smaller of the two binds — the caller's broker rejects oversized publishes before they reach the agent), parse streamed chunks.
-- **`agents/*`** - register the `agents` micro service, drive the underlying AI harness, stream chunks back.
-- **`examples/*`** - demonstrate SDK usage end-to-end against real agents.
+- **`client-sdk/*`** (caller side) - produce envelopes, validate locally against agent metadata (`max_payload`, `attachments_ok`) and the caller's own `nc.info.max_payload` (the smaller of the two binds — the caller's broker rejects oversized publishes before they reach the agent), parse streamed chunks.
+- **`agent-sdk/*`** (host side) - register the `agents` micro service, run the heartbeat loop, decode envelopes, stream typed chunks back, emit the §6.5 stream terminator. Built on top of `client-sdk/*` (which owns the wire types).
+- **`agents/*`** - thin plugins that wrap an existing AI harness and call into the host SDK to expose it on NATS.
+- **`examples/*`** - demonstrate end-to-end usage against real agents (callers, controllers, and agent hosts built from scratch).
 
 ## Quickstart (TypeScript)
 
@@ -111,7 +119,7 @@ await agents.close();
 await nc.close();
 ```
 
-See `client-sdk/typescript/README.md` for install, error handling, and full examples. For Python, see `client-sdk/python/README.md`.
+See `client-sdk/typescript/README.md` for caller-side install, error handling, and full examples. To host an agent (register the service, run the heartbeat loop, stream typed chunks back), see `agent-sdk/typescript/README.md` — install both packages and use `AgentService`. For Python, see `client-sdk/python/README.md` and `agent-sdk/python/README.md`.
 
 ## License
 

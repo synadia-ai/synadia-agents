@@ -242,6 +242,8 @@ bun run test:smoke     # wire-level smoke against nats-server on 127.0.0.1:4222
 
 The smoke test drives a minimal spec-compliant service assembled from the repo's own `protocol.ts` + `attachments.ts` and verifies `$SRV.INFO` shape, heartbeat fields, four 400 paths, the `ack → response → terminator` cycle, and attachment staging + cleanup.
 
+The plugin pulls both `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side encoders / heartbeat helpers) via `file:` links to the sibling SDK checkouts. See [`README-DEV.md`](../../README-DEV.md) at the repo root for the build / install dance when iterating locally.
+
 ## License
 
 Apache-2.0

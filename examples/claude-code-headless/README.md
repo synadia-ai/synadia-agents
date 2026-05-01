@@ -1,6 +1,6 @@
 # claude-code-headless
 
-A headless NATS agent host that spawns [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions on demand via the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and exposes each one as a first-class NATS Agent Protocol **v0.3** instance (verb-first subjects + `status` endpoint).
+A headless NATS agent host that spawns [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions on demand via the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and exposes each one as a first-class NATS Agent Protocol **v0.3** instance (verb-first subjects + `status` endpoint). Built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `ReferenceAgent`).
 
 Each spawned session registers as its own NATS agent under `agents.prompt.cc.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.cc.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
 
@@ -13,10 +13,12 @@ This example is the Claude Code analogue of [`examples/pi-headless/`](../pi-head
 ## Quickstart
 
 ```bash
-# 1. Build the SDK once (workspace sibling, referenced via file:).
-cd ../../client-sdk/typescript
-bun install
-bun run build
+# 1. Build both SDKs (workspace siblings, referenced via file:). The
+#    extra `bun install` in agent-sdk re-copies the freshly-built
+#    caller dist into agent-sdk/node_modules/@synadia-ai/agents/, which
+#    is the path the host SDK's compiled output resolves at runtime.
+(cd ../../client-sdk/typescript && bun install && bun run build)
+(cd ../../agent-sdk/typescript  && bun install && bun run build)
 
 # 2. Install + run claude-code-headless.
 cd ../../examples/claude-code-headless
@@ -33,6 +35,10 @@ bun run scripts/spawn.ts \
   --allowed-tools "Read,Glob,Grep" \
   --stop-after
 ```
+
+See [`README-DEV.md`](../../README-DEV.md) at the repo root for a fuller
+walk-through of the build / install dance, including how to pick up SDK
+edits without rebooting everything.
 
 ## Configuration
 

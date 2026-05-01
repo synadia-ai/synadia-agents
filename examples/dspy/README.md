@@ -1,6 +1,6 @@
 # examples/dspy - building an agent with the SDK
 
-An example of **building a new agent from scratch** using the `@synadia-ai/agents` TypeScript SDK. It runs a [ax-llm](https://github.com/ax-llm/ax) (DSPy-style signatures + ReAct) loop with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Once started it appears as a normal NATS Agent Protocol service and can be driven by any caller - the CLI examples in `../../client-sdk/typescript/examples/`, the web UI in `../agent-web-ui/`, or your own code.
+An example of **building a new agent from scratch** using the TypeScript SDK pair: caller-side primitives from `@synadia-ai/agents` (subjects, the `parseNatsUrl` helper) and the host-side `AgentService` from `@synadia-ai/agent-service` (registration, prompt + status endpoints, heartbeat loop, terminator). It runs a [ax-llm](https://github.com/ax-llm/ax) (DSPy-style signatures + ReAct) loop with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Once started it appears as a normal NATS Agent Protocol service and can be driven by any caller - the CLI examples in `../../client-sdk/typescript/examples/`, the web UI in `../agent-web-ui/`, or your own code.
 
 - `list_files` / `read_file` / `write_file` refuse any path that escapes the sandbox root.
 - `bash` runs commands with `cwd` set to the sandbox root, a 30 s timeout, and 8000-char output truncation. **Note:** a shell is a soft boundary - the model can `cd ..`, `curl`, etc. Don't point this at anything you care about.
@@ -23,15 +23,20 @@ agents.status.dspy.<owner>.react       # status request/response (§8.7 (v0.3))
 ## Run
 
 ```sh
-# 1. source your API key (NVIDIA OpenAI-compatible endpoint)
+# 1. Build both SDKs (workspace siblings, referenced via file:).
+(cd ../../client-sdk/typescript && bun install && bun run build)
+(cd ../../agent-sdk/typescript  && bun install && bun run build)
+
+# 2. source your API key (NVIDIA OpenAI-compatible endpoint).
 source ../../.env
 
-# 2. install deps (requires the client SDK to be built first - see monorepo README)
+# 3. install deps and start.
 bun install
-
-# 3. start
 bun run start
 ```
+
+See [`README-DEV.md`](../../README-DEV.md) at the repo root for the full
+local-development build / install recipes.
 
 Environment variables:
 

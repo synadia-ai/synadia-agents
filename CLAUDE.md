@@ -28,9 +28,10 @@ semantics). When reasoning about wire shape, expected on-the-wire
 behaviour, or testing a new SDK / agent, read these first — they are
 the authoritative on-the-wire counterpart to the spec doc.
 
-- **TypeScript**: `client-sdk/typescript/src/testing/reference-agent.ts`
+- **TypeScript**: `agent-sdk/typescript/src/testing/reference-agent.ts`
   — the `ReferenceAgent` class, importable from third-party packages
-  via `@synadia-ai/agents/testing`. Runnable script:
+  via `@synadia-ai/agent-service/testing` (post-SDK-split — pre-split
+  it lived under `@synadia-ai/agents/testing`). Runnable script:
   `client-sdk/typescript/examples/_run-reference-agent.ts`.
 - **Python**: `client-sdk/python/examples/_reference_agent.py` — a
   runnable echo agent with conversation memory, used as the test
@@ -224,7 +225,7 @@ and publish to PyPI via `uv publish`.
 
 - `README.md` — repo overview, layout, subject namespace, wire
   shape.
-- `client-sdk/typescript/src/testing/reference-agent.ts` and
+- `agent-sdk/typescript/src/testing/reference-agent.ts` and
   `client-sdk/python/examples/_reference_agent.py` — canonical
   spec-compliant reference agents (see "Reference agents" section
   above). Read these before touching anything wire-shape-y.

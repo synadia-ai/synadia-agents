@@ -40,8 +40,7 @@
       "@synadia-ai/agent-service": ["./src/index.ts"],
       "@synadia-ai/agent-service/testing": ["./src/testing/index.ts"],
       "@synadia-ai/agents": ["../../client-sdk/typescript/src/index.ts"],
-      "@synadia-ai/agents/errors": ["../../client-sdk/typescript/src/errors.ts"],
-      "@synadia-ai/agents/testing": ["../../client-sdk/typescript/src/testing/index.ts"]
+      "@synadia-ai/agents/errors": ["../../client-sdk/typescript/src/errors.ts"]
     }
   },
   "include": [

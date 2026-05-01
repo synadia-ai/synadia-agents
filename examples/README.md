@@ -1,15 +1,15 @@
 # Examples
 
-End-to-end apps built with the SDK in `../client-sdk/`. Some are **callers** that drive agents from `../agents/`; others **build a new agent from scratch** on top of the SDK. Either way they're the fastest path to a working system.
+End-to-end apps built with the SDKs in `../client-sdk/` (caller side) and `../agent-sdk/` (host side). Some are **callers** that drive agents from `../agents/`; others **build a new agent from scratch** on top of the host SDK. Either way they're the fastest path to a working system.
 
 ## Examples in this monorepo
 
 | Path                    | Kind   | Stack                                    | What it shows                                                                 |
 | ----------------------- | ------ | ---------------------------------------- | ----------------------------------------------------------------------------- |
 | `agent-web-ui/`         | caller | Vue 3 + Bun (server) + `@synadia-ai/agents` | Browser client for discovery, prompting with attachments, and streaming responses. Renders mid-stream `query` chunks inline with allow/deny controls. When a pi-headless controller is discovered, a second "PI Exec" workspace unlocks: spawn form, session list with lifetime/queue metadata, and a fan-out composer that streams one prompt across N working directories in parallel. |
-| `claude-code-headless/` | agent  | Bun + `@synadia-ai/agents` + [`@anthropic-ai/claude-agent-sdk`](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) | Claude Code analogue of `pi-headless/`. One process spawns and manages headless Claude Code sessions; each registers as its OWN first-class NATS agent at `agents.prompt.cc.<owner>.<session_id>` (v0.3 verb-first). A controller at `agents.prompt.cc.<owner>.exec` adds `spawn`/`stop`/`list` endpoints alongside the protocol-required `prompt`. Per-token text streaming, tool calls + results forwarded as inline cards, mid-stream §7 query chunks for permission requests, per-turn cost tracking. Wire-compatible with the same callers as `pi-headless/` (including `agent-web-ui/`). |
-| `dspy/`                 | agent  | Bun + `@synadia-ai/agents` + [ax-llm](https://github.com/ax-llm/ax) | A standalone NATS Agent Protocol service built from scratch with the SDK's `ReferenceAgent` helper. Runs a DSPy-style ReAct loop with four sandboxed tools (`list_files`, `read_file`, `write_file`, `bash`). Registers as type token `dspy` and can be driven by any caller - including `agent-web-ui/`. |
-| `pi-headless/`          | agent  | Bun/Node + `@synadia-ai/agents` + `@mariozechner/pi-coding-agent` | One process that spawns and manages any number of headless PI coding-agent sessions. Each session registers as its OWN first-class NATS agent at `agents.prompt.pi.<owner>.<session_id>` (v0.3 verb-first) - discoverable and promptable with any protocol client. A small controller at `agents.prompt.pi.<owner>.exec` adds request/reply endpoints for session lifecycle (`spawn`, `stop`, `list`) alongside the protocol-required `prompt`. Pairs naturally with `agent-web-ui/` for an interactive spawn/prompt/fan-out UI. |
+| `claude-code-headless/` | agent  | Bun + `@synadia-ai/agents` + `@synadia-ai/agent-service` + [`@anthropic-ai/claude-agent-sdk`](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) | Claude Code analogue of `pi-headless/`. One process spawns and manages headless Claude Code sessions; each registers as its OWN first-class NATS agent at `agents.prompt.cc.<owner>.<session_id>` (v0.3 verb-first) via the host SDK's `ReferenceAgent`. A controller at `agents.prompt.cc.<owner>.exec` adds `spawn`/`stop`/`list` endpoints alongside the protocol-required `prompt`. Per-token text streaming, tool calls + results forwarded as inline cards, mid-stream §7 query chunks for permission requests, per-turn cost tracking. Wire-compatible with the same callers as `pi-headless/` (including `agent-web-ui/`). |
+| `dspy/`                 | agent  | Bun + `@synadia-ai/agents` + `@synadia-ai/agent-service` + [ax-llm](https://github.com/ax-llm/ax) | A standalone NATS Agent Protocol service built from scratch with the host SDK's `AgentService` helper. Runs a DSPy-style ReAct loop with four sandboxed tools (`list_files`, `read_file`, `write_file`, `bash`). Registers as type token `dspy` and can be driven by any caller - including `agent-web-ui/`. |
+| `pi-headless/`          | agent  | Bun/Node + `@synadia-ai/agents` + `@synadia-ai/agent-service` + `@mariozechner/pi-coding-agent` | One process that spawns and manages any number of headless PI coding-agent sessions. Each session registers as its OWN first-class NATS agent at `agents.prompt.pi.<owner>.<session_id>` (v0.3 verb-first) via the host SDK's `ReferenceAgent` — discoverable and promptable with any protocol client. A small controller at `agents.prompt.pi.<owner>.exec` adds request/reply endpoints for session lifecycle (`spawn`, `stop`, `list`) alongside the protocol-required `prompt`. Pairs naturally with `agent-web-ui/` for an interactive spawn/prompt/fan-out UI. |
 
 ## Architecture pattern (browser examples)
 
@@ -34,14 +34,18 @@ Browser (Vue / React / …)  ⇄  server process (SDK + NATS)  ⇄  NATS  ⇄  a
 
 **In agent examples (like `dspy/`):**
 
-1. **Building on `ReferenceAgent`** - the SDK's `@synadia-ai/agents/testing` helper handles registration, heartbeats, and stream termination for you.
-2. **Envelope handling** - accept both plain text and JSON envelopes.
-3. **Chunk streaming** - emit `status` for progress/keep-alive and `response` for content deltas.
+1. **Building on `AgentService` or `ReferenceAgent`** - the host SDK at `@synadia-ai/agent-service` handles registration, heartbeats, and stream termination for you. `AgentService` is the production-shape helper; `ReferenceAgent` (via `@synadia-ai/agent-service/testing`) is the test counterparty `pi-headless` and `claude-code-headless` build on.
+2. **Envelope handling** - accept both plain text and JSON envelopes (`decodeEnvelope` from `@synadia-ai/agents`).
+3. **Chunk streaming** - emit `status` for progress/keep-alive and `response` for content deltas (`encodeChunk` from `@synadia-ai/agent-service`, or `response.send(...)` when using `AgentService`).
 4. **Metadata** - advertise `max_payload` and `attachments_ok` correctly.
 
 ## Adding a new example
 
 1. Create `examples/<name>/` with a minimal project.
-2. Depend on the SDK via workspace link (`file:../../client-sdk/typescript` for TS examples) so a local SDK change is picked up immediately.
+2. Depend on the SDKs via workspace links so a local SDK change is picked up immediately:
+   - Caller examples (`agent-web-ui/`-style): just `"@synadia-ai/agents": "file:../../client-sdk/typescript"`.
+   - Agent examples: also `"@synadia-ai/agent-service": "file:../../agent-sdk/typescript"`.
 3. Keep the example focused on one thing - don't bundle "discovery" and "permission handling" and "attachments" into one sprawling demo unless that's the *point*.
 4. Add a row to the table above, plus a README in the example explaining **what it demonstrates** and **how to run it**.
+
+The repo's [`README-DEV.md`](../README-DEV.md) covers the SDK build / install dance for local development.

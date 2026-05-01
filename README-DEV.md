@@ -149,5 +149,4 @@ A Bun workspace would symlink the `file:` packages and remove most of
 the rebuild/reinstall dance, at the cost of a non-trivial restructure
 (root `package.json`, repo-wide `bun.lock`, and a publish workflow that
 correctly handles workspace deps). The current layout keeps each
-package self-contained and publishable on its own; the rebuild
-recipes above are short enough to live in muscle memory.
+package self-contained and publishable on its own.
