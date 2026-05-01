@@ -1,0 +1,56 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": false,
+
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "verbatimModuleSyntax": true,
+
+    "skipLibCheck": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@synadia-ai/agent-service": ["./src/index.ts"],
+      "@synadia-ai/agent-service/testing": ["./src/testing/index.ts"],
+      "@synadia-ai/agents": ["../../client-sdk/typescript/src/index.ts"],
+      "@synadia-ai/agents/errors": ["../../client-sdk/typescript/src/errors.ts"],
+      "@synadia-ai/agents/testing": ["../../client-sdk/typescript/src/testing/index.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "examples/**/*.ts",
+    "*.config.ts",
+    "*.config.mts",
+    "eslint.config.mjs"
+  ],
+  "exclude": ["node_modules", "dist", "coverage"]
+}

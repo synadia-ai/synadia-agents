@@ -1,0 +1,90 @@
+{
+  "name": "@synadia-ai/agent-service",
+  "version": "0.4.0",
+  "description": "Server-side TypeScript SDK for the NATS Agent Protocol — host an agent (AgentService, ReferenceAgent, server-side helpers).",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "require": "./dist/testing.cjs",
+      "default": "./dist/testing.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run test",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "nats",
+    "ai",
+    "agents",
+    "agent-protocol",
+    "synadia",
+    "sdk",
+    "agent-service",
+    "host"
+  ],
+  "license": "Apache-2.0",
+  "author": "Synadia Communications",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "agent-sdk/typescript"
+  },
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agent-sdk/typescript",
+  "bugs": {
+    "url": "https://github.com/synadia-ai/synadia-agents/issues"
+  },
+  "publishConfig": {
+    "access": "restricted"
+  },
+  "dependencies": {
+    "@nats-io/nats-core": "^3.3.0",
+    "@nats-io/services": "^3.3.0",
+    "@nats-io/transport-node": "^3.3.0",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "@vitest/coverage-v8": "^3.2.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.0",
+    "tsup": "^8.3.0",
+    "typedoc": "^0.26.0",
+    "typescript": "~5.6.0",
+    "typescript-eslint": "^8.10.0",
+    "vitest": "^3.2.0"
+  }
+}
