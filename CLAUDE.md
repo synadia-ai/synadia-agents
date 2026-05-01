@@ -208,9 +208,12 @@ gh api -X POST repos/synadia-ai/synadia-agents/environments/pypi/deployment-bran
   -f name='new-prefix-v*' -f type=tag
 ```
 
-(Repo Admin required —
+(Repo Admin required. Sanity check:
 `gh api repos/synadia-ai/synadia-agents --jq '.permissions.admin'`
-should return `true`.)
+should print exactly `true`. Anything else means no admin in the
+current auth context — `false` is a real "you don't have it,"
+while `null` typically means a fine-grained PAT or GitHub App
+token that doesn't surface the permissions sub-object at all.)
 
 ## CI and the Claude reviewer bot
 
