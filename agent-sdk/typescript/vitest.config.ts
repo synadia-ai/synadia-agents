@@ -10,6 +10,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // caller as an external — see tsup.config.ts.
 const CALLER_SRC = resolve(__dirname, "../../client-sdk/typescript/src");
 
+// Self-alias for symmetry — host tests use relative paths today, but a
+// future test that does `from "@synadia-ai/agent-service"` should
+// resolve to source instead of going through the package.json `main`
+// (which points at `./dist/index.cjs` and would require a build).
+const HOST_SRC = resolve(__dirname, "src");
+
 export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
@@ -26,8 +32,9 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      "@synadia-ai/agent-service/testing": `${HOST_SRC}/testing/index.ts`,
+      "@synadia-ai/agent-service": `${HOST_SRC}/index.ts`,
       "@synadia-ai/agents/errors": `${CALLER_SRC}/errors.ts`,
-      "@synadia-ai/agents/testing": `${CALLER_SRC}/testing/index.ts`,
       "@synadia-ai/agents": `${CALLER_SRC}/index.ts`,
     },
   },
