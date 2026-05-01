@@ -115,15 +115,15 @@ describe("AgentSubject (§2 v0.3 — verb-first)", () => {
     });
 
     it("validates the override against §2 MUST rules", () => {
-      expect(() =>
-        AgentSubject.new("claude-code", "alice", "s1", { subjectToken: "" }),
-      ).toThrow(InvalidSubjectTokenError);
+      expect(() => AgentSubject.new("claude-code", "alice", "s1", { subjectToken: "" })).toThrow(
+        InvalidSubjectTokenError,
+      );
       expect(() =>
         AgentSubject.new("claude-code", "alice", "s1", { subjectToken: "$sys" }),
       ).toThrow(InvalidSubjectTokenError);
-      expect(() =>
-        AgentSubject.new("claude-code", "alice", "s1", { subjectToken: "c.c" }),
-      ).toThrow(InvalidSubjectTokenError);
+      expect(() => AgentSubject.new("claude-code", "alice", "s1", { subjectToken: "c.c" })).toThrow(
+        InvalidSubjectTokenError,
+      );
     });
   });
 });
