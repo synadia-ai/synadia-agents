@@ -2,7 +2,7 @@
 
 **SDKs and ready-to-run agent plugins for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs).**
 
-The NATS Agent Protocol lets any AI agent — Claude Code, OpenClaw, PI, Hermes, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official caller-side and agent-side SDKs (TypeScript and Python), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
+The NATS Agent Protocol lets any AI agent — Claude Code, OpenClaw, PI, Hermes, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official **caller** and **host** SDKs (TypeScript and Python — see [SDKs](#sdks) below), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
 
 ## Get started — pick your path
 
@@ -28,12 +28,12 @@ Subjects follow a verb-first pattern: `agents.{verb}.{token}.{owner}.{session}` 
 
 ## SDKs
 
-Two halves per language. **Caller** SDKs discover and prompt agents; **host** SDKs let you register and serve one. Caller-only consumers install just the caller package; agent-host authors install both.
+Two halves per language. The **caller** SDK (`client-sdk/`) discovers and prompts agents; the **host** SDK (`agent-sdk/`) lets you register and serve one. Caller-only consumers install just the caller package; agent-host authors install both halves of their language's pair.
 
-|  | TypeScript | Python |
-| --- | --- | --- |
-| **Caller** | [`@synadia-ai/agents`](client-sdk/typescript/) | [`synadia-ai-agents`](client-sdk/python/) |
-| **Host** | [`@synadia-ai/agent-service`](agent-sdk/typescript/) | [`synadia-ai-agent-service`](agent-sdk/python/) |
+| Side | Folder | TypeScript | Python |
+| --- | --- | --- | --- |
+| **Caller** | [`client-sdk/`](client-sdk/) | [`@synadia-ai/agents`](client-sdk/typescript/) | [`synadia-ai-agents`](client-sdk/python/) |
+| **Host** | [`agent-sdk/`](agent-sdk/) | [`@synadia-ai/agent-service`](agent-sdk/typescript/) | [`synadia-ai-agent-service`](agent-sdk/python/) |
 
 Both languages stay in lockstep on the wire format, validated by a cross-SDK interop test ([`tests/test_interop_e2e.py`](client-sdk/python/tests/test_interop_e2e.py)) that runs the TS reference agent against the Python client.
 
@@ -56,9 +56,13 @@ nats sub 'agents.hb.*.*.*'
 
 Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>.
 
-## Quickstart (TypeScript)
+## Quickstart
 
-You bring a `NatsConnection`; the SDK uses it. Use `@nats-io/transport-node` for TCP or `wsconnect` from `@nats-io/nats-core` for WebSocket.
+Both snippets use TypeScript and bring their own `NatsConnection` — use `@nats-io/transport-node` for TCP or `wsconnect` from `@nats-io/nats-core` for WebSocket.
+
+### Caller side — discover and prompt an agent
+
+Uses the **caller SDK** ([`client-sdk/typescript/`](client-sdk/typescript/) → `@synadia-ai/agents`).
 
 ```ts
 import { connect } from "@nats-io/transport-node";
@@ -77,7 +81,37 @@ await agents.close();
 await nc.close();
 ```
 
-For caller-side install, error handling, and full examples see [`client-sdk/typescript/README.md`](client-sdk/typescript/README.md). To host an agent, see [`agent-sdk/typescript/README.md`](agent-sdk/typescript/README.md). The Python equivalents live at [`client-sdk/python/README.md`](client-sdk/python/README.md) and [`agent-sdk/python/README.md`](agent-sdk/python/README.md).
+### Host side — serve an agent on NATS
+
+Uses the **host SDK** ([`agent-sdk/typescript/`](agent-sdk/typescript/) → `@synadia-ai/agent-service`). Agent-host authors install both packages — caller types and helpers stay imported from `@synadia-ai/agents`.
+
+```ts
+import { connect } from "@nats-io/transport-node";
+import { AgentService } from "@synadia-ai/agent-service";
+
+const nc = await connect({ servers: "nats://localhost:4222" });
+
+const service = new AgentService({
+  nc,
+  agent: "echo", // metadata.agent — canonical harness identifier
+  owner: "demo", // metadata.owner — operator / account namespace
+  name: "main", // 5th subject token — instance name
+  description: "Echo agent demo",
+});
+
+service.onPrompt(async (envelope, response) => {
+  await response.send(`echo: ${envelope.prompt}`);
+});
+
+await service.start();
+console.log(`listening on ${service.subject.prompt}`);
+
+// on shutdown:
+await service.stop();
+await nc.close();
+```
+
+For full install, error handling, and longer examples see the per-package READMEs: caller — [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/); host — [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/).
 
 ## Examples
 
