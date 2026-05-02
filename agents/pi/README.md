@@ -138,7 +138,7 @@ A successful `$SRV.INFO.agents` response for a PI session looks like:
 }
 ```
 
-If you see your `agents.prompt.pi.<owner>.<session>` subject in the response, you're discoverable. Multiple PI sessions show up as multiple responses to the same query.
+If you see your `agents.prompt.pi.<owner>.<session>` subject in the response, you're discoverable. Multiple PI sessions show up as multiple responses to the same query — the `cwd` metadata field tells you which working directory each one was started from, useful when you've got several PI windows open and need to pick the right session to prompt.
 
 ## Talk to your session
 

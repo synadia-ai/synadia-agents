@@ -26,6 +26,8 @@ After restarting OpenClaw, your agent is reachable at:
 agents.prompt.oc.<owner>.<agentName>
 ```
 
+> **Only one account is active at a time.** The plugin runs a single gateway process and registers one account on it. Adding multiple `accounts.<id>` blocks in your config doesn't register multiple agents simultaneously — pick the one you want active.
+
 ### Three common configurations
 
 **Local dev — public demo NATS:**
@@ -226,7 +228,7 @@ When OpenClaw's `sendText` fires (the agent proactively pushing a message rather
 agents.oc.<owner>.<agentName>.outbound
 ```
 
-This is a fire-and-forget pub/sub subject — subscribe with `nats sub agents.oc.<owner>.<agentName>.outbound` to consume them. It's an OpenClaw-specific extension, not part of the protocol; the subject deliberately sits under the agent root for easy locating relative to the prompt subject.
+This is a fire-and-forget pub/sub subject — subscribe with `nats sub agents.oc.<owner>.<agentName>.outbound` to consume them. **The payload is raw UTF-8 text, not a JSON envelope** — pipe it straight into your consumer, don't try to parse it as JSON. It's an OpenClaw-specific extension, not part of the protocol; the subject deliberately sits under the agent root for easy locating relative to the prompt subject.
 
 ## Multi-tenancy
 
@@ -248,6 +250,8 @@ bun install
 bun run test           # protocol unit tests, no nats-server needed
 bun run test:smoke     # wire-level smoke against nats-server on 127.0.0.1:4222
 ```
+
+The smoke test needs a `nats-server` running on `127.0.0.1:4222` — install per [the upstream docs](https://docs.nats.io/running-a-nats-service/introduction/installation) (`brew install nats-server` on macOS) then start it in another terminal with `nats-server`.
 
 The smoke test drives a minimal spec-compliant service assembled from this repo's own protocol module and verifies `$SRV.INFO` shape, heartbeat fields, the four 400 paths, the `ack → response → terminator` cycle, and attachment staging + cleanup.
 
