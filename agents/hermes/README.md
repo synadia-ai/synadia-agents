@@ -44,7 +44,7 @@ Toggle **NATS** with `SPACE` and confirm with `ENTER`.
 
 - **`Use the public demo server (nats://demo.nats.io)`** — zero-config, public, ephemeral. Fine for a first smoke test, **not** for anything sensitive.
 - **`Enter a custom NATS server URL`** — point at your own `nats-server` or a Synadia Cloud cluster.
-- **`Use an existing NATS CLI context`** — picks one of your `~/.config/nats/context/*.json`. Recommended for anything beyond the demo server; see [Via a NATS CLI context](#configure) below for how to create one.
+- **`Use an existing NATS CLI context`** — picks one of your `~/.config/nats/context/*.json`. Recommended for anything beyond the demo server; see [Via a NATS CLI context](#via-a-nats-cli-context-recommended-for-anything-beyond-demonatsio) below for how to create one.
 
 **Owner and session name.** The wizard then prompts for:
 
@@ -359,10 +359,10 @@ Current deferrals (candidates for future phases, not bugs):
 ## Troubleshooting
 
 - **`NATS: synadia-ai-agents / synadia-ai-agent-service SDKs not installed` at gateway startup.** The `[nats]` extra wasn't installed. Re-run `./setup-hermes.sh`, or `uv sync --all-extras --locked` from the hermes-agent clone. If `setup-hermes.sh` should have done this for you, it's a packaging bug — file an issue.
-- **Gateway not discovered / `nats micro list` returns nothing.** Gateway didn't register. Check `platforms.nats.enabled: true`, that the NATS URL/context resolves, and look for `[Nats] Connected — subscribed at …` in the gateway log. If another Hermes instance already holds the same `(agent, owner, session_name)` on this host, the log shows `NATS agent identity hermes:<owner>:<session_name> already in use (PID …)`.
+- **Gateway not discovered / `nats micro list` returns nothing.** Gateway didn't register. Check `platforms.nats.enabled: true`, that the NATS URL/context resolves, and look for `[Nats] Connected — subscribed at …` in the gateway log. (That line logs at INFO; in the foreground you need `hermes gateway run -v` to surface it — `hermes gateway run` defaults to WARNING. For an installed service, check the systemd/launchd journal.) If another Hermes instance already holds the same `(agent, owner, session_name)` on this host, the log shows `NATS agent identity hermes:<owner>:<session_name> already in use (PID …)`.
 - **Stale platform lock blocks restart.** Lives at `~/.local/state/hermes/gateway-locks/nats-<hash>.lock`. Verify the recorded PID is dead (`ps -p <PID>`), then `rm` the file.
 - **`nats req` returns only one chunk.** That's expected — `nats request` shows the first reply. For the full streamed body use `examples/02-prompt-text.py` (or any caller iterating the SDK's async iterator).
-- **Caller hangs after the first chunk; `is_online()` returns False.** Gateway probably crashed or lost NATS connectivity. The protocol marks an agent offline after ~3 missed heartbeats (~90 s at the 30 s default). Check the gateway log, or query `agents.status.hermes.<owner>.<session_name>` directly.
+- **Caller hangs after the first chunk; `is_online()` returns False.** Gateway probably crashed or lost NATS connectivity. The protocol marks an agent offline after ~3 missed heartbeats (~90 s at the 30 s default). Check the gateway log (foreground: re-run with `hermes gateway run -v` to surface INFO output; service: systemd/launchd journal), or query `agents.status.hermes.<owner>.<session_name>` directly.
 - **Dangerous command hangs for 5 minutes then fails.** The caller didn't handle the `query` chunk. Drain `query` in your SDK loop (see `examples/04-query-reply.py`) — after `gateway_timeout` (default 300 s) the command is auto-denied.
 - **`400 attachment[N] has invalid base64 content`.** The caller emitted URL-safe base64 or unpadded output. Switch to RFC 4648 §4 (standard alphabet, padded).
 - **`ValueError: could not parse max_payload '…'`.** `max_payload` must match `\d+(B|KB|MB|GB)` — e.g. `"1MB"`, `"512KB"`, `"104857600B"`.
