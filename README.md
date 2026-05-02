@@ -105,6 +105,10 @@ service.onPrompt(async (envelope, response) => {
 
 await service.start();
 console.log(`listening on ${service.subject.prompt}`);
+
+// on shutdown:
+await service.stop();
+await nc.close();
 ```
 
 For full install, error handling, and longer examples see the per-package READMEs: caller — [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/); host — [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/).
