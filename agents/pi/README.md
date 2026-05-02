@@ -58,7 +58,7 @@ Config file lives at `~/.pi/agent/nats-channel.json`:
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `context` | no | `demo.nats.io` | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). |
+| `context` | no | — | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). When unset, falls back to `$NATS_URL` or, if that's also unset, the built-in `demo.nats.io`. |
 | `sessionName` | no | sanitized basename of CWD | The 5th subject token. Override to give your session a stable, addressable name. |
 
 The `owner` token (4th) is always derived from `$USER` — there's no override for it. For multi-tenant isolation, see [Multi-tenancy](#multi-tenancy) below.
@@ -106,6 +106,40 @@ nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
 nats sub 'agents.hb.*.*.*'
 ```
 
+A successful `$SRV.INFO.agents` response for a PI session looks like:
+
+```json
+{
+  "type": "io.nats.micro.v1.info_response",
+  "name": "agents",
+  "id": "JC8O0IGAWI5APOHLAOA96N",
+  "version": "0.4.0",
+  "description": "PI agent (my-session) in /home/me",
+  "metadata": {
+    "agent": "pi",
+    "owner": "me",
+    "session": "my-session",
+    "protocol_version": "0.3",
+    "cwd": "/home/me"
+  },
+  "endpoints": [
+    {
+      "name": "prompt",
+      "subject": "agents.prompt.pi.me.my-session",
+      "queue_group": "agents",
+      "metadata": { "max_payload": "8MB", "attachments_ok": "true" }
+    },
+    {
+      "name": "status",
+      "subject": "agents.status.pi.me.my-session",
+      "queue_group": "agents"
+    }
+  ]
+}
+```
+
+If you see your `agents.prompt.pi.<owner>.<session>` subject in the response, you're discoverable. Multiple PI sessions show up as multiple responses to the same query.
+
 ## Talk to your session
 
 From the CLI:
@@ -149,6 +183,8 @@ When a request envelope carries `attachments`, each file is decoded and staged a
 
 The absolute paths are prepended to the prompt text so PI's model can open them with its file tools. Files staged earlier in a session stay on disk so follow-up turns can reference them; the whole `<session>/` directory is removed on session shutdown.
 
+Encode files with `base64 -w0 <file>` (Linux/macOS) or `Buffer.from(bytes).toString("base64")` in Node before embedding in the JSON envelope. Caller SDKs do this for you.
+
 Caller-side limits (rejected with `400` if violated):
 
 - `content` must be standard-alphabet padded base64 — no URL-safe variant, no whitespace.
@@ -181,6 +217,7 @@ Deliberate deferrals:
 - **`nats req` hangs or returns nothing** — pass `--wait-for-empty`. The protocol ends streams with an empty-body message, not a single response.
 - **`400 attachment[N] has invalid base64 content`** — the caller emitted URL-safe base64 or unpadded output. `Buffer.from(bytes).toString("base64")` (Node) produces the right form.
 - **`400 attachment[N] has unsafe filename`** — send the basename only (`"report.pdf"`), not a path (`"./reports/report.pdf"`).
+- **Stale attachments piling up under `~/.pi/agent/attachments/`** — clean session shutdown removes the whole `<session>/` tree, but a force-quit or crash leaves the per-request UUID directories on disk. Safe to `rm -rf ~/.pi/agent/attachments/<session>/` between runs if you don't need to re-reference earlier attachments.
 
 ## See also
 

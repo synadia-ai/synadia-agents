@@ -18,7 +18,7 @@ The fastest path is the wizard:
 openclaw configure --section channels
 ```
 
-Pick **NATS Agent Network** and answer the prompts. The only required field is the **agent name**; the rest fall back to sensible defaults (`demo.nats.io`, `default` owner, no auth).
+Pick **NATS Agent Network** and answer the prompts. The only required field is the **agent name** (alphanumeric, `-`, `_` — no spaces or dots; it becomes part of a NATS subject); the rest fall back to sensible defaults (`demo.nats.io`, `default` owner, no auth).
 
 After restarting OpenClaw, your agent is reachable at:
 
@@ -124,6 +124,41 @@ nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
 nats sub 'agents.hb.*.*.*'
 ```
 
+A successful `$SRV.INFO.agents` response for an OpenClaw agent looks like:
+
+```json
+{
+  "type": "io.nats.micro.v1.info_response",
+  "name": "agents",
+  "id": "PYYZRKNVLK6CA1LC6L7FZU",
+  "version": "0.4.0",
+  "description": "My OpenClaw agent",
+  "metadata": {
+    "agent": "openclaw",
+    "owner": "me",
+    "session": "default",
+    "protocol_version": "0.3",
+    "platform": "openclaw",
+    "description": "My OpenClaw agent"
+  },
+  "endpoints": [
+    {
+      "name": "prompt",
+      "subject": "agents.prompt.oc.me.my-agent",
+      "queue_group": "agents",
+      "metadata": { "max_payload": "8MB", "attachments_ok": "true" }
+    },
+    {
+      "name": "status",
+      "subject": "agents.status.oc.me.my-agent",
+      "queue_group": "agents"
+    }
+  ]
+}
+```
+
+If you see your `agents.prompt.oc.<owner>.<agentName>` subject in the response, you're discoverable.
+
 ## Talk to your agent
 
 From the CLI:
@@ -174,6 +209,8 @@ When a request envelope carries `attachments`, each file is decoded and staged a
 `<stateDir>` is the OpenClaw state directory (typically `~/.openclaw`). The `media/` prefix is required: OpenClaw's media-access allowlist only permits paths under `<stateDir>/media`, so staged files have to live there for the agent's tools to be allowed to read them.
 
 The absolute paths are prepended to the prompt text so OpenClaw's pipeline (and any tool the agent has access to) can open them by path. Files staged earlier in the gateway's lifetime stay on disk so follow-up turns can reference them; the whole `<agentName>/` directory is removed when the gateway stops.
+
+Encode files with `base64 -w0 <file>` (Linux/macOS) or `Buffer.from(bytes).toString("base64")` in Node before embedding in the JSON envelope. Caller SDKs do this for you.
 
 Caller-side limits (rejected with `400` if violated):
 
