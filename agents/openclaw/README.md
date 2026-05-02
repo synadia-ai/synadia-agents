@@ -75,11 +75,11 @@ openclaw gateway restart
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `agentName` | yes | - | 5th subject token (`agents.prompt.oc.<owner>.<agentName>`) |
-| `url` | no | `nats://localhost:4222` | NATS server URL. Ignored when `context` is set and resolves successfully. |
+| `url` | no | `nats://demo.nats.io` | NATS server URL. Ignored when `context` is set and resolves successfully. |
 | `description` | no | `OpenClaw agent <agentName>` | Shown via `$SRV.INFO` |
 | `owner` | no | `default` | 4th subject token — operator/account namespace, per §2 (v0.3) verb-first scheme. |
 | `credentials` | no | - | Path to a `.creds` file for NATS authentication. |
-| `context` | no | - | Name of a `nats` CLI context (file under `~/.config/nats/context/<name>.json`) to source `url` and `credentials` from. Set by the setup wizard's "context" input. Per-field `url`/`credentials` and the env-var equivalents still take precedence — see [Resolution order](#resolution-order). |
+| `context` | no | - | Name of a `nats` CLI context (file under `~/.config/nats/context/<name>.json`) to source `url` and `credentials` from. Set by the setup wizard's "context" input. **Overrides** any per-field `url`/`credentials` in this account; per-field env vars (`$NATS_URL`, `$NATS_CREDENTIALS`) and `$NATS_CONTEXT` still take precedence — see [Resolution order](#resolution-order). |
 | `enabled` | no | `true` | Set to `false` to keep the account block but disable connecting it. |
 
 > **Migrating from v0.1:** the old `org` field has been renamed `owner` (§3.2 terminology). The old name is still accepted as an alias with a deprecation warning in logs.
