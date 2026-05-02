@@ -13,9 +13,8 @@ view: layout, subject namespace, wire shape, quickstart. Read it before
 making changes that touch user-visible surface.
 
 The protocol spec is **not vendored here**. Canonical source:
-[`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs).
-Either checkout it as a sibling at `../nats-agent-sdk-docs/` or link to
-the GitHub URL when reasoning about wire shape. Local
+[`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs)
+— always link to the GitHub URL when reasoning about wire shape. Local
 `docs/protocol-mapping.md` files inside each SDK translate spec → impl;
 they are not the spec itself.
 
