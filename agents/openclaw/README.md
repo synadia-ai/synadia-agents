@@ -168,8 +168,10 @@ await nc.close();
 When a request envelope carries `attachments`, each file is decoded and staged at:
 
 ```
-~/.openclaw/attachments/<agentName>/<uuid>/<filename>
+<stateDir>/media/nats-channel/<agentName>/<uuid>/<filename>
 ```
+
+`<stateDir>` is the OpenClaw state directory (typically `~/.openclaw`). The `media/` prefix is required: OpenClaw's media-access allowlist only permits paths under `<stateDir>/media`, so staged files have to live there for the agent's tools to be allowed to read them.
 
 The absolute paths are prepended to the prompt text so OpenClaw's pipeline (and any tool the agent has access to) can open them by path. Files staged earlier in the gateway's lifetime stay on disk so follow-up turns can reference them; the whole `<agentName>/` directory is removed when the gateway stops.
 
