@@ -16,13 +16,13 @@ The NATS Agent Protocol lets any AI agent — Claude Code, OpenClaw, PI, Hermes,
 
 Pre-built channel plugins that put existing AI harnesses on NATS. Each registers as an `agents` micro service and serves the protocol's `prompt`, `status`, and `hb` endpoints out of the box.
 
-| Agent | Token | Package | Docs |
-| --- | --- | --- | --- |
-| [Claude Code](agents/claude-code/) | `cc` | `claude-channel-nats` | [`agents/claude-code/`](agents/claude-code/) |
-| [OpenClaw](agents/openclaw/) | `oc` | `@synadia-ai/nats-channel` | [`agents/openclaw/`](agents/openclaw/) |
-| [PI Agent](agents/pi/) | `pi` | `@synadia-ai/nats-pi-channel` | [`agents/pi/`](agents/pi/) |
-| [Hermes](agents/hermes/) | `hermes` | upstream fork (work in progress) | [`agents/hermes/`](agents/hermes/) |
-| [DSPy ReAct](examples/dspy/) | `dspy` | example, not published | [`examples/dspy/`](examples/dspy/) |
+| Agent | Token | Package |
+| --- | --- | --- |
+| [Claude Code](agents/claude-code/) | `cc` | `claude-channel-nats` |
+| [OpenClaw](agents/openclaw/) | `oc` | `@synadia-ai/nats-channel` |
+| [PI Agent](agents/pi/) | `pi` | `@synadia-ai/nats-pi-channel` |
+| [Hermes](agents/hermes/) | `hermes` | upstream fork (work in progress) |
+| [DSPy ReAct](examples/dspy/) | `dspy` | example, not published |
 
 Subjects follow a verb-first pattern: `agents.{verb}.{token}.{owner}.{session}` where `verb` is `prompt`, `hb`, or `status`.
 
