@@ -14,29 +14,83 @@ Sibling implementations sharing the same wire protocol: [`pi`](../pi) (PI), [`op
 
 ## Install
 
-Two parts: (1) clone the fork and bootstrap Hermes, (2) configure the gateway.
+Clone the fork, bootstrap Hermes, then let the setup wizard write your `platforms.nats` block. Power-users who'd rather hand-edit `~/.hermes/config.yaml` can skip the wizard and jump to [Configure](#configure).
 
-### 1. Clone and bootstrap Hermes
+**Clone and bootstrap.**
 
 ```bash
-# Clone hermes-agent anywhere you like.
 git clone -b nats-gateway https://github.com/synadia-ai/hermes-agent.git
 cd hermes-agent
-
-# setup-hermes.sh installs uv, creates venv, installs hermes-agent[all,dev]
-# (which pulls synadia-ai-agents and synadia-ai-agent-service from PyPI
-# via the [nats] extra), symlinks ~/.local/bin/hermes, and prompts for
-# an LLM provider key.
 ./setup-hermes.sh
 ```
 
-After this you can run `hermes --help` from anywhere. User state lives in `~/.hermes/`.
+`setup-hermes.sh` installs Hermes, prompts for an LLM provider key, and ends with:
 
-### 2. Configure the gateway
+```
+Would you like to run the setup wizard now? [Y/n]
+```
 
-Edit `~/.hermes/config.yaml` and add the `platforms.nats` block. The `owner` and `session_name` fields determine your subject — `agents.prompt.hermes.<owner>.<session_name>`.
+Press `ENTER` (or `Y`) to launch it. If you decline, you can run it later with `hermes setup` and pick **Quick Setup**.
 
-Minimal `demo.nats.io` setup (no credentials, ephemeral public server — perfect for a first smoke test, not for anything sensitive):
+**Pick NATS in the platform menu.** Quick Setup opens with a multi-select. The initial first-run wizard shows a longer list of platforms; the NATS choice is the same:
+
+![Quick Setup platform menu — NATS toggled on](images/setup-wizard-platforms.png)
+
+Toggle **NATS** with `SPACE` and confirm with `ENTER`.
+
+**Choose how Hermes connects to NATS.**
+
+![How should Hermes connect to NATS? — three options](images/setup-wizard-nats.png)
+
+- **`Use the public demo server (nats://demo.nats.io)`** — zero-config, public, ephemeral. Fine for a first smoke test, **not** for anything sensitive.
+- **`Enter a custom NATS server URL`** — point at your own `nats-server` or a Synadia Cloud cluster.
+- **`Use an existing NATS CLI context`** — picks one of your `~/.config/nats/context/*.json`. Recommended for anything beyond the demo server; see [Via a NATS CLI context](#via-a-nats-cli-context-recommended-for-anything-beyond-demonatsio) below for how to create one.
+
+**Owner and session name.** The wizard then prompts for:
+
+- `Owner` — 4th subject token, e.g. your GitHub handle.
+- `Session name` — 5th subject token; one service = one session.
+
+See [Subject hierarchy](#subject-hierarchy-v03-verb-first) for the full layout.
+
+**Confirmation.** The wizard prints:
+
+```
+NATS configured: agents.prompt.hermes.<owner>.<session>
+```
+
+**Start the gateway.** Near the end the wizard asks whether to install the gateway as a `systemd` (Linux) or `launchd` (macOS) service that runs in the background and starts on boot. If you accepted, it's already running — skip ahead to [Verify](#verify). If you declined, run it in the foreground (Ctrl+C to stop):
+
+```bash
+hermes gateway run
+```
+
+You'll see the startup banner and a warning about user allowlists:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│           ⚕ Hermes Gateway Starting...                  │
+├─────────────────────────────────────────────────────────┤
+│  Messaging platforms + cron scheduler                   │
+│  Press Ctrl+C to stop                                   │
+└─────────────────────────────────────────────────────────┘
+
+WARNING gateway.run: No user allowlists configured. All unauthorized users will be denied. Set GATEWAY_ALLOW_ALL_USERS=true in ~/.hermes/.env to allow open access, or configure platform allowlists (e.g., TELEGRAM_ALLOWED_USERS=your_id).
+```
+
+The allowlist warning is harmless for a NATS-only setup — it gates Telegram/Discord/Slack-style DMs, where Hermes needs to know who's allowed to talk to it. NATS access is gated at the broker (account + subject permissions), not via gateway allowlists, so you can ignore the warning until you wire up another platform.
+
+Confirm the gateway registered as expected via [Verify](#verify) below. (For more verbose logs in the foreground — including the `[Nats] Connected — subscribed at …` line — re-run with `hermes gateway run -v`.)
+
+You can install the gateway as a service later with `hermes gateway install`. For manual `config.yaml` edits or to go beyond what the wizard covers, see [Configure](#configure) below.
+
+## Configure
+
+Use this section if you skipped the wizard, want raw YAML, or need fields the wizard doesn't surface (e.g. `max_payload`, `heartbeat_interval_s`, custom `agent` token). All settings live under `platforms.nats` in `~/.hermes/config.yaml`. The `owner` and `session_name` fields determine your subject — `agents.prompt.hermes.<owner>.<session_name>`.
+
+### Minimal `demo.nats.io` setup
+
+No credentials, ephemeral public server — perfect for a first smoke test, not for anything sensitive:
 
 ```yaml
 platforms:
@@ -48,19 +102,6 @@ platforms:
       session_name: demo          # 5th subject token; pick one per profile
       attachments_ok: true
 ```
-
-Start the gateway and confirm registration:
-
-```bash
-hermes gateway run
-# expect: "[Nats] Connected — subscribed at agents.prompt.hermes.yourname.demo (heartbeat=30s, max_payload=1MB (server-negotiated), attachments_ok=True)"
-# The "(server-negotiated)" suffix means max_payload was derived from
-# nc.info.max_payload at connect time (1MB on a default nats-server,
-# more on bigger brokers); a YAML `max_payload` setting shows up as
-# "(configured)" instead.
-```
-
-## Configure
 
 ### Via a NATS CLI context (recommended for anything beyond `demo.nats.io`)
 
@@ -318,10 +359,10 @@ Current deferrals (candidates for future phases, not bugs):
 ## Troubleshooting
 
 - **`NATS: synadia-ai-agents / synadia-ai-agent-service SDKs not installed` at gateway startup.** The `[nats]` extra wasn't installed. Re-run `./setup-hermes.sh`, or `uv sync --all-extras --locked` from the hermes-agent clone. If `setup-hermes.sh` should have done this for you, it's a packaging bug — file an issue.
-- **Gateway not discovered / `nats micro list` returns nothing.** Gateway didn't register. Check `platforms.nats.enabled: true`, that the NATS URL/context resolves, and look for `[Nats] Connected — subscribed at …` in the gateway log. If another Hermes instance already holds the same `(agent, owner, session_name)` on this host, the log shows `NATS agent identity hermes:<owner>:<session_name> already in use (PID …)`.
+- **Gateway not discovered / `nats micro list` returns nothing.** Gateway didn't register. Check `platforms.nats.enabled: true`, that the NATS URL/context resolves, and look for `[Nats] Connected — subscribed at …` in the gateway log. (That line logs at INFO; in the foreground you need `hermes gateway run -v` to surface it — `hermes gateway run` defaults to WARNING. For an installed service, check the systemd/launchd journal.) If another Hermes instance already holds the same `(agent, owner, session_name)` on this host, the log shows `NATS agent identity hermes:<owner>:<session_name> already in use (PID …)`.
 - **Stale platform lock blocks restart.** Lives at `~/.local/state/hermes/gateway-locks/nats-<hash>.lock`. Verify the recorded PID is dead (`ps -p <PID>`), then `rm` the file.
 - **`nats req` returns only one chunk.** That's expected — `nats request` shows the first reply. For the full streamed body use `examples/02-prompt-text.py` (or any caller iterating the SDK's async iterator).
-- **Caller hangs after the first chunk; `is_online()` returns False.** Gateway probably crashed or lost NATS connectivity. The protocol marks an agent offline after ~3 missed heartbeats (~90 s at the 30 s default). Check the gateway log, or query `agents.status.hermes.<owner>.<session_name>` directly.
+- **Caller hangs after the first chunk; `is_online()` returns False.** Gateway probably crashed or lost NATS connectivity. The protocol marks an agent offline after ~3 missed heartbeats (~90 s at the 30 s default). Check the gateway log (foreground: re-run with `hermes gateway run -v` to surface INFO output; service: systemd/launchd journal), or query `agents.status.hermes.<owner>.<session_name>` directly.
 - **Dangerous command hangs for 5 minutes then fails.** The caller didn't handle the `query` chunk. Drain `query` in your SDK loop (see `examples/04-query-reply.py`) — after `gateway_timeout` (default 300 s) the command is auto-denied.
 - **`400 attachment[N] has invalid base64 content`.** The caller emitted URL-safe base64 or unpadded output. Switch to RFC 4648 §4 (standard alphabet, padded).
 - **`ValueError: could not parse max_payload '…'`.** `max_payload` must match `\d+(B|KB|MB|GB)` — e.g. `"1MB"`, `"512KB"`, `"104857600B"`.
