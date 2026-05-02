@@ -1,24 +1,6 @@
 # @synadia-ai/nats-pi-channel
 
-NATS channel for [PI Agent](https://github.com/badlogic/pi-mono), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.3** (verb-first subjects + `status` endpoint).
-
-Every PI session becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol - e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) - can enumerate running PI sessions, prompt them, and stream responses back.
-
-Sibling implementations (same wire protocol): [`claude-code`](../claude-code), [`openclaw`](../openclaw).
-
-## How it works
-
-On session start the extension:
-
-1. Connects to NATS using a configured context (or `demo.nats.io` by default).
-2. Registers a NATS micro service named `agents` with spec metadata (`agent`, `owner`, `session`, `protocol_version`).
-3. Adds a `prompt` endpoint at `agents.prompt.pi.<owner>.<session>` (verb-first §2 v0.3) advertising the server-negotiated `max_payload` (read from `nc.info.max_payload` at connect, formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar — `1MB` against a default `nats-server`, more if the operator bumped `--max_payload`) and `attachments_ok: true`.
-4. Adds a `status` endpoint at `agents.status.pi.<owner>.<session>` (§8.7 (v0.3)) that replies with the same payload shape as a heartbeat.
-5. Begins publishing heartbeats on `agents.hb.pi.<owner>.<session>` (verb is the abbreviation `hb`, §8.1 v0.3) every 30 s.
-5. On each inbound prompt: decodes any attached files to `~/.pi/agent/attachments/<session>/<uuid>/<filename>`, prepends their absolute paths to the prompt text, emits a `status: ack` chunk, injects the augmented prompt into PI via `pi.sendUserMessage()`, streams `text_delta` events back as typed `{type:"response",data}` chunks, and closes with the spec-mandated empty-body no-headers terminator.
-6. Malformed envelopes, oversized payloads, invalid base64, and unsafe filenames are rejected at the wire with `Nats-Service-Error-Code: 400`. Staging failures (disk full, permission denied) return `500`.
-
-Multiple PI sessions on the same host register as distinct instances of the same service, each with a unique `prompt` endpoint subject - `nats micro info agents` aggregates across all of them.
+NATS channel extension for [PI Agent](https://github.com/badlogic/pi-mono). Every running PI session becomes discoverable, addressable, and streamable over NATS — anyone with a [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) client (e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) or [`synadia-ai-agents`](../../client-sdk/python)) can find your session, prompt it, and stream the reply back.
 
 ## Install
 
@@ -26,11 +8,11 @@ Multiple PI sessions on the same host register as distinct instances of the same
 # From npm
 pi install npm:@synadia-ai/nats-pi-channel
 
-# From a local clone during development. Both SDKs need a current
-# dist/ for pi's loader to resolve the file: links — see
-# ../../README-DEV.md at the repo root for the build sequence.
+# From a local clone (development)
 pi install /absolute/path/to/nats-pi-channel
 ```
+
+When iterating on the SDKs locally, both `@synadia-ai/agents` and `@synadia-ai/agent-service` need a current `dist/` for PI's loader to resolve the `file:` links — see [`README-DEV.md`](../../README-DEV.md) at the repo root for the build sequence.
 
 Then start PI normally:
 
@@ -38,73 +20,107 @@ Then start PI normally:
 pi
 ```
 
-You should see `Connected to NATS (<server>) as agents.prompt.pi.<you>.<session>` and a footer status `NATS: agents.prompt.pi.<you>.<session>`.
+You should see `Connected to NATS (<server>) as agents.prompt.pi.<you>.<session>` and a footer status line `NATS: agents.prompt.pi.<you>.<session>`.
 
 ## Configure
 
-Config lives at `~/.pi/agent/nats-channel.json`:
+Out of the box, no configuration is needed: PI connects to `demo.nats.io` and uses your `$USER` + the basename of the working directory as the subject tokens. Your session is reachable at:
+
+```
+agents.prompt.pi.<owner>.<session>
+```
+
+For real deployments, point PI at your own NATS via a context file. Two common setups:
+
+**Production with a NATS CLI context** (already configured via `nats context add`):
+
+```json
+// ~/.pi/agent/nats-channel.json
+{
+  "context": "prod"
+}
+```
+
+**Pin a stable session name** (so callers can address the same logical session even if you cd around):
 
 ```json
 {
-  "context": "my-nats-context",
+  "context": "prod",
   "sessionName": "my-session"
 }
 ```
 
+Restart PI to pick up changes — or use the in-PI commands below.
+
+### Configuration reference
+
+Config file lives at `~/.pi/agent/nats-channel.json`:
+
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `context` | no | `demo.nats.io` | NATS CLI context name in `~/.config/nats/context/` |
-| `sessionName` | no | sanitized basename of CWD | Overrides the 4th subject token |
+| `context` | no | `demo.nats.io` | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). |
+| `sessionName` | no | sanitized basename of CWD | The 5th subject token. Override to give your session a stable, addressable name. |
 
-Environment variables take precedence over the file:
+The `owner` token (4th) is always derived from `$USER` — there's no override for it. For multi-tenant isolation, see [Multi-tenancy](#multi-tenancy) below.
 
-| Variable | Overrides | Default |
-| --- | --- | --- |
-| `NATS_CONTEXT` | NATS CLI context name | `demo.nats.io` |
-| `NATS_SESSION_NAME` | Session name (5th token in `agents.prompt.pi.<owner>.<session>`) | sanitized basename of CWD |
+### Environment variables
+
+Env vars override the config file:
+
+| Variable | Sets | Notes |
+|----------|------|-------|
+| `NATS_CONTEXT` | `context` | Highest precedence — see below. |
+| `NATS_URL` | raw URL (no auth context) | Used only when `NATS_CONTEXT` and `config.context` are both unset. |
+| `NATS_SESSION_NAME` | `sessionName` | |
+
+### Resolution order
+
+1. Built-in default — `demo.nats.io`, no auth
+2. `config.context` — wizard-set / hand-edited NATS CLI context
+3. `$NATS_URL` — raw URL fallback (only consulted when no context is set)
+4. **`$NATS_CONTEXT`** — wins over everything
+
+For `sessionName`: `$NATS_SESSION_NAME` overrides `config.sessionName`, which overrides the CWD-basename default.
 
 ### In-PI commands
 
-- `/nats-status` - show current subject, service, instance id, protocol version, pending/queued counts
-- `/nats-configure` - print current config
-- `/nats-configure <context>` - switch NATS context
-- `/nats-configure session <name>` - override session name
-- `/nats-configure session clear` - revert to CWD basename
+Available inside a running PI session:
 
-Changes take effect after restarting PI.
+| Command | What it does |
+|---------|--------------|
+| `/nats-status` | Show current subject, service, instance id, protocol version, pending/queued counts |
+| `/nats-configure` | Print current config |
+| `/nats-configure <context>` | Switch NATS context |
+| `/nats-configure session <name>` | Override session name |
+| `/nats-configure session clear` | Revert to CWD basename |
 
-### Tenant isolation
+`/nats-configure` writes the config file; restart PI to apply. (Live reconnect on context switch is a deferral — see [Limitations](#limitations).)
 
-The spec reserves the subject structure for protocol use; there is no `org` segment. For multi-tenant isolation, use NATS accounts and subject permissions (spec §10.1). Within an account, collisions between two PI sessions on the same `owner + session` auto-suffix `-2`, `-3`, …
-
-## Subject hierarchy
-
-```
-agents.prompt.pi.<owner>.<session>      # prompt endpoint (spec §2, §5 — v0.3 verb-first)
-agents.hb.pi.<owner>.<session>          # liveness beacon (spec §8.1 — verb `hb`)
-agents.status.pi.<owner>.<session>      # status request/response (§8.7 (v0.3))
-```
-
-- `pi` is both `metadata.agent` and its subject abbreviation (Appendix C).
-- `owner`: sanitized `$USER`.
-- `session`: sanitized basename of CWD, overridable.
-
-## Talking to a running PI session
-
-Any caller speaking the protocol - a spec-compliant SDK or the `nats` CLI - can:
+## Verify
 
 ```bash
-# Enumerate all compliant agents (includes Claude Code, OpenClaw, etc.)
+# Find your session (and any other agents on the same NATS)
 nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
 
-# Send a plain-text prompt
-nats req agents.prompt.pi.<owner>.<session> "What files are in the current directory?" --wait-for-empty --timeout 120s
+# Watch heartbeats — your session should beat every ~30 s
+nats sub 'agents.hb.*.*.*'
+```
 
-# Or a JSON envelope
+## Talk to your session
+
+From the CLI:
+
+```bash
+# Plain text prompt
+nats req agents.prompt.pi.<owner>.<session> "What files are here?" --wait-for-empty --timeout 120s
+
+# JSON envelope (caller SDKs use this form)
 nats req agents.prompt.pi.<owner>.<session> '{"prompt":"What files are here?"}' --wait-for-empty --timeout 120s
 ```
 
-With the TypeScript SDK:
+`--wait-for-empty` is required: replies stream as multiple chunks and end with an empty terminator message.
+
+From TypeScript using `@synadia-ai/agents`:
 
 ```ts
 import { connect } from "@nats-io/transport-node";
@@ -123,76 +139,53 @@ await agents.close();
 await nc.close();
 ```
 
-## Wire protocol (summary)
-
-Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>. Quick reference:
-
-- **Request**: plain UTF-8 text OR JSON `{"prompt":"…","attachments":[{"filename":"…","content":"<base64>"},…]}`. Attachment `content` must be RFC 4648 §4 base64 (standard alphabet, padded, no URL-safe variant, no whitespace).
-- **Response**: one or more typed chunks on the reply subject:
-  - `{"type":"response","data":"<text>"}` - content
-  - `{"type":"status","data":"ack"}` - accepted / keep-alive
-- **Terminator**: empty body **and no headers** (spec §6.5).
-- **Errors**: `Nats-Service-Error-Code` header with `400`/`500`, followed by the terminator.
-
-## Discovery
-
-Any NATS Agent Protocol SDK will enumerate PI sessions automatically. Without an SDK:
-
-```bash
-# Micro service framework
-nats micro list           # shows all agents instances
-nats micro info agents
-
-# Heartbeats - track liveness without polling
-nats sub 'agents.hb.*.*.*'
-```
-
-## Concurrency
-
-Each PI session processes one NATS request at a time. Additional requests queue until the agent is idle. The user's local TUI input and inbound NATS prompts share the same agent session.
-
 ## Attachments
 
-When a request envelope contains `attachments`, each file is decoded and staged on disk at:
+When a request envelope carries `attachments`, each file is decoded and staged at:
 
 ```
 ~/.pi/agent/attachments/<session>/<uuid>/<filename>
 ```
 
-The absolute paths are then prepended to the prompt as:
+The absolute paths are prepended to the prompt text so PI's model can open them with its file tools. Files staged earlier in a session stay on disk so follow-up turns can reference them; the whole `<session>/` directory is removed on session shutdown.
 
-```
-[Attachments available at the following absolute paths]
-- /home/you/.pi/agent/attachments/myproj/abcd-…/vacation.jpg
+Caller-side limits (rejected with `400` if violated):
 
-<original prompt text>
-```
+- `content` must be standard-alphabet padded base64 — no URL-safe variant, no whitespace.
+- `filename` must be a plain basename. Path separators, `..`, absolute paths, and NUL bytes are rejected, not silently flattened.
+- The fully-encoded request must fit within the server-negotiated `max_payload` (1 MB on a default `nats-server`, more if the operator raised `--max_payload`).
 
-PI's model sees the list in the user message and can open the files with its file tools. The entire `<session>` directory is removed on `session_shutdown`; within a session, attachments from earlier turns remain on disk so follow-up turns can still reference them.
+## Concurrency
 
-Caller-side constraints (rejected at the wire with `400` if violated):
-- `content` must be strict RFC 4648 §4 base64 - standard alphabet, padded, no URL-safe, no whitespace.
-- `filename` must be a plain basename. Path separators (`/`, `\`), `..`, absolute paths, and NUL bytes are rejected rather than silently flattened.
-- Full encoded envelope must fit within the advertised `max_payload` — the server-negotiated limit read at connect time. `1 MB` against a default `nats-server`; matches whatever `nc.info.max_payload` reports.
+Each PI session processes one NATS request at a time. Additional requests queue until the session is idle. The local TUI input and inbound NATS prompts share the same agent — typing locally during a NATS-driven turn means that local output flows to the NATS reply alongside the remote prompt's response.
 
-Spec §5.5 reserves a future `attachments` endpoint at `agents.attachments.pi.<owner>.<session>` (v0.3 verb-first) for chunked large-file upload; that lands in a future protocol revision and will coexist with inline attachments.
+Multiple PI sessions on the same host register as distinct service instances; `nats micro info agents` aggregates across all of them. If two sessions try to register on the same `owner + session`, the later one auto-suffixes `-2`, `-3`, … — pick a stable name with `/nats-configure session <name>` if you want addressability.
+
+## Multi-tenancy
+
+The agent subject layout has no per-tenant slot. For real isolation between tenants or environments, use **NATS accounts** and subject permissions — that's a server-side configuration, not an extension one. Within a single account, sessions with distinct `owner` values (i.e. different `$USER`s) coexist cleanly.
 
 ## Limitations
 
 Deliberate deferrals:
 
-- **No mid-stream queries.** PI doesn't currently initiate permission prompts or clarifications over this channel; the spec's `query` chunk type (§7) is supported by callers but never emitted.
-- **No live reconfigure.** `/nats-configure` writes the config file; restart PI to apply.
-- **TUI bleed.** If the user types locally during a NATS-driven turn, that output flows to the NATS reply subject alongside the prompt's response.
+- **No mid-stream queries.** PI doesn't initiate permission prompts or clarifications over this channel; the protocol's `query` chunk type is supported by callers but never emitted by the PI side.
+- **No live reconfigure.** `/nats-configure` writes the config file; PI must be restarted for the new context or session name to apply.
+- **TUI bleed.** Local typing during a NATS-driven turn flows to the NATS reply subject as part of the response.
 
 ## Troubleshooting
 
-- **`NATS: disconnected` in footer.** Check `/nats-status`, the context file at `~/.config/nats/context/<context>.json`, and NATS server reachability.
-- **`NATS: reconnecting…`.** Connection dropped; restoring automatically.
-- **My session got a `-2` suffix.** Another PI session on the same `owner + session` was already registered. Use `/nats-configure session <name>` to pick a different name.
-- **`nats req` returns nothing or hangs.** Pass `--wait-for-empty`; the protocol signals end-of-stream with an empty-body message, not a single response.
-- **`400 attachment[N] has invalid base64 content`.** The SDK / client emitted URL-safe base64 or unpadded output. Switch to RFC 4648 §4 (standard alphabet, padded) - Node's `Buffer.from(bytes).toString("base64")` produces the correct form.
-- **`400 attachment[N] has unsafe filename`.** Path separators, `..`, absolute paths, or NUL in `filename`. Send the basename only (e.g. `"report.pdf"`, not `"./reports/report.pdf"`).
+- **`NATS: disconnected` in footer** — run `/nats-status`, then check the context file at `~/.config/nats/context/<context>.json` and that the NATS server is reachable.
+- **`NATS: reconnecting…`** — the connection dropped; the client restores it automatically.
+- **My session got a `-2` suffix** — another PI session was already registered on the same `owner + session`. Use `/nats-configure session <name>` to pick a different one.
+- **`nats req` hangs or returns nothing** — pass `--wait-for-empty`. The protocol ends streams with an empty-body message, not a single response.
+- **`400 attachment[N] has invalid base64 content`** — the caller emitted URL-safe base64 or unpadded output. `Buffer.from(bytes).toString("base64")` (Node) produces the right form.
+- **`400 attachment[N] has unsafe filename`** — send the basename only (`"report.pdf"`), not a path (`"./reports/report.pdf"`).
+
+## See also
+
+- Sibling channel plugins: [`openclaw`](../openclaw) (OpenClaw), [`claude-code`](../claude-code) (Claude Code).
+- The wire-level protocol behind it all: [`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs).
 
 ## License
 
