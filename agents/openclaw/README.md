@@ -74,31 +74,33 @@ openclaw gateway restart
 
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `url` | no | `nats://localhost:4222` | NATS server URL |
 | `agentName` | yes | - | 5th subject token (`agents.prompt.oc.<owner>.<agentName>`) |
+| `url` | no | `nats://demo.nats.io` | NATS server URL. Ignored when `context` is set and resolves successfully. |
 | `description` | no | `OpenClaw agent <agentName>` | Shown via `$SRV.INFO` |
-| `credentials` | no | - | Path to `.creds` file for NATS authentication |
-| `owner` | no | `default` | 4th subject token - operator/account namespace, per §2 (v0.3) verb-first scheme. |
+| `owner` | no | `default` | 4th subject token — operator/account namespace, per §2 (v0.3) verb-first scheme. |
+| `credentials` | no | - | Path to a `.creds` file for NATS authentication. |
+| `context` | no | - | Name of a `nats` CLI context (file under `~/.config/nats/context/<name>.json`) to source `url` and `credentials` from. Set by the setup wizard's "context" input. **Overrides** any per-field `url`/`credentials` in this account; per-field env vars (`$NATS_URL`, `$NATS_CREDENTIALS`) and `$NATS_CONTEXT` still take precedence — see [Resolution order](#resolution-order). |
+| `enabled` | no | `true` | Set to `false` to keep the account block but disable connecting it. |
 
 > **Migrating from v0.1:** the old `org` field has been renamed `owner` (§3.2 terminology). The old name is still accepted as an alias with a deprecation warning in logs.
 
-> **Auth — limitations of the openclaw adapter.** Only `.creds` files
-> (the `credentials` field) are honoured for NATS auth today. If you
-> point a `nats context add`-style context file at openclaw via the
-> `context` field or `NATS_CONTEXT`, openclaw's adapter currently
-> reads only `url` / `token` / `user` / `password` / `creds` — `nkey`,
-> `user_jwt` / `user_seed`, and the TLS triple `cert` / `key` / `ca`
-> are silently dropped. For NGS / decentralised-auth deployments, use a
-> `.creds` file (the SDK's full-context loader supports the rest, but
-> openclaw consumes only the narrow `{url, credentials}` shape — see
-> `src/nats/context-loader.ts`).
+> **Auth — limitations of the openclaw adapter.** A `nats` CLI context
+> (via the `context` field or `$NATS_CONTEXT`) is read only for `url` /
+> `token` / `user` / `password` / `creds` — `nkey`, `user_jwt` /
+> `user_seed`, and the TLS triple `cert` / `key` / `ca` are silently
+> dropped. For NGS / decentralised-auth deployments, point a `.creds`
+> file via either `credentials` or a context whose `creds` field is set.
+> The SDK's full-context loader supports the rest; openclaw consumes
+> only the narrow `{url, credentials}` shape — see
+> `src/nats/context-loader.ts`.
 
 ### Environment variables (Docker / containers)
 
-All fields can be overridden via env vars:
+Fields can be overridden via env vars:
 
 | Variable | Overrides | Example |
 |----------|-----------|---------|
+| `NATS_CONTEXT` | `context` (highest precedence — see below) | `prod` |
 | `NATS_URL` | `url` | `nats://prod.example.com:4222` |
 | `NATS_AGENT_NAME` | `agentName` | `my-agent` |
 | `NATS_DESCRIPTION` | `description` | `Production agent` |
@@ -106,16 +108,27 @@ All fields can be overridden via env vars:
 | `NATS_ORG` | `owner` (legacy alias) | `acme` |
 | `NATS_CREDENTIALS` | `credentials` | `/run/secrets/nats.creds` |
 
-Each env var overrides the corresponding [config field](#config-fields) above; defaults live there.
-
 ```yaml
 # docker-compose.yml
 environment:
   NATS_AGENT_NAME: my-agent
-  NATS_URL: nats://nats:4222
-  NATS_DESCRIPTION: Production agent
+  NATS_CONTEXT: prod              # picks up url + creds from ~/.config/nats/context/prod.json
   NATS_OWNER: acme
 ```
+
+### Resolution order
+
+For each account, `url` and `credentials` are resolved in this order
+(later steps override earlier ones, except `$NATS_CONTEXT` which is
+applied last as a single source of truth):
+
+1. Built-in default — `nats://demo.nats.io` (only when nothing else sets `url`)
+2. Account config — `url`, `credentials`
+3. `config.context` — wizard-selected NATS CLI context file
+4. `$NATS_URL`, `$NATS_CREDENTIALS`, `$NATS_AGENT_NAME`, … — per-field env overrides
+5. **`$NATS_CONTEXT`** — applied last; wins over per-field env vars so a deployer who sets it gets a coherent `url`+`credentials` pair from one file rather than a confusing mix from `$NATS_URL` + `$NATS_CREDENTIALS`
+
+A failure in step 3 or 5 (missing file, malformed JSON, no `url` field) is logged and downgraded — the gateway falls back to whatever the previous step resolved instead of crashing.
 
 ## Verify
 
