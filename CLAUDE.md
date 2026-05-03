@@ -57,7 +57,7 @@ compatibility between the two SDKs.
 | Path | Package | Published as | Notes |
 | --- | --- | --- | --- |
 | `client-sdk/typescript/` | `@synadia-ai/agents` | npm (restricted) | TS SDK — Node/Bun callers |
-| `client-sdk/python/` | `synadia-ai-agents` (import: `synadia_ai.agents`) | PyPI (not yet published) | Python SDK — has its own CLAUDE.md |
+| `client-sdk/python/` | `synadia-ai-agents` (import: `synadia_ai.agents`) | PyPI | Python SDK — has its own CLAUDE.md |
 | `agents/pi/` | `@synadia-ai/nats-pi-channel` | npm (restricted) | PI extension plugin |
 | `agents/openclaw/` | `@synadia-ai/nats-channel` | npm (restricted) | OpenClaw plugin |
 | `agents/claude-code/` | `claude-channel-nats` | npm (restricted) | Claude Code MCP plugin |
@@ -113,8 +113,9 @@ Two distinct version axes:
 - **Package version (npm/PyPI)** — independent per SDK pair.
   - TS: `@synadia-ai/agents` + `@synadia-ai/agent-service` — both at
     `0.4.0` in lockstep, neither published to npm yet.
-  - Python: `synadia-ai-agents` + `synadia-ai-agent-service` — not
-    yet published to PyPI.
+  - Python: `synadia-ai-agents` (`0.6.0`) +
+    `synadia-ai-agent-service` (`0.2.0`) — both published to PyPI;
+    versions diverge per package.
 
 The package versions differ for historical reasons. They are **not** a
 protocol skew. The Python `tests/test_interop_e2e.py` runs the TS
