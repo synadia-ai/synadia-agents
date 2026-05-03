@@ -82,6 +82,25 @@ unchanged; protocol stays at `"0.3"`.
   read-only property `Agents.prompt_max_wait_s` mirrors
   `Agents.stream_inactivity_timeout`.
 
+### Fixed (post-review)
+
+- **`max_wait_s <= 0` now raises `ValueError` synchronously** at every
+  entry point (`Agent.prompt(max_wait_s=...)`, `Agent(prompt_max_wait_s=...)`,
+  `Agents(prompt_max_wait_s=...)`). The previous implementation pre-fired
+  the ceiling on `0` so the first read raised `StreamMaxWaitExceededError`
+  before any chunk arrived — a footgun for callers who reasonably read
+  `max_wait_s=0` as either "no limit" or "non-blocking poll." There is
+  no "no limit" sentinel — an unbounded prompt stream is the exact
+  failure mode the ceiling exists to prevent. Pass `None` to use the
+  default, or any strictly positive number to override. Found by the
+  reviewer bot on PR #67.
+- **Documented multi-event-loop caveat on `mux_for` / `MuxInbox`.** The
+  `_MUX_CACHE` is module-global and `MuxInbox` captures an
+  `asyncio.Lock` at construction tied to the loop running on the first
+  call; sharing one `Client` across loops in different threads is not
+  supported. Documentation contract, not a runtime check — the SDK is
+  single-loop-asyncio in shape. Found by the reviewer bot on PR #67.
+
 ### Note
 
 - **No protocol-version bump.** PR #66 on the TS side was a

@@ -24,7 +24,7 @@ import json
 import time
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import nats
 import pytest
@@ -33,6 +33,7 @@ from synadia_ai.agents import (
     DEFAULT_PROMPT_MAX_WAIT_S,
     Agent,
     AgentInfo,
+    Agents,
     EndpointInfo,
     ResponseChunk,
     StreamMaxWaitExceededError,
@@ -97,6 +98,35 @@ def test_max_wait_default_is_600s_and_constant_exported() -> None:
     assert DEFAULT_PROMPT_MAX_WAIT_S == 600.0
     sig = inspect.signature(Agent.__init__)
     assert sig.parameters["prompt_max_wait_s"].default is DEFAULT_PROMPT_MAX_WAIT_S
+
+
+@pytest.mark.parametrize("bad_value", [0, 0.0, -1, -0.5])
+def test_prompt_max_wait_rejects_non_positive(bad_value: float) -> None:
+    """Non-positive ``max_wait_s`` is rejected synchronously at every entry point.
+
+    There is no "no limit" sentinel — an unbounded prompt stream is
+    the exact failure mode the ceiling exists to prevent — so we
+    refuse the value at the public boundary instead of silently
+    treating ``0`` as either "fire immediately" (the previous
+    behaviour) or "wait forever" (a footgun inherited from other
+    timeout APIs).
+    """
+    info = _make_agent_info(PROMPT_SUBJECT)
+    nc_placeholder = cast("NATSClient", object())
+
+    # Constructor on `Agent` directly.
+    with pytest.raises(ValueError, match="prompt_max_wait_s must be > 0"):
+        Agent(nc_placeholder, info, prompt_max_wait_s=bad_value)
+
+    # Constructor on `Agents` (the default-supplier path).
+    with pytest.raises(ValueError, match="prompt_max_wait_s must be > 0"):
+        Agents(nc=nc_placeholder, prompt_max_wait_s=bad_value)
+
+    # Per-call override on `Agent.prompt`. No network I/O happens
+    # before the validation, so a placeholder `nc` is fine.
+    agent = Agent(nc_placeholder, info)
+    with pytest.raises(ValueError, match="max_wait_s must be > 0"):
+        agent.prompt("hello", max_wait_s=bad_value)
 
 
 async def test_max_wait_exceeded_raises(

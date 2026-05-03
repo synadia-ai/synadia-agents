@@ -65,6 +65,8 @@ class Agents:
         prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         logger: logging.Logger | None = None,
     ) -> None:
+        if prompt_max_wait_s <= 0:
+            raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
         self._nc = nc
         self._stream_inactivity_timeout = stream_inactivity_timeout
         self._prompt_max_wait_s = prompt_max_wait_s

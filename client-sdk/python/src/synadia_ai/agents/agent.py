@@ -119,6 +119,8 @@ class Agent:
         prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         close_event: asyncio.Event | None = None,
     ) -> None:
+        if prompt_max_wait_s <= 0:
+            raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
         self._nc = nc
         self._info = info
         self._default_inactivity_timeout = stream_inactivity_timeout
@@ -219,13 +221,16 @@ class Agent:
 
         ``max_wait_s`` is the absolute ceiling on the whole stream —
         distinct from ``timeout``, which resets on every received chunk.
-        Defaults to the value passed to the owning :class:`Agents`
-        (10 minutes out of the box). Mirrors the TS SDK's
-        ``PromptOptions.maxWaitMs`` from PR #66. On expiry the iterator
-        raises :class:`StreamMaxWaitExceededError`; the inactivity-gap
-        path raises :class:`StreamStalledError`. Both inherit from
-        :class:`ProtocolError` so existing catch-broadly callers keep
-        working.
+        Must be a positive float; ``None`` falls back to the value passed
+        to the owning :class:`Agents` (10 minutes out of the box).
+        Mirrors the TS SDK's ``PromptOptions.maxWaitMs`` from PR #66.
+        On expiry the iterator raises :class:`StreamMaxWaitExceededError`;
+        the inactivity-gap path raises :class:`StreamStalledError`. Both
+        inherit from :class:`ProtocolError` so existing catch-broadly
+        callers keep working. Passing ``max_wait_s <= 0`` raises
+        :class:`ValueError` synchronously — there is no "no limit"
+        sentinel, since an unbounded prompt stream is the exact failure
+        mode this ceiling exists to prevent.
 
         §5.4 pre-publish validation runs synchronously before any wire I/O.
         Failures raise:
@@ -235,6 +240,7 @@ class Agent:
           ``attachments_ok=false`` (§5.4).
         - :class:`PayloadTooLargeError` — envelope exceeds ``max_payload``
           (§5.4).
+        - :class:`ValueError` — ``max_wait_s`` is not strictly positive.
 
         The iterator yields :class:`ResponseChunk` / :class:`StatusChunk` as
         the agent emits them and :class:`Query` when the agent asks a
@@ -260,6 +266,11 @@ class Agent:
           deterministically. A bare ``break`` defers cleanup to the
           generator finalizer (works, but the slot lingers until GC).
         """
+        if max_wait_s is not None and max_wait_s <= 0:
+            raise ValueError(
+                f"max_wait_s must be > 0 (got {max_wait_s!r}); pass None to use the default."
+            )
+
         if isinstance(text, Envelope):
             merged_attachments: list[Attachment] | None
             if attachments:
@@ -312,6 +323,17 @@ class Agent:
         behind FIFO backlog and max-wait does not drain arbitrary chunks
         after its deadline. The inactivity timeout remains a per-read
         gap detector and resets after every delivered item.
+
+        Per-iteration task churn (``queue_task`` plus ``max_wait_task``
+        and optionally ``close_task``, each cancelled on the loser side
+        of the ``asyncio.wait`` race) is intentional. Lifting the
+        event-wait tasks into :meth:`_stream_prompt` and reusing them
+        across iterations would save a couple of ``create_task`` calls
+        per slow-path read but at the cost of cleanup locality — the
+        ``finally`` here is the single place that guarantees no task
+        outlives the read it served. AI-stream chunk rates make the
+        allocation cost invisible; the locality is what keeps the
+        close-race contract auditable.
         """
         self._raise_if_cancelled(reply)
         if max_wait_event.is_set():
@@ -406,17 +428,14 @@ class Agent:
         # connection. See `_mux.py`'s INTERIM-NATSPY-REQUEST-MANY note.
         mux = mux_for(self._nc)
         await mux.start()  # idempotent; pays SUB+flush on the first prompt
+        # `max_wait_s > 0` is enforced at the public boundary (Agent.prompt
+        # and the constructors), so we treat it as an invariant here.
         loop = asyncio.get_running_loop()
         max_wait_event = asyncio.Event()
-        max_wait_handle: asyncio.TimerHandle | None
-        if max_wait_s > 0:
-            max_wait_handle = loop.call_later(max_wait_s, max_wait_event.set)
-        else:
-            max_wait_event.set()
-            max_wait_handle = None
+        max_wait_handle = loop.call_later(max_wait_s, max_wait_event.set)
 
         def on_msg(msg: Msg) -> None:
-            if msg.data == b"" and not (msg.headers or {}) and max_wait_handle is not None:
+            if msg.data == b"" and not (msg.headers or {}):
                 max_wait_handle.cancel()
 
         token, queue = mux.register(on_msg=on_msg)

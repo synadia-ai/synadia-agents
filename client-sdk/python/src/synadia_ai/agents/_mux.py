@@ -209,6 +209,17 @@ def mux_for(nc: NATSClient) -> MuxInbox:
 
     Single-threaded asyncio + sync check-and-insert means concurrent
     first calls are safe without a lock.
+
+    .. note::
+
+       Single-event-loop assumption. ``_MUX_CACHE`` is module-global,
+       and :class:`MuxInbox` captures an :class:`asyncio.Lock` at
+       construction time bound to whichever loop is running on the
+       first call. Sharing one ``Client`` across event loops in
+       different threads (unusual but legal in :mod:`nats-py`) would
+       cross loops on the cached lock and is not supported. The SDK
+       is otherwise single-loop-asyncio in shape, so this is a
+       documentation contract, not a runtime check.
     """
     mux = _MUX_CACHE.get(nc)
     if mux is None:
