@@ -499,8 +499,7 @@ class Agent:
             # deterministically rather than waiting on the queue's
             # own GC, which matters for streams that exit early with
             # large chunks still buffered.
-            if max_wait_handle is not None:
-                max_wait_handle.cancel()
+            max_wait_handle.cancel()
             mux.unregister(token)
             while not queue.empty():
                 queue.get_nowait()
