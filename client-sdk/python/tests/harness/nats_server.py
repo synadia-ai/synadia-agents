@@ -27,6 +27,26 @@ def _pick_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _pick_free_ports(n: int) -> tuple[int, ...]:
+    """Pick *n* distinct free ports atomically.
+
+    Holds all *n* binds simultaneously before closing any, so the
+    kernel cannot hand out the same ephemeral port twice across a
+    single multi-port allocation. Two back-to-back :func:`_pick_free_port`
+    calls would have a vanishingly rare TOCTOU collision when the
+    kernel reuses the same port for both — uncommon, but a bulletproof
+    harness shouldn't depend on luck.
+    """
+    socks = [socket.socket(socket.AF_INET, socket.SOCK_STREAM) for _ in range(n)]
+    try:
+        for sock in socks:
+            sock.bind(("127.0.0.1", 0))
+        return tuple(int(sock.getsockname()[1]) for sock in socks)
+    finally:
+        for sock in socks:
+            sock.close()
+
+
 @dataclass
 class RunningServer:
     """A nats-server running as a child process of the test session.
@@ -73,8 +93,7 @@ def start_server(log_dir: Path) -> RunningServer:
         raise RuntimeError("nats-server not on PATH")
 
     log_dir.mkdir(parents=True, exist_ok=True)
-    port = _pick_free_port()
-    monitoring_port = _pick_free_port()
+    port, monitoring_port = _pick_free_ports(2)
     log_file = log_dir / f"nats-server-{port}.log"
 
     # -DV = debug+verbose; -a = address; -p = client port; -m = HTTP

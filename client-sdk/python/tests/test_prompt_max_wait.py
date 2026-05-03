@@ -234,8 +234,10 @@ async def test_max_wait_distinct_from_inactivity_timeout(
     assert excinfo.value.max_wait_s == 0.3
     # Tight band: ceiling must fire close to 0.3 s, definitely not the
     # 60 s inactivity timeout. Lower bound = ceiling minus jitter; upper
-    # bound = generous slack for CI noise but well below inactivity.
-    assert 0.25 < elapsed < 1.0, (
+    # bound = 2x ceiling, tight enough to catch a regression where
+    # max_wait fires hundreds of milliseconds late but generous enough
+    # to absorb CI scheduler noise.
+    assert 0.25 < elapsed < 0.6, (
         f"max_wait fired at {elapsed:.3f}s — outside dual-timer-distinct band"
     )
     # At least two chunks proves the inactivity timer was being reset by

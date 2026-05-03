@@ -228,6 +228,15 @@ async def test_broker_sees_one_mux_subscription_for_n_prompts(
         f"broker reports {len(mux_subs)} subscription(s) under mux prefix "
         f"{mux_prefix!r} — expected exactly 1 (the mux). Subs: {mux_subs!r}"
     )
+    # Tighter than just "starts with the prefix": the one subscription
+    # MUST be the wildcard ``<mux_prefix>.*`` itself. A regression that
+    # opened a per-prompt SUB on ``<mux_prefix>.<token>`` and
+    # unsubscribed before our poll would still match the prefix filter
+    # by accident; this assertion catches that failure mode by
+    # demanding the exact wildcard form.
+    assert mux_subs[0].get("subject") == f"{mux_prefix}.*", (
+        f"expected mux SUB to be wildcard {mux_prefix}.*; got {mux_subs[0].get('subject')!r}"
+    )
     evidence.write_json(
         "broker_subsz.json",
         {
