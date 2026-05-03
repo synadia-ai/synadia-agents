@@ -96,6 +96,16 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
       maxWait: this.#maxWaitMs,
     })) as QueuedIterator<Msg>;
     this.#iter = iter;
+    // cancel() may have fired during the requestMany await — the early
+    // check above only covers cancellation before iteration started.
+    if (this.#cancelled) {
+      iter.stop();
+      return;
+    }
+    if (this.#signal?.aborted) {
+      iter.stop();
+      throw abortError(this.#signal);
+    }
 
     let onAbort: (() => void) | undefined;
     if (this.#signal) {
