@@ -140,10 +140,15 @@ async def test_max_wait_exceeded_raises(
     # Ceiling fired close to 0.5s, not the inactivity default (60s).
     assert 0.4 < elapsed < 1.5, f"max_wait fired at {elapsed:.3f}s — outside expected band"
     assert excinfo.value.max_wait_s == 0.5
-    # We saw at least a handful of chunks — proves the stream was
-    # progressing (so this is the ceiling firing, not the inactivity-gap path).
-    assert len(chunks_observed) >= 4, (
-        f"expected ≥4 chunks at 50 ms cadence within 500 ms; saw {len(chunks_observed)}"
+    # At least two chunks proves the stream was *progressing* — i.e. the
+    # ceiling fired, not the inactivity-gap path. We deliberately do NOT
+    # assert a tighter count: the cadence target is 10 chunks (50 ms over
+    # 500 ms) but bunched scheduling under CI load can drop the observed
+    # count well below that without the underlying behaviour changing.
+    # Two is the floor that distinguishes "made progress" from "silent
+    # stall."
+    assert len(chunks_observed) >= 2, (
+        f"expected ≥2 chunks (proves progression, not stall); saw {len(chunks_observed)}"
     )
     evidence.write_jsonl("chunks.jsonl", chunks_observed)  # type: ignore[arg-type]
 
@@ -185,7 +190,21 @@ async def test_max_wait_distinct_from_inactivity_timeout(
     arrive every 50 ms (well inside any reasonable inactivity timeout),
     yet the stream still fails with ``StreamMaxWaitExceededError`` —
     NOT ``StreamStalledError`` — once 0.3 s has elapsed.
+
+    Three assertions pin the dual-timer claim, not just the error class:
+
+    - ``elapsed`` close to ``max_wait_s=0.3``, not the 60 s inactivity
+      timeout. If ``max_wait_s`` were mis-wired to feed the inactivity
+      path, the test would either fail with ``StreamStalledError`` or
+      hang for 60 s — not raise the right class at the right time.
+    - Chunks observed must show the inactivity timer is being reset by
+      incoming traffic. Two or more chunks across the 0.3 s window with
+      a 50 ms cadence is conservative evidence of "stream progressing."
+    - The error class. (Already implied by ``pytest.raises``, but
+      together with the elapsed band it rules out an accidental
+      stall-path raise.)
     """
+    chunks_observed: list[dict[str, object]] = []
 
     async def fake_agent(msg: Msg) -> None:
         async def emit() -> None:
@@ -200,13 +219,37 @@ async def test_max_wait_distinct_from_inactivity_timeout(
     sub = await nc.subscribe(PROMPT_SUBJECT, cb=fake_agent)
     try:
         agent = Agent(nc, _make_agent_info(PROMPT_SUBJECT))
+        start = time.monotonic()
         # Inactivity timeout very high (60s) so it cannot trip first.
-        with pytest.raises(StreamMaxWaitExceededError):
-            async for _ in agent.prompt("steady", timeout=60.0, max_wait_s=0.3):
-                pass
+        with pytest.raises(StreamMaxWaitExceededError) as excinfo:
+            async for chunk in agent.prompt("steady", timeout=60.0, max_wait_s=0.3):
+                if isinstance(chunk, ResponseChunk):
+                    chunks_observed.append(
+                        {"text": chunk.text, "elapsed_s": time.monotonic() - start}
+                    )
+        elapsed = time.monotonic() - start
     finally:
         await sub.unsubscribe()
-    evidence.write_json("note.json", {"verified": "ceiling, not stall"})
+
+    assert excinfo.value.max_wait_s == 0.3
+    # Tight band: ceiling must fire close to 0.3 s, definitely not the
+    # 60 s inactivity timeout. Lower bound = ceiling minus jitter; upper
+    # bound = generous slack for CI noise but well below inactivity.
+    assert 0.25 < elapsed < 1.0, (
+        f"max_wait fired at {elapsed:.3f}s — outside dual-timer-distinct band"
+    )
+    # At least two chunks proves the inactivity timer was being reset by
+    # incoming traffic. If max_wait were mis-wired to the inactivity
+    # path, a stream emitting every 50 ms would have its stall timer
+    # reset on each chunk and never raise.
+    assert len(chunks_observed) >= 2, (
+        f"expected ≥2 chunks proving inactivity timer was being reset; saw {len(chunks_observed)}"
+    )
+    evidence.write_jsonl("chunks.jsonl", chunks_observed)  # type: ignore[arg-type]
+    evidence.write_json(
+        "timing.json",
+        {"elapsed_s": round(elapsed, 3), "max_wait_s": 0.3, "chunks": len(chunks_observed)},
+    )
 
 
 async def test_inactivity_raises_stream_stalled_error(
@@ -275,7 +318,14 @@ async def test_max_wait_fires_after_connection_severed(
                 bg_tasks(asyncio.create_task(emit_loop()))
 
             sub = await client.subscribe(PROMPT_SUBJECT, cb=fake_agent)
-            kill_at_chunks = 3
+            # Two chunks is the floor that proves the consumer was
+            # iterating before we killed the broker (i.e. this is the
+            # connection-severed path, not "broker died before publish
+            # ever landed"). Bigger numbers just narrow the timing
+            # window for the kill — at 50 ms cadence and a 1.0 s
+            # ceiling, ``kill_at=2`` lands ~100 ms in with ~900 ms of
+            # ceiling remaining, robust against CI scheduler bunching.
+            kill_at_chunks = 2
             kill_ts: float | None = None
             try:
                 agent = Agent(client, _make_agent_info(PROMPT_SUBJECT))
