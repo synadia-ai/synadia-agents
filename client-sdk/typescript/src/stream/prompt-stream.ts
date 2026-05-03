@@ -2,21 +2,29 @@
 // `Agent.prompt`. Implements `AsyncIterable<StreamMessage>` so the
 // caller writes `for await (const msg of stream) { ... }`.
 //
-// Wire behaviour:
-//   - Subscribes to a fresh reply inbox, flushes the SUB to the server,
-//     publishes the request envelope with that inbox as `reply`.
+// Wire behavior:
+//   - Calls `nc.requestMany(subject, payload, { strategy: "sentinel", maxWait })`.
+//     The connection's mux inbox handles the reply routing; the empty-body
+//     terminator (§6.5) ends the iterator.
 //   - Yields `{ type: "response" }`, `{ type: "status" }`, `QueryEvent` per
 //     §6.3–§7.
 //   - Emits a synthetic `{ type: "status", status: "done" }` when the wire
 //     terminator (empty body + no headers, §6.5) arrives.
 //   - Throws `ServiceError` on a `Nats-Service-Error-Code` header (§9.1).
 //   - Throws `StreamStalledError` on inactivity timeout (§6.6).
-//   - `cancel()` and early break from `for await` both unsubscribe cleanly.
+//   - Throws `StreamMaxWaitExceededError` if `maxWaitMs` elapses without
+//     a terminator (sentinel strategy's absolute ceiling).
+//   - `cancel()` and early break from `for await` both stop the iterator
+//     cleanly.
 
-import type { Msg, NatsConnection, Subscription } from "@nats-io/nats-core";
-import { ServiceError, StreamStalledError, type ServiceErrorBody } from "../errors.js";
+import type { Msg, NatsConnection, QueuedIterator } from "@nats-io/nats-core";
+import {
+  ServiceError,
+  StreamMaxWaitExceededError,
+  StreamStalledError,
+  type ServiceErrorBody,
+} from "../errors.js";
 import { abortError } from "../internal/abort.js";
-import { newInbox } from "../internal/inbox.js";
 import { encodeEnvelope, type RequestEnvelope } from "../prompt/envelope.js";
 import { buildQueryEvent, type QueryEvent } from "../query/query-event.js";
 import { decodeChunk, type DecodedAttachment, type DecodedChunk } from "./chunk-decoder.js";
@@ -38,10 +46,10 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
   readonly #nc: NatsConnection;
   readonly #requestSubject: string;
   readonly #envelope: RequestEnvelope;
-  readonly #replySubject: string;
   readonly #inactivityTimeoutMs: number;
+  readonly #maxWaitMs: number;
   readonly #signal: AbortSignal | undefined;
-  #sub: Subscription | null = null;
+  #iter: QueuedIterator<Msg> | null = null;
   #iterated = false;
   #cancelled = false;
 
@@ -50,28 +58,24 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
     requestSubject: string,
     envelope: RequestEnvelope,
     inactivityTimeoutMs: number,
+    maxWaitMs: number,
     signal?: AbortSignal,
   ) {
     this.#nc = nc;
     this.#requestSubject = requestSubject;
     this.#envelope = envelope;
-    this.#replySubject = newInbox();
     this.#inactivityTimeoutMs = inactivityTimeoutMs;
+    this.#maxWaitMs = maxWaitMs;
     this.#signal = signal;
   }
 
-  /** The NATS reply inbox this stream is listening on. Exposed for debugging. */
-  get replySubject(): string {
-    return this.#replySubject;
-  }
-
   /**
-   * Unsubscribe the reply inbox and end the stream cleanly. Subsequent
-   * `for await` iterations over this stream exit without throwing.
+   * Stop the underlying request iterator and end the stream cleanly.
+   * Subsequent `for await` iterations over this stream exit without throwing.
    */
   cancel(): void {
     this.#cancelled = true;
-    this.#sub?.unsubscribe();
+    this.#iter?.stop();
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamMessage> {
@@ -82,31 +86,43 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
     if (this.#cancelled) return;
     if (this.#signal?.aborted) throw abortError(this.#signal);
 
-    const sub = this.#nc.subscribe(this.#replySubject);
-    this.#sub = sub;
-    // Flush so the SUB is at the server before the request is published —
-    // otherwise the agent could start replying before we're subscribed.
-    await this.#nc.flush();
-    this.#nc.publish(this.#requestSubject, encodeEnvelope(this.#envelope), {
-      reply: this.#replySubject,
-    });
+    // The `NatsConnection` interface types `requestMany` as returning a bare
+    // `AsyncIterable<Msg>`, but the concrete implementations (nats-core /
+    // transport-node / Bun ws) all return a `QueuedIterator<Msg>` whose
+    // `.stop()` is the only way to bail out early without waiting for
+    // `maxWait` to expire. Cast at the boundary.
+    const iter = (await this.#nc.requestMany(this.#requestSubject, encodeEnvelope(this.#envelope), {
+      strategy: "sentinel",
+      maxWait: this.#maxWaitMs,
+    })) as QueuedIterator<Msg>;
+    this.#iter = iter;
+    // cancel() may have fired during the requestMany await — the early
+    // check above only covers cancellation before iteration started.
+    if (this.#cancelled) {
+      iter.stop();
+      return;
+    }
+    if (this.#signal?.aborted) {
+      iter.stop();
+      throw abortError(this.#signal);
+    }
 
     let onAbort: (() => void) | undefined;
     if (this.#signal) {
       onAbort = (): void => {
         this.#cancelled = true; // mark so we distinguish "closed by abort" vs "stalled"
-        sub.unsubscribe();
+        iter.stop();
       };
       this.#signal.addEventListener("abort", onAbort, { once: true });
     }
 
     try {
-      const iter = withInactivityTimeout(
-        sub,
+      const timed = withInactivityTimeout(
+        iter,
         this.#inactivityTimeoutMs,
         () => new StreamStalledError(this.#inactivityTimeoutMs),
       );
-      for await (const msg of iter) {
+      for await (const msg of timed) {
         if (this.#signal?.aborted) throw abortError(this.#signal);
         if (isErrorSignal(msg)) {
           throw buildServiceErrorFromMsg(msg);
@@ -127,20 +143,20 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
         if (!decoded) continue; // unknown `type` silently dropped per §6.6
         yield toStreamMessage(decoded, this.#nc);
       }
-      // Subscription closed without a terminator. Three possibilities:
-      //   - explicit cancel() / AbortSignal fired → exit cleanly (for
-      //     cancel) or throw the signal's reason (for abort).
-      //   - network / server closed the subscription → stalled.
+      // The terminator branch above always `return`s, so reaching here
+      // means the iterator drained without one. Possible sources:
+      //   - AbortSignal fired → throw the signal's reason.
+      //   - cancel() fired → exit cleanly.
+      //   - maxWait elapsed → throw StreamMaxWaitExceededError.
       if (this.#signal?.aborted) {
         throw abortError(this.#signal);
       }
-      if (!this.#cancelled) {
-        throw new StreamStalledError(this.#inactivityTimeoutMs);
-      }
+      if (this.#cancelled) return;
+      throw new StreamMaxWaitExceededError(this.#maxWaitMs);
     } finally {
       if (onAbort && this.#signal) this.#signal.removeEventListener("abort", onAbort);
-      sub.unsubscribe();
-      this.#sub = null;
+      iter.stop();
+      this.#iter = null;
     }
   }
 }

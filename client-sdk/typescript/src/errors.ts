@@ -90,6 +90,19 @@ export class StreamStalledError extends NatsAgentError {
   }
 }
 
+/**
+ * The stream ran past its absolute deadline without seeing the wire
+ * terminator (spec §6.5). Distinct from {@link StreamStalledError}: the
+ * agent may still be sending chunks at less than the inactivity gap, but
+ * the total time exceeded the per-prompt `maxWaitMs` ceiling.
+ */
+export class StreamMaxWaitExceededError extends NatsAgentError {
+  constructor(public readonly maxWaitMs: number) {
+    super(`stream exceeded maxWait of ${maxWaitMs}ms without terminator`);
+    this.name = "StreamMaxWaitExceededError";
+  }
+}
+
 /** A received wire payload could not be interpreted per spec. */
 export class ProtocolError extends NatsAgentError {
   constructor(message: string, options?: ErrorOptions) {

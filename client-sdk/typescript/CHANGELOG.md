@@ -13,6 +13,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+> **Release-tag note:** the `replySubject` removal under "Removed" below
+> is a breaking public API change (the getter was listed in the 0.4.0
+> public surface). Cut this as **0.5.0**, not a 0.4.x patch.
+
+### Changed
+
+- `PromptStream` now drives the response with `nc.requestMany` using
+  the `sentinel` strategy (the wire terminator's empty-body shape
+  doubles as the sentinel). Replies route through the connection's
+  shared mux inbox instead of a fresh per-stream subscription, removing
+  the explicit `subscribe → flush → publish` dance and per-call
+  `_INBOX.agents.>` subject. Behavior over the wire is unchanged.
+
+### Added
+
+- `PromptOptions.maxWaitMs` — absolute ceiling for a single prompt
+  response, passed through to `requestMany`'s `maxWait`. Distinct from
+  `inactivityTimeoutMs` (which still enforces §6.6 idle-gap
+  detection). Default exported as `DEFAULT_PROMPT_MAX_WAIT_MS`
+  (10 minutes).
+- `StreamMaxWaitExceededError` — thrown when a prompt stream runs past
+  its absolute `maxWaitMs` ceiling without seeing the wire terminator,
+  even if chunks were still arriving under the inactivity gap.
+
+### Removed
+
+- `PromptStream.replySubject` getter. With the requestMany / mux move
+  the inbox is shared across all in-flight requests on the connection,
+  so the per-stream value lost meaning. The getter was documented as a
+  debugging aid and is not used by any tests or examples in-tree.
+
 ## [0.4.0] - 2026-04-30
 
 > **Note:** `0.3.0` was tagged in code (verb-first wire bump + max_payload
