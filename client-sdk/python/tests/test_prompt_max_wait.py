@@ -181,6 +181,46 @@ async def test_max_wait_with_terminator_in_time(
     evidence.write_json("received.json", received_texts)
 
 
+async def test_terminator_arrival_cancels_max_wait_even_if_consumer_is_slow(
+    nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
+) -> None:
+    """Terminator arrival, not consumer drain speed, stops the max-wait ceiling."""
+    received_texts: list[str] = []
+    terminator_published = asyncio.Event()
+    slow_body_s = 0.4
+    max_wait_s = 0.2
+
+    async def fake_agent(msg: Msg) -> None:
+        async def emit() -> None:
+            await nc.publish(msg.reply, _response_chunk_bytes("chunk-before-slow-body"))
+            await nc.publish(msg.reply, b"")
+            await nc.flush()
+            terminator_published.set()
+
+        bg_tasks(asyncio.create_task(emit()))
+
+    sub = await nc.subscribe(PROMPT_SUBJECT, cb=fake_agent)
+    try:
+        agent = Agent(nc, _make_agent_info(PROMPT_SUBJECT))
+        async for chunk in agent.prompt("terminate-before-sleep", max_wait_s=max_wait_s):
+            if isinstance(chunk, ResponseChunk):
+                received_texts.append(chunk.text)
+                await asyncio.wait_for(terminator_published.wait(), timeout=2.0)
+                await asyncio.sleep(slow_body_s)
+    finally:
+        await sub.unsubscribe()
+
+    assert received_texts == ["chunk-before-slow-body"]
+    evidence.write_json(
+        "slow_consumer_terminator.json",
+        {
+            "max_wait_s": max_wait_s,
+            "slow_body_s": slow_body_s,
+            "received": received_texts,
+        },
+    )
+
+
 async def test_max_wait_distinct_from_inactivity_timeout(
     nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
 ) -> None:

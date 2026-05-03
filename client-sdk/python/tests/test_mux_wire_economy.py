@@ -24,8 +24,10 @@ Two layers of evidence:
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import urllib.request
+import weakref
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -36,7 +38,7 @@ from synadia_ai.agents import (
     EndpointInfo,
     ResponseChunk,
 )
-from synadia_ai.agents._mux import mux_for
+from synadia_ai.agents._mux import _MUX_CACHE, mux_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -78,6 +80,30 @@ def _make_agent_info(prompt_subject: str) -> AgentInfo:
 
 def _response_chunk(text: str) -> bytes:
     return json.dumps({"type": "response", "data": text}).encode("utf-8")
+
+
+class _WeakrefableClient:
+    pass
+
+
+def test_mux_cache_does_not_keep_dropped_client_alive() -> None:
+    """The weak-keyed mux cache must not retain closed/dropped Clients."""
+    client = _WeakrefableClient()
+    client_ref = weakref.ref(client)
+    mux = mux_for(cast("NATSClient", client))
+
+    assert mux_for(cast("NATSClient", client)) is mux
+
+    del client
+    for _ in range(5):
+        gc.collect()
+        # Touch the weak dictionary so pending removals are committed.
+        list(_MUX_CACHE.items())
+        if client_ref() is None:
+            break
+
+    assert client_ref() is None
+    assert all(cached is not mux for cached in _MUX_CACHE.values())
 
 
 async def test_five_prompts_open_one_mux_subscription(

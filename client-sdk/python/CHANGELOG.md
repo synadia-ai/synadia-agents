@@ -68,15 +68,14 @@ unchanged; protocol stays at `"0.3"`.
   `INTERIM-NATSPY-REQUEST-MANY`.
 
   [np-rm]: https://github.com/nats-io/nats.py
-- **Internal: `Agent.prompt` runs a per-stream close-event watcher
-  task** that pushes a cancellation sentinel into the stream's queue
-  when `close_event` fires. Consumers unblock from `queue.get()`
-  within an event-loop tick instead of waiting for the §6.6
-  inactivity timer. Restores the prior contract from before the
-  refactor — works regardless of whether the `Agent` was built via
-  `Agents.discover()` or directly. Mirrors TS's `closeSignal:
-  AbortSignal` mechanism, kept intentionally orthogonal to the mux
-  (mux = transport, close_event = cancellation).
+- **Internal: `Agent.prompt` races stream reads against lifecycle
+  events** so `close_event` and `max_wait_s` win over queued chunks
+  and terminators. Consumers unblock within an event-loop tick
+  instead of waiting for the §6.6 inactivity timer, and max-wait is
+  cancelled when the mux observes the wire terminator. Restores the
+  prior close contract while matching TS's `closeSignal: AbortSignal`
+  and `requestMany(..., { maxWait })` split (mux = transport,
+  close/max-wait = lifecycle).
 - **`Agents(prompt_max_wait_s=...)`** kwarg on the constructor —
   default for the new `Agent.prompt(max_wait_s=...)` ceiling. Falls
   back to `DEFAULT_PROMPT_MAX_WAIT_S = 600.0` when omitted. New
@@ -88,9 +87,9 @@ unchanged; protocol stays at `"0.3"`.
 - **No protocol-version bump.** PR #66 on the TS side was a
   client-only refactor (consumer changes how it subscribes; producer
   is unaffected). This Python catch-up is the same: zero wire-shape
-  change, `protocol_version` stays at `"0.3"`. The
-  `tests/test_interop_e2e.py` skip remains tied to the v0.3
-  verb-first wire blocker, not to this change.
+  change, `protocol_version` stays at `"0.3"`. The cross-SDK
+  `tests/test_interop_e2e.py` tests run when Bun + the TS sibling
+  dependencies are present and skip only for missing prereqs.
 - **The agent-sdk side (`agent-sdk/python`) is bumped in lockstep**
   for dependency-pinning hygiene only; no agent-side code changes.
   PR #66 was confirmed to touch only `client-sdk/typescript/` (`gh

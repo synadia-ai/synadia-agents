@@ -14,26 +14,25 @@ whose internal mux is automatically shared by every caller of the same
 This module is the API-level analogue, intentionally mirroring the TS
 shape: **one** ``MuxInbox`` per :class:`~nats.aio.client.Client`,
 created on first prompt and held in a process-global
-:class:`weakref.WeakKeyDictionary` keyed by the connection. Every caller
-of :func:`mux_for` against the same ``nc`` gets the same instance, so
-multiple :class:`~synadia_ai.agents.Agents` (or directly-constructed
-:class:`~synadia_ai.agents.Agent` handles) on the same connection
-share one ``_INBOX.agents.<mux>.*`` subscription. Lifecycle is tied to
-the connection: when the user closes ``nc`` the subscription dies, and
-when *every* strong reference to the ``Client`` object is dropped the
-weak-keyed cache entry is collected automatically — no explicit
-teardown. Note the mux itself holds ``self._nc`` strongly, so the
-cache only frees once the user (and any other code path) has released
-their references too; with a long-lived caller this means the entry
-persists for the lifetime of the process, by design.
+:class:`weakref.WeakKeyDictionary` keyed by the connection. The mux keeps
+only a weak reference back to that connection, so every caller of
+:func:`mux_for` against the same ``nc`` gets the same instance without
+the cache keeping closed/dropped ``Client`` objects alive. Multiple
+:class:`~synadia_ai.agents.Agents` (or directly-constructed
+:class:`~synadia_ai.agents.Agent` handles) on the same connection share
+one ``_INBOX.agents.<mux>.*`` subscription. Lifecycle is tied to the
+connection: when the user closes ``nc`` the subscription dies, and when
+*every* strong reference to the ``Client`` object is dropped the
+weak-keyed cache entry is collected automatically — no explicit teardown.
 
 Cancellation is **not** the mux's concern. The mux only routes
 :class:`~nats.aio.msg.Msg` objects from inbox-tail token to per-stream
-queue. Per-stream cancellation (``Agents.close()``,
-``Agent.prompt()`` early bailout) is handled by the consumer in
-:meth:`~synadia_ai.agents.agent.Agent._stream_prompt` via a
-``close_event`` watcher task — the same separation TS uses between
-``requestMany`` (transport) and ``closeSignal`` (cancellation).
+queue. Per-stream cancellation and absolute-deadline handling
+(``Agents.close()``, ``Agent.prompt()`` early bailout, ``max_wait_s``)
+are handled by the consumer in
+:meth:`~synadia_ai.agents.agent.Agent._stream_prompt` — the same
+separation TS uses between ``requestMany`` (transport) and
+``closeSignal`` / max-wait control (lifecycle).
 
 When ``nats-py`` ships ``request_many`` upstream, this module is meant
 to be **deleted** wholesale —
@@ -47,6 +46,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import weakref
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ._inbox import SDK_INBOX_PREFIX, _nuid
@@ -55,9 +56,14 @@ from ._logging import get_logger
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
     from nats.aio.msg import Msg
-    from nats.aio.subscription import Subscription
 
 log = get_logger(__name__)
+
+
+@dataclass(slots=True)
+class _Route:
+    queue: asyncio.Queue[object]
+    on_msg: Callable[[Msg], None] | None = None
 
 
 class MuxInbox:
@@ -79,18 +85,16 @@ class MuxInbox:
     """
 
     def __init__(self, nc: NATSClient) -> None:
-        self._nc = nc
+        self._nc_ref = weakref.ref(nc)
         # The mux nuid lives between the prefix and the per-stream token
         # — it isolates this connection's caller-side reply subjects
         # from any other client account that shares the
         # ``_INBOX.agents.>`` permission grant.
         self._inbox_prefix = f"{SDK_INBOX_PREFIX}.{_nuid.next().decode()}"
-        self._sub: Subscription | None = None
-        # Queue is typed `object` because consumers (currently
-        # ``agent.py``) push their own per-stream cancellation sentinels
-        # alongside the wire :class:`~nats.aio.msg.Msg` values the mux
-        # dispatches. Consumers disambiguate by ``is`` identity at read.
-        self._routes: dict[str, asyncio.Queue[object]] = {}
+        # Queue is typed `object` because consumers may race it against
+        # their own lifecycle events. The mux itself only enqueues wire
+        # :class:`~nats.aio.msg.Msg` values.
+        self._routes: dict[str, _Route] = {}
         # `_started` flips True after the first successful start(); used
         # to make start() idempotent without re-subscribing.
         self._started = False
@@ -114,27 +118,29 @@ class MuxInbox:
         a live :class:`~nats.aio.subscription.Subscription`, the partial
         sub is unsubscribed before the exception propagates. Otherwise a
         retry on the next prompt would call ``subscribe()`` again and
-        overwrite ``self._sub``, leaking the original subscription on
-        the broker until ``nc`` is closed.
+        leak the original subscription on the broker until ``nc`` is
+        closed.
         """
         if self._started:
             return
         async with self._lock:
             if self._started:  # second-check inside the lock
                 return
+            nc = self._nc_ref()
+            if nc is None:
+                raise RuntimeError("NATS connection was released before mux start")
             wildcard = f"{self._inbox_prefix}.*"
-            sub = await self._nc.subscribe(wildcard, cb=self._on_msg)
+            sub = await nc.subscribe(wildcard, cb=self._on_msg)
             try:
                 # Flush so the SUB lands at the broker before any caller
                 # publishes a request that names this inbox as its reply.
-                await self._nc.flush()
+                await nc.flush()
             except BaseException:
                 # Roll back the half-started state so a retry from the
                 # next prompt can subscribe cleanly.
                 with contextlib.suppress(Exception):
                     await sub.unsubscribe()
                 raise
-            self._sub = sub
             self._started = True
 
     async def _on_msg(self, msg: Msg) -> None:
@@ -150,24 +156,33 @@ class MuxInbox:
         subject: str = msg.subject
         last_dot = subject.rfind(".")
         token = subject[last_dot + 1 :] if last_dot >= 0 else subject
-        queue = self._routes.get(token)
-        if queue is None:
+        route = self._routes.get(token)
+        if route is None:
             log.debug("mux: dropping reply for unregistered token (subject=%s)", subject)
             return
-        queue.put_nowait(msg)
+        if route.on_msg is not None:
+            try:
+                route.on_msg(msg)
+            except Exception:
+                log.exception("mux: route message hook failed (subject=%s)", subject)
+        route.queue.put_nowait(msg)
 
-    def register(self) -> tuple[str, asyncio.Queue[object]]:
+    def register(
+        self, *, on_msg: Callable[[Msg], None] | None = None
+    ) -> tuple[str, asyncio.Queue[object]]:
         """Reserve a per-stream token + queue.
 
         Returns ``(token, queue)``. The caller publishes its request
         with ``reply=mux.reply_subject_for(token)`` and pulls inbound
-        chunks from ``queue``. After the stream completes (or is
-        cancelled), the caller MUST call :meth:`unregister` to free
-        the slot.
+        chunks from ``queue``. ``on_msg`` is an optional synchronous
+        hook for arrival-side lifecycle bookkeeping such as cancelling
+        a max-wait timer when the caller recognises a terminator. After
+        the stream completes (or is cancelled), the caller MUST call
+        :meth:`unregister` to free the slot.
         """
         token = _nuid.next().decode()
         queue: asyncio.Queue[object] = asyncio.Queue()
-        self._routes[token] = queue
+        self._routes[token] = _Route(queue=queue, on_msg=on_msg)
         return token, queue
 
     def unregister(self, token: str) -> None:

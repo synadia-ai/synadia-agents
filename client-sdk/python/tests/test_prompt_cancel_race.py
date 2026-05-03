@@ -3,8 +3,10 @@
 Plan §race analysis covers a dozen-odd windows where a prompt can be
 cancelled or torn down. These tests pin the load-bearing ones:
 
-- :class:`Agents.close` mid-stream delivers a sentinel that unblocks the
-  consumer within an event-loop tick, NOT after the inactivity timer.
+- :class:`Agents.close` mid-stream wins the stream wait race and unblocks
+  the consumer within an event-loop tick, NOT after the inactivity timer.
+- :class:`Agents.close` wins over chunks and terminators already queued
+  in the mux inbox.
 - 50 concurrent prompts on the same shared mux see only their own
   chunks (no token cross-talk).
 - :meth:`Agent.prompt` after :meth:`Agents.close` raises a clean error
@@ -80,6 +82,22 @@ def _response_chunk_bytes(text: str) -> bytes:
     return json.dumps({"type": "response", "data": text}).encode("utf-8")
 
 
+async def _wait_for_buffered_route_depth(nc: NATSClient, min_depth: int) -> list[int]:
+    """Wait until an active mux route has at least ``min_depth`` queued replies."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 2.0
+    mux = mux_for(nc)
+    while loop.time() < deadline:
+        depths = [route.queue.qsize() for route in mux._routes.values()]
+        if depths and max(depths) >= min_depth:
+            return depths
+        await asyncio.sleep(0.01)
+    raise AssertionError(
+        f"timed out waiting for mux route queue depth >= {min_depth}; "
+        f"depths={[route.queue.qsize() for route in mux._routes.values()]}"
+    )
+
+
 async def test_agents_close_during_live_stream_unblocks_promptly(
     nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
 ) -> None:
@@ -110,7 +128,7 @@ async def test_agents_close_during_live_stream_unblocks_promptly(
             consume_started.set()
             with pytest.raises(ProtocolError) as excinfo:
                 # Use a long inactivity timeout so the failure path
-                # MUST come from the close-sentinel, not from inactivity.
+                # MUST come from the close lifecycle path, not from inactivity.
                 async for _ in agent.prompt("hold open", timeout=60.0):
                     pass
             consume_unblocked_at["t"] = time.monotonic()
@@ -127,7 +145,7 @@ async def test_agents_close_during_live_stream_unblocks_promptly(
         elapsed_ms = (consume_unblocked_at["t"] - close_fired_at["t"]) * 1000
         # Assert "promptly" — well under any inactivity deadline.
         assert elapsed_ms < 500, (
-            f"close→unblock took {elapsed_ms:.1f} ms; expected <500 ms (mux sentinel path)"
+            f"close→unblock took {elapsed_ms:.1f} ms; expected <500 ms (close path)"
         )
         evidence.write_json("close_latency.json", {"unblock_ms": elapsed_ms})
     finally:
@@ -243,6 +261,51 @@ async def test_cancel_during_iteration_unregisters_token(
     evidence.write_json("seen_first.json", seen_first)
 
 
+async def test_close_wins_over_buffered_chunks_and_terminator(
+    nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
+) -> None:
+    """Close beats mux FIFO backlog, including an already-queued terminator."""
+    emitted_all = asyncio.Event()
+
+    async def burst_agent(msg: Msg) -> None:
+        async def emit() -> None:
+            await nc.publish(msg.reply, _response_chunk_bytes("first"))
+            await nc.publish(msg.reply, _response_chunk_bytes("buffered"))
+            await nc.publish(msg.reply, b"")
+            await nc.flush()
+            emitted_all.set()
+
+        bg_tasks(asyncio.create_task(emit()))
+
+    sub = await nc.subscribe(PROMPT_SUBJECT, cb=burst_agent)
+    stream: AsyncGenerator[object, None] | None = None
+    depths: list[int] = []
+    try:
+        agents = Agents(nc=nc)
+        info = _make_agent_info(PROMPT_SUBJECT)
+        agent = Agent(nc, info, close_event=agents.close_event)
+
+        stream = cast(AsyncGenerator[object, None], agent.prompt("burst", timeout=60.0))
+        first = await anext(stream)
+        assert isinstance(first, ResponseChunk)
+        assert first.text == "first"
+        await asyncio.wait_for(emitted_all.wait(), timeout=2.0)
+        depths = await _wait_for_buffered_route_depth(nc, min_depth=2)
+
+        await agents.close()
+        with pytest.raises(ProtocolError) as excinfo:
+            await anext(stream)
+
+        assert "Agents is closed" in str(excinfo.value)
+        assert mux_for(nc)._routes == {}
+    finally:
+        if stream is not None:
+            await stream.aclose()
+        await sub.unsubscribe()
+
+    evidence.write_json("buffered_close.json", {"queued_depths_before_close": depths})
+
+
 async def test_close_before_prompt_raises_agents_closed_error(
     nc: NATSClient, evidence: EvidenceRecorder
 ) -> None:
@@ -283,9 +346,9 @@ async def test_close_during_prompt_yields_protocol_error(
     """Plan §race-analysis #7 — half B: ``close()`` fires *during* the loop.
 
     Once the prompt has gotten past its synchronous pre-flight check
-    AND past the publish (so the post-publish close-watcher is armed),
-    ``Agents.close()`` propagates via the per-stream watcher pushing
-    :data:`_CLOSE_SENTINEL`; the iterator raises :class:`ProtocolError`
+    AND past the publish (so the post-publish lifecycle wait is active),
+    ``Agents.close()`` wins the stream wait race; the iterator raises
+    :class:`ProtocolError`
     (not :class:`AgentsClosedError`) so callers can branch on "torn
     down mid-flight" vs "called against a closed Agents."
 
@@ -317,7 +380,7 @@ async def test_close_during_prompt_yields_protocol_error(
                 async for chunk in agent.prompt("hold open", timeout=60.0):
                     if isinstance(chunk, ResponseChunk):
                         # First chunk delivered → consumer is provably past
-                        # publish + close-watcher arming; safe to fire close.
+                        # publish + lifecycle wait setup; safe to fire close.
                         consumer_in_iteration.set()
             except AgentsClosedError as exc:
                 outcome["raised"] = f"AgentsClosedError: {exc}"

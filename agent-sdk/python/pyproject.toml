@@ -37,7 +37,7 @@ Issues = "https://github.com/synadia-ai/synadia-agents/issues"
 # `uv sync`. This affects monorepo developers only — it is dev-time
 # config and is NOT persisted into the built wheel's METADATA, so an
 # external user installing `synadia-ai-agent-service` from PyPI gets
-# the declared dep (`synadia-ai-agents>=0.5`) from PyPI as normal.
+# the declared dep (`synadia-ai-agents>=0.6`) from PyPI as normal.
 synadia-ai-agents = { path = "../../client-sdk/python", editable = true }
 
 [dependency-groups]

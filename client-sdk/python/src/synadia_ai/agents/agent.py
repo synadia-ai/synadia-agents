@@ -15,7 +15,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Final, TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 from ._logging import get_logger
 from ._mux import mux_for
@@ -39,26 +39,6 @@ if TYPE_CHECKING:
     from nats.aio.msg import Msg
 
 log = get_logger(__name__)
-
-
-# Per-stream cancellation sentinel. Pushed into the stream's queue by
-# the close-event watcher (see :func:`_close_to_sentinel`) so the
-# consumer's ``queue.get()`` returns immediately on
-# :meth:`Agents.close` regardless of the inactivity-timeout setting.
-# Distinct from any wire-level value — the consumer recognises it by
-# ``is`` identity.
-_CLOSE_SENTINEL: Final[object] = object()
-
-
-async def _close_to_sentinel(close_event: asyncio.Event, queue: asyncio.Queue[object]) -> None:
-    """Watcher coroutine: push :data:`_CLOSE_SENTINEL` when ``close_event`` fires.
-
-    Spawned per stream in :meth:`Agent._stream_prompt`; cancelled in the
-    stream's ``finally`` block. The queue is unbounded so
-    ``put_nowait`` cannot raise.
-    """
-    await close_event.wait()
-    queue.put_nowait(_CLOSE_SENTINEL)
 
 
 # Default per-stream inactivity timeout (§6.6) — 60 seconds. Mirrors the
@@ -321,29 +301,79 @@ class Agent:
         *,
         timeout: float,
         max_wait_s: float,
-        deadline: float,
+        max_wait_event: asyncio.Event,
         reply: str,
-        loop: asyncio.AbstractEventLoop,
     ) -> object:
         """Pull the next item off ``queue`` or raise the appropriate timeout.
 
-        Splits the dual-timer logic out of :meth:`_stream_prompt` so the
-        per-chunk decode loop stays readable. ``StreamMaxWaitExceededError``
-        and ``StreamStalledError`` are disambiguated by which deadline
-        elapsed first; both inherit from :class:`ProtocolError` for back-
-        compat.
+        Close and max-wait are lifecycle controls, not ordinary queued
+        stream values. They win over already-buffered chunks (including
+        a buffered terminator) so :meth:`Agents.close` cannot be hidden
+        behind FIFO backlog and max-wait does not drain arbitrary chunks
+        after its deadline. The inactivity timeout remains a per-read
+        gap detector and resets after every delivered item.
         """
-        remaining = deadline - loop.time()
-        if remaining <= 0:
+        self._raise_if_cancelled(reply)
+        if max_wait_event.is_set():
             raise StreamMaxWaitExceededError(max_wait_s)
-        wait_for = min(timeout, remaining)
+
+        if not queue.empty():
+            item = queue.get_nowait()
+            self._raise_if_cancelled(reply)
+            if max_wait_event.is_set():
+                raise StreamMaxWaitExceededError(max_wait_s)
+            return item
+
+        queue_task: asyncio.Task[object] = asyncio.create_task(
+            queue.get(),
+            name=f"agents-prompt-next:{reply}",
+        )
+        max_wait_task: asyncio.Task[bool] = asyncio.create_task(
+            max_wait_event.wait(),
+            name=f"agents-prompt-max-wait:{reply}",
+        )
+        close_task: asyncio.Task[bool] | None = (
+            asyncio.create_task(
+                self._close_event.wait(),
+                name=f"agents-prompt-close:{reply}",
+            )
+            if self._close_event is not None
+            else None
+        )
+        wait_set: set[asyncio.Task[object] | asyncio.Task[bool]] = {
+            queue_task,
+            max_wait_task,
+        }
+        if close_task is not None:
+            wait_set.add(close_task)
+
         try:
-            return await asyncio.wait_for(queue.get(), timeout=wait_for)
-        except TimeoutError as exc:
-            if loop.time() >= deadline:
-                raise StreamMaxWaitExceededError(max_wait_s) from exc
-            log.warning("stream stalled on %s: no chunk within %.1fs", reply, timeout)
-            raise StreamStalledError(timeout, reply_subject=reply) from exc
+            done, _pending = await asyncio.wait(
+                wait_set,
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                log.warning("stream stalled on %s: no chunk within %.1fs", reply, timeout)
+                raise StreamStalledError(timeout, reply_subject=reply)
+            if close_task is not None and close_task in done:
+                raise ProtocolError(
+                    f"prompt stream cancelled: owning Agents is closed (reply={reply})"
+                )
+            if max_wait_task in done:
+                raise StreamMaxWaitExceededError(max_wait_s)
+
+            item = queue_task.result()
+            self._raise_if_cancelled(reply)
+            if max_wait_event.is_set():
+                raise StreamMaxWaitExceededError(max_wait_s)
+            return item
+        finally:
+            for task in wait_set:
+                if not task.done():
+                    task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await task
 
     def _raise_if_closed(self) -> None:
         """Raise :class:`AgentsClosedError` if the owning Agents has closed.
@@ -358,26 +388,10 @@ class Agent:
         if self._close_event is not None and self._close_event.is_set():
             raise AgentsClosedError("Agents is closed; cannot start new prompt streams")
 
-    def _arm_close_watcher(
-        self, queue: asyncio.Queue[object], token: str
-    ) -> asyncio.Task[None] | None:
-        """Wire the per-stream cancellation path immediately after publish.
-
-        If ``close_event`` already fired during the publish await, push
-        :data:`_CLOSE_SENTINEL` synchronously so the very first
-        ``queue.get()`` unblocks. Otherwise spawn the async watcher.
-        Returns the spawned task (or ``None`` for the no-watcher cases)
-        so :meth:`_stream_prompt` can cancel it in ``finally``.
-        """
-        if self._close_event is None:
-            return None
-        if self._close_event.is_set():
-            queue.put_nowait(_CLOSE_SENTINEL)
-            return None
-        return asyncio.create_task(
-            _close_to_sentinel(self._close_event, queue),
-            name=f"agents-close-watcher:{token}",
-        )
+    def _raise_if_cancelled(self, reply: str) -> None:
+        """Raise if :meth:`Agents.close` fired during an active stream."""
+        if self._close_event is not None and self._close_event.is_set():
+            raise ProtocolError(f"prompt stream cancelled: owning Agents is closed (reply={reply})")
 
     async def _stream_prompt(
         self, envelope: Envelope, encoded: bytes, timeout: float, max_wait_s: float
@@ -392,16 +406,23 @@ class Agent:
         # connection. See `_mux.py`'s INTERIM-NATSPY-REQUEST-MANY note.
         mux = mux_for(self._nc)
         await mux.start()  # idempotent; pays SUB+flush on the first prompt
-        token, queue = mux.register()
-        close_watcher: asyncio.Task[None] | None = None
+        loop = asyncio.get_running_loop()
+        max_wait_event = asyncio.Event()
+        max_wait_handle: asyncio.TimerHandle | None
+        if max_wait_s > 0:
+            max_wait_handle = loop.call_later(max_wait_s, max_wait_event.set)
+        else:
+            max_wait_event.set()
+            max_wait_handle = None
+
+        def on_msg(msg: Msg) -> None:
+            if msg.data == b"" and not (msg.headers or {}) and max_wait_handle is not None:
+                max_wait_handle.cancel()
+
+        token, queue = mux.register(on_msg=on_msg)
         try:
             reply = mux.reply_subject_for(token)
             subject = self._info.prompt_endpoint.subject
-
-            # Absolute ceiling. ``loop.time()`` is monotonic so the deadline
-            # is robust against wall-clock skew.
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + max_wait_s
 
             # Re-check after the mux.start() await: close may have
             # fired during the SUB+flush window. Bail before publishing
@@ -409,21 +430,16 @@ class Agent:
             self._raise_if_closed()
 
             await self._nc.publish(subject, encoded, reply=reply)
-            close_watcher = self._arm_close_watcher(queue, token)
 
             while True:
                 item = await self._wait_for_chunk(
                     queue,
                     timeout=timeout,
                     max_wait_s=max_wait_s,
-                    deadline=deadline,
+                    max_wait_event=max_wait_event,
                     reply=reply,
-                    loop=loop,
                 )
-                if item is _CLOSE_SENTINEL:
-                    raise ProtocolError(
-                        f"prompt stream cancelled: owning Agents is closed (reply={reply})"
-                    )
+                self._raise_if_cancelled(reply)
 
                 msg: Msg = item  # type: ignore[assignment]
                 headers = msg.headers or {}
@@ -455,20 +471,18 @@ class Agent:
                 else:
                     yield chunk
         finally:
-            # Ordering matters: cancel the watcher first (no more
-            # sentinels can be pushed), then unregister the token (no
-            # more wire chunks will be routed here — _on_msg is sync
-            # body, so any in-flight call has already completed
-            # before this line returns), then drain anything that
-            # arrived between the consumer's last ``get()`` and now.
+            # Ordering matters: cancel the max-wait timer first, then
+            # unregister the token (no more wire chunks will be routed
+            # here — _on_msg is sync body, so any in-flight call has
+            # already completed before this line returns), then drain
+            # anything that arrived between the consumer's last ``get()``
+            # and now.
             # This releases :class:`~nats.aio.msg.Msg` payloads
             # deterministically rather than waiting on the queue's
             # own GC, which matters for streams that exit early with
             # large chunks still buffered.
-            if close_watcher is not None and not close_watcher.done():
-                close_watcher.cancel()
-                with contextlib.suppress(BaseException):
-                    await close_watcher
+            if max_wait_handle is not None:
+                max_wait_handle.cancel()
             mux.unregister(token)
             while not queue.empty():
                 queue.get_nowait()
