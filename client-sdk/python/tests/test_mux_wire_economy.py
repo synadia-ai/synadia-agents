@@ -156,9 +156,7 @@ def _fetch_subsz(monitoring_url: str) -> dict[str, Any]:
     loop and the call is sub-millisecond against a localhost server.
     Avoids dragging in :mod:`aiohttp` for one cold poll.
     """
-    with urllib.request.urlopen(
-        f"{monitoring_url}/subsz?subs=1", timeout=2.0
-    ) as response:
+    with urllib.request.urlopen(f"{monitoring_url}/subsz?subs=1", timeout=2.0) as response:
         return cast("dict[str, Any]", json.loads(response.read()))
 
 
