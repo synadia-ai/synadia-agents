@@ -347,8 +347,9 @@ class Agent:
         if close_task is not None:
             wait_set.add(close_task)
 
+        pending: set[asyncio.Task[object] | asyncio.Task[bool]] = set()
         try:
-            done, _pending = await asyncio.wait(
+            done, pending = await asyncio.wait(
                 wait_set,
                 timeout=timeout,
                 return_when=asyncio.FIRST_COMPLETED,
@@ -369,11 +370,10 @@ class Agent:
                 raise StreamMaxWaitExceededError(max_wait_s)
             return item
         finally:
-            for task in wait_set:
-                if not task.done():
-                    task.cancel()
-                    with contextlib.suppress(BaseException):
-                        await task
+            for task in pending:
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
 
     def _raise_if_closed(self) -> None:
         """Raise :class:`AgentsClosedError` if the owning Agents has closed.
@@ -439,7 +439,6 @@ class Agent:
                     max_wait_event=max_wait_event,
                     reply=reply,
                 )
-                self._raise_if_cancelled(reply)
 
                 msg: Msg = item  # type: ignore[assignment]
                 headers = msg.headers or {}
