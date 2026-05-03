@@ -29,10 +29,14 @@ from synadia_ai.agents import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nats.aio.client import Client as NATSClient
     from nats.aio.msg import Msg
 
     from tests.harness.evidence import EvidenceRecorder
+
+    BgTasks = Callable[[asyncio.Task[object]], None]
 
 
 PROMPT_SUBJECT = "agents.prompt.test-agent.pytest.wireecon"
@@ -66,7 +70,7 @@ def _response_chunk(text: str) -> bytes:
 
 
 async def test_five_prompts_open_one_mux_subscription(
-    nc: NATSClient, evidence: EvidenceRecorder
+    nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
 ) -> None:
     """A 5-prompt sequence opens exactly ONE inbox subscription (the mux).
 
@@ -96,13 +100,13 @@ async def test_five_prompts_open_one_mux_subscription(
             await nc.publish(msg.reply, _response_chunk("ok"))
             await nc.publish(msg.reply, b"")  # terminator
 
-        msg._emit_task = asyncio.create_task(emit())  # type: ignore[attr-defined]
+        bg_tasks(asyncio.create_task(emit()))
 
     sub = await original_subscribe(PROMPT_SUBJECT, cb=echo_agent)
     try:
         agents = Agents(nc=nc)
         info = _make_agent_info(PROMPT_SUBJECT)
-        agent = Agent(nc, info, mux=agents.mux, close_event=agents.close_event)
+        agent = Agent(nc, info, close_event=agents.close_event)
 
         # Snapshot pre-prompt count so we don't conflate other
         # subscriptions opened by the test harness/agents.

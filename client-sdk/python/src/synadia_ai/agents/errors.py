@@ -51,12 +51,15 @@ class StreamMaxWaitExceededError(ProtocolError):
 
 
 class AgentsClosedError(NatsAgentError):
-    """Raised by SDK-internal entry points after :meth:`Agents.close` has run.
+    """Raised when :meth:`Agent.prompt` is called after :meth:`Agents.close`.
 
-    Today this only fires from the interim mux inbox's ``register()`` —
-    the only path callers can reach is via :meth:`Agent.prompt` after the
-    owning :class:`Agents` was torn down. Surfaces as a clean,
-    branch-able error rather than a generic :class:`RuntimeError`.
+    Pre-flight check at the top of every prompt stream: if the
+    ``close_event`` is already set, the iterator raises this error
+    before any wire I/O instead of hanging on a torn-down broker.
+    Distinct from :class:`ProtocolError` (which the iterator raises
+    when ``Agents.close`` fires *during* an active stream) so callers
+    can branch on "already closed at call time" vs "torn down
+    mid-flight" if they care.
     """
 
     def __init__(self, what: str = "Agents is closed") -> None:

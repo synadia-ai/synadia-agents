@@ -11,10 +11,10 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 Catch-up to the TypeScript SDK's
 [PR #66](https://github.com/synadia-ai/synadia-agents/pull/66)
 (`requestMany` + sentinel) — Python-side analogue using an interim
-SDK-level mux reply-inbox (one `SUB`+flush per `Agents`, regardless
-of how many concurrent prompts) plus the `max_wait_s` absolute
-ceiling on prompt streams. Wire shape unchanged; protocol stays at
-`"0.3"`.
+**per-NATS-connection** mux reply-inbox (one SUB+flush per
+connection, automatically shared by every caller of the same `nc`)
+plus the `max_wait_s` absolute ceiling on prompt streams. Wire shape
+unchanged; protocol stays at `"0.3"`.
 
 ### Added
 
@@ -40,43 +40,48 @@ ceiling on prompt streams. Wire shape unchanged; protocol stays at
     that previously raised a bare `ProtocolError("stream stalled
     ...")`. Carries `.timeout_s` and `.reply_subject`. Same
     back-compat story as `StreamMaxWaitExceededError`.
-- **`AgentsClosedError(NatsAgentError)`** — raised by
-  `Agent.prompt()` when called after the owning `Agents.close()` has
-  fired. Surfaces the race between a torn-down `Agents` and a
-  late-arriving prompt as a clean, branchable error rather than a
-  generic `RuntimeError`.
+- **`AgentsClosedError(NatsAgentError)`** — raised by the
+  pre-flight check at the top of `Agent.prompt()` when called after
+  the owning `Agents.close()` has already fired. Distinct from
+  `ProtocolError` (which fires when close happens *during* an active
+  stream) so callers can branch on "called against a closed Agents"
+  vs "torn down mid-flight."
 
 ### Changed
 
-- **Internal: `Agents` opens a single shared mux reply-inbox
-  subscription instead of subscribing per prompt.** Wire shape from
-  the broker's POV is unchanged — every reply still arrives on a
-  subject under the SDK inbox prefix `_INBOX.agents.>` — but now one
-  `Agents` instance opens **one** SUB at first prompt-time and routes
-  every stream's chunks to the right consumer by token. A 5-prompt
-  sequence cuts SUB+UNSUB traffic from 10 frames to 0 (after the
-  first SUB), and from one extra `flush()` per prompt to one total.
-  See `src/synadia_ai/agents/_mux.py` for the design + the
-  migration-to-`request_many` plan; **interim** until `nats-py`
+- **Internal: shared mux reply-inbox lives on the NATS connection,
+  not on `Agents`.** Mirrors the TS SDK's design: in PR #66 the TS
+  client uses `nc.requestMany(...)`, which is a method on the
+  connection — every caller of the same `nc` automatically shares
+  the connection's internal mux. Python's analogue is a per-`nc`
+  singleton `MuxInbox` held in a `WeakKeyDictionary` keyed by the
+  connection (see `synadia_ai.agents._mux.mux_for`). Multiple
+  `Agents` instances on the same connection — and directly-
+  constructed `Agent` handles — share one
+  `_INBOX.agents.<mux>.*` subscription. Lifecycle is tied to the
+  connection: when the user closes `nc`, the subscription dies; when
+  the `Client` object is GC'd, the mux entry drops out of the cache
+  automatically. `Agents.close()` does **not** tear down the mux —
+  it lives on the connection and is the connection-owner's
+  responsibility, just like in TS. **Interim** until `nats-py`
   ships [`request_many`][np-rm] upstream. Tracked under marker
   `INTERIM-NATSPY-REQUEST-MANY`.
 
   [np-rm]: https://github.com/nats-io/nats.py
-- **Internal: `Agents.close()` now broadcasts a sentinel into every
-  live stream's queue** before tearing down the mux subscription, so
-  consumers unblock from `queue.get()` within an event-loop tick
-  instead of waiting for the §6.6 inactivity timer. Eliminates the
-  `next_msg`-vs-`close_event` `asyncio.wait` race window that the
-  old per-prompt code carried.
+- **Internal: `Agent.prompt` runs a per-stream close-event watcher
+  task** that pushes a cancellation sentinel into the stream's queue
+  when `close_event` fires. Consumers unblock from `queue.get()`
+  within an event-loop tick instead of waiting for the §6.6
+  inactivity timer. Restores the prior contract from before the
+  refactor — works regardless of whether the `Agent` was built via
+  `Agents.discover()` or directly. Mirrors TS's `closeSignal:
+  AbortSignal` mechanism, kept intentionally orthogonal to the mux
+  (mux = transport, close_event = cancellation).
 - **`Agents(prompt_max_wait_s=...)`** kwarg on the constructor —
   default for the new `Agent.prompt(max_wait_s=...)` ceiling. Falls
   back to `DEFAULT_PROMPT_MAX_WAIT_S = 600.0` when omitted. New
   read-only property `Agents.prompt_max_wait_s` mirrors
   `Agents.stream_inactivity_timeout`.
-- **`Agents.mux`** — read-only property exposing the shared mux for
-  callers that build `Agent` instances outside `Agents.discover()`
-  (parallel to the existing `Agents.close_event`). Documented as
-  **interim** alongside `_mux.py`.
 
 ### Note
 

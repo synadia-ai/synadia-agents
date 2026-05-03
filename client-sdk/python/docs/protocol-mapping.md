@@ -60,7 +60,7 @@ spec to catch up.
 
 | SDK                                  | Wire behaviour                                                                              | Spec ref   |
 | ------------------------------------ | ------------------------------------------------------------------------------------------- | ---------- |
-| Stream start                         | Per-stream reply subject under a shared `_INBOX.agents.<mux>.*` subscription (one per `Agents`); SUB established lazily on first prompt and reused thereafter. **Interim** until nats-py ships `request_many` — see [`src/synadia_ai/agents/_mux.py`](../src/synadia_ai/agents/_mux.py) (marker `INTERIM-NATSPY-REQUEST-MANY`). | §6.1 |
+| Stream start                         | Per-stream reply subject under a shared `_INBOX.agents.<mux>.*` subscription (one per **NATS connection**, automatically shared by every caller — mirrors TS `nc.requestMany`); SUB established lazily on first prompt and reused thereafter. **Interim** until nats-py ships `request_many` — see [`src/synadia_ai/agents/_mux.py`](../src/synadia_ai/agents/_mux.py) (marker `INTERIM-NATSPY-REQUEST-MANY`). | §6.1 |
 | `ResponseChunk.text`                 | Decoded from `{"type":"response","data":"..."}` OR `{...,"data":{text, attachments?}}`.     | §6.3       |
 | `StatusChunk.status`                 | Decoded from `{"type":"status","data":"<token>"}`. Unknown tokens flow through unchanged.   | §6.4, §6.6 |
 | `QueryChunk` → `Query` event         | Decoded from `{"type":"query","data":{id, reply_subject, prompt, attachments?}}`.           | §7         |
@@ -162,12 +162,16 @@ mirror the TypeScript SDK so the two stay in lockstep.
    no `request_many` primitive yet — the TS SDK's PR #66 reshape
    (`nc.requestMany(subject, payload, { strategy: "sentinel", maxWait
    })`) doesn't have a direct port. The Python SDK ships a
-   library-level analogue: one shared
-   `_INBOX.agents.<mux>.*` subscription per `Agents`, replies routed
-   to per-stream queues by inbox-tail token (see
-   [`src/synadia_ai/agents/_mux.py`](../src/synadia_ai/agents/_mux.py)).
-   Wire shape from the broker's POV is unchanged. Once `nats-py`
-   gains `request_many` upstream the interim module gets retired and
+   library-level analogue **deliberately mirroring the TS shape**: one
+   shared `_INBOX.agents.<mux>.*` subscription **per NATS connection**
+   (held in a `WeakKeyDictionary` keyed by the `Client` object —
+   `synadia_ai.agents._mux.mux_for(nc)`), with replies routed to
+   per-stream queues by inbox-tail token. Every `Agents` instance and
+   every directly-constructed `Agent` handle on the same connection
+   automatically picks up the same mux — no plumbing required, just
+   like in TS where `nc.requestMany` belongs to the connection. Wire
+   shape from the broker's POV is unchanged. Once `nats-py` gains
+   `request_many` upstream the interim module gets retired and
    `Agent._stream_prompt` is the single call site to migrate. Track
    the upstream feature at
    [`nats-io/nats.py`](https://github.com/nats-io/nats.py); SDK-side

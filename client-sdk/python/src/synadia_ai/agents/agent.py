@@ -12,15 +12,21 @@ distribution :mod:`synadia_ai.agent_service`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Final, TypeAlias
 
 from ._logging import get_logger
-from ._mux import MuxInbox, is_agents_closed_sentinel
+from ._mux import mux_for
 from .discovery import AgentInfo, EndpointInfo
 from .envelope import Attachment, Envelope, encode
-from .errors import ProtocolError, StreamMaxWaitExceededError, StreamStalledError
+from .errors import (
+    AgentsClosedError,
+    ProtocolError,
+    StreamMaxWaitExceededError,
+    StreamStalledError,
+)
 from .messages import QueryChunk, ResponseChunk, StatusChunk, decode_chunk
 from .validation import (
     assert_attachments_allowed,
@@ -33,6 +39,26 @@ if TYPE_CHECKING:
     from nats.aio.msg import Msg
 
 log = get_logger(__name__)
+
+
+# Per-stream cancellation sentinel. Pushed into the stream's queue by
+# the close-event watcher (see :func:`_close_to_sentinel`) so the
+# consumer's ``queue.get()`` returns immediately on
+# :meth:`Agents.close` regardless of the inactivity-timeout setting.
+# Distinct from any wire-level value — the consumer recognises it by
+# ``is`` identity.
+_CLOSE_SENTINEL: Final[object] = object()
+
+
+async def _close_to_sentinel(close_event: asyncio.Event, queue: asyncio.Queue[object]) -> None:
+    """Watcher coroutine: push :data:`_CLOSE_SENTINEL` when ``close_event`` fires.
+
+    Spawned per stream in :meth:`Agent._stream_prompt`; cancelled in the
+    stream's ``finally`` block. The queue is unbounded so
+    ``put_nowait`` cannot raise.
+    """
+    await close_event.wait()
+    queue.put_nowait(_CLOSE_SENTINEL)
 
 
 # Default per-stream inactivity timeout (§6.6) — 60 seconds. Mirrors the
@@ -112,21 +138,12 @@ class Agent:
         stream_inactivity_timeout: float = DEFAULT_STREAM_INACTIVITY_TIMEOUT_S,
         prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         close_event: asyncio.Event | None = None,
-        mux: MuxInbox | None = None,
     ) -> None:
         self._nc = nc
         self._info = info
         self._default_inactivity_timeout = stream_inactivity_timeout
         self._default_max_wait_s = prompt_max_wait_s
         self._close_event = close_event
-        # When `mux` is None — i.e. the handle was constructed outside
-        # `Agents` (e.g. from a heartbeat + `$SRV.INFO.agents.{id}`
-        # direct lookup) — we lazy-allocate a private mux on the first
-        # prompt(). All subsequent prompts on this Agent share that
-        # subscription, so the wire-economy property still holds even
-        # for direct callers; the SUB itself rides on `nc` and is
-        # cleaned up when the caller closes the connection.
-        self._mux = mux
 
     # --- flat read-only identity / capability fields -------------------
 
@@ -246,10 +263,22 @@ class Agent:
         terminates when the empty-payload chunk arrives (§6.5). Service
         errors mid-stream (§9) are raised as :class:`ProtocolError`.
 
-        The iterator also short-circuits if the owning :class:`Agents`
-        is closed mid-stream — the iterator raises a :class:`ProtocolError`
-        describing the cancellation so callers don't silently hang on a
-        broker that's already torn down.
+        Cancellation:
+
+        - If :meth:`Agents.close` has *already* fired before this
+          iterator advances, :class:`AgentsClosedError` is raised
+          before any wire I/O.
+        - If :meth:`Agents.close` fires *during* iteration, the
+          iterator raises :class:`ProtocolError` describing the
+          cancellation within an event-loop tick — independent of
+          ``timeout`` — so callers don't silently hang on a torn-down
+          broker.
+        - If the caller breaks out of the ``async for`` early, prefer
+          ``async with contextlib.aclosing(agent.prompt(...)) as
+          stream:`` (or an explicit ``await stream.aclose()``) so the
+          per-stream slot in the shared mux inbox is freed
+          deterministically. A bare ``break`` defers cleanup to the
+          generator finalizer (works, but the slot lingers until GC).
         """
         if isinstance(text, Envelope):
             merged_attachments: list[Attachment] | None
@@ -320,13 +349,15 @@ class Agent:
         self, envelope: Envelope, encoded: bytes, timeout: float, max_wait_s: float
     ) -> AsyncIterator[StreamMessage]:
         del envelope  # retained for readability at the call site; not needed here
-        # Resolve the mux: shared (passed in by Agents) or private
-        # (lazy-allocated for direct-construction callers). The wire
-        # economy still holds — every Agent shares one SUB across all
-        # of its prompts, regardless of how it was built.
-        if self._mux is None:
-            self._mux = MuxInbox(self._nc)
-        mux = self._mux
+        # Pre-flight: refuse outright if the owning Agents is already
+        # closed. This catches the "called prompt() after close()" case
+        # cleanly, before any wire I/O or mux state mutation.
+        if self._close_event is not None and self._close_event.is_set():
+            raise AgentsClosedError("Agents is closed; cannot start new prompt streams")
+
+        # Per-nc mux singleton — shared across every Agent on the same
+        # connection. See `_mux.py`'s INTERIM-NATSPY-REQUEST-MANY note.
+        mux = mux_for(self._nc)
         await mux.start()  # idempotent; pays SUB+flush on the first prompt
         token, queue = mux.register()
         reply = mux.reply_subject_for(token)
@@ -337,15 +368,23 @@ class Agent:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max_wait_s
 
+        # Per-stream close watcher (only when wired up). When
+        # close_event fires, this task pushes a sentinel into our
+        # queue so the consumer's next ``queue.get()`` unblocks
+        # immediately — independent of the inactivity timeout. Mirrors
+        # the TS SDK's ``closeSignal: AbortSignal`` path under PR #66.
+        close_watcher: asyncio.Task[None] | None = None
         try:
             await self._nc.publish(subject, encoded, reply=reply)
-            # Race: cancel() / Agents.close() may have fired during the
-            # publish await. The mux's sentinel-broadcast lands in our
-            # queue, but if close fired *before* we publish we still
-            # want to fail fast rather than wait on a dead inbox.
+            # Race: close_event may have fired during the publish await.
+            # Push the sentinel synchronously so the loop sees it on
+            # the very first iteration.
             if self._close_event is not None and self._close_event.is_set():
-                raise ProtocolError(
-                    f"prompt stream cancelled: owning Agents is closed (reply={reply})"
+                queue.put_nowait(_CLOSE_SENTINEL)
+            elif self._close_event is not None:
+                close_watcher = asyncio.create_task(
+                    _close_to_sentinel(self._close_event, queue),
+                    name=f"agents-close-watcher:{token}",
                 )
 
             while True:
@@ -357,7 +396,7 @@ class Agent:
                     reply=reply,
                     loop=loop,
                 )
-                if is_agents_closed_sentinel(item):
+                if item is _CLOSE_SENTINEL:
                     raise ProtocolError(
                         f"prompt stream cancelled: owning Agents is closed (reply={reply})"
                     )
@@ -392,6 +431,10 @@ class Agent:
                 else:
                     yield chunk
         finally:
+            if close_watcher is not None and not close_watcher.done():
+                close_watcher.cancel()
+                with contextlib.suppress(BaseException):
+                    await close_watcher
             mux.unregister(token)
 
 

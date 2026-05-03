@@ -1,41 +1,51 @@
-"""Per-:class:`Agents` shared mux inbox for prompt-stream replies.
+"""Per-NATS-connection shared mux inbox for prompt-stream replies.
 
 INTERIM-NATSPY-REQUEST-MANY: this module is the Python-side workaround
 for ``nats-py``'s missing ``request_many`` primitive. The TypeScript SDK
 (see PR
 [synadia-ai/synadia-agents#66](https://github.com/synadia-ai/synadia-agents/pull/66))
 drives prompt streams through ``nc.requestMany(subject, payload, {
-strategy: "sentinel", maxWait })`` so replies route through the
-connection's shared mux inbox instead of a fresh per-stream
-``_INBOX.agents.>`` subscription. ``nats-py`` has no equivalent — its
-internal mux (``_resp_map`` / ``_resp_sub_prefix`` in
-``nats/aio/client.py``) tracks one ``Future`` per token, not iterators.
+strategy: "sentinel", maxWait })`` — a method on the **NATS connection**
+whose internal mux is automatically shared by every caller of the same
+``nc``. ``nats-py`` has no equivalent (its internal mux at
+``_resp_map`` / ``_resp_sub_prefix`` in ``nats/aio/client.py`` tracks one
+``Future`` per token, not iterators).
 
-This module is the API-level analogue: one persistent
-``_INBOX.agents.<mux>.*`` subscription per :class:`Agents`, with messages
-routed by inbox-tail token to per-stream queues. Callers get the
-wire-traffic savings (one SUB+flush per :class:`Agents` instance instead
-of one per prompt) and the parity API on the prompt side
-(``max_wait_s``, :class:`StreamMaxWaitExceededError`,
-cancellation-safe teardown).
+This module is the API-level analogue, intentionally mirroring the TS
+shape: **one** ``MuxInbox`` per :class:`~nats.aio.client.Client`,
+created on first prompt and held in a process-global
+:class:`weakref.WeakKeyDictionary` keyed by the connection. Every caller
+of :func:`mux_for` against the same ``nc`` gets the same instance, so
+multiple :class:`~synadia_ai.agents.Agents` (or directly-constructed
+:class:`~synadia_ai.agents.Agent` handles) on the same connection
+share one ``_INBOX.agents.<mux>.*`` subscription. Lifecycle is tied to
+the connection: when the user closes ``nc`` the subscription dies and
+when the ``Client`` object is garbage-collected the mux entry drops
+out of the cache automatically — no explicit teardown.
+
+Cancellation is **not** the mux's concern. The mux only routes
+:class:`~nats.aio.msg.Msg` objects from inbox-tail token to per-stream
+queue. Per-stream cancellation (``Agents.close()``,
+``Agent.prompt()`` early bailout) is handled by the consumer in
+:meth:`~synadia_ai.agents.agent.Agent._stream_prompt` via a
+``close_event`` watcher task — the same separation TS uses between
+``requestMany`` (transport) and ``closeSignal`` (cancellation).
 
 When ``nats-py`` ships ``request_many`` upstream, this module is meant
-to be **deleted** — :meth:`Agent._stream_prompt` is the single call site
-to migrate. The migration plan is tracked in
-`client-sdk/python/CHANGELOG.md` under the entry that introduced this
-module; track the upstream feature at
+to be **deleted** wholesale —
+:meth:`~synadia_ai.agents.agent.Agent._stream_prompt` is the single
+call site to migrate. Track the upstream feature at
 [`nats-io/nats.py`](https://github.com/nats-io/nats.py).
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
-from typing import TYPE_CHECKING, Final
+import weakref
+from typing import TYPE_CHECKING
 
 from ._inbox import SDK_INBOX_PREFIX, _nuid
 from ._logging import get_logger
-from .errors import AgentsClosedError
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
@@ -45,28 +55,19 @@ if TYPE_CHECKING:
 log = get_logger(__name__)
 
 
-# Sentinel object placed into a per-stream queue when :meth:`MuxInbox.close`
-# fires. The consumer (:meth:`Agent._stream_prompt`) recognises it via
-# ``is`` identity and raises a clean cancellation error instead of waiting
-# for the inactivity timeout against a torn-down subscription.
-_AGENTS_CLOSED: Final[object] = object()
-
-
 class MuxInbox:
-    """One shared reply-inbox subscription, routed per stream by token.
+    """Shared reply-inbox subscription for one NATS connection.
 
-    Owned by an :class:`Agents` instance (one per process, normally).
-    Lazy-started: the SUB+flush is paid on the first :meth:`register`,
-    so :class:`Agents` instances that only do discovery never open a
-    reply-inbox subscription. Re-entrancy on :meth:`start` and
-    :meth:`close` is safe and idempotent.
+    Routed per stream by inbox-tail token. Construct via
+    :func:`mux_for` rather than directly so every caller on the same
+    connection gets the same instance.
 
     Wire layout::
 
-        SUB  _INBOX.agents.<mux-nuid>.*    1  (one per Agents)
+        SUB  _INBOX.agents.<mux-nuid>.*    1  (one per connection)
         PUB  agents.prompt.{a}.{o}.{n}     -> reply=_INBOX.agents.<mux>.<token>
 
-    Tokens are nuids (``nats.nuid``), globally unique within the
+    Tokens are NATS nuids (``nats.nuid``), globally unique within the
     process — no token reuse, so a stale chunk arriving after a stream
     has been unregistered routes nowhere and is silently dropped at
     DEBUG.
@@ -75,21 +76,21 @@ class MuxInbox:
     def __init__(self, nc: NATSClient) -> None:
         self._nc = nc
         # The mux nuid lives between the prefix and the per-stream token
-        # — it isolates this :class:`Agents` instance from any other
-        # caller sharing the same ``_INBOX.agents.>`` permission grant.
+        # — it isolates this connection's caller-side reply subjects
+        # from any other client account that shares the
+        # ``_INBOX.agents.>`` permission grant.
         self._inbox_prefix = f"{SDK_INBOX_PREFIX}.{_nuid.next().decode()}"
         self._sub: Subscription | None = None
-        self._routes: dict[str, asyncio.Queue[Msg | object]] = {}
+        # Queue is typed `object` because consumers (currently
+        # ``agent.py``) push their own per-stream cancellation sentinels
+        # alongside the wire :class:`~nats.aio.msg.Msg` values the mux
+        # dispatches. Consumers disambiguate by ``is`` identity at read.
+        self._routes: dict[str, asyncio.Queue[object]] = {}
         # `_started` flips True after the first successful start(); used
         # to make start() idempotent without re-subscribing.
         self._started = False
-        # `_closed` flips True at the start of close() — *before* the
-        # sentinel broadcast — so a concurrent register() either races
-        # in first (and gets the sentinel via close()'s sweep) or races
-        # in second (and raises AgentsClosedError). See plan §race #7.
-        self._closed = False
-        # Held across check-then-mutate sections to keep close() and
-        # register() linearly ordered against each other.
+        # Serialises start() against itself; concurrent first prompts
+        # race the SUB+flush exactly once.
         self._lock = asyncio.Lock()
 
     @property
@@ -107,10 +108,6 @@ class MuxInbox:
             return
         async with self._lock:
             if self._started:  # second-check inside the lock
-                return
-            if self._closed:
-                # Don't resurrect a torn-down inbox — surfaces as a
-                # clean error from register().
                 return
             wildcard = f"{self._inbox_prefix}.*"
             self._sub = await self._nc.subscribe(wildcard, cb=self._on_msg)
@@ -144,19 +141,9 @@ class MuxInbox:
         Returns ``(token, queue)``. The caller publishes its request
         with ``reply=mux.reply_subject_for(token)`` and pulls inbound
         chunks from ``queue``. After the stream completes (or is
-        cancelled), the caller MUST call :meth:`unregister` to free the
-        slot.
-
-        The check-and-insert is synchronous — no awaits between the
-        ``self._closed`` test and the dict assignment — so a concurrent
-        :meth:`close` either ran first (and this raises
-        :class:`AgentsClosedError`) or runs second (and the sentinel
-        broadcast in close() finds the token).
+        cancelled), the caller MUST call :meth:`unregister` to free
+        the slot.
         """
-        if self._closed:
-            raise AgentsClosedError("Agents is closed; cannot start new prompt streams")
-        # Shared module-level NUID; nuids are globally unique within the
-        # process — no token collision risk across concurrent prompts.
         token = _nuid.next().decode()
         queue: asyncio.Queue[object] = asyncio.Queue()
         self._routes[token] = queue
@@ -166,37 +153,32 @@ class MuxInbox:
         """Drop the routing entry for ``token``. Idempotent."""
         self._routes.pop(token, None)
 
-    async def close(self) -> None:
-        """Tear down. Broadcasts a sentinel to every live queue, then unsubscribes.
 
-        Idempotent. After :meth:`close` returns, :meth:`register` raises
-        :class:`AgentsClosedError` on every subsequent call.
-        """
-        if self._closed:
-            return
-        async with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            # 1) Broadcast first so every consumer that's blocked on
-            #    queue.get() unblocks promptly. Use put_nowait — the
-            #    queue is unbounded, this never blocks.
-            for queue in list(self._routes.values()):
-                queue.put_nowait(_AGENTS_CLOSED)
-            self._routes.clear()
-            # 2) Then drop the subscription. Order matters: if we
-            #    unsubscribed first, an inbound message could try to
-            #    enqueue against a queue we're about to abandon.
-            sub = self._sub
-            self._sub = None
-        if sub is not None:
-            with contextlib.suppress(Exception):
-                await sub.unsubscribe()
+# Process-global cache: one MuxInbox per NATS connection. WeakKeyDictionary
+# means the entry drops when the user's ``Client`` object is GC'd, so the
+# SDK never holds a connection alive longer than the user does.
+_MUX_CACHE: weakref.WeakKeyDictionary[NATSClient, MuxInbox] = weakref.WeakKeyDictionary()
 
 
-def is_agents_closed_sentinel(value: object) -> bool:
-    """``True`` iff ``value`` is the close-broadcast sentinel placed in queues."""
-    return value is _AGENTS_CLOSED
+def mux_for(nc: NATSClient) -> MuxInbox:
+    """Return the singleton :class:`MuxInbox` for ``nc``.
+
+    Lazy-initialised on first call per connection. Subsequent calls on
+    the same connection return the same instance, so multiple
+    :class:`~synadia_ai.agents.Agents` and directly-constructed
+    :class:`~synadia_ai.agents.Agent` handles share one
+    ``_INBOX.agents.<mux>.*`` subscription. Mirrors the TS SDK's
+    ``nc.requestMany`` shape, where the mux belongs to the connection
+    and every caller picks it up automatically.
+
+    Single-threaded asyncio + sync check-and-insert means concurrent
+    first calls are safe without a lock.
+    """
+    mux = _MUX_CACHE.get(nc)
+    if mux is None:
+        mux = MuxInbox(nc)
+        _MUX_CACHE[nc] = mux
+    return mux
 
 
-__all__ = ["MuxInbox", "is_agents_closed_sentinel"]
+__all__ = ["MuxInbox", "mux_for"]

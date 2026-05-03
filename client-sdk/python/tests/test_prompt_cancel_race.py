@@ -37,12 +37,17 @@ from synadia_ai.agents import (
     ProtocolError,
     ResponseChunk,
 )
+from synadia_ai.agents._mux import mux_for
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nats.aio.client import Client as NATSClient
     from nats.aio.msg import Msg
 
     from tests.harness.evidence import EvidenceRecorder
+
+    BgTasks = Callable[[asyncio.Task[object]], None]
 
 
 PROMPT_SUBJECT = "agents.prompt.test-agent.pytest.cancel"
@@ -76,7 +81,7 @@ def _response_chunk_bytes(text: str) -> bytes:
 
 
 async def test_agents_close_during_live_stream_unblocks_promptly(
-    nc: NATSClient, evidence: EvidenceRecorder
+    nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
 ) -> None:
     """A live consumer raises within ~50 ms of :meth:`Agents.close`, not on timeout."""
 
@@ -88,14 +93,14 @@ async def test_agents_close_during_live_stream_unblocks_promptly(
                 i += 1
                 await asyncio.sleep(0.05)
 
-        msg._emit_task = asyncio.create_task(emit())  # type: ignore[attr-defined]
+        bg_tasks(asyncio.create_task(emit()))
 
     sub = await nc.subscribe(PROMPT_SUBJECT, cb=trickle_agent)
     try:
         # Build an Agents that owns the mux, plus an Agent attached to it.
         agents = Agents(nc=nc)
         info = _make_agent_info(PROMPT_SUBJECT)
-        agent = Agent(nc, info, mux=agents.mux, close_event=agents.close_event)
+        agent = Agent(nc, info, close_event=agents.close_event)
 
         consume_started = asyncio.Event()
         close_fired_at: dict[str, float] = {}
@@ -129,22 +134,9 @@ async def test_agents_close_during_live_stream_unblocks_promptly(
         await sub.unsubscribe()
 
 
-async def test_register_after_close_raises(nc: NATSClient, evidence: EvidenceRecorder) -> None:
-    """Calling :meth:`Agent.prompt` after :meth:`Agents.close` raises cleanly."""
-    agents = Agents(nc=nc)
-    info = _make_agent_info(PROMPT_SUBJECT)
-    agent = Agent(nc, info, mux=agents.mux, close_event=agents.close_event)
-
-    await agents.close()
-
-    with pytest.raises(AgentsClosedError):
-        async for _ in agent.prompt("anyone home?"):
-            pass
-
-    evidence.write_json("status.json", {"raised": "AgentsClosedError"})
-
-
-async def test_concurrent_prompts_isolated(nc: NATSClient, evidence: EvidenceRecorder) -> None:
+async def test_concurrent_prompts_isolated(
+    nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
+) -> None:
     """50 concurrent prompts on the shared mux see ONLY their own chunks."""
 
     n_streams = 50
@@ -166,13 +158,13 @@ async def test_concurrent_prompts_isolated(nc: NATSClient, evidence: EvidenceRec
                 await nc.publish(msg.reply, _response_chunk_bytes(f"{payload_text}#{i}"))
             await nc.publish(msg.reply, b"")  # terminator
 
-        msg._emit_task = asyncio.create_task(emit())  # type: ignore[attr-defined]
+        bg_tasks(asyncio.create_task(emit()))
 
     sub = await nc.subscribe(PROMPT_SUBJECT, cb=echo_agent)
     try:
         agents = Agents(nc=nc)
         info = _make_agent_info(PROMPT_SUBJECT)
-        agent = Agent(nc, info, mux=agents.mux, close_event=agents.close_event)
+        agent = Agent(nc, info, close_event=agents.close_event)
 
         async def run_one(idx: int) -> list[str]:
             seen: list[str] = []
@@ -199,7 +191,7 @@ async def test_concurrent_prompts_isolated(nc: NATSClient, evidence: EvidenceRec
 
 
 async def test_cancel_during_iteration_unregisters_token(
-    nc: NATSClient, evidence: EvidenceRecorder
+    nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
 ) -> None:
     """``aclose()`` on the prompt iterator runs the ``finally``: unregister().
 
@@ -220,13 +212,13 @@ async def test_cancel_during_iteration_unregisters_token(
                 i += 1
                 await asyncio.sleep(0.05)
 
-        msg._emit_task = asyncio.create_task(emit())  # type: ignore[attr-defined]
+        bg_tasks(asyncio.create_task(emit()))
 
     sub = await nc.subscribe(PROMPT_SUBJECT, cb=emit_forever)
     try:
         agents = Agents(nc=nc)
         info = _make_agent_info(PROMPT_SUBJECT)
-        agent = Agent(nc, info, mux=agents.mux, close_event=agents.close_event)
+        agent = Agent(nc, info, close_event=agents.close_event)
 
         seen_first: list[str] = []
         # `agent.prompt()` is an async generator (has aclose), but the
@@ -241,9 +233,8 @@ async def test_cancel_during_iteration_unregisters_token(
                         break
 
         # After aclose() the routing dict should be empty.
-        assert agents.mux._routes == {}, (
-            f"orphan tokens after aclose: {list(agents.mux._routes.keys())}"
-        )
+        mux = mux_for(nc)
+        assert mux._routes == {}, f"orphan tokens after aclose: {list(mux._routes.keys())}"
 
         await agents.close()
     finally:
@@ -252,15 +243,16 @@ async def test_cancel_during_iteration_unregisters_token(
     evidence.write_json("seen_first.json", seen_first)
 
 
-async def test_concurrent_close_and_register_is_safe(
+async def test_close_before_prompt_raises_agents_closed_error(
     nc: NATSClient, evidence: EvidenceRecorder
 ) -> None:
-    """Plan §race-analysis #7: ``close()`` racing with ``register()`` is safe.
+    """Plan §race-analysis #7 — half A: ``close()`` *before* ``prompt()``.
 
-    Either ``register()`` runs first and gets a sentinel via close()'s
-    sweep, or it runs second and raises :class:`AgentsClosedError`.
-    Both outcomes are acceptable; the bad outcome (orphan token, no
-    error) MUST NOT happen.
+    Schedules close() to run before the prompt's first event-loop tick
+    so the synchronous pre-flight check at the top of
+    :meth:`Agent._stream_prompt` sees ``close_event.is_set()`` and
+    raises :class:`AgentsClosedError`. This is the
+    "obviously-closed" branch.
     """
 
     async def silent_agent(msg: Msg) -> None:
@@ -270,40 +262,73 @@ async def test_concurrent_close_and_register_is_safe(
     try:
         agents = Agents(nc=nc)
         info = _make_agent_info(PROMPT_SUBJECT)
-        agent = Agent(nc, info, mux=agents.mux, close_event=agents.close_event)
+        agent = Agent(nc, info, close_event=agents.close_event)
 
-        # Pre-warm the mux so close() has a real subscription to tear down.
-        await agents.mux.start()
+        await agents.close()  # set close_event before any prompt runs
 
-        outcomes: list[str] = []
+        with pytest.raises(AgentsClosedError):
+            async for _ in agent.prompt("after-close"):
+                pass
 
-        async def attempt_prompt() -> None:
-            try:
-                async for _ in agent.prompt("racy"):
-                    pass
-            except AgentsClosedError:
-                outcomes.append("AgentsClosedError")
-            except ProtocolError as exc:
-                if "closed" in str(exc).lower():
-                    outcomes.append("ProtocolError-closed")
-                else:
-                    outcomes.append(f"ProtocolError-other: {exc}")
-            except Exception as exc:
-                outcomes.append(f"unexpected: {type(exc).__name__}")
-
-        # Fire prompt + close concurrently.
-        await asyncio.gather(attempt_prompt(), agents.close())
-
-        # Whatever order the race resolved in, we must have observed
-        # one of the two clean-exit outcomes. The bad outcome (silent
-        # hang or orphan token) would manifest as a hung gather above.
-        assert outcomes and outcomes[0] in (
-            "AgentsClosedError",
-            "ProtocolError-closed",
-        ), f"unexpected outcomes: {outcomes!r}"
-        # And after close, no orphan tokens linger.
-        assert agents.mux._routes == {}
+        assert mux_for(nc)._routes == {}
     finally:
         await sub.unsubscribe()
 
-    evidence.write_json("race_outcomes.json", outcomes)
+    evidence.write_json("status.json", {"raised": "AgentsClosedError"})
+
+
+async def test_close_during_prompt_yields_protocol_error(
+    nc: NATSClient, evidence: EvidenceRecorder
+) -> None:
+    """Plan §race-analysis #7 — half B: ``close()`` fires *during* the loop.
+
+    Once the prompt has gotten past its synchronous pre-flight check
+    and started awaiting chunks, ``Agents.close()`` propagates via the
+    per-stream close-watcher pushing :data:`_CLOSE_SENTINEL`; the
+    iterator raises :class:`ProtocolError` (not
+    :class:`AgentsClosedError`) so callers can branch on
+    "torn down mid-flight" vs "called against a closed Agents."
+    """
+
+    async def silent_agent(msg: Msg) -> None:
+        del msg
+
+    sub = await nc.subscribe(PROMPT_SUBJECT, cb=silent_agent)
+    try:
+        agents = Agents(nc=nc)
+        info = _make_agent_info(PROMPT_SUBJECT)
+        agent = Agent(nc, info, close_event=agents.close_event)
+
+        # Start the prompt; once it's blocked on queue.get, fire close.
+        consume_started = asyncio.Event()
+        outcome: dict[str, str] = {}
+
+        async def consume() -> None:
+            try:
+                consume_started.set()
+                async for _ in agent.prompt("hold open", timeout=60.0):
+                    pass
+            except AgentsClosedError as exc:
+                outcome["raised"] = f"AgentsClosedError: {exc}"
+            except ProtocolError as exc:
+                outcome["raised"] = "ProtocolError"
+                outcome["msg"] = str(exc)
+
+        consumer = asyncio.create_task(consume())
+        await consume_started.wait()
+        # Yield twice so the prompt advances past pre-flight + publish
+        # and parks on queue.get() before close fires.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await agents.close()
+        await asyncio.wait_for(consumer, timeout=2.0)
+
+        assert outcome.get("raised") == "ProtocolError", (
+            f"expected mid-flight ProtocolError, got {outcome!r}"
+        )
+        assert "Agents is closed" in outcome.get("msg", "")
+        assert mux_for(nc)._routes == {}
+    finally:
+        await sub.unsubscribe()
+
+    evidence.write_json("outcome.json", outcome)

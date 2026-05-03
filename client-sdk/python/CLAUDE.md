@@ -318,12 +318,18 @@ either guides them to success or frustrates them.
 ## Alignment milestones
 
 - **2026-05-03 - prompt-stream catch-up to TS PR #66 (`requestMany` +
-  sentinel).** Python-side analogue of the TS reshape: prompt streams
-  now ride a shared `_INBOX.agents.<mux>.*` subscription per `Agents`
-  (one SUB+flush, regardless of how many concurrent prompts) instead
-  of `subscribe + publish + unsubscribe` per call. Wire shape
-  unchanged — the broker still sees replies on subjects under the
-  SDK inbox prefix; protocol stays at `"0.3"`. New public API:
+  sentinel).** Python-side analogue of the TS reshape, mirroring TS's
+  shape exactly: prompt streams ride a shared
+  `_INBOX.agents.<mux>.*` subscription that lives **on the NATS
+  connection** (per-`nc` singleton in
+  `synadia_ai.agents._mux.mux_for`, held in a `WeakKeyDictionary`),
+  not on `Agents` — every caller of the same `nc` automatically
+  shares it, just like TS's `nc.requestMany`. Wire shape unchanged
+  — the broker still sees replies on subjects under the SDK inbox
+  prefix; protocol stays at `"0.3"`. Cancellation stays orthogonal
+  to the mux: a per-stream watcher task pushes a sentinel into the
+  stream's queue when `close_event` fires (mirrors TS's
+  `closeSignal: AbortSignal`). New public API:
   `Agent.prompt(max_wait_s=...)` (absolute ceiling, mirrors TS
   `PromptOptions.maxWaitMs`), `DEFAULT_PROMPT_MAX_WAIT_S = 600.0`,
   `StreamMaxWaitExceededError`, `StreamStalledError` (the previously-

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,6 +47,40 @@ async def nc(nats_server: RunningServer) -> AsyncIterator[NATSClient]:
         yield client
     finally:
         await client.close()
+
+
+@pytest_asyncio.fixture
+async def bg_tasks() -> AsyncIterator[Callable[[asyncio.Task[object]], None]]:
+    """Track background tasks (e.g. fake-agent emit loops) and cancel at teardown.
+
+    Tests that spawn a forever-loop in a NATS subscription callback —
+    typically ``while True: await nc.publish(...); await asyncio.sleep(...)``
+    — must register the task here. Otherwise pytest-asyncio prints
+    ``Task was destroyed but it is pending`` warnings and the dying
+    task can log noise into a later test's evidence directory when
+    :meth:`Client.close` causes it to crash with
+    :class:`~nats.errors.ConnectionClosedError`.
+
+    Use::
+
+        async def fake_agent(msg: Msg) -> None:
+            t = asyncio.create_task(emit_loop(msg))
+            bg_tasks(t)
+    """
+    tasks: set[asyncio.Task[object]] = set()
+
+    def register(task: asyncio.Task[object]) -> None:
+        tasks.add(task)
+
+    try:
+        yield register
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            with contextlib.suppress(BaseException):
+                await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest_asyncio.fixture

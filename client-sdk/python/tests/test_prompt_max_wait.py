@@ -18,6 +18,7 @@ distribution.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 from types import MappingProxyType
@@ -36,10 +37,14 @@ from synadia_ai.agents import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nats.aio.client import Client as NATSClient
     from nats.aio.msg import Msg
 
     from tests.harness.evidence import EvidenceRecorder
+
+    BgTasks = Callable[[asyncio.Task[object]], None]
 
 
 PROMPT_SUBJECT = "agents.prompt.test-agent.pytest.maxwait"
@@ -78,19 +83,21 @@ def _response_chunk_bytes(text: str) -> bytes:
     return json.dumps({"type": "response", "data": text}).encode("utf-8")
 
 
-async def test_max_wait_default_is_600s_and_constant_exported() -> None:
-    """The default ceiling matches TS PR #66's ``DEFAULT_PROMPT_MAX_WAIT_MS = 600_000``."""
+def test_max_wait_default_is_600s_and_constant_exported() -> None:
+    """The default ceiling matches TS PR #66's ``DEFAULT_PROMPT_MAX_WAIT_MS = 600_000``.
+
+    Asserts both the constant value and that the :meth:`Agent.__init__`
+    kwarg actually defaults to it (so a careless rename of either side
+    surfaces here, not at runtime).
+    """
     assert DEFAULT_PROMPT_MAX_WAIT_S == 600.0
-    # The dataclass default cascades to per-call override = None as well.
-    info = _make_agent_info(PROMPT_SUBJECT)
-    # Build directly (no NATS): just confirm the kwarg exists with the right default.
-    agent = Agent.__new__(Agent)
-    agent._default_max_wait_s = DEFAULT_PROMPT_MAX_WAIT_S
-    assert agent._default_max_wait_s == 600.0
-    del info  # unused — exists only to confirm the import path is real.
+    sig = inspect.signature(Agent.__init__)
+    assert sig.parameters["prompt_max_wait_s"].default is DEFAULT_PROMPT_MAX_WAIT_S
 
 
-async def test_max_wait_exceeded_raises(nc: NATSClient, evidence: EvidenceRecorder) -> None:
+async def test_max_wait_exceeded_raises(
+    nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
+) -> None:
     """An agent that never terminates triggers ``StreamMaxWaitExceededError``.
 
     Evidence: ``chunks.jsonl`` records every chunk delivered before
@@ -110,9 +117,7 @@ async def test_max_wait_exceeded_raises(nc: NATSClient, evidence: EvidenceRecord
                 i += 1
                 await asyncio.sleep(chunk_interval_s)
 
-        emit_task = asyncio.create_task(emit_loop())
-        # Park the task on the message subscription state so it doesn't get GC'd.
-        msg._emit_task = emit_task  # type: ignore[attr-defined]
+        bg_tasks(asyncio.create_task(emit_loop()))
 
     sub = await nc.subscribe(PROMPT_SUBJECT, cb=fake_agent)
     try:
@@ -139,7 +144,9 @@ async def test_max_wait_exceeded_raises(nc: NATSClient, evidence: EvidenceRecord
     evidence.write_jsonl("chunks.jsonl", chunks_observed)  # type: ignore[arg-type]
 
 
-async def test_max_wait_with_terminator_in_time(nc: NATSClient, evidence: EvidenceRecorder) -> None:
+async def test_max_wait_with_terminator_in_time(
+    nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
+) -> None:
     """A stream that terminates well inside the ceiling completes cleanly."""
     received_texts: list[str] = []
 
@@ -150,7 +157,7 @@ async def test_max_wait_with_terminator_in_time(nc: NATSClient, evidence: Eviden
             # §6.5: zero-byte terminator, no headers.
             await nc.publish(msg.reply, b"")
 
-        msg._emit_task = asyncio.create_task(emit())  # type: ignore[attr-defined]
+        bg_tasks(asyncio.create_task(emit()))
 
     sub = await nc.subscribe(PROMPT_SUBJECT, cb=fake_agent)
     try:
@@ -166,7 +173,7 @@ async def test_max_wait_with_terminator_in_time(nc: NATSClient, evidence: Eviden
 
 
 async def test_max_wait_distinct_from_inactivity_timeout(
-    nc: NATSClient, evidence: EvidenceRecorder
+    nc: NATSClient, evidence: EvidenceRecorder, bg_tasks: BgTasks
 ) -> None:
     """Steady chunks (well under inactivity timeout) still trip the ceiling.
 
@@ -184,7 +191,7 @@ async def test_max_wait_distinct_from_inactivity_timeout(
                 i += 1
                 await asyncio.sleep(0.05)
 
-        msg._emit_task = asyncio.create_task(emit())  # type: ignore[attr-defined]
+        bg_tasks(asyncio.create_task(emit()))
 
     sub = await nc.subscribe(PROMPT_SUBJECT, cb=fake_agent)
     try:
