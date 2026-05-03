@@ -36,16 +36,6 @@ import pytest
 
 from synadia_ai.agents import Agents, ResponseChunk
 
-# TODO(v0.3-wire): remove this skip once the TS SDK lands the verb-first wire
-# (`agents.{verb}.{a}.{o}.{n}`) and bumps `protocol_version` to "0.3". The
-# Python SDK ships ahead of TS per the cross-SDK release ladder in the root
-# CLAUDE.md; until then, exercising the TS reference agent (still on v0.2)
-# against a v0.3 Python client only proves a known incompatibility.
-pytest.skip(
-    "awaiting TS SDK v0.3 wire catch-up — see CHANGELOG.md [Unreleased]",
-    allow_module_level=True,
-)
-
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -217,3 +207,53 @@ async def test_python_client_prompts_ts_reference_agent(
         assert received[0].text == "demo agent received your prompt."
     finally:
         await agents.close()
+
+
+@pytest.mark.asyncio
+async def test_python_client_uses_one_mux_sub_for_n_prompts_against_ts_agent(
+    nc: NATSClient, ts_reference_agent: _ReferenceAgentProcess
+) -> None:
+    """Wire-economy regression vs the TS agent: 5 prompts → 1 mux SUB.
+
+    Pre-PR the Python client opened a fresh ``_INBOX.agents.<nuid>``
+    subscription per prompt (one SUB+UNSUB+flush per call). The
+    interim mux-inbox refactor (`_mux.py`) consolidates those into
+    a single shared ``_INBOX.agents.<mux>.*`` SUB per :class:`Agents`.
+    Counts inbox-prefixed ``nc.subscribe()`` calls during a 5-prompt
+    sequence — should be exactly **1**.
+    """
+    assert ts_reference_agent.prompt_subject is not None
+
+    inbox_subscribes: list[str] = []
+    original_subscribe = nc.subscribe
+
+    async def counting_subscribe(subject: str, *args: object, **kwargs: object) -> object:
+        if subject.startswith("_INBOX.agents."):
+            inbox_subscribes.append(subject)
+        return await original_subscribe(subject, *args, **kwargs)  # type: ignore[arg-type]
+
+    nc.subscribe = counting_subscribe  # type: ignore[method-assign,assignment]
+
+    try:
+        agents = Agents(nc=nc)
+        try:
+            found = await agents.discover(timeout=3.0)
+            discovered = next(
+                a for a in found if a.prompt_subject == ts_reference_agent.prompt_subject
+            )
+            baseline = len(inbox_subscribes)
+            for _ in range(5):
+                received_count = 0
+                async for _msg in discovered.prompt("ping", timeout=10.0):
+                    received_count += 1
+                assert received_count >= 1
+            opened = inbox_subscribes[baseline:]
+        finally:
+            await agents.close()
+    finally:
+        nc.subscribe = original_subscribe  # type: ignore[method-assign]
+
+    assert len(opened) == 1, (
+        f"expected 1 mux inbox SUB across 5 prompts to TS agent; opened {len(opened)}: {opened!r}"
+    )
+    assert opened[0].startswith("_INBOX.agents.")

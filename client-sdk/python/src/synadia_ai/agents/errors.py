@@ -17,6 +17,52 @@ class ProtocolError(NatsAgentError):
     """Wire payload violates the NATS Agent Protocol (malformed envelope, bad chunk, etc.)."""
 
 
+class StreamStalledError(ProtocolError):
+    """Per-chunk inactivity timeout (§6.6) elapsed without a new chunk arriving.
+
+    Inherits from :class:`ProtocolError` so existing ``except ProtocolError``
+    clauses keep catching the stalled case; new code may catch this subclass
+    to distinguish it from :class:`StreamMaxWaitExceededError` (the absolute
+    ceiling) and from genuine wire-shape violations.
+    """
+
+    def __init__(self, timeout_s: float, *, reply_subject: str | None = None) -> None:
+        loc = f" on {reply_subject}" if reply_subject else ""
+        super().__init__(f"stream stalled: no chunk received within {timeout_s}s{loc}")
+        self.timeout_s = timeout_s
+        self.reply_subject = reply_subject
+
+
+class StreamMaxWaitExceededError(ProtocolError):
+    """Absolute ``max_wait_s`` ceiling on a prompt stream elapsed.
+
+    Distinct from :class:`StreamStalledError` (the inactivity gap detector
+    from §6.6). The ceiling is the safety net for cases where chunks keep
+    arriving steadily but the agent never terminates — e.g. a misbehaving
+    handler emitting a heartbeat-style ack every few seconds forever, or
+    a silent reconnect window that exceeds the inactivity timer's
+    per-message reset cycle. Inherits from :class:`ProtocolError` for
+    back-compat with broad ``except ProtocolError`` clauses.
+    """
+
+    def __init__(self, max_wait_s: float) -> None:
+        super().__init__(f"prompt stream exceeded max_wait_s={max_wait_s}s ceiling")
+        self.max_wait_s = max_wait_s
+
+
+class AgentsClosedError(NatsAgentError):
+    """Raised by SDK-internal entry points after :meth:`Agents.close` has run.
+
+    Today this only fires from the interim mux inbox's ``register()`` —
+    the only path callers can reach is via :meth:`Agent.prompt` after the
+    owning :class:`Agents` was torn down. Surfaces as a clean,
+    branch-able error rather than a generic :class:`RuntimeError`.
+    """
+
+    def __init__(self, what: str = "Agents is closed") -> None:
+        super().__init__(what)
+
+
 class InvalidSubjectToken(NatsAgentError):
     """A subject token (agent / owner / name) breaks §2 constraints and can't be sanitized."""
 

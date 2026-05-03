@@ -60,7 +60,7 @@ spec to catch up.
 
 | SDK                                  | Wire behaviour                                                                              | Spec ref   |
 | ------------------------------------ | ------------------------------------------------------------------------------------------- | ---------- |
-| Stream start                         | Fresh `_INBOX` reply subject; SUB established before request PUBLISH.                       | §6.1       |
+| Stream start                         | Per-stream reply subject under a shared `_INBOX.agents.<mux>.*` subscription (one per `Agents`); SUB established lazily on first prompt and reused thereafter. **Interim** until nats-py ships `request_many` — see [`src/synadia_ai/agents/_mux.py`](../src/synadia_ai/agents/_mux.py) (marker `INTERIM-NATSPY-REQUEST-MANY`). | §6.1 |
 | `ResponseChunk.text`                 | Decoded from `{"type":"response","data":"..."}` OR `{...,"data":{text, attachments?}}`.     | §6.3       |
 | `StatusChunk.status`                 | Decoded from `{"type":"status","data":"<token>"}`. Unknown tokens flow through unchanged.   | §6.4, §6.6 |
 | `QueryChunk` → `Query` event         | Decoded from `{"type":"query","data":{id, reply_subject, prompt, attachments?}}`.           | §7         |
@@ -68,7 +68,8 @@ spec to catch up.
 | Plain-text on response side          | **Rejected** - `decode_chunk` requires JSON with a `type` discriminator.                    | §6.2       |
 | Stream terminator                    | Empty body AND no NATS headers. Error frames carry headers and are NOT terminators.         | §6.5, §9.3 |
 | `PromptStream.send(str)`             | Wraps the string in a `ResponseChunk`, emits the §6.3 bare-string form.                     | §6.3       |
-| Per-stream inactivity timeout        | Caller-supplied `timeout=` kwarg; raises `ProtocolError("stream stalled")` on lapse.        | §6.6       |
+| Per-stream inactivity timeout        | Caller-supplied `timeout=` kwarg (default `DEFAULT_STREAM_INACTIVITY_TIMEOUT_S = 60.0`); raises `StreamStalledError` (a `ProtocolError` subclass — back-compat preserved) on lapse. Resets every received chunk. | §6.6 |
+| Absolute stream ceiling              | Caller-supplied `max_wait_s=` kwarg (default `DEFAULT_PROMPT_MAX_WAIT_S = 600.0`); raises `StreamMaxWaitExceededError` (a `ProtocolError` subclass) on expiry. Distinct from the inactivity timer — does NOT reset on chunks. Mirrors TS `PromptOptions.maxWaitMs` from PR #66. | (SDK convention; spec silent) |
 
 ## Errors (§9)
 
@@ -140,7 +141,7 @@ mirror the TypeScript SDK so the two stay in lockstep.
    sub-subject). This SDK ships the verb-first form
    (`agents.{verb}.{a}.{o}.{n}`) ahead of the spec text so a working
    reference exists for the spec PR + the TS SDK port. Companion work
-   tracked in `CHANGELOG.md` [Unreleased] under "Anticipated companion
+   tracked in `CHANGELOG.md` [0.5.0] under "Anticipated companion
    work".
 5. **`status` request/response endpoint.** Not yet defined in the spec.
    This SDK registers a NATS micro endpoint named `status` on
@@ -157,6 +158,20 @@ mirror the TypeScript SDK so the two stay in lockstep.
    ahead of the spec's blessing — the upstream PR will cover §3.2
    metadata, §5.1 envelope, and §8.3 heartbeat-payload field
    removals in lockstep.
+7. **Interim mux reply-inbox vs `request_many` (§6.1).** `nats-py` has
+   no `request_many` primitive yet — the TS SDK's PR #66 reshape
+   (`nc.requestMany(subject, payload, { strategy: "sentinel", maxWait
+   })`) doesn't have a direct port. The Python SDK ships a
+   library-level analogue: one shared
+   `_INBOX.agents.<mux>.*` subscription per `Agents`, replies routed
+   to per-stream queues by inbox-tail token (see
+   [`src/synadia_ai/agents/_mux.py`](../src/synadia_ai/agents/_mux.py)).
+   Wire shape from the broker's POV is unchanged. Once `nats-py`
+   gains `request_many` upstream the interim module gets retired and
+   `Agent._stream_prompt` is the single call site to migrate. Track
+   the upstream feature at
+   [`nats-io/nats.py`](https://github.com/nats-io/nats.py); SDK-side
+   marker `INTERIM-NATSPY-REQUEST-MANY`.
 
 ## Deferred TS-parity work
 

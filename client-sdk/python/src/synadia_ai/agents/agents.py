@@ -29,7 +29,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ._logging import get_logger
-from .agent import DEFAULT_STREAM_INACTIVITY_TIMEOUT_S, Agent
+from ._mux import MuxInbox
+from .agent import DEFAULT_PROMPT_MAX_WAIT_S, DEFAULT_STREAM_INACTIVITY_TIMEOUT_S, Agent
 from .discovery import (
     DEFAULT_DISCOVER_MAX_WAIT_S,
     DEFAULT_DISCOVER_STALL_S,
@@ -62,12 +63,19 @@ class Agents:
         *,
         nc: NATSClient,
         stream_inactivity_timeout: float = DEFAULT_STREAM_INACTIVITY_TIMEOUT_S,
+        prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         logger: logging.Logger | None = None,
     ) -> None:
         self._nc = nc
         self._stream_inactivity_timeout = stream_inactivity_timeout
+        self._prompt_max_wait_s = prompt_max_wait_s
         self._logger = logger if logger is not None else log
         self._tracker = HeartbeatTracker(nc)
+        # Shared mux reply-inbox used for every prompt stream this Agents
+        # produces. Lazy-subscribed: SUB+flush is paid on the first
+        # prompt(), not at construction. See `_mux.py` for the design
+        # rationale (interim ahead of nats-py request_many).
+        self._mux = MuxInbox(nc)
         # Set when close() is called; passed to every Agent so in-flight
         # prompt streams can short-circuit instead of waiting on a torn-
         # down broker.
@@ -84,6 +92,11 @@ class Agents:
     def stream_inactivity_timeout(self) -> float:
         """Default per-stream inactivity timeout applied to every :meth:`Agent.prompt`."""
         return self._stream_inactivity_timeout
+
+    @property
+    def prompt_max_wait_s(self) -> float:
+        """Default absolute ceiling for :meth:`Agent.prompt` (overridable per-call)."""
+        return self._prompt_max_wait_s
 
     @property
     def close_event(self) -> asyncio.Event:
@@ -147,7 +160,9 @@ class Agents:
                 self._nc,
                 info,
                 stream_inactivity_timeout=self._stream_inactivity_timeout,
+                prompt_max_wait_s=self._prompt_max_wait_s,
                 close_event=self._close_event,
+                mux=self._mux,
             )
             for info in infos
             if matches_filter(info, filter)
@@ -205,16 +220,35 @@ class Agents:
     async def close(self) -> None:
         """Tear down SDK-owned state. Idempotent.
 
-        Cancels in-flight prompt streams via :attr:`close_event` and
-        unsubscribes the heartbeat wildcard. The underlying NATS
-        connection is NOT touched — the caller who opened it is
-        responsible for closing it.
+        Cancels in-flight prompt streams via :attr:`close_event` and the
+        mux-inbox sentinel broadcast (``_mux.py``), unsubscribes the
+        heartbeat wildcard, and tears down the shared reply-inbox
+        subscription. The underlying NATS connection is NOT touched —
+        the caller who opened it is responsible for closing it.
         """
         if self._closed:
             return
         self._closed = True
         self._close_event.set()
+        # Mux close runs first so live prompt streams unblock from
+        # queue.get() via the broadcast sentinel; the heartbeat
+        # tracker stop is independent.
+        await self._mux.close()
         await self._tracker.stop()
+
+    @property
+    def mux(self) -> MuxInbox:
+        """The shared reply-inbox mux this :class:`Agents` opens for prompt streams.
+
+        Public for symmetry with :attr:`close_event` — callers that
+        construct :class:`Agent` outside :meth:`discover` (e.g. from a
+        heartbeat + ``$SRV.INFO.agents.{id}`` direct lookup) can pass
+        the mux to the :class:`Agent` constructor so the handle uses
+        the same shared subscription. Documented as **interim** until
+        ``nats-py`` ships ``request_many`` upstream; see
+        :mod:`synadia_ai.agents._mux` for the migration plan.
+        """
+        return self._mux
 
     def _ensure_open(self) -> None:
         if self._closed:

@@ -6,7 +6,90 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
 the 0.x line is explicitly unstable per protocol spec §11.2.
 
-## [Unreleased]
+## [0.6.0] - 2026-05-03
+
+Catch-up to the TypeScript SDK's
+[PR #66](https://github.com/synadia-ai/synadia-agents/pull/66)
+(`requestMany` + sentinel) — Python-side analogue using an interim
+SDK-level mux reply-inbox (one `SUB`+flush per `Agents`, regardless
+of how many concurrent prompts) plus the `max_wait_s` absolute
+ceiling on prompt streams. Wire shape unchanged; protocol stays at
+`"0.3"`.
+
+### Added
+
+- **`Agent.prompt(max_wait_s=...)` — absolute ceiling on a prompt
+  stream.** Mirrors the TS SDK's `PromptOptions.maxWaitMs` from
+  [PR #66](https://github.com/synadia-ai/synadia-agents/pull/66)
+  (`requestMany` + sentinel). Distinct from `timeout=`, which is the
+  §6.6 per-chunk inactivity timer that resets on every received chunk.
+  The ceiling is the safety net for streams that emit a steady trickle
+  forever, or for silent reconnect windows that exceed the inactivity
+  reset cycle. Defaults to **600 seconds** (10 min); pass `max_wait_s=`
+  to override per-call, or set `Agents(prompt_max_wait_s=...)` to
+  change the default for every `Agent` produced by that `Agents`. New
+  exports:
+  - `DEFAULT_PROMPT_MAX_WAIT_S = 600.0` (constant, mirrors TS
+    `DEFAULT_PROMPT_MAX_WAIT_MS = 600_000`).
+  - `StreamMaxWaitExceededError(ProtocolError)` — raised when the
+    ceiling fires. Carries `.max_wait_s`. Inherits from
+    `ProtocolError` so existing `except ProtocolError` clauses keep
+    catching it; new code may catch the subclass to distinguish from
+    inactivity-gap and wire-shape errors.
+  - `StreamStalledError(ProtocolError)` — the inactivity-gap case
+    that previously raised a bare `ProtocolError("stream stalled
+    ...")`. Carries `.timeout_s` and `.reply_subject`. Same
+    back-compat story as `StreamMaxWaitExceededError`.
+- **`AgentsClosedError(NatsAgentError)`** — raised by
+  `Agent.prompt()` when called after the owning `Agents.close()` has
+  fired. Surfaces the race between a torn-down `Agents` and a
+  late-arriving prompt as a clean, branchable error rather than a
+  generic `RuntimeError`.
+
+### Changed
+
+- **Internal: `Agents` opens a single shared mux reply-inbox
+  subscription instead of subscribing per prompt.** Wire shape from
+  the broker's POV is unchanged — every reply still arrives on a
+  subject under the SDK inbox prefix `_INBOX.agents.>` — but now one
+  `Agents` instance opens **one** SUB at first prompt-time and routes
+  every stream's chunks to the right consumer by token. A 5-prompt
+  sequence cuts SUB+UNSUB traffic from 10 frames to 0 (after the
+  first SUB), and from one extra `flush()` per prompt to one total.
+  See `src/synadia_ai/agents/_mux.py` for the design + the
+  migration-to-`request_many` plan; **interim** until `nats-py`
+  ships [`request_many`][np-rm] upstream. Tracked under marker
+  `INTERIM-NATSPY-REQUEST-MANY`.
+
+  [np-rm]: https://github.com/nats-io/nats.py
+- **Internal: `Agents.close()` now broadcasts a sentinel into every
+  live stream's queue** before tearing down the mux subscription, so
+  consumers unblock from `queue.get()` within an event-loop tick
+  instead of waiting for the §6.6 inactivity timer. Eliminates the
+  `next_msg`-vs-`close_event` `asyncio.wait` race window that the
+  old per-prompt code carried.
+- **`Agents(prompt_max_wait_s=...)`** kwarg on the constructor —
+  default for the new `Agent.prompt(max_wait_s=...)` ceiling. Falls
+  back to `DEFAULT_PROMPT_MAX_WAIT_S = 600.0` when omitted. New
+  read-only property `Agents.prompt_max_wait_s` mirrors
+  `Agents.stream_inactivity_timeout`.
+- **`Agents.mux`** — read-only property exposing the shared mux for
+  callers that build `Agent` instances outside `Agents.discover()`
+  (parallel to the existing `Agents.close_event`). Documented as
+  **interim** alongside `_mux.py`.
+
+### Note
+
+- **No protocol-version bump.** PR #66 on the TS side was a
+  client-only refactor (consumer changes how it subscribes; producer
+  is unaffected). This Python catch-up is the same: zero wire-shape
+  change, `protocol_version` stays at `"0.3"`. The
+  `tests/test_interop_e2e.py` skip remains tied to the v0.3
+  verb-first wire blocker, not to this change.
+- **The agent-sdk side (`agent-sdk/python`) is bumped in lockstep**
+  for dependency-pinning hygiene only; no agent-side code changes.
+  PR #66 was confirmed to touch only `client-sdk/typescript/` (`gh
+  pr view 66 --json files`); the agent-side wire is unaffected.
 
 ## [0.5.0] - 2026-04-30
 
@@ -840,7 +923,8 @@ Initial scaffold. Released ahead of the finalised v0.1 spec; most wire
 shapes in this version no longer match the spec and are corrected in
 0.1.0.
 
-[Unreleased]: https://github.com/synadia-ai/synadia-agents/compare/python-v0.3.0...HEAD
+[0.6.0]: https://github.com/synadia-ai/synadia-agents/compare/python-v0.5.0...HEAD
+[0.5.0]: https://github.com/synadia-ai/synadia-agents/compare/python-v0.3.0...python-v0.5.0
 [0.3.0]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.3.0
 [0.2.0]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.2.0
 [0.1.0]: https://github.com/synadia-ai/synadia-agents/releases/tag/python-v0.1.0

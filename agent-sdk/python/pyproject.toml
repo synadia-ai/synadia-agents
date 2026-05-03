@@ -1,6 +1,6 @@
 [project]
 name = "synadia-ai-agent-service"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python agent-host SDK for the NATS Agent Protocol — register and serve spec-compliant agents over NATS"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "nats-py>=2.7",
     "pydantic>=2.5",
-    "synadia-ai-agents>=0.5",
+    "synadia-ai-agents>=0.6",
 ]
 
 [project.urls]
