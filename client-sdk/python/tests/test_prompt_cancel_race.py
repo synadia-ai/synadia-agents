@@ -24,7 +24,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncGenerator
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
@@ -95,6 +95,29 @@ async def _wait_for_buffered_route_depth(nc: NATSClient, min_depth: int) -> list
     raise AssertionError(
         f"timed out waiting for mux route queue depth >= {min_depth}; "
         f"depths={[route.queue.qsize() for route in mux._routes.values()]}"
+    )
+
+
+def _active_prompt_wait_tasks() -> list[asyncio.Task[object]]:
+    current = asyncio.current_task()
+    return [
+        cast(asyncio.Task[object], task)
+        for task in asyncio.all_tasks()
+        if task is not current and not task.done() and task.get_name().startswith("agents-prompt-")
+    ]
+
+
+async def _wait_for_active_prompt_wait_tasks(min_count: int) -> list[asyncio.Task[object]]:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 2.0
+    while loop.time() < deadline:
+        tasks = _active_prompt_wait_tasks()
+        if len(tasks) >= min_count:
+            return tasks
+        await asyncio.sleep(0.01)
+    raise AssertionError(
+        "timed out waiting for prompt wait tasks; "
+        f"active={[task.get_name() for task in _active_prompt_wait_tasks()]}"
     )
 
 
@@ -304,6 +327,51 @@ async def test_close_wins_over_buffered_chunks_and_terminator(
         await sub.unsubscribe()
 
     evidence.write_json("buffered_close.json", {"queued_depths_before_close": depths})
+
+
+async def test_cancelling_consumer_cancels_prompt_wait_tasks(
+    nc: NATSClient, evidence: EvidenceRecorder
+) -> None:
+    """Caller-side cancellation must clean up queue/max-wait/close wait tasks."""
+
+    async def silent_agent(msg: Msg) -> None:
+        del msg
+
+    sub = await nc.subscribe(PROMPT_SUBJECT, cb=silent_agent)
+    agents = Agents(nc=nc)
+    stream: AsyncGenerator[object, None] | None = None
+    try:
+        info = _make_agent_info(PROMPT_SUBJECT)
+        agent = Agent(nc, info, close_event=agents.close_event)
+        stream = cast(
+            AsyncGenerator[object, None],
+            agent.prompt("cancel wait", timeout=60.0, max_wait_s=60.0),
+        )
+
+        consumer = asyncio.create_task(anext(stream), name="test-cancel-prompt-consumer")
+        wait_tasks = await _wait_for_active_prompt_wait_tasks(min_count=3)
+        wait_task_names = sorted(task.get_name() for task in wait_tasks)
+
+        consumer.cancel()
+        with suppress(asyncio.CancelledError):
+            await consumer
+        await asyncio.sleep(0)
+
+        leaked = _active_prompt_wait_tasks()
+        leaked_names = sorted(task.get_name() for task in leaked)
+        for task in leaked:
+            task.cancel()
+        if leaked:
+            await asyncio.gather(*leaked, return_exceptions=True)
+
+        assert leaked_names == []
+        assert mux_for(nc)._routes == {}
+        evidence.write_json("cancelled_wait_tasks.json", {"cancelled": wait_task_names})
+    finally:
+        if stream is not None:
+            await stream.aclose()
+        await agents.close()
+        await sub.unsubscribe()
 
 
 async def test_close_before_prompt_raises_agents_closed_error(
