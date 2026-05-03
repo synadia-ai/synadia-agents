@@ -9,7 +9,7 @@ import type { EndpointInfo } from "./discovery/endpoint-info.js";
 import { combineAbortSignals } from "./internal/abort.js";
 import { normalizeAttachments } from "./prompt/attachments.js";
 import { encodedEnvelopeSize, type RequestEnvelope } from "./prompt/envelope.js";
-import type { PromptOptions } from "./prompt/options.js";
+import { DEFAULT_PROMPT_MAX_WAIT_MS, type PromptOptions } from "./prompt/options.js";
 import {
   assertAttachmentsAllowed,
   assertPromptNonEmpty,
@@ -119,6 +119,7 @@ export class Agent {
       this.promptEndpoint.subject,
       envelope,
       opts.inactivityTimeoutMs ?? this.#defaultInactivityTimeoutMs,
+      opts.maxWaitMs ?? DEFAULT_PROMPT_MAX_WAIT_MS,
       signal,
     );
   }

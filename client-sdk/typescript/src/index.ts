@@ -86,7 +86,7 @@ export {
   normalizeAttachment,
   normalizeAttachments,
 } from "./prompt/attachments.js";
-export { type PromptOptions } from "./prompt/options.js";
+export { type PromptOptions, DEFAULT_PROMPT_MAX_WAIT_MS } from "./prompt/options.js";
 export {
   PromptStream,
   type StreamMessage,
@@ -111,6 +111,7 @@ export {
   PayloadTooLargeError,
   ServiceError,
   StreamStalledError,
+  StreamMaxWaitExceededError,
   ProtocolError,
   NatsContextError,
   type ServiceErrorBody,
