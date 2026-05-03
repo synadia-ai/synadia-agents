@@ -122,14 +122,12 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
         this.#inactivityTimeoutMs,
         () => new StreamStalledError(this.#inactivityTimeoutMs),
       );
-      let sawTerminator = false;
       for await (const msg of timed) {
         if (this.#signal?.aborted) throw abortError(this.#signal);
         if (isErrorSignal(msg)) {
           throw buildServiceErrorFromMsg(msg);
         }
         if (isTerminator(msg)) {
-          sawTerminator = true;
           yield { type: "status", status: "done" };
           return;
         }
@@ -145,19 +143,16 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
         if (!decoded) continue; // unknown `type` silently dropped per §6.6
         yield toStreamMessage(decoded, this.#nc);
       }
-      // Iterator drained without a terminator. Sources:
-      //   - explicit cancel() / AbortSignal fired → exit cleanly (cancel)
-      //     or throw the signal's reason (abort).
-      //   - sentinel hit on an empty body that wasn't a clean terminator
-      //     (handled above; sawTerminator catches the standard case).
+      // The terminator branch above always `return`s, so reaching here
+      // means the iterator drained without one. Possible sources:
+      //   - AbortSignal fired → throw the signal's reason.
+      //   - cancel() fired → exit cleanly.
       //   - maxWait elapsed → throw StreamMaxWaitExceededError.
       if (this.#signal?.aborted) {
         throw abortError(this.#signal);
       }
       if (this.#cancelled) return;
-      if (!sawTerminator) {
-        throw new StreamMaxWaitExceededError(this.#maxWaitMs);
-      }
+      throw new StreamMaxWaitExceededError(this.#maxWaitMs);
     } finally {
       if (onAbort && this.#signal) this.#signal.removeEventListener("abort", onAbort);
       iter.stop();
