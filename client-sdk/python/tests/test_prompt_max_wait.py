@@ -18,12 +18,15 @@ distribution.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import time
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+import nats
 import pytest
 
 from synadia_ai.agents import (
@@ -35,6 +38,8 @@ from synadia_ai.agents import (
     StreamMaxWaitExceededError,
     StreamStalledError,
 )
+from tests.harness.evidence import EvidenceRecorder
+from tests.harness.nats_server import start_server
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -42,12 +47,11 @@ if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
     from nats.aio.msg import Msg
 
-    from tests.harness.evidence import EvidenceRecorder
-
     BgTasks = Callable[[asyncio.Task[object]], None]
 
 
 PROMPT_SUBJECT = "agents.prompt.test-agent.pytest.maxwait"
+_EVIDENCE_ROOT = Path(__file__).parent / "_evidence"
 
 
 def _make_agent_info(prompt_subject: str) -> AgentInfo:
@@ -226,3 +230,94 @@ async def test_inactivity_raises_stream_stalled_error(
 
     assert excinfo.value.timeout_s == 0.2
     evidence.write_json("error.json", {"timeout_s": excinfo.value.timeout_s})
+
+
+async def test_max_wait_fires_after_connection_severed(
+    request: pytest.FixtureRequest,
+    bg_tasks: BgTasks,
+    tmp_path: Path,
+) -> None:
+    """Connection severed mid-stream → ceiling fires after ``max_wait_s``.
+
+    Plan §race #8 safety net. A catastrophic broker death (or any
+    network drop where chunks stop forever) leaves the per-chunk
+    inactivity timer as the only fallback. With ``max_wait_s`` set
+    tight and ``timeout`` (inactivity) set high, the ceiling rescues
+    the stream after the absolute deadline regardless of whether the
+    transport ever told us it died.
+
+    Uses a dedicated ``nats-server`` (NOT the session-scoped fixture)
+    so killing the broker mid-test does not poison every other test.
+    Caller connects with ``allow_reconnect=False`` so the dead server
+    stays dead — no background reconnect loop muddying the timing.
+    """
+    evidence = EvidenceRecorder.for_test(_EVIDENCE_ROOT, request.node.nodeid)
+    server = start_server(tmp_path / "nats-logs")
+    try:
+        client = await nats.connect(server.url, allow_reconnect=False)
+        try:
+            chunks_observed: list[dict[str, object]] = []
+
+            async def fake_agent(msg: Msg) -> None:
+                async def emit_loop() -> None:
+                    i = 0
+                    while True:
+                        try:
+                            await client.publish(msg.reply, _response_chunk_bytes(f"tick-{i}"))
+                        except Exception:
+                            # Broker is gone; bail quietly. The bg_tasks
+                            # fixture will cancel us at teardown anyway,
+                            # but exiting cleanly avoids spurious tracebacks.
+                            return
+                        i += 1
+                        await asyncio.sleep(0.05)
+
+                bg_tasks(asyncio.create_task(emit_loop()))
+
+            sub = await client.subscribe(PROMPT_SUBJECT, cb=fake_agent)
+            kill_at_chunks = 3
+            kill_ts: float | None = None
+            try:
+                agent = Agent(client, _make_agent_info(PROMPT_SUBJECT))
+                start = time.monotonic()
+                with pytest.raises(StreamMaxWaitExceededError) as excinfo:
+                    async for chunk in agent.prompt("sever-me", timeout=60.0, max_wait_s=1.0):
+                        if isinstance(chunk, ResponseChunk):
+                            chunks_observed.append(
+                                {
+                                    "text": chunk.text,
+                                    "elapsed_s": time.monotonic() - start,
+                                }
+                            )
+                            if len(chunks_observed) == kill_at_chunks:
+                                # Kill the broker. From here on no chunks will
+                                # ever arrive — only the ceiling can save us.
+                                kill_ts = time.monotonic() - start
+                                server.stop()
+                elapsed = time.monotonic() - start
+            finally:
+                with contextlib.suppress(Exception):
+                    await sub.unsubscribe()
+        finally:
+            with contextlib.suppress(Exception):
+                await client.close()
+    finally:
+        server.stop()
+
+    assert excinfo.value.max_wait_s == 1.0
+    assert kill_ts is not None
+    # Ceiling must fire close to 1.0 s after start, regardless of when the
+    # broker died. Kernel TCP teardown + asyncio scheduling can each add
+    # tens of ms, and CI machines are noisy — generous slack.
+    assert 0.9 < elapsed < 2.5, f"max_wait fired at {elapsed:.3f}s — outside expected band"
+    assert len(chunks_observed) >= kill_at_chunks
+    evidence.write_jsonl("chunks.jsonl", chunks_observed)  # type: ignore[arg-type]
+    evidence.write_json(
+        "timing.json",
+        {
+            "kill_at_s": round(kill_ts, 3),
+            "max_wait_raised_at_s": round(elapsed, 3),
+            "max_wait_s": 1.0,
+            "inactivity_timeout_s": 60.0,
+        },
+    )
