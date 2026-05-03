@@ -7,18 +7,27 @@ catch-up — assert it directly so a regression to the per-prompt
 ``subscribe + publish`` pattern shows up as a test failure rather than
 a silent perf regression.
 
-We can't observe SUB frames from a NATS client (nats-py doesn't surface
-them), so we instead instrument the connection's own ``subscribe()``
-method and count calls during a 5-prompt sequence. The expected count
-is 1 (the mux SUB), not 5.
+Two layers of evidence:
+
+1. :func:`test_five_prompts_open_one_mux_subscription` — instruments
+   the SDK's ``nc.subscribe`` callsite. Fast, deterministic, fails on
+   any code path that adds a per-prompt SDK-level subscribe call.
+2. :func:`test_broker_sees_one_mux_subscription_for_n_prompts` — hits
+   the broker's HTTP monitoring ``/subsz`` endpoint and asserts the
+   subscription count under the mux's exact inbox prefix. Catches a
+   subtler regression where some hand-rolled path bypasses
+   ``nc.subscribe`` (e.g. constructs a ``Subscription`` directly via
+   internal nats-py API). The HTTP endpoint is enabled unconditionally
+   by :func:`tests.harness.nats_server.start_server`.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import urllib.request
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from synadia_ai.agents import (
     Agent,
@@ -27,6 +36,7 @@ from synadia_ai.agents import (
     EndpointInfo,
     ResponseChunk,
 )
+from synadia_ai.agents._mux import mux_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -35,6 +45,7 @@ if TYPE_CHECKING:
     from nats.aio.msg import Msg
 
     from tests.harness.evidence import EvidenceRecorder
+    from tests.harness.nats_server import RunningServer
 
     BgTasks = Callable[[asyncio.Task[object]], None]
 
@@ -135,4 +146,97 @@ async def test_five_prompts_open_one_mux_subscription(
     evidence.write_json(
         "sub_count.json",
         {"prompts": 5, "inbox_subs_opened": len(opened_during_prompts)},
+    )
+
+
+def _fetch_subsz(monitoring_url: str) -> dict[str, Any]:
+    """Synchronous GET of the broker's ``/subsz?subs=1`` endpoint.
+
+    Synchronous because :mod:`urllib.request` doesn't need an event
+    loop and the call is sub-millisecond against a localhost server.
+    Avoids dragging in :mod:`aiohttp` for one cold poll.
+    """
+    with urllib.request.urlopen(
+        f"{monitoring_url}/subsz?subs=1", timeout=2.0
+    ) as response:
+        return cast("dict[str, Any]", json.loads(response.read()))
+
+
+async def test_broker_sees_one_mux_subscription_for_n_prompts(
+    nats_server: RunningServer,
+    nc: NATSClient,
+    evidence: EvidenceRecorder,
+    bg_tasks: BgTasks,
+) -> None:
+    """Broker-observed truth: exactly one SUB under this mux's inbox prefix.
+
+    Complements :func:`test_five_prompts_open_one_mux_subscription` by
+    asking the broker — not the SDK — how many subscriptions actually
+    exist for the mux's inbox prefix during a multi-prompt sequence.
+    A regression that bypasses ``nc.subscribe`` (hand-rolled
+    :class:`~nats.aio.subscription.Subscription`, or any future code
+    path that registers SUBs without going through ``nc.subscribe``)
+    would fool the SDK-instrumented test but not this one.
+
+    We filter by the mux's exact ``inbox_prefix`` (one nuid per
+    connection) so other tests' lingering subs and the test
+    harness's evidence-recorder ``_INBOX.>`` cannot be conflated
+    with this connection's mux.
+    """
+    n_prompts = 5
+
+    async def echo_agent(msg: Msg) -> None:
+        async def emit() -> None:
+            await nc.publish(msg.reply, _response_chunk("ok"))
+            await nc.publish(msg.reply, b"")  # terminator
+
+        bg_tasks(asyncio.create_task(emit()))
+
+    sub = await nc.subscribe(PROMPT_SUBJECT, cb=echo_agent)
+    try:
+        agents = Agents(nc=nc)
+        info = _make_agent_info(PROMPT_SUBJECT)
+        agent = Agent(nc, info, close_event=agents.close_event)
+
+        for i in range(n_prompts):
+            received: list[str] = []
+            async for chunk in agent.prompt(f"prompt-{i}"):
+                if isinstance(chunk, ResponseChunk):
+                    received.append(chunk.text)
+            assert received == ["ok"], f"prompt {i} got unexpected chunks: {received!r}"
+
+        # Flush the connection so every SUB/UNSUB has reached the broker
+        # before we poll, otherwise the broker's view can lag the SDK's.
+        await nc.flush()
+
+        # Mux-instance prefix — unique per connection. Filtering by the
+        # exact prefix means other tests' lingering subs, the
+        # evidence-recorder `_INBOX.>`, and any future test running in
+        # parallel cannot inflate the count.
+        mux_prefix = mux_for(nc).inbox_prefix
+        subsz = _fetch_subsz(nats_server.monitoring_url)
+        all_subs = subsz.get("subscriptions_list", []) or subsz.get("subscriptions", [])
+        mux_subs = [
+            entry
+            for entry in all_subs
+            if isinstance(entry, dict) and str(entry.get("subject", "")).startswith(mux_prefix)
+        ]
+
+        await agents.close()
+    finally:
+        await sub.unsubscribe()
+
+    assert len(mux_subs) == 1, (
+        f"broker reports {len(mux_subs)} subscription(s) under mux prefix "
+        f"{mux_prefix!r} — expected exactly 1 (the mux). Subs: {mux_subs!r}"
+    )
+    evidence.write_json(
+        "broker_subsz.json",
+        {
+            "prompts": n_prompts,
+            "mux_prefix": mux_prefix,
+            "mux_subs_count": len(mux_subs),
+            "mux_subs": mux_subs,
+            "broker_total_subscriptions": subsz.get("num_subscriptions"),
+        },
     )
