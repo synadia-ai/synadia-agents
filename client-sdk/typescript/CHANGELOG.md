@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+> **Release-tag note:** the `replySubject` removal under "Removed" below
+> is a breaking public API change (the getter was listed in the 0.4.0
+> public surface). Cut this as **0.5.0**, not a 0.4.x patch.
+
 ### Changed
 
 - `PromptStream` now drives the response with `nc.requestMany` using

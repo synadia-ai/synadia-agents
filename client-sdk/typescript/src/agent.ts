@@ -79,8 +79,11 @@ export class Agent {
    *   - {@link PayloadTooLargeError}         — envelope exceeds `max_payload` (§5.4).
    *
    * Wire errors thrown from the iterator:
-   *   - {@link ServiceError}       — `Nats-Service-Error-Code` header (§9.1).
-   *   - {@link StreamStalledError} — inactivity timeout (§6.6).
+   *   - {@link ServiceError}              — `Nats-Service-Error-Code` header (§9.1).
+   *   - {@link StreamStalledError}        — inactivity timeout (§6.6).
+   *   - {@link StreamMaxWaitExceededError} — total response time exceeded
+   *     `maxWaitMs` (default {@link DEFAULT_PROMPT_MAX_WAIT_MS}, 10 minutes)
+   *     without seeing the wire terminator.
    */
   prompt(text: string, opts: PromptOptions = {}): Promise<PromptStream> {
     assertPromptNonEmpty(text);
