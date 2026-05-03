@@ -317,6 +317,29 @@ either guides them to success or frustrates them.
 
 ## Alignment milestones
 
+- **2026-05-03 - prompt-stream catch-up to TS PR #66 (`requestMany` +
+  sentinel).** Python-side analogue of the TS reshape, mirroring TS's
+  shape exactly: prompt streams ride a shared
+  `_INBOX.agents.<mux>.*` subscription that lives **on the NATS
+  connection** (per-`nc` singleton in
+  `synadia_ai.agents._mux.mux_for`, held in a `WeakKeyDictionary`),
+  not on `Agents` — every caller of the same `nc` automatically
+  shares it, just like TS's `nc.requestMany`. Wire shape unchanged
+  — the broker still sees replies on subjects under the SDK inbox
+  prefix; protocol stays at `"0.3"`. Cancellation stays orthogonal
+  to the mux: a per-stream watcher task pushes a sentinel into the
+  stream's queue when `close_event` fires (mirrors TS's
+  `closeSignal: AbortSignal`). New public API:
+  `Agent.prompt(max_wait_s=...)` (absolute ceiling, mirrors TS
+  `PromptOptions.maxWaitMs`), `DEFAULT_PROMPT_MAX_WAIT_S = 600.0`,
+  `StreamMaxWaitExceededError`, `StreamStalledError` (the previously-
+  bare-`ProtocolError("stream stalled ...")` case promoted to a
+  concrete subclass — back-compat preserved), `AgentsClosedError`.
+  Implementation in `src/synadia_ai/agents/_mux.py`; documented as
+  **interim** until `nats-py` ships `request_many` upstream
+  (marker `INTERIM-NATSPY-REQUEST-MANY` in source). Agent-sdk side
+  unaffected by wire shape; bumped in lockstep for dependency-pin
+  hygiene only.
 - **2026-04-28 - session-name collapse (Python-only, ahead of spec).**
   Token 5 of every agent subject IS the session: `name` + `session`
   collapse into a single `session_name`. Public-API renames on
@@ -331,7 +354,7 @@ either guides them to success or frustrates them.
   §3.3's queue group `"agents"` load-balancing across instances of
   the same logical session. Ships under the same protocol version
   `"0.3"` as the verb-first wire bump (no second protocol bump). See
-  `CHANGELOG.md` [Unreleased] for full migration notes.
+  `CHANGELOG.md` [0.5.0] for full migration notes.
 - **2026-04-27 - v0.3.0 wire bump (Python-only, ahead of spec).** Moves
   the agent subject hierarchy to verb-first
   (`agents.{verb}.{agent}.{owner}.{session_name}`) so each endpoint
@@ -344,11 +367,10 @@ either guides them to success or frustrates them.
   now `agents.hb.*.*.*`. `metadata.protocol_version` bumps
   `"0.2"` → `"0.3"`; old v0.2 callers fail to discovery-match a v0.3
   agent rather than silently talking past it. Ships ahead of the
-  protocol spec, the TypeScript SDK, and the agent harnesses
-  (`agents/*`); the cross-SDK interop test
-  `tests/test_interop_e2e.py` is `pytest.skip`d at module level until
-  TS catches up. See `CHANGELOG.md` [Unreleased] for full migration
-  notes.
+  protocol spec; the TypeScript SDK has since caught up to v0.3 (see
+  `client-sdk/typescript/src/version.ts`) and the cross-SDK interop
+  test `tests/test_interop_e2e.py` is unskipped. See `CHANGELOG.md`
+  [0.5.0] for full migration notes.
 - **2026-04-22 - v0.2.0 wire bump.** Aligns with NATS Agent Protocol
   v0.2: service name `SynadiaAgents` → `agents` (§3.1); discovery
   subjects rebased to `$SRV.{PING,INFO}.agents` (§4.1/§4.2); `prompt`

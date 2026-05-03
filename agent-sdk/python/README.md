@@ -20,7 +20,7 @@ uv pip install -e .
 ```
 
 When both packages are on PyPI, plain `pip install
-synadia-ai-agent-service` will pull `synadia-ai-agents>=0.5`
+synadia-ai-agent-service` will pull `synadia-ai-agents>=0.6`
 automatically.
 
 ## Quickstart — host an agent

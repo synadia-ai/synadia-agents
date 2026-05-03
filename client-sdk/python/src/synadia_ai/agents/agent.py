@@ -17,11 +17,16 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
-from ._inbox import new_inbox
 from ._logging import get_logger
+from ._mux import mux_for
 from .discovery import AgentInfo, EndpointInfo
 from .envelope import Attachment, Envelope, encode
-from .errors import ProtocolError
+from .errors import (
+    AgentsClosedError,
+    ProtocolError,
+    StreamMaxWaitExceededError,
+    StreamStalledError,
+)
 from .messages import QueryChunk, ResponseChunk, StatusChunk, decode_chunk
 from .validation import (
     assert_attachments_allowed,
@@ -31,6 +36,7 @@ from .validation import (
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
+    from nats.aio.msg import Msg
 
 log = get_logger(__name__)
 
@@ -38,6 +44,16 @@ log = get_logger(__name__)
 # Default per-stream inactivity timeout (§6.6) — 60 seconds. Mirrors the
 # TS SDK's DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS.
 DEFAULT_STREAM_INACTIVITY_TIMEOUT_S: float = 60.0
+
+
+# Default absolute ceiling on a prompt stream — 10 minutes. Distinct from
+# the §6.6 per-chunk inactivity timer: the inactivity timer resets every
+# message, so a stream that emits a steady trickle of chunks could in
+# principle run forever. ``max_wait_s`` is the safety net for that case
+# and for silent reconnect windows that exceed the inactivity reset
+# cycle. Mirrors the TS SDK's ``DEFAULT_PROMPT_MAX_WAIT_MS`` from
+# `client-sdk/typescript`'s PR #66.
+DEFAULT_PROMPT_MAX_WAIT_S: float = 600.0
 
 
 @dataclass(frozen=True)
@@ -100,11 +116,15 @@ class Agent:
         info: AgentInfo,
         *,
         stream_inactivity_timeout: float = DEFAULT_STREAM_INACTIVITY_TIMEOUT_S,
+        prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         close_event: asyncio.Event | None = None,
     ) -> None:
+        if prompt_max_wait_s <= 0:
+            raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
         self._nc = nc
         self._info = info
         self._default_inactivity_timeout = stream_inactivity_timeout
+        self._default_max_wait_s = prompt_max_wait_s
         self._close_event = close_event
 
     # --- flat read-only identity / capability fields -------------------
@@ -182,6 +202,7 @@ class Agent:
         *,
         attachments: list[Attachment] | None = None,
         timeout: float | None = None,
+        max_wait_s: float | None = None,
     ) -> AsyncIterator[StreamMessage]:
         """Send a prompt and return an async iterator of streamed messages.
 
@@ -198,6 +219,19 @@ class Agent:
         defaults to the value passed to the owning :class:`Agents` (60 s
         out of the box, §6.6).
 
+        ``max_wait_s`` is the absolute ceiling on the whole stream —
+        distinct from ``timeout``, which resets on every received chunk.
+        Must be a positive float; ``None`` falls back to the value passed
+        to the owning :class:`Agents` (10 minutes out of the box).
+        Mirrors the TS SDK's ``PromptOptions.maxWaitMs`` from PR #66.
+        On expiry the iterator raises :class:`StreamMaxWaitExceededError`;
+        the inactivity-gap path raises :class:`StreamStalledError`. Both
+        inherit from :class:`ProtocolError` so existing catch-broadly
+        callers keep working. Passing ``max_wait_s <= 0`` raises
+        :class:`ValueError` synchronously — there is no "no limit"
+        sentinel, since an unbounded prompt stream is the exact failure
+        mode this ceiling exists to prevent.
+
         §5.4 pre-publish validation runs synchronously before any wire I/O.
         Failures raise:
 
@@ -206,6 +240,7 @@ class Agent:
           ``attachments_ok=false`` (§5.4).
         - :class:`PayloadTooLargeError` — envelope exceeds ``max_payload``
           (§5.4).
+        - :class:`ValueError` — ``max_wait_s`` is not strictly positive.
 
         The iterator yields :class:`ResponseChunk` / :class:`StatusChunk` as
         the agent emits them and :class:`Query` when the agent asks a
@@ -214,11 +249,28 @@ class Agent:
         terminates when the empty-payload chunk arrives (§6.5). Service
         errors mid-stream (§9) are raised as :class:`ProtocolError`.
 
-        The iterator also short-circuits if the owning :class:`Agents`
-        is closed mid-stream — the iterator raises a :class:`ProtocolError`
-        describing the cancellation so callers don't silently hang on a
-        broker that's already torn down.
+        Cancellation:
+
+        - If :meth:`Agents.close` has *already* fired before this
+          iterator advances, :class:`AgentsClosedError` is raised
+          before any wire I/O.
+        - If :meth:`Agents.close` fires *during* iteration, the
+          iterator raises :class:`ProtocolError` describing the
+          cancellation within an event-loop tick — independent of
+          ``timeout`` — so callers don't silently hang on a torn-down
+          broker.
+        - If the caller breaks out of the ``async for`` early, prefer
+          ``async with contextlib.aclosing(agent.prompt(...)) as
+          stream:`` (or an explicit ``await stream.aclose()``) so the
+          per-stream slot in the shared mux inbox is freed
+          deterministically. A bare ``break`` defers cleanup to the
+          generator finalizer (works, but the slot lingers until GC).
         """
+        if max_wait_s is not None and max_wait_s <= 0:
+            raise ValueError(
+                f"max_wait_s must be > 0 (got {max_wait_s!r}); pass None to use the default."
+            )
+
         if isinstance(text, Envelope):
             merged_attachments: list[Attachment] | None
             if attachments:
@@ -251,48 +303,163 @@ class Agent:
         assert_within_max_payload(len(encoded), ep.max_payload_bytes, conn_limit)
 
         effective_timeout = timeout if timeout is not None else self._default_inactivity_timeout
-        return self._stream_prompt(envelope, encoded, effective_timeout)
+        effective_max_wait = max_wait_s if max_wait_s is not None else self._default_max_wait_s
+        return self._stream_prompt(envelope, encoded, effective_timeout, effective_max_wait)
 
-    async def _stream_prompt(
-        self, envelope: Envelope, encoded: bytes, timeout: float
-    ) -> AsyncIterator[StreamMessage]:
-        del envelope  # retained for readability at the call site; not needed here
-        reply = new_inbox()
-        sub = await self._nc.subscribe(reply)
-        subject = self._info.prompt_endpoint.subject
-        # §6.6: per-chunk inactivity timeout. Honor the owning Agents.close()
-        # mid-wait — racing next_msg against close_event so teardown is
-        # observed promptly instead of after the full inactivity window.
+    async def _wait_for_chunk(
+        self,
+        queue: asyncio.Queue[object],
+        *,
+        timeout: float,
+        max_wait_s: float,
+        max_wait_event: asyncio.Event,
+        reply: str,
+    ) -> object:
+        """Pull the next item off ``queue`` or raise the appropriate timeout.
+
+        Close and max-wait are lifecycle controls, not ordinary queued
+        stream values. They win over already-buffered chunks (including
+        a buffered terminator) so :meth:`Agents.close` cannot be hidden
+        behind FIFO backlog and max-wait does not drain arbitrary chunks
+        after its deadline. The inactivity timeout remains a per-read
+        gap detector and resets after every delivered item.
+
+        Per-iteration task churn (``queue_task`` plus ``max_wait_task``
+        and optionally ``close_task``, each cancelled on the loser side
+        of the ``asyncio.wait`` race) is intentional. Lifting the
+        event-wait tasks into :meth:`_stream_prompt` and reusing them
+        across iterations would save a couple of ``create_task`` calls
+        per slow-path read but at the cost of cleanup locality — the
+        ``finally`` here is the single place that guarantees no task
+        outlives the read it served. AI-stream chunk rates make the
+        allocation cost invisible; the locality is what keeps the
+        close-race contract auditable.
+        """
+        self._raise_if_cancelled(reply)
+        if max_wait_event.is_set():
+            raise StreamMaxWaitExceededError(max_wait_s)
+
+        if not queue.empty():
+            item = queue.get_nowait()
+            self._raise_if_cancelled(reply)
+            if max_wait_event.is_set():
+                raise StreamMaxWaitExceededError(max_wait_s)
+            return item
+
+        queue_task: asyncio.Task[object] = asyncio.create_task(
+            queue.get(),
+            name=f"agents-prompt-next:{reply}",
+        )
+        max_wait_task: asyncio.Task[bool] = asyncio.create_task(
+            max_wait_event.wait(),
+            name=f"agents-prompt-max-wait:{reply}",
+        )
         close_task: asyncio.Task[bool] | None = (
-            asyncio.ensure_future(self._close_event.wait())
+            asyncio.create_task(
+                self._close_event.wait(),
+                name=f"agents-prompt-close:{reply}",
+            )
             if self._close_event is not None
             else None
         )
-        try:
-            await self._nc.publish(subject, encoded, reply=reply)
-            while True:
-                if close_task is not None and close_task.done():
-                    raise ProtocolError(
-                        f"prompt stream cancelled: owning Agents is closed (reply={reply})"
-                    )
-                next_task = asyncio.ensure_future(sub.next_msg(timeout=timeout))
-                wait_set = {next_task, close_task} if close_task is not None else {next_task}
-                done, _pending = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
-                if close_task is not None and close_task in done:
-                    next_task.cancel()
-                    with contextlib.suppress(BaseException):
-                        await next_task
-                    raise ProtocolError(
-                        f"prompt stream cancelled: owning Agents is closed (reply={reply})"
-                    )
-                try:
-                    msg = await next_task
-                except TimeoutError as exc:
-                    log.warning("stream stalled on %s: no chunk within %.1fs", reply, timeout)
-                    raise ProtocolError(
-                        f"stream stalled: no chunk received within {timeout}s on {reply}"
-                    ) from exc
+        wait_set: set[asyncio.Task[object] | asyncio.Task[bool]] = {
+            queue_task,
+            max_wait_task,
+        }
+        if close_task is not None:
+            wait_set.add(close_task)
 
+        try:
+            done, _pending = await asyncio.wait(
+                wait_set,
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                log.warning("stream stalled on %s: no chunk within %.1fs", reply, timeout)
+                raise StreamStalledError(timeout, reply_subject=reply)
+            if close_task is not None and close_task in done:
+                raise ProtocolError(
+                    f"prompt stream cancelled: owning Agents is closed (reply={reply})"
+                )
+            if max_wait_task in done:
+                raise StreamMaxWaitExceededError(max_wait_s)
+
+            item = queue_task.result()
+            self._raise_if_cancelled(reply)
+            if max_wait_event.is_set():
+                raise StreamMaxWaitExceededError(max_wait_s)
+            return item
+        finally:
+            for task in wait_set:
+                if not task.done():
+                    task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await task
+
+    def _raise_if_closed(self) -> None:
+        """Raise :class:`AgentsClosedError` if the owning Agents has closed.
+
+        Called at every point in :meth:`_stream_prompt` that is still
+        pre-publish — top of method, and again immediately before the
+        publish, since ``mux.start()`` may await for a non-trivial
+        time on its first call (SUB + flush). Callers that have
+        already entered the cleanup ``try`` block rely on the
+        ``finally`` to drop the registered mux token.
+        """
+        if self._close_event is not None and self._close_event.is_set():
+            raise AgentsClosedError("Agents is closed; cannot start new prompt streams")
+
+    def _raise_if_cancelled(self, reply: str) -> None:
+        """Raise if :meth:`Agents.close` fired during an active stream."""
+        if self._close_event is not None and self._close_event.is_set():
+            raise ProtocolError(f"prompt stream cancelled: owning Agents is closed (reply={reply})")
+
+    async def _stream_prompt(
+        self, envelope: Envelope, encoded: bytes, timeout: float, max_wait_s: float
+    ) -> AsyncIterator[StreamMessage]:
+        del envelope  # retained for readability at the call site; not needed here
+        # Pre-flight: refuse outright if the owning Agents is already
+        # closed. This catches the "called prompt() after close()" case
+        # cleanly, before any wire I/O or mux state mutation.
+        self._raise_if_closed()
+
+        # Per-nc mux singleton — shared across every Agent on the same
+        # connection. See `_mux.py`'s INTERIM-NATSPY-REQUEST-MANY note.
+        mux = mux_for(self._nc)
+        await mux.start()  # idempotent; pays SUB+flush on the first prompt
+        # `max_wait_s > 0` is enforced at the public boundary (Agent.prompt
+        # and the constructors), so we treat it as an invariant here.
+        loop = asyncio.get_running_loop()
+        max_wait_event = asyncio.Event()
+        max_wait_handle = loop.call_later(max_wait_s, max_wait_event.set)
+
+        def on_msg(msg: Msg) -> None:
+            if msg.data == b"" and not (msg.headers or {}):
+                max_wait_handle.cancel()
+
+        token, queue = mux.register(on_msg=on_msg)
+        try:
+            reply = mux.reply_subject_for(token)
+            subject = self._info.prompt_endpoint.subject
+
+            # Re-check after the mux.start() await: close may have
+            # fired during the SUB+flush window. Bail before publishing
+            # rather than firing a request whose reply we won't consume.
+            self._raise_if_closed()
+
+            await self._nc.publish(subject, encoded, reply=reply)
+
+            while True:
+                item = await self._wait_for_chunk(
+                    queue,
+                    timeout=timeout,
+                    max_wait_s=max_wait_s,
+                    max_wait_event=max_wait_event,
+                    reply=reply,
+                )
+
+                msg: Msg = item  # type: ignore[assignment]
                 headers = msg.headers or {}
                 if "Nats-Service-Error-Code" in headers:
                     code = headers["Nats-Service-Error-Code"]
@@ -322,15 +489,24 @@ class Agent:
                 else:
                     yield chunk
         finally:
-            if close_task is not None and not close_task.done():
-                close_task.cancel()
-                with contextlib.suppress(BaseException):
-                    await close_task
-            with contextlib.suppress(Exception):
-                await sub.unsubscribe()
+            # Ordering matters: cancel the max-wait timer first, then
+            # unregister the token (no more wire chunks will be routed
+            # here — _on_msg is sync body, so any in-flight call has
+            # already completed before this line returns), then drain
+            # anything that arrived between the consumer's last ``get()``
+            # and now.
+            # This releases :class:`~nats.aio.msg.Msg` payloads
+            # deterministically rather than waiting on the queue's
+            # own GC, which matters for streams that exit early with
+            # large chunks still buffered.
+            max_wait_handle.cancel()
+            mux.unregister(token)
+            while not queue.empty():
+                queue.get_nowait()
 
 
 __all__ = [
+    "DEFAULT_PROMPT_MAX_WAIT_S",
     "DEFAULT_STREAM_INACTIVITY_TIMEOUT_S",
     "Agent",
     "Query",

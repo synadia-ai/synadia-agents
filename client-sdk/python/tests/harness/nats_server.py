@@ -27,14 +27,42 @@ def _pick_free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _pick_free_ports(n: int) -> tuple[int, ...]:
+    """Pick *n* distinct free ports atomically.
+
+    Holds all *n* binds simultaneously before closing any, so the
+    kernel cannot hand out the same ephemeral port twice across a
+    single multi-port allocation. Two back-to-back :func:`_pick_free_port`
+    calls would have a vanishingly rare TOCTOU collision when the
+    kernel reuses the same port for both — uncommon, but a bulletproof
+    harness shouldn't depend on luck.
+    """
+    socks = [socket.socket(socket.AF_INET, socket.SOCK_STREAM) for _ in range(n)]
+    try:
+        for sock in socks:
+            sock.bind(("127.0.0.1", 0))
+        return tuple(int(sock.getsockname()[1]) for sock in socks)
+    finally:
+        for sock in socks:
+            sock.close()
+
+
 @dataclass
 class RunningServer:
-    """A nats-server running as a child process of the test session."""
+    """A nats-server running as a child process of the test session.
+
+    Exposes both the client port (``url``) and the HTTP monitoring port
+    (``monitoring_url``) so tests that want to verify broker-side state
+    (e.g. live subscription count) can hit ``/subsz`` directly rather
+    than relying on SDK-internal instrumentation.
+    """
 
     url: str
     process: subprocess.Popen[bytes]
     stdout_log: Path
     port: int
+    monitoring_port: int
+    monitoring_url: str
 
     def stop(self) -> None:
         if self.process.poll() is not None:
@@ -50,33 +78,66 @@ class RunningServer:
 def start_server(log_dir: Path) -> RunningServer:
     """Start a fresh nats-server on a free port, logging verbosely to `log_dir`.
 
-    Returns a handle with `.url` (nats://127.0.0.1:<port>) and a `.stop()` method.
-    Raises RuntimeError if the server fails to accept connections within 5 seconds.
+    Returns a handle with ``.url`` (nats://127.0.0.1:<client_port>),
+    ``.monitoring_url`` (http://127.0.0.1:<monitoring_port>), and a
+    ``.stop()`` method. Raises RuntimeError if either port fails to
+    accept connections within 5 seconds.
+
+    The monitoring port is enabled unconditionally: it costs one extra
+    listening socket and lets tests assert broker-observed truth (e.g.
+    subscription counts via ``/subsz``) instead of having to monkey-
+    patch SDK internals.
     """
     binary = find_nats_server()
     if binary is None:
         raise RuntimeError("nats-server not on PATH")
 
     log_dir.mkdir(parents=True, exist_ok=True)
-    port = _pick_free_port()
+    port, monitoring_port = _pick_free_ports(2)
     log_file = log_dir / f"nats-server-{port}.log"
 
-    # -DV = debug+verbose; -a = address; -p = port. We write to a file so the
-    # test can attach it as evidence on failure without racing the subprocess pipe.
+    # -DV = debug+verbose; -a = address; -p = client port; -m = HTTP
+    # monitoring port. We write to a file so the test can attach it as
+    # evidence on failure without racing the subprocess pipe.
     proc = subprocess.Popen(
-        [binary, "-DV", "-a", "127.0.0.1", "-p", str(port), "-l", str(log_file)],
+        [
+            binary,
+            "-DV",
+            "-a",
+            "127.0.0.1",
+            "-p",
+            str(port),
+            "-m",
+            str(monitoring_port),
+            "-l",
+            str(log_file),
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
     url = f"nats://127.0.0.1:{port}"
+    monitoring_url = f"http://127.0.0.1:{monitoring_port}"
     if not _wait_for_listen(port, timeout=5.0):
         proc.kill()
         raise RuntimeError(
             f"nats-server failed to accept connections on :{port} within 5s; "
             f"see {log_file} for details"
         )
-    return RunningServer(url=url, process=proc, stdout_log=log_file, port=port)
+    if not _wait_for_listen(monitoring_port, timeout=5.0):
+        proc.kill()
+        raise RuntimeError(
+            f"nats-server monitoring failed to accept connections on :{monitoring_port} "
+            f"within 5s; see {log_file} for details"
+        )
+    return RunningServer(
+        url=url,
+        process=proc,
+        stdout_log=log_file,
+        port=port,
+        monitoring_port=monitoring_port,
+        monitoring_url=monitoring_url,
+    )
 
 
 def _wait_for_listen(port: int, *, timeout: float) -> bool:

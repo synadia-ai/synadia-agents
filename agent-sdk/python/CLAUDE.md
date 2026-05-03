@@ -85,8 +85,9 @@ package).
   `parse_nats_url`, the `SERVICE_NAME` / `PROMPT_QUEUE_GROUP` constants,
   …) keeps its `from synadia_ai.agents import …` path unchanged.
 - **Dependency direction:** `synadia-ai-agent-service` depends on
-  `synadia-ai-agents` (`>=0.5` — the first release that ships the
-  trimmed surface). Not the other way around. The client-sdk must
+  `synadia-ai-agents` (`>=0.6` on the current release line; `0.5.0`
+  was the first release that shipped the trimmed surface). Not the
+  other way around. The client-sdk must
   remain installable and useful without ever pulling the agent-sdk.
 - **No code duplication.** Anything shared (envelope codec, subject
   sanitization, `HeartbeatPayload`, `_PROTOCOL_VERSION`, validation

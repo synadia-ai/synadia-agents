@@ -6,6 +6,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
 the 0.x line is explicitly unstable per protocol spec §11.2.
 
+## [0.2.0] - 2026-05-03
+
+### Changed
+
+- **Dependency floor bumped to `synadia-ai-agents>=0.6`** in lockstep
+  with the client-sdk's prompt-stream catch-up to the TS SDK's PR #66
+  (`requestMany` + sentinel) — see
+  [`client-sdk/python/CHANGELOG.md`](../../client-sdk/python/CHANGELOG.md)
+  `[0.6.0]` for the substance of that change. **No agent-side
+  code changes:** PR #66 was confirmed to touch only
+  `client-sdk/typescript/` (`gh pr view 66 --json files`); the
+  agent-host wire is identical pre/post. Agents still publish
+  individual chunks to `msg.reply` with the §6.5 zero-byte
+  terminator — whether the client subscribed per-stream or via a
+  shared mux is invisible from the agent's POV. The bump exists
+  purely to keep the published metapackage coherent so a user
+  installing `synadia-ai-agent-service` via PyPI pulls a client-sdk
+  that exposes the new `Agent.prompt(max_wait_s=...)` /
+  `StreamMaxWaitExceededError` / `StreamStalledError` surface shared
+  between both packages.
+
 ## [0.1.0] - 2026-04-30
 
 Initial release. **Carved out of `synadia-ai-agents` at the 0.5.0

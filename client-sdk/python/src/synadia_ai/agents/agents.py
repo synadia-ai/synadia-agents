@@ -29,7 +29,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ._logging import get_logger
-from .agent import DEFAULT_STREAM_INACTIVITY_TIMEOUT_S, Agent
+from .agent import DEFAULT_PROMPT_MAX_WAIT_S, DEFAULT_STREAM_INACTIVITY_TIMEOUT_S, Agent
 from .discovery import (
     DEFAULT_DISCOVER_MAX_WAIT_S,
     DEFAULT_DISCOVER_STALL_S,
@@ -62,15 +62,22 @@ class Agents:
         *,
         nc: NATSClient,
         stream_inactivity_timeout: float = DEFAULT_STREAM_INACTIVITY_TIMEOUT_S,
+        prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         logger: logging.Logger | None = None,
     ) -> None:
+        if prompt_max_wait_s <= 0:
+            raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
         self._nc = nc
         self._stream_inactivity_timeout = stream_inactivity_timeout
+        self._prompt_max_wait_s = prompt_max_wait_s
         self._logger = logger if logger is not None else log
         self._tracker = HeartbeatTracker(nc)
         # Set when close() is called; passed to every Agent so in-flight
         # prompt streams can short-circuit instead of waiting on a torn-
-        # down broker.
+        # down broker. The shared mux reply-inbox lives on the
+        # connection itself (per-nc singleton in `_mux.py`); this Agents
+        # does not own it, mirroring the TS SDK's `nc.requestMany`
+        # design where the connection holds the mux.
         self._close_event = asyncio.Event()
         self._closed = False
         self._lazy_start_task: asyncio.Task[None] | None = None
@@ -84,6 +91,11 @@ class Agents:
     def stream_inactivity_timeout(self) -> float:
         """Default per-stream inactivity timeout applied to every :meth:`Agent.prompt`."""
         return self._stream_inactivity_timeout
+
+    @property
+    def prompt_max_wait_s(self) -> float:
+        """Default absolute ceiling for :meth:`Agent.prompt` (overridable per-call)."""
+        return self._prompt_max_wait_s
 
     @property
     def close_event(self) -> asyncio.Event:
@@ -147,6 +159,7 @@ class Agents:
                 self._nc,
                 info,
                 stream_inactivity_timeout=self._stream_inactivity_timeout,
+                prompt_max_wait_s=self._prompt_max_wait_s,
                 close_event=self._close_event,
             )
             for info in infos
@@ -205,10 +218,15 @@ class Agents:
     async def close(self) -> None:
         """Tear down SDK-owned state. Idempotent.
 
-        Cancels in-flight prompt streams via :attr:`close_event` and
-        unsubscribes the heartbeat wildcard. The underlying NATS
-        connection is NOT touched — the caller who opened it is
-        responsible for closing it.
+        Sets :attr:`close_event`, which every in-flight
+        :meth:`Agent.prompt` iterator races against — they unblock
+        within an event-loop tick instead of waiting on the inactivity
+        timeout. Then unsubscribes the heartbeat wildcard. The shared
+        reply-inbox mux is **not** torn down here — it lives on the
+        connection (per-nc singleton in ``_mux.py``) and dies when the
+        caller closes ``nc``. The underlying NATS connection itself is
+        also NOT touched — the caller who opened it is responsible
+        for closing it.
         """
         if self._closed:
             return

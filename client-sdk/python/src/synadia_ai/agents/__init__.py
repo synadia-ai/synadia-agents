@@ -29,6 +29,7 @@ convention (``jetstream(nc)``, ``Svcm(nc)``, ``Kvm(nc)``…).
 from __future__ import annotations
 
 from .agent import (
+    DEFAULT_PROMPT_MAX_WAIT_S,
     DEFAULT_STREAM_INACTIVITY_TIMEOUT_S,
     Agent,
     Query,
@@ -52,6 +53,7 @@ from .discovery import (
 from .envelope import Attachment, Envelope, decode, encode
 from .errors import (
     AgentNotFound,
+    AgentsClosedError,
     AttachmentsNotSupportedError,
     InvalidSubjectToken,
     NatsAgentError,
@@ -60,6 +62,8 @@ from .errors import (
     PromptEmptyError,
     ProtocolError,
     QueryTimeout,
+    StreamMaxWaitExceededError,
+    StreamStalledError,
     ValidationError,
 )
 from .heartbeat import (
@@ -75,6 +79,7 @@ __all__ = [
     "DEFAULT_DISCOVER_MAX_WAIT_S",
     "DEFAULT_DISCOVER_STALL_S",
     "DEFAULT_LIVENESS_SLACK",
+    "DEFAULT_PROMPT_MAX_WAIT_S",
     "DEFAULT_STREAM_INACTIVITY_TIMEOUT_S",
     "HEARTBEAT_SUBJECT",
     "PROMPT_ENDPOINT_NAME",
@@ -87,6 +92,7 @@ __all__ = [
     "AgentNotFound",
     "AgentSubject",
     "Agents",
+    "AgentsClosedError",
     "Attachment",
     "AttachmentsNotSupportedError",
     "Chunk",
@@ -106,7 +112,9 @@ __all__ = [
     "QueryTimeout",
     "ResponseChunk",
     "StatusChunk",
+    "StreamMaxWaitExceededError",
     "StreamMessage",
+    "StreamStalledError",
     "ValidationError",
     "build_agent_info",
     "decode",
