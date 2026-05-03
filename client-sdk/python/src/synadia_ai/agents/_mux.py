@@ -19,9 +19,13 @@ of :func:`mux_for` against the same ``nc`` gets the same instance, so
 multiple :class:`~synadia_ai.agents.Agents` (or directly-constructed
 :class:`~synadia_ai.agents.Agent` handles) on the same connection
 share one ``_INBOX.agents.<mux>.*`` subscription. Lifecycle is tied to
-the connection: when the user closes ``nc`` the subscription dies and
-when the ``Client`` object is garbage-collected the mux entry drops
-out of the cache automatically — no explicit teardown.
+the connection: when the user closes ``nc`` the subscription dies, and
+when *every* strong reference to the ``Client`` object is dropped the
+weak-keyed cache entry is collected automatically — no explicit
+teardown. Note the mux itself holds ``self._nc`` strongly, so the
+cache only frees once the user (and any other code path) has released
+their references too; with a long-lived caller this means the entry
+persists for the lifetime of the process, by design.
 
 Cancellation is **not** the mux's concern. The mux only routes
 :class:`~nats.aio.msg.Msg` objects from inbox-tail token to per-stream
@@ -41,6 +45,7 @@ call site to migrate. Track the upstream feature at
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import weakref
 from typing import TYPE_CHECKING
 
@@ -103,17 +108,33 @@ class MuxInbox:
         return f"{self._inbox_prefix}.{token}"
 
     async def start(self) -> None:
-        """Subscribe + flush. Idempotent; safe to call from every prompt."""
+        """Subscribe + flush. Idempotent; safe to call from every prompt.
+
+        If ``flush()`` raises after ``subscribe()`` has already returned
+        a live :class:`~nats.aio.subscription.Subscription`, the partial
+        sub is unsubscribed before the exception propagates. Otherwise a
+        retry on the next prompt would call ``subscribe()`` again and
+        overwrite ``self._sub``, leaking the original subscription on
+        the broker until ``nc`` is closed.
+        """
         if self._started:
             return
         async with self._lock:
             if self._started:  # second-check inside the lock
                 return
             wildcard = f"{self._inbox_prefix}.*"
-            self._sub = await self._nc.subscribe(wildcard, cb=self._on_msg)
-            # Flush so the SUB lands at the broker before any caller
-            # publishes a request that names this inbox as its reply.
-            await self._nc.flush()
+            sub = await self._nc.subscribe(wildcard, cb=self._on_msg)
+            try:
+                # Flush so the SUB lands at the broker before any caller
+                # publishes a request that names this inbox as its reply.
+                await self._nc.flush()
+            except BaseException:
+                # Roll back the half-started state so a retry from the
+                # next prompt can subscribe cleanly.
+                with contextlib.suppress(Exception):
+                    await sub.unsubscribe()
+                raise
+            self._sub = sub
             self._started = True
 
     async def _on_msg(self, msg: Msg) -> None:

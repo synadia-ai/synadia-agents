@@ -345,6 +345,40 @@ class Agent:
             log.warning("stream stalled on %s: no chunk within %.1fs", reply, timeout)
             raise StreamStalledError(timeout, reply_subject=reply) from exc
 
+    def _raise_if_closed(self) -> None:
+        """Raise :class:`AgentsClosedError` if the owning Agents has closed.
+
+        Called at every point in :meth:`_stream_prompt` that is still
+        pre-publish — top of method, and again immediately before the
+        publish, since ``mux.start()`` may await for a non-trivial
+        time on its first call (SUB + flush). Callers that have
+        already entered the cleanup ``try`` block rely on the
+        ``finally`` to drop the registered mux token.
+        """
+        if self._close_event is not None and self._close_event.is_set():
+            raise AgentsClosedError("Agents is closed; cannot start new prompt streams")
+
+    def _arm_close_watcher(
+        self, queue: asyncio.Queue[object], token: str
+    ) -> asyncio.Task[None] | None:
+        """Wire the per-stream cancellation path immediately after publish.
+
+        If ``close_event`` already fired during the publish await, push
+        :data:`_CLOSE_SENTINEL` synchronously so the very first
+        ``queue.get()`` unblocks. Otherwise spawn the async watcher.
+        Returns the spawned task (or ``None`` for the no-watcher cases)
+        so :meth:`_stream_prompt` can cancel it in ``finally``.
+        """
+        if self._close_event is None:
+            return None
+        if self._close_event.is_set():
+            queue.put_nowait(_CLOSE_SENTINEL)
+            return None
+        return asyncio.create_task(
+            _close_to_sentinel(self._close_event, queue),
+            name=f"agents-close-watcher:{token}",
+        )
+
     async def _stream_prompt(
         self, envelope: Envelope, encoded: bytes, timeout: float, max_wait_s: float
     ) -> AsyncIterator[StreamMessage]:
@@ -352,40 +386,30 @@ class Agent:
         # Pre-flight: refuse outright if the owning Agents is already
         # closed. This catches the "called prompt() after close()" case
         # cleanly, before any wire I/O or mux state mutation.
-        if self._close_event is not None and self._close_event.is_set():
-            raise AgentsClosedError("Agents is closed; cannot start new prompt streams")
+        self._raise_if_closed()
 
         # Per-nc mux singleton — shared across every Agent on the same
         # connection. See `_mux.py`'s INTERIM-NATSPY-REQUEST-MANY note.
         mux = mux_for(self._nc)
         await mux.start()  # idempotent; pays SUB+flush on the first prompt
         token, queue = mux.register()
-        reply = mux.reply_subject_for(token)
-        subject = self._info.prompt_endpoint.subject
-
-        # Absolute ceiling. ``loop.time()`` is monotonic so the deadline
-        # is robust against wall-clock skew.
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + max_wait_s
-
-        # Per-stream close watcher (only when wired up). When
-        # close_event fires, this task pushes a sentinel into our
-        # queue so the consumer's next ``queue.get()`` unblocks
-        # immediately — independent of the inactivity timeout. Mirrors
-        # the TS SDK's ``closeSignal: AbortSignal`` path under PR #66.
         close_watcher: asyncio.Task[None] | None = None
         try:
+            reply = mux.reply_subject_for(token)
+            subject = self._info.prompt_endpoint.subject
+
+            # Absolute ceiling. ``loop.time()`` is monotonic so the deadline
+            # is robust against wall-clock skew.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + max_wait_s
+
+            # Re-check after the mux.start() await: close may have
+            # fired during the SUB+flush window. Bail before publishing
+            # rather than firing a request whose reply we won't consume.
+            self._raise_if_closed()
+
             await self._nc.publish(subject, encoded, reply=reply)
-            # Race: close_event may have fired during the publish await.
-            # Push the sentinel synchronously so the loop sees it on
-            # the very first iteration.
-            if self._close_event is not None and self._close_event.is_set():
-                queue.put_nowait(_CLOSE_SENTINEL)
-            elif self._close_event is not None:
-                close_watcher = asyncio.create_task(
-                    _close_to_sentinel(self._close_event, queue),
-                    name=f"agents-close-watcher:{token}",
-                )
+            close_watcher = self._arm_close_watcher(queue, token)
 
             while True:
                 item = await self._wait_for_chunk(
@@ -431,11 +455,23 @@ class Agent:
                 else:
                     yield chunk
         finally:
+            # Ordering matters: cancel the watcher first (no more
+            # sentinels can be pushed), then unregister the token (no
+            # more wire chunks will be routed here — _on_msg is sync
+            # body, so any in-flight call has already completed
+            # before this line returns), then drain anything that
+            # arrived between the consumer's last ``get()`` and now.
+            # This releases :class:`~nats.aio.msg.Msg` payloads
+            # deterministically rather than waiting on the queue's
+            # own GC, which matters for streams that exit early with
+            # large chunks still buffered.
             if close_watcher is not None and not close_watcher.done():
                 close_watcher.cancel()
                 with contextlib.suppress(BaseException):
                     await close_watcher
             mux.unregister(token)
+            while not queue.empty():
+                queue.get_nowait()
 
 
 __all__ = [

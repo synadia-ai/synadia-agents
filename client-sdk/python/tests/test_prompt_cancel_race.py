@@ -283,31 +283,42 @@ async def test_close_during_prompt_yields_protocol_error(
     """Plan §race-analysis #7 — half B: ``close()`` fires *during* the loop.
 
     Once the prompt has gotten past its synchronous pre-flight check
-    and started awaiting chunks, ``Agents.close()`` propagates via the
-    per-stream close-watcher pushing :data:`_CLOSE_SENTINEL`; the
-    iterator raises :class:`ProtocolError` (not
-    :class:`AgentsClosedError`) so callers can branch on
-    "torn down mid-flight" vs "called against a closed Agents."
+    AND past the publish (so the post-publish close-watcher is armed),
+    ``Agents.close()`` propagates via the per-stream watcher pushing
+    :data:`_CLOSE_SENTINEL`; the iterator raises :class:`ProtocolError`
+    (not :class:`AgentsClosedError`) so callers can branch on "torn
+    down mid-flight" vs "called against a closed Agents."
+
+    Synchronisation is event-driven, not ``asyncio.sleep(0)``-based:
+    the fake agent yields one chunk, and the consumer signals an event
+    on receipt. Once that fires, the consumer is provably *past* both
+    pre-publish close checks and into the iteration body — so close
+    can only land in the mid-stream path. Without this, an interim
+    pre-publish race-window check could trip first and raise
+    :class:`AgentsClosedError`, masquerading as the mid-stream path.
     """
+    consumer_in_iteration = asyncio.Event()
 
-    async def silent_agent(msg: Msg) -> None:
-        del msg
+    async def one_chunk_agent(msg: Msg) -> None:
+        # Single chunk, no terminator — keeps the consumer iterating
+        # forever after delivery so close can fire mid-loop.
+        await nc.publish(msg.reply, _response_chunk_bytes("alive"))
 
-    sub = await nc.subscribe(PROMPT_SUBJECT, cb=silent_agent)
+    sub = await nc.subscribe(PROMPT_SUBJECT, cb=one_chunk_agent)
     try:
         agents = Agents(nc=nc)
         info = _make_agent_info(PROMPT_SUBJECT)
         agent = Agent(nc, info, close_event=agents.close_event)
 
-        # Start the prompt; once it's blocked on queue.get, fire close.
-        consume_started = asyncio.Event()
         outcome: dict[str, str] = {}
 
         async def consume() -> None:
             try:
-                consume_started.set()
-                async for _ in agent.prompt("hold open", timeout=60.0):
-                    pass
+                async for chunk in agent.prompt("hold open", timeout=60.0):
+                    if isinstance(chunk, ResponseChunk):
+                        # First chunk delivered → consumer is provably past
+                        # publish + close-watcher arming; safe to fire close.
+                        consumer_in_iteration.set()
             except AgentsClosedError as exc:
                 outcome["raised"] = f"AgentsClosedError: {exc}"
             except ProtocolError as exc:
@@ -315,11 +326,7 @@ async def test_close_during_prompt_yields_protocol_error(
                 outcome["msg"] = str(exc)
 
         consumer = asyncio.create_task(consume())
-        await consume_started.wait()
-        # Yield twice so the prompt advances past pre-flight + publish
-        # and parks on queue.get() before close fires.
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        await asyncio.wait_for(consumer_in_iteration.wait(), timeout=2.0)
         await agents.close()
         await asyncio.wait_for(consumer, timeout=2.0)
 
