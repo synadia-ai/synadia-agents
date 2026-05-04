@@ -11,6 +11,7 @@ import {
 } from "../stores/agents.ts";
 import { onStopped, piexecState } from "../stores/piexec.ts";
 import { ccexecState, onCcStopped } from "../stores/ccexec.ts";
+import { selectionState, toggleSelection } from "../stores/selection.ts";
 import { useBridge } from "../composables/useBridge.ts";
 
 const props = defineProps<{
@@ -203,6 +204,22 @@ const sessionState = computed<"alive" | "expired">(() => {
 });
 const isExpired = computed(() => sessionState.value === "expired");
 
+// A card is multi-selectable iff it represents a prompt-target the user
+// could meaningfully fan a prompt out to. Controllers (which spawn,
+// don't prompt) and expired sessions (which can't accept prompts) are
+// out — the selection circle isn't even rendered for them, so the card
+// looks normal.
+const multiSelectable = computed(() => !isController.value && !isExpired.value);
+const isMultiSelected = computed(() => selectionState.ids.has(props.agent.instanceId));
+
+function onToggleSelect(e: Event): void {
+  // Stop propagation so the card-body click handler (single-select for
+  // the right-panel chat) doesn't also fire — the two interactions are
+  // intentionally orthogonal.
+  e.stopPropagation();
+  toggleSelection(props.agent.instanceId);
+}
+
 // Find the controller that spawned this session (matched by agent token +
 // role + owner). Returns null if the controller has vanished — in which case
 // the stop button is shown disabled with a tooltip.
@@ -272,11 +289,36 @@ function onTrash(): void {
         selected,
         'is-controller': isController,
         'is-session': isPiSession || isCcSession,
+        'is-multi-selected': isMultiSelected,
       }"
       type="button"
       @click="$emit('select', agent.instanceId)"
     >
       <header class="card-head">
+        <span
+          v-if="multiSelectable"
+          class="select-circle"
+          :class="{ active: isMultiSelected }"
+          role="checkbox"
+          tabindex="0"
+          :aria-checked="isMultiSelected ? 'true' : 'false'"
+          :title="isMultiSelected ? 'Deselect for multi-prompt' : 'Select for multi-prompt'"
+          @click="onToggleSelect"
+          @keydown.space.prevent="onToggleSelect"
+          @keydown.enter.prevent="onToggleSelect"
+        >
+          <svg
+            v-if="isMultiSelected"
+            class="check"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          ><polyline points="20 6 9 17 4 12" /></svg>
+        </span>
         <div class="head-tags">
           <span class="agent-tag mono">{{ tagLabel }}</span>
           <span v-if="isController" class="role-badge mono" title="headless controller — spawns sessions">CONTROLLER</span>
@@ -488,6 +530,15 @@ function onTrash(): void {
     0 0 0 1px var(--memory-preference),
     0 0 18px rgba(167, 139, 250, 0.25);
 }
+/* Multi-select visual: a faint accent ring on the card so the user can
+   see which cards are ticked even with the right-panel selection on a
+   different card. Distinct from `.selected` (which is the right-panel
+   open-in-chat state) — both can apply at once. */
+.card.is-multi-selected {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 55%, transparent),
+    0 0 14px var(--accent-glow);
+}
 
 .card-head {
   display: flex;
@@ -503,6 +554,55 @@ function onTrash(): void {
   flex-wrap: wrap;
 }
 .status-led { flex-shrink: 0; }
+
+/* Selection circle. Always rendered for multi-selectable cards so the
+   layout slot is reserved (no shift on hover); fades in on card hover or
+   sticks visible when selected. Click toggles; propagation stops so the
+   card body's open-in-chat click doesn't fire. */
+.select-circle {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--text-dim) 80%, transparent);
+  background: var(--bg-primary);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast),
+              border-color var(--transition-fast),
+              background var(--transition-fast),
+              transform var(--transition-fast);
+  /* Above the card's interactive surface so click events land here, not
+     on the parent button. */
+  position: relative;
+  z-index: 2;
+}
+.card-wrap:hover .select-circle,
+.select-circle.active,
+.select-circle:focus-visible {
+  opacity: 1;
+}
+.select-circle:hover {
+  border-color: var(--accent-primary);
+  background: var(--accent-glow);
+}
+.select-circle.active {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+.select-circle:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+.select-circle .check {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
 
 .role-badge {
   font-size: 9px;
