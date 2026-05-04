@@ -295,6 +295,11 @@ function onTrash(): void {
 
       <p v-if="cwd" class="cwd mono" :title="cwd">{{ cwd }}</p>
 
+      <!-- Eats the leftover height when cards in a row are equalised, so the
+           subject + stats + badges + hint dock to the card's bottom edge while
+           the head / title / meta / cwd block stays anchored to the top. -->
+      <div class="grow-spacer" aria-hidden="true" />
+
       <p
         v-if="agent.promptEndpoint.subject"
         class="subject mono"
@@ -381,8 +386,12 @@ function onTrash(): void {
 <style scoped>
 .card-wrap {
   position: relative;
-  display: block;
+  display: flex;
   width: 100%;
+  /* Fill the grid row's height. CSS Grid stretches items to the tallest
+     row sibling by default; this prop just makes that height visible to
+     the inner `.card` so it can flex-fill it. */
+  height: 100%;
 }
 
 .stop-btn {
@@ -436,6 +445,9 @@ function onTrash(): void {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
+  /* Fill the card-wrap so all cards in a row share the tallest card's
+     height — the `.grow-spacer` inside then pushes the bottom block down. */
+  flex: 1;
   padding: var(--space-md);
   background: var(--bg-secondary);
   /* Default border = a faint wash of the per-bucket tag colour. This
@@ -570,6 +582,14 @@ function onTrash(): void {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.grow-spacer {
+  flex: 1;
+  /* Honour the card's `gap` rule (`--space-xs`) by collapsing to 0 minimum
+     height — the gap on either side already provides breathing room when
+     no extra space is available. */
+  min-height: 0;
+}
+
 .subject {
   font-size: 11px;
   color: var(--text-dim);
