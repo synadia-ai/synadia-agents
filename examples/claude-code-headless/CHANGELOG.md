@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-05-04
+
+### Changed
+
+- **Lower heartbeat cadence from 30 s to 5 s** on both the controller
+  and its spawned sessions. The dashboard's stale-eviction loop runs
+  at `3 × intervalS`, so dead controllers / sessions disappear from
+  the grid in ~15 s instead of ~90 s. The SDK's
+  `DEFAULT_HEARTBEAT_INTERVAL_S` stays at 30 s as a sensible
+  third-party default; this is a per-package opt-in.
+
 ## [0.5.2] - 2026-05-04
 
 ### Fixed

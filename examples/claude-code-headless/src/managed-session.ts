@@ -81,7 +81,12 @@ interface PendingRequest {
   readonly stagedDir: string | undefined;
 }
 
-const HEARTBEAT_INTERVAL_S = 30;
+// 5s — snappy enough that the dashboard's stale-eviction loop
+// (3× intervalS) drops a vanished controller in ~15s. The SDK's
+// `DEFAULT_HEARTBEAT_INTERVAL_S` stays at 30s as a sensible
+// third-party default; first-party harnesses opt into the snappier
+// cadence.
+const HEARTBEAT_INTERVAL_S = 5;
 const PERMISSION_TIMEOUT_MS = 120_000; // 2 minutes for a user to decide
 
 export class ManagedSession {
