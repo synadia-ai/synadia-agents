@@ -72,7 +72,7 @@
   "dependencies": {
     "@nats-io/nats-core": "^3.3.0",
     "@nats-io/services": "^3.3.0",
-    "@synadia-ai/agents": "file:../../client-sdk/typescript"
+    "@synadia-ai/agents": "^0.5.0"
   },
   "devDependencies": {
     "@nats-io/transport-node": "^3.3.0",
