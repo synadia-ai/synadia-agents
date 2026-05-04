@@ -33,8 +33,10 @@ function onTrash(e: Event): void {
   e.stopPropagation();
   if (!confirm(`Delete ${props.session.label}?`)) return;
   // Cancel any in-flight per-source streams so nothing keeps writing into
-  // a session we're about to drop.
-  for (const promptId of props.session.activePromptIds.values()) {
+  // a session we're about to drop. Snapshot the values first so a future
+  // bridge.cancel that synchronously mutates the map (it doesn't today)
+  // wouldn't break the iteration mid-loop.
+  for (const promptId of [...props.session.activePromptIds.values()]) {
     bridge.cancel(promptId);
   }
   deleteVirtualSession(props.session.id);

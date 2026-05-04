@@ -1,5 +1,6 @@
 import { reactive, computed } from "vue";
 import type { DiscoveredAgentDTO } from "../wire.ts";
+import { isVirtualId } from "./virtualSessions.ts";
 
 export const agentsState = reactive<{
   list: DiscoveredAgentDTO[];
@@ -29,9 +30,11 @@ export function setAgents(list: DiscoveredAgentDTO[]): void {
   // If the previously selected agent vanished, clear selection — but
   // skip this for virtual-session ids (`virtual:<uuid>`) which are
   // UI-only entities not present in `list` and shouldn't be wiped on
-  // every refresh.
+  // every refresh. The prefix check goes through the canonical helper
+  // exported from `virtualSessions.ts` so the prefix string lives in
+  // exactly one place.
   const sel = agentsState.selectedInstanceId;
-  if (sel && !sel.startsWith("virtual:") && !list.some((a) => a.instanceId === sel)) {
+  if (sel && !isVirtualId(sel) && !list.some((a) => a.instanceId === sel)) {
     agentsState.selectedInstanceId = null;
   }
 }

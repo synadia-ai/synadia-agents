@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import MessageBubble from "./MessageBubble.vue";
 import PromptArea from "./PromptArea.vue";
 import { fileToAttachment, useBridge } from "../composables/useBridge.ts";
@@ -105,6 +105,13 @@ function onStop(): void {
     bridge.cancel(promptId);
   }
 }
+
+// Clear the inline-report timer if the user navigates away mid-countdown
+// (e.g. opens a different session or deletes this one) — otherwise the
+// callback fires into an orphaned ref and emits an unhandled warning.
+onUnmounted(() => {
+  if (reportTimer !== null) clearTimeout(reportTimer);
+});
 </script>
 
 <template>
