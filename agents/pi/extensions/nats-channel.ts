@@ -56,7 +56,6 @@ import {
 } from "@synadia-ai/agents";
 import {
 	DEFAULT_ATTACHMENTS_OK,
-	DEFAULT_HEARTBEAT_INTERVAL_S,
 	DEFAULT_MAX_PAYLOAD,
 	buildHeartbeatPayload,
 	encodeChunk,
@@ -71,6 +70,14 @@ import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-age
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SERVICE_VERSION = "0.4.0";
+
+// Heartbeat cadence on `agents.hb.pi.<owner>.<name>`. Locally pinned at
+// 5s so the dashboard's stale-eviction loop (3× intervalS) drops a dead
+// `pi` agent in ~15s instead of ~90s. The SDK's own
+// SDK's `DEFAULT_HEARTBEAT_INTERVAL_S` stays at 30s as a sensible
+// third-party default — first-party harnesses opt into the snappier
+// cadence.
+const HEARTBEAT_INTERVAL_S = 5;
 
 // Spec §2, Appendix C: `pi` is both the canonical agent identifier and its
 // conventional subject abbreviation, so `metadata.agent` and the wire
@@ -537,7 +544,7 @@ export default function (pi: ExtensionAPI) {
 			throw new Error("heartbeat called before service was registered");
 		}
 		return encodeHeartbeatPayload(
-			buildHeartbeatPayload(agentSubject, DEFAULT_HEARTBEAT_INTERVAL_S, instanceId, {
+			buildHeartbeatPayload(agentSubject, HEARTBEAT_INTERVAL_S, instanceId, {
 				session: sessionName,
 			}),
 		);
@@ -577,7 +584,7 @@ export default function (pi: ExtensionAPI) {
 		};
 		// Emit one immediately so callers discovering us don't wait a full cadence.
 		publish();
-		heartbeatTimer = setInterval(publish, DEFAULT_HEARTBEAT_INTERVAL_S * 1000);
+		heartbeatTimer = setInterval(publish, HEARTBEAT_INTERVAL_S * 1000);
 		heartbeatTimer.unref?.();
 	}
 

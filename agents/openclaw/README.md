@@ -122,7 +122,7 @@ A failure in step 3 or 5 (missing file, malformed JSON, no `url`) is logged and 
 # Find your agent (and any others on the same NATS)
 nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
 
-# Watch heartbeats — your agent should beat every ~30 s
+# Watch heartbeats — your agent beats every ~5 s
 nats sub 'agents.hb.*.*.*'
 ```
 
