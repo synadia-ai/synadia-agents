@@ -33,7 +33,7 @@ export interface PiHeadlessConfig {
 const CONFIG_FILE = join(homedir(), ".pi-headless", "config.json");
 
 const BUILT_IN_DEFAULTS = {
-  name: "exec",
+  name: "control",
   defaultMaxLifetimeS: 1800,
 } as const;
 

@@ -2,7 +2,7 @@
 
 A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `ReferenceAgent`) and conforming to the NATS Agent Protocol **v0.3** (verb-first subjects + `status` endpoint).
 
-Each spawned PI session registers as its own NATS agent instance under `agents.prompt.pi.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.pi.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
+Each spawned PI session registers as its own NATS agent instance under `agents.prompt.pi-headless.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.pi-headless.<owner>.<name>` (default `name = "control"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
 
 In short: one process, many PI sessions, all first-class NATS agents.
 
@@ -26,8 +26,8 @@ npx @synadia-ai/nats-pi-headless --context localhost
 and prints:
 
 ```
-pi-headless: controller listening on agents.prompt.pi.<you>.exec
-pi-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
+pi-headless: controller listening on agents.prompt.pi-headless.<you>.control
+pi-headless: control endpoints — agents.spawn.pi-headless.<you>.control  …  agents.stop.…  agents.list.…
 ```
 
 For a permanent install:
@@ -82,7 +82,7 @@ Optional defaults live in `~/.pi-headless/config.json`:
 ```json
 {
   "context": "localhost",
-  "name": "exec",
+  "name": "control",
   "defaultModel": "anthropic/claude-sonnet-4-5",
   "defaultThinkingLevel": "off",
   "defaultMaxLifetimeS": 1800
@@ -94,7 +94,7 @@ Env overrides:
 | Variable | Overrides | Default |
 | --- | --- | --- |
 | `PI_HEADLESS_OWNER` | Owner subject token (3rd segment) | `$USER` |
-| `PI_HEADLESS_NAME` | Controller instance name (4th token) | `exec` |
+| `PI_HEADLESS_NAME` | Controller instance name (4th token) | `control` |
 | `PI_HEADLESS_DEFAULT_MODEL` | Default model spec for spawns | (none — caller must set, or PI picks) |
 | `PI_HEADLESS_DEFAULT_THINKING_LEVEL` | Default thinking level for spawns | (none) |
 | `PI_HEADLESS_DEFAULT_MAX_LIFETIME` | Default session lifetime, in seconds | `1800` |
@@ -105,17 +105,19 @@ PI auth / model registry comes from `~/.pi/agent/auth.json` (the same location `
 
 ## Subject layout
 
-```
-agents.prompt.pi.<owner>.<name>             ← controller prompt endpoint (help text)
-agents.status.pi.<owner>.<name>             ← controller status (§8.7 (v0.3); replies with heartbeat-shaped payload)
-agents.hb.pi.<owner>.<name>                 ← controller heartbeat (§8.1 v0.3, 30 s)
-agents.pi.<owner>.<name>.spawn              ← POST JSON → session descriptor (custom; non-verb-first)
-agents.pi.<owner>.<name>.stop               ← POST { session_id } → { ok: true }    (custom)
-agents.pi.<owner>.<name>.list               ← (empty) → { sessions: [...] }          (custom)
+Verb-first throughout — protocol verbs and pi-headless extension verbs share the same `agents.<verb>.pi-headless.<owner>.<token>` shape, so a tracer or audit layer can subscribe to `agents.<verb>.>` and parse identity positionally.
 
-agents.prompt.pi.<owner>.<session_id>       ← spawned session prompt (§5/§6, v0.3)
-agents.status.pi.<owner>.<session_id>       ← spawned session status (§8.7 (v0.3))
-agents.hb.pi.<owner>.<session_id>           ← spawned session heartbeat (§8.1 v0.3, 30 s)
+```
+agents.prompt.pi-headless.<owner>.<name>      ← controller prompt endpoint (help text)
+agents.status.pi-headless.<owner>.<name>      ← controller status (replies with heartbeat-shaped payload)
+agents.hb.pi-headless.<owner>.<name>          ← controller heartbeat (30 s)
+agents.spawn.pi-headless.<owner>.<name>       ← POST JSON → session descriptor
+agents.stop.pi-headless.<owner>.<name>        ← POST { session_id } → { ok: true }
+agents.list.pi-headless.<owner>.<name>        ← (empty) → { sessions: [...] }
+
+agents.prompt.pi-headless.<owner>.<session_id>  ← spawned session prompt
+agents.status.pi-headless.<owner>.<session_id>  ← spawned session status
+agents.hb.pi-headless.<owner>.<session_id>      ← spawned session heartbeat (30 s)
 ```
 
 ## Wire examples
@@ -123,16 +125,16 @@ agents.hb.pi.<owner>.<session_id>           ← spawned session heartbeat (§8.1
 ### Spawn
 
 ```bash
-nats req agents.pi.$USER.exec.spawn \
+nats req agents.spawn.pi-headless.$USER.control \
   '{"cwd":"/tmp/pi-sandbox","model":"anthropic/claude-sonnet-4-5","max_lifetime_s":900}' \
   --timeout=10s
-# → { "session_id":"sess-a1b2c3d4", "subject":"agents.prompt.pi.$USER.sess-a1b2c3d4", "status_subject":"agents.status.pi.$USER.sess-a1b2c3d4", ... }
+# → { "session_id":"sess-a1b2c3d4", "subject":"agents.prompt.pi-headless.$USER.sess-a1b2c3d4", "status_subject":"agents.status.pi-headless.$USER.sess-a1b2c3d4", ... }
 ```
 
 ### Prompt (protocol-standard - no custom format)
 
 ```bash
-nats req agents.prompt.pi.$USER.sess-a1b2c3d4 \
+nats req agents.prompt.pi-headless.$USER.sess-a1b2c3d4 \
   'summarise the files in this directory' --replies=0 --timeout=60s
 # → {"type":"status","data":"ack"}
 # → {"type":"response","data":"There are three files: …"}
@@ -161,14 +163,14 @@ await nc.close();
 ### Stop
 
 ```bash
-nats req agents.pi.$USER.exec.stop '{"session_id":"sess-a1b2c3d4"}'
+nats req agents.stop.pi-headless.$USER.control '{"session_id":"sess-a1b2c3d4"}'
 # → { "ok": true, "session_id":"sess-a1b2c3d4" }
 ```
 
 ### List
 
 ```bash
-nats req agents.pi.$USER.exec.list ''
+nats req agents.list.pi-headless.$USER.control ''
 # → { "sessions": [ { "session_id":"sess-a1b2c3d4", "cwd":"/tmp/pi-sandbox", "remaining_lifetime_s": 867, ... } ] }
 ```
 
@@ -192,9 +194,9 @@ Session prompt endpoints follow protocol §9.
 
 ## Notes
 
-- **Session identity.** The 4th subject token is the session id; `metadata.session` echoes it. Controllers use `name = "exec"` by default.
-- **Metadata marker.** The controller carries `metadata.role = "pi-headless-controller"` so clients can tell it apart from other pi agents.
-- **One controller per `(owner, name)`.** The custom `spawn` / `stop` / `list` endpoints are NATS micro-service endpoints, which load-balance across all instances sharing the same subject. If you need multiple controllers side-by-side, give each one a distinct `--name` (e.g. `--name exec-a`, `--name exec-b`) so they advertise on different subjects and don't cross-steal each other's control requests.
+- **Session identity.** The 4th subject token is the session id; `metadata.session` echoes it. Controllers use `name = "control"` by default and sessions carry `metadata.role = "session"`.
+- **Metadata marker.** The controller carries `metadata.role = "controller"` so clients can tell it apart from sessions. The shared `agent: "pi-headless"` token already disambiguates this from the regular `agent: "pi"` runtime.
+- **Multiple controllers per host.** On startup the controller probes `$SRV.INFO.agents` and, if its target prompt subject is already claimed, picks the next free `<name>-2`, `<name>-3`, … suffix automatically. So booting a second pi-headless with default settings leaves the first as `control` and the second as `control-2` without explicit `--name` flags. (For deterministic naming or two stable controllers side-by-side, still pass `--name` explicitly.)
 - **Serial drain.** Per session, prompts are queued and processed one at a time.
 - **Lifetime & pruning.** `max_lifetime_s` bounds a session's wall-clock life; pending requests older than 30 min are evicted (active requests are never evicted).
 - **Attachments.** Base64 attachments are decoded to `~/.pi-headless/attachments/<session_id>/<uuid>/` and their absolute paths are prepended to the prompt text, matching the `agents/pi/` staging pattern.

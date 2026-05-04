@@ -1,65 +1,68 @@
 // Subject builders + session-id sanitizer for pi-headless.
 //
-// The protocol subjects (`agents.{verb}.pi.<owner>.<token>`) are built via
-// the SDK's `AgentSubject` so the wire layout has one source of truth across
-// the SDK, agent harnesses, and examples. The `pi` subject token equals
-// `metadata.agent` here (Appendix C: `pi` is both the canonical id and the
-// conventional abbreviation), so `AgentSubject.new(...)` without a
-// `subjectToken` override produces the right wire shape.
+// Wire layout (verb-first throughout):
 //
-// Custom endpoints (spawn / stop / list) stay on a non-verb-first form so
-// they're clearly application extensions, not protocol endpoints.
+//   agents.prompt.pi-headless.<owner>.<name>     → controller's prompt endpoint
+//   agents.hb.pi-headless.<owner>.<name>         → controller heartbeat
+//   agents.status.pi-headless.<owner>.<name>     → controller status
+//   agents.spawn.pi-headless.<owner>.<name>      → controller spawn endpoint
+//   agents.stop.pi-headless.<owner>.<name>       → controller stop endpoint
+//   agents.list.pi-headless.<owner>.<name>       → controller list endpoint
+//   agents.prompt.pi-headless.<owner>.<session>  → spawned session prompt
+//   agents.hb.pi-headless.<owner>.<session>      → spawned session heartbeat
+//   agents.status.pi-headless.<owner>.<session>  → spawned session status
+//
+// `pi-headless` distinguishes this controller (and its spawned sessions) from
+// the regular `pi` agent at `agents/pi/`. The wire layout is verb-first for
+// every endpoint — the protocol-mandated verbs (`prompt`, `hb`, `status`)
+// share the same `agents.<verb>.<agent>.<owner>.<name>` shape as the
+// extension verbs (`spawn`, `stop`, `list`), so any tracer or audit layer
+// can subscribe to `agents.<verb>.>` and parse identity positionally.
 
-import { AgentSubject } from "@synadia-ai/agents";
+import type { NatsConnection } from "@nats-io/nats-core";
+import { Svcm } from "@nats-io/services";
+import { SERVICE_NAME } from "@synadia-ai/agents";
 
-export const AGENT_TOKEN = "pi";
+export const AGENT_TOKEN = "pi-headless";
 
-function controllerSubject(owner: string, name: string): AgentSubject {
-  return AgentSubject.new(AGENT_TOKEN, owner, name);
+function subject(verb: string, owner: string, name: string): string {
+  return `agents.${verb}.${AGENT_TOKEN}.${owner}.${name}`;
 }
 
 export function controllerPromptSubject(owner: string, name: string): string {
-  return controllerSubject(owner, name).prompt;
+  return subject("prompt", owner, name);
 }
 
 export function controllerHeartbeatSubject(owner: string, name: string): string {
-  return controllerSubject(owner, name).heartbeat;
+  return subject("hb", owner, name);
 }
 
 export function controllerStatusSubject(owner: string, name: string): string {
-  return controllerSubject(owner, name).status;
+  return subject("status", owner, name);
 }
 
-/** Custom endpoints — application-specific, NOT part of the v0.3 verb-first scheme. */
-const customSubjectRoot = (owner: string, name: string): string =>
-  `agents.${AGENT_TOKEN}.${owner}.${name}`;
-
 export function controllerSpawnSubject(owner: string, name: string): string {
-  return `${customSubjectRoot(owner, name)}.spawn`;
+  return subject("spawn", owner, name);
 }
 
 export function controllerStopSubject(owner: string, name: string): string {
-  return `${customSubjectRoot(owner, name)}.stop`;
+  return subject("stop", owner, name);
 }
 
 export function controllerListSubject(owner: string, name: string): string {
-  return `${customSubjectRoot(owner, name)}.list`;
-}
-
-function sessionSubject(owner: string, sessionId: string): AgentSubject {
-  return AgentSubject.new(AGENT_TOKEN, owner, sessionId);
+  return subject("list", owner, name);
 }
 
 export function sessionPromptSubject(owner: string, sessionId: string): string {
-  return sessionSubject(owner, sessionId).prompt;
+  return subject("prompt", owner, sessionId);
 }
 
 export function sessionHeartbeatSubject(owner: string, sessionId: string): string {
-  return sessionSubject(owner, sessionId).heartbeat;
+  return subject("hb", owner, sessionId);
 }
 
 export function sessionStatusSubject(owner: string, sessionId: string): string {
-  return sessionSubject(owner, sessionId).status;
+  return subject("status", owner, sessionId);
 }
 
 // Tokens MUST follow §2.2: [a-z0-9_-], not starting with $, 1..63 chars.
@@ -98,4 +101,40 @@ export function generateSessionId(): string {
   globalThis.crypto.getRandomValues(bytes);
   const rand = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   return `sess-${rand}`;
+}
+
+/**
+ * Probe `$SRV.INFO.agents` and pick the first controller name whose prompt
+ * subject is unclaimed. Auto-suffixes `-2`, `-3`, … until a free slot is
+ * found, so two pi-headless processes booted with the default `control`
+ * land on `control` and `control-2` respectively. The probe is best-effort
+ * (a small race window remains between discovery and svcm.add) — the
+ * trade-off is acceptable for a developer convenience.
+ */
+export async function resolveControllerName(
+  nc: NatsConnection,
+  base: string,
+  owner: string,
+): Promise<string> {
+  const svcm = new Svcm(nc);
+  const client = svcm.client({ strategy: "stall", maxWait: 1000, maxMessages: 50 });
+
+  const taken = new Set<string>();
+  try {
+    const iter = await client.info(SERVICE_NAME);
+    for await (const si of iter) {
+      for (const ep of si.endpoints ?? []) {
+        taken.add(ep.subject);
+      }
+    }
+  } catch {
+    // No existing services or timeout — fine.
+  }
+
+  let candidate = base;
+  let suffix = 2;
+  while (taken.has(controllerPromptSubject(owner, candidate))) {
+    candidate = `${base}-${suffix++}`;
+  }
+  return candidate;
 }
