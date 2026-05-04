@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import AttachmentChips from "./AttachmentChips.vue";
-import { agentsState } from "../stores/agents.ts";
+import { agentsState, selectAgent } from "../stores/agents.ts";
 import { clearSelection, selectionState } from "../stores/selection.ts";
 import { getSession } from "../stores/chat.ts";
 import { fileToAttachment } from "../composables/useBridge.ts";
 import { startPromptStream } from "../composables/promptStreaming.ts";
+import { startVirtualTurn } from "../composables/virtualPromptStreaming.ts";
+import { createVirtualSession } from "../stores/virtualSessions.ts";
 
 const text = ref("");
 const files = ref<File[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
 const sending = ref(false);
+const virtualMode = ref(false);
 
 // "Last send report" — sticky inline near the Send button so the user can
 // see how many fired vs. how many were skipped (busy). Cleared on next send
@@ -35,9 +38,16 @@ const busyCount = computed(() => {
 
 const sendableCount = computed(() => selectedCount.value - busyCount.value);
 
-const canSend = computed(
-  () => !sending.value && text.value.trim().length > 0 && sendableCount.value > 0,
-);
+// In plain fan-out mode we need at least one non-busy target. In virtual
+// mode the selection is locked into the new session and busy targets
+// just get a "(busy — skipped)" placeholder — the user can retry later
+// from inside the virtual chat — so we allow Send as long as something
+// is selected.
+const canSend = computed(() => {
+  if (sending.value || text.value.trim().length === 0) return false;
+  if (virtualMode.value) return selectedCount.value > 0;
+  return sendableCount.value > 0;
+});
 
 function autoResize(): void {
   const el = textarea.value;
@@ -94,13 +104,33 @@ async function send(): Promise<void> {
   // shift indices, and so the inline report counts what we attempted.
   let okN = 0;
   let busyN = 0;
-  for (const agent of selectedAgents.value) {
-    if (getSession(agent.instanceId).activePromptId !== null) {
-      busyN++;
-      continue;
+
+  if (virtualMode.value) {
+    // Phase 2: spin up a virtual session locked to the current selection,
+    // route the right panel to it, and let the virtual transcript host
+    // every future prompt against this same target list. The first turn
+    // also fires immediately so the user sees streaming responses without
+    // a second click.
+    const targetIds = selectedAgents.value.map((a) => a.instanceId);
+    const virtualId = createVirtualSession(targetIds);
+    const report = startVirtualTurn(virtualId, t, attachments);
+    okN = report.ok;
+    busyN = report.busy;
+    selectAgent(virtualId);
+    // Drop the multi-selection — the virtual session is now the surface
+    // for further prompting against this group.
+    clearSelection();
+    // Reset the toggle so the next selection starts in plain fan-out mode.
+    virtualMode.value = false;
+  } else {
+    for (const agent of selectedAgents.value) {
+      if (getSession(agent.instanceId).activePromptId !== null) {
+        busyN++;
+        continue;
+      }
+      startPromptStream(agent, t, attachments);
+      okN++;
     }
-    startPromptStream(agent, t, attachments);
-    okN++;
   }
 
   if (reportTimer !== null) clearTimeout(reportTimer);
@@ -150,11 +180,17 @@ onUnmounted(() => {
 
       <span class="bar-spacer" />
 
-      <!-- Phase-2 placeholder. Disabled with an explanatory tooltip so
-           the affordance is visible from day one and the bar's layout
-           doesn't shift when Phase 2 lands. -->
-      <label class="virtual-toggle mono" title="Coming next: aggregate streams into a single virtual session">
-        <input type="checkbox" disabled />
+      <!-- When ticked, Send creates a new persistent virtual session
+           locked to the current selection, fires the first turn against
+           every target, and switches the right panel to the aggregate
+           transcript. The virtual session keeps the same target list
+           for every subsequent prompt typed into it. -->
+      <label
+        class="virtual-toggle mono"
+        :class="{ active: virtualMode }"
+        title="Create a new virtual session that fans every future prompt out to these N agents"
+      >
+        <input type="checkbox" v-model="virtualMode" />
         <span>Stream all to a virtual session</span>
       </label>
 
@@ -192,9 +228,11 @@ onUnmounted(() => {
         class="textarea"
         rows="1"
         :placeholder="
-          sendableCount === 0
-            ? 'All selected agents are busy — wait for them to finish or pick others'
-            : `Type a prompt — Enter to send to ${sendableCount} agent${sendableCount === 1 ? '' : 's'}`
+          virtualMode
+            ? `Type a prompt — creates a virtual session of ${selectedCount} agent${selectedCount === 1 ? '' : 's'}`
+            : sendableCount === 0
+              ? 'All selected agents are busy — wait for them to finish or pick others'
+              : `Type a prompt — Enter to send to ${sendableCount} agent${sendableCount === 1 ? '' : 's'}`
         "
         @keydown="onKey"
       />
@@ -202,9 +240,13 @@ onUnmounted(() => {
       <button
         type="button"
         class="btn send"
+        :class="{ 'is-virtual': virtualMode }"
         :disabled="!canSend"
         @click="send"
-      >Send to {{ sendableCount }}</button>
+      >
+        <template v-if="virtualMode">Create virtual + send</template>
+        <template v-else>Send to {{ sendableCount }}</template>
+      </button>
     </div>
   </div>
 </template>
@@ -252,12 +294,24 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  color: var(--text-dim);
+  color: var(--text-muted);
   font-size: 11px;
-  cursor: not-allowed;
+  cursor: pointer;
   user-select: none;
+  padding: 3px 8px;
+  border-radius: var(--border-radius-sm);
+  border: 1px solid transparent;
+  transition: all var(--transition-fast);
 }
-.virtual-toggle input { cursor: not-allowed; }
+.virtual-toggle:hover {
+  color: var(--text-secondary);
+}
+.virtual-toggle.active {
+  color: var(--bucket-virtual);
+  background: color-mix(in srgb, var(--bucket-virtual) 10%, transparent);
+  border-color: color-mix(in srgb, var(--bucket-virtual) 35%, transparent);
+}
+.virtual-toggle input { cursor: pointer; accent-color: var(--bucket-virtual); }
 
 .clear-btn {
   width: 24px;
@@ -352,4 +406,7 @@ onUnmounted(() => {
 }
 .btn.send:hover:not(:disabled) { filter: brightness(1.1); }
 .btn.send:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn.send.is-virtual {
+  background: linear-gradient(135deg, var(--bucket-virtual), #c026d3);
+}
 </style>

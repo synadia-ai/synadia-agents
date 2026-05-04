@@ -2,11 +2,18 @@
 import { computed } from "vue";
 import AgentGroup from "./AgentGroup.vue";
 import MultiSelectBar from "./MultiSelectBar.vue";
+import VirtualSessionsSection from "./VirtualSessionsSection.vue";
 import { agentsState, agentSections } from "../stores/agents.ts";
 import { selectionState } from "../stores/selection.ts";
+import { virtualSessionsList } from "../stores/virtualSessions.ts";
 
 const groups = computed(() => agentSections.value);
-const isEmpty = computed(() => groups.value.length === 0);
+// Empty state for the placeholder card only fires when there are no real
+// agents AND no virtual sessions; a fresh page with virtual sessions
+// alone still needs the grid header chrome.
+const isEmpty = computed(
+  () => groups.value.length === 0 && virtualSessionsList.value.length === 0,
+);
 const hasSelection = computed(() => selectionState.ids.size > 0);
 </script>
 
@@ -33,6 +40,7 @@ const hasSelection = computed(() => selectionState.ids.size > 0);
         </p>
       </div>
       <div v-else class="groups">
+        <VirtualSessionsSection />
         <AgentGroup
           v-for="g in groups"
           :key="g.id"
