@@ -1,0 +1,25 @@
+{
+  "name": "@synadia-ai/open-agent-vercel-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Run @synadia-ai/open-agent's bridge against @vercel/sandbox — proves the inbound bridge works behind any Sandbox impl.",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nats-io/nats-core": "^3.3.1",
+    "@nats-io/transport-node": "^3.3.1",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript",
+    "@synadia-ai/open-agent": "file:../../agents/open-agent",
+    "@vercel/sandbox": "2.0.0-beta.11"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "license": "Apache-2.0"
+}
