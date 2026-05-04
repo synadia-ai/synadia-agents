@@ -168,6 +168,15 @@ the model sees a tool error it can react to.
 Same primitive as `ask_user_question`. The `examples/agent-web-ui`
 client renders both the same way.
 
+**Known limitation — no cancellation during the approval wait.** The
+AI SDK's `tool()` API passes `abortSignal` to `execute` but **not** to
+`needsApproval`. If the caller abandons the prompt mid-flight while
+the bridge is blocked on `PromptResponse.ask`, the §7 query continues
+to wait until the configured timeout (`askUserQuestionTimeoutMs`,
+default 5 minutes) before giving up. Lowering the timeout lowers the
+worst-case hang. A real fix needs upstream AI SDK changes; see
+`vendor/agent/tools/bash.ts` for the unmodified hook signature.
+
 ## Subject layout
 
 The bridge advertises:

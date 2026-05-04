@@ -57,7 +57,8 @@ export function translatePart(part: UIPart): Chunk[] {
       const toolName = readString(part, "toolName");
       if (toolCallId === "" || toolName === "") return [];
       const input = isObject(part["input"]) ? part["input"] : {};
-      const payload: ToolUsePayload = { id: toolCallId, name: toolName, input };
+      const safeInput = summarizeToolInputForWire(toolName, input);
+      const payload: ToolUsePayload = { id: toolCallId, name: toolName, input: safeInput };
       const encoded = safeStringify(payload);
       if (encoded === undefined) return [];
       return [{ type: "status", status: `tool_use:${encoded}` }];
@@ -130,6 +131,73 @@ interface ToolResultPayload {
 function readString(part: UIPart, key: string): string {
   const value = part[key];
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * Cap on inline string fields in a `tool_use` payload before it ships
+ * over the wire. The status chunk is **not** chunkable — it goes through
+ * `response.send` directly, so a verbatim file body in `write.content`
+ * or a large `edit.oldString` would blow `max_payload` and cascade into
+ * a §9.1 500 before the tool ever ran. 1 KB per string is generous for
+ * preview purposes; clients that need the full input can reconstruct
+ * from `tool_result` (which is similarly summarised).
+ */
+const MAX_INLINE_INPUT_STRING_BYTES = 1024;
+
+/**
+ * Per-tool elision rules for `tool_use.input`. Keeps the wire under
+ * `max_payload` for tools that take large string fields, while still
+ * conveying intent (filePath, command, pattern).
+ *
+ * `write` and `edit` carry full file contents, so their fat fields are
+ * always elided regardless of size. Other tools fall through to a
+ * generic per-field cap so an unknown future tool with a giant input
+ * doesn't surprise us with a 500.
+ */
+function summarizeToolInputForWire(
+  toolName: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  switch (toolName) {
+    case "write":
+      return elideStringFields(input, ["content"]);
+    case "edit":
+      return elideStringFields(input, ["oldString", "newString"]);
+    default:
+      return capStringValues(input, MAX_INLINE_INPUT_STRING_BYTES);
+  }
+}
+
+function elideStringFields(
+  input: Record<string, unknown>,
+  fields: ReadonlyArray<string>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (fields.includes(key) && typeof value === "string") {
+      out[key] = `<${value.length} chars elided>`;
+    } else if (typeof value === "string" && value.length > MAX_INLINE_INPUT_STRING_BYTES) {
+      out[key] = truncate(value, MAX_INLINE_INPUT_STRING_BYTES);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function capStringValues(
+  input: Record<string, unknown>,
+  maxBytes: number,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (typeof value === "string" && value.length > maxBytes) {
+      out[key] = truncate(value, maxBytes);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
 function summarizeToolOutput(toolName: string, output: unknown): string {

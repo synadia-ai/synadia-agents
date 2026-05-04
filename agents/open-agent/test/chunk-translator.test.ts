@@ -167,6 +167,76 @@ describe("translatePart", () => {
     expect(out).toEqual([]);
   });
 
+  test("write tool_use elides the file content so a large body can't blow max_payload", () => {
+    const bigBody = "x".repeat(64 * 1024);
+    const out = translatePart({
+      type: "tool-input-available",
+      toolCallId: "x",
+      toolName: "write",
+      input: { filePath: "src/big.txt", content: bigBody },
+    });
+    const decoded = decodeToolUse(out[0]);
+    expect(decoded.input["filePath"]).toBe("src/big.txt");
+    expect(decoded.input["content"]).toBe(`<${bigBody.length} chars elided>`);
+    // Whole status chunk is now small — well under the 1 MB default budget.
+    const c = out[0] as { status: string };
+    expect(c.status.length).toBeLessThan(2 * 1024);
+  });
+
+  test("edit tool_use elides both oldString and newString", () => {
+    const oldBody = "a".repeat(8000);
+    const newBody = "b".repeat(9000);
+    const out = translatePart({
+      type: "tool-input-available",
+      toolCallId: "x",
+      toolName: "edit",
+      input: { filePath: "src/file.ts", oldString: oldBody, newString: newBody },
+    });
+    const decoded = decodeToolUse(out[0]);
+    expect(decoded.input["filePath"]).toBe("src/file.ts");
+    expect(decoded.input["oldString"]).toBe(`<${oldBody.length} chars elided>`);
+    expect(decoded.input["newString"]).toBe(`<${newBody.length} chars elided>`);
+  });
+
+  test("write tool_use leaves small fields untouched", () => {
+    const out = translatePart({
+      type: "tool-input-available",
+      toolCallId: "x",
+      toolName: "write",
+      input: { filePath: "tiny.txt", content: "hi" },
+    });
+    const decoded = decodeToolUse(out[0]);
+    // Even a tiny content gets elided — `content` is always replaced because
+    // the wire payload should never depend on caller's file size.
+    expect(decoded.input["content"]).toBe("<2 chars elided>");
+  });
+
+  test("unknown tools have any large string field truncated by the default cap", () => {
+    const giant = "z".repeat(50_000);
+    const out = translatePart({
+      type: "tool-input-available",
+      toolCallId: "x",
+      toolName: "future-tool",
+      input: { command: giant, smallField: "ok" },
+    });
+    const decoded = decodeToolUse(out[0]);
+    const command = decoded.input["command"] as string;
+    expect(command.length).toBeLessThanOrEqual(1024);
+    expect(command.endsWith("…")).toBe(true);
+    expect(decoded.input["smallField"]).toBe("ok");
+  });
+
+  test("bash command is forwarded verbatim when under the cap", () => {
+    const out = translatePart({
+      type: "tool-input-available",
+      toolCallId: "x",
+      toolName: "bash",
+      input: { command: "ls -la", cwd: "src" },
+    });
+    const decoded = decodeToolUse(out[0]);
+    expect(decoded.input).toEqual({ command: "ls -la", cwd: "src" });
+  });
+
   test("paired tool_use + tool_result share a stable tool_use_id", () => {
     const useChunks = translatePart({
       type: "tool-input-available",
