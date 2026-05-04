@@ -58,7 +58,11 @@ export class Bridge {
    */
   private static readonly STALE_SWEEP_INTERVAL_MS = 5_000;
   private static readonly STALE_MISS_FACTOR = 3;
-  private static readonly DEFAULT_HB_INTERVAL_S = 30;
+  // Fallback when an inbound heartbeat is missing `intervalS` (rare —
+  // every first-party agent fills it in). Matches the value first-party
+  // harnesses use; third-party agents still on the SDK's 30 s default
+  // include `intervalS = 30` in their heartbeat, so they don't hit this.
+  private static readonly DEFAULT_HB_INTERVAL_S = 5;
 
   constructor(
     private readonly agents: Agents,
