@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/agent-service",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Server-side TypeScript SDK for the NATS Agent Protocol — host an agent (AgentService, ReferenceAgent, server-side helpers).",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -67,7 +67,7 @@
     "url": "https://github.com/synadia-ai/synadia-agents/issues"
   },
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "dependencies": {
     "@nats-io/nats-core": "^3.3.0",

@@ -56,13 +56,13 @@ compatibility between the two SDKs.
 
 | Path | Package | Published as | Notes |
 | --- | --- | --- | --- |
-| `client-sdk/typescript/` | `@synadia-ai/agents` | npm (restricted) | TS SDK — Node/Bun callers |
+| `client-sdk/typescript/` | `@synadia-ai/agents` | npm (public) | TS SDK — Node/Bun callers |
 | `client-sdk/python/` | `synadia-ai-agents` (import: `synadia_ai.agents`) | PyPI | Python SDK — has its own CLAUDE.md |
-| `agents/pi/` | `@synadia-ai/nats-pi-channel` | npm (restricted) | PI extension plugin |
-| `agents/openclaw/` | `@synadia-ai/nats-channel` | npm (restricted) | OpenClaw plugin |
-| `agents/claude-code/` | `claude-channel-nats` | npm (restricted) | Claude Code MCP plugin |
+| `agents/pi/` | `@synadia-ai/nats-pi-channel` | npm (public) | PI extension plugin |
+| `agents/openclaw/` | `@synadia-ai/nats-channel` | npm (public) | OpenClaw plugin |
+| `agents/claude-code/` | `claude-channel-nats` | npm (public) | Claude Code MCP plugin |
 | `agents/hermes/` | — | not in repo | README only; ships from upstream Hermes |
-| `examples/pi-headless/` | `@synadia-ai/nats-pi-headless` | npm (restricted) | depends on `@synadia-ai/agents@^0.1.x` |
+| `examples/pi-headless/` | `@synadia-ai/nats-pi-headless` | npm (public) | depends on `@synadia-ai/agents@^0.5.x` |
 | `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | github only | local-clone test client; `private: true` so it never publishes |
 | `examples/dspy/` | `@synadia-ai/nats-dspy-agent` | private | uses `file:` link to local SDK |
 
@@ -248,9 +248,10 @@ token that doesn't surface the permissions sub-object at all.)
 
 ## Conventions worth knowing
 
-- **`publishConfig.access: "restricted"`** is set on every publishable
-  package. The `@synadia-ai/*` scope is private; don't flip a package
-  to public-access without explicit user direction.
+- **`publishConfig.access: "public"`** is set on every publishable
+  package. The `@synadia-ai/*` scope is published openly to npm; the
+  `claude-channel-nats` package ships via the Claude marketplace
+  subtree rather than npm.
 - **No `--no-verify`, no `--force` without `--force-with-lease`.** Hooks
   exist for a reason.
 - **Don't amend or force-push to other contributors' PR branches**
