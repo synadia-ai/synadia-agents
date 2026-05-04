@@ -229,4 +229,111 @@ describe("runBridge integration", () => {
       );
     }),
   );
+
+  test(
+    "stream `error` parts surface as ServiceError(500) instead of being silently dropped",
+    maybeSkip(async () => {
+      const errorPartFactory: AgentFactory = async () => ({
+        stream: (async function* () {
+          yield { type: "text-delta", id: "t", delta: "starting…" };
+          yield { type: "error", error: "model exploded" };
+          // Anything past the error part should never run — the bridge
+          // throws as soon as it sees the part.
+          yield { type: "text-delta", id: "t", delta: "should-not-appear" };
+        })(),
+        waitForResult: async () => [],
+      });
+
+      await withSession(
+        async ({ agents, owner, session }) => {
+          const found = await agents.discover({ timeoutMs: 1500 });
+          const ours = found.find(
+            (a: import("@synadia-ai/agents").Agent) =>
+              a.agent === "open-agent" && a.owner === owner && a.name === session,
+          );
+          expect(ours).toBeDefined();
+
+          const stream = await ours!.prompt("hi", { maxWaitMs: 5_000 });
+          const collected: string[] = [];
+          let caught: unknown;
+          try {
+            for await (const m of stream) {
+              if (m.type === "response") collected.push(m.text);
+            }
+          } catch (err) {
+            caught = err;
+          }
+          expect(caught).toBeInstanceOf(ServiceError);
+          expect((caught as ServiceError).code).toBe(500);
+          expect(collected.join("")).not.toContain("should-not-appear");
+        },
+        { agentFactory: errorPartFactory },
+      );
+    }),
+  );
+});
+
+describe("runBridge subject-token validation", () => {
+  test(
+    "owner with NATS special characters is rejected before service registration",
+    maybeSkip(async () => {
+      const nc = await connect({ servers: server.url });
+      try {
+        await expect(
+          runBridge({
+            nc,
+            owner: "evil.attacker",
+            session: "ok",
+            sandboxFactory: async () => {
+              throw new Error("sandboxFactory should not be called");
+            },
+          }),
+        ).rejects.toThrow(/owner .* NATS special characters/);
+      } finally {
+        await nc.close();
+      }
+    }),
+  );
+
+  test(
+    "session with a wildcard token is rejected",
+    maybeSkip(async () => {
+      const nc = await connect({ servers: server.url });
+      try {
+        await expect(
+          runBridge({
+            nc,
+            owner: "ok",
+            session: ">",
+            sandboxFactory: async () => {
+              throw new Error("sandboxFactory should not be called");
+            },
+          }),
+        ).rejects.toThrow(/session .* NATS special characters/);
+      } finally {
+        await nc.close();
+      }
+    }),
+  );
+
+  test(
+    "empty owner is rejected",
+    maybeSkip(async () => {
+      const nc = await connect({ servers: server.url });
+      try {
+        await expect(
+          runBridge({
+            nc,
+            owner: "",
+            session: "ok",
+            sandboxFactory: async () => {
+              throw new Error("sandboxFactory should not be called");
+            },
+          }),
+        ).rejects.toThrow(/owner must be non-empty/);
+      } finally {
+        await nc.close();
+      }
+    }),
+  );
 });

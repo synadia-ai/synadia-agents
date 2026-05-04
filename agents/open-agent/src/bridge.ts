@@ -102,10 +102,27 @@ const DEFAULT_MAX_STEPS = 50;
 const DEFAULT_ASK_USER_QUESTION_TIMEOUT_MS = 5 * 60_000;
 
 /**
+ * Reject `owner` / `session` values that contain NATS subject delimiters
+ * or wildcards. Without this, `owner="evil.attacker"` silently routes to
+ * a different endpoint and `session=">"` opens a wildcard subscription.
+ */
+function validateSubjectToken(value: string, name: string): void {
+  if (value.length === 0 || /[.*>\s]/.test(value)) {
+    throw new Error(
+      `${name} must be non-empty and must not contain NATS special characters ` +
+        `(. * > or whitespace); got: ${JSON.stringify(value)}`,
+    );
+  }
+}
+
+/**
  * Start the bridge. Returns once `AgentService.start` has finished
  * (heartbeats running, endpoints registered). Call `stop()` to tear down.
  */
 export async function runBridge(opts: RunBridgeOptions): Promise<{ stop: () => Promise<void> }> {
+  validateSubjectToken(opts.owner, "owner");
+  validateSubjectToken(opts.session, "session");
+
   const logger = opts.logger ?? SILENT_LOGGER;
   const modelId = opts.modelId ?? defaultModelLabel;
   const modelFactory = opts.modelFactory ?? gatewayModelFactory();
@@ -116,15 +133,21 @@ export async function runBridge(opts: RunBridgeOptions): Promise<{ stop: () => P
 
   const history = new ConversationHistory();
   let cachedSandbox: SandboxBundle | null = null;
-  const ensureSandbox = async (): Promise<SandboxBundle> => {
-    if (cachedSandbox === null) {
-      cachedSandbox = await opts.sandboxFactory(opts.session);
-      logger.info("open-agent: sandbox ready", {
-        type: cachedSandbox.state.type,
-        workingDirectory: cachedSandbox.sandbox.workingDirectory,
+  // Memoise on the in-flight Promise so two concurrent prompts collapse
+  // onto a single `sandboxFactory` call and don't leak a sandbox.
+  let sandboxPromise: Promise<SandboxBundle> | null = null;
+  const ensureSandbox = (): Promise<SandboxBundle> => {
+    if (sandboxPromise === null) {
+      sandboxPromise = opts.sandboxFactory(opts.session).then((bundle) => {
+        cachedSandbox = bundle;
+        logger.info("open-agent: sandbox ready", {
+          type: bundle.state.type,
+          workingDirectory: bundle.sandbox.workingDirectory,
+        });
+        return bundle;
       });
     }
-    return cachedSandbox;
+    return sandboxPromise;
   };
 
   const serviceOptions: AgentServiceOptions = {
@@ -160,6 +183,18 @@ export async function runBridge(opts: RunBridgeOptions): Promise<{ stop: () => P
 
     let assistantTextBuffer = "";
     for await (const part of run.stream) {
+      // Surface stream-level errors as a thrown handler error so
+      // AgentService maps them to §9.1 + the §6.5 terminator. The AI
+      // SDK normally throws, but some versions emit an `error` UIPart
+      // without throwing — without this guard, that error would be
+      // silently swallowed and the caller would see a clean terminator.
+      if (part.type === "error") {
+        const errorText =
+          readPartString(part, "errorText") ||
+          readPartString(part, "error") ||
+          "agent stream error";
+        throw new Error(errorText);
+      }
       // Accumulate model-emitted text (text-delta) so we can persist a
       // single `{role:"assistant"}` turn into history. Tool I/O is not
       // round-tripped — v1 doesn't replay tool calls across prompts.
@@ -214,6 +249,11 @@ export async function runBridge(opts: RunBridgeOptions): Promise<{ stop: () => P
       }
     },
   };
+}
+
+function readPartString(part: UIPart, key: string): string {
+  const value = (part as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
 }
 
 /** Default factory — wires the vendored ToolLoopAgent. */

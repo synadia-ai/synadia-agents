@@ -3,12 +3,25 @@
 // vendored open-agents tools (which `connectSandbox(state)` on every
 // invocation) can run unmodified against a host filesystem.
 //
-// Not isolated — there is no chroot/cgroup/namespace boundary. Trust the
-// operator. Designed for the v1 inbound-bridge demo; production deployments
-// belong on a real sandbox (the Vercel example sits behind the same factory).
+// Confinement guarantees:
+//   - All file-system methods reject paths resolving outside
+//     `workingDirectory`. Vendored tools that pass absolute paths
+//     through (e.g. `read.ts`) get fenced here regardless of how the
+//     model phrased the path. The fence is enforced via `path.resolve`
+//     prefix checking — symlinks crossing the boundary are NOT
+//     followed-and-rejected and remain a known gap.
+//   - `exec` confines its `cwd` argument the same way. The command
+//     itself runs through bash with full host privileges of the bridge
+//     user — bash can read anything that user can. A real isolation
+//     boundary (container/chroot) belongs in a real sandbox; the
+//     Vercel example sits behind the same factory for that case.
+//   - Subprocess env is allow-listed (not a blanket `...process.env`)
+//     so credentials in the bridge process (e.g. `*_API_KEY`,
+//     `NATS_CREDS`) can't leak through `bash printenv`.
 
 import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
 import type { ExecResult, Sandbox, SandboxStats } from "./interface.js";
 
@@ -22,12 +35,32 @@ export interface LocalSandboxState {
 /** 50 KB cap on combined stdout+stderr for `exec` — matches the bash tool's contract. */
 const EXEC_OUTPUT_CAP_BYTES = 50_000;
 
+/**
+ * Parent-environment keys forwarded into `exec` subprocesses. Anything
+ * not on this list is dropped to avoid leaking credentials (`*_API_KEY`,
+ * `NATS_CREDS`, etc.) through the bash tool. Caller-supplied
+ * `state.env` overrides are merged on top.
+ */
+const FORWARDED_ENV_KEYS: ReadonlySet<string> = new Set([
+  "HOME",
+  "PATH",
+  "TERM",
+  "TMPDIR",
+  "USER",
+  "SHELL",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "PWD",
+]);
+
 class LocalSandbox implements Sandbox {
   readonly type = "cloud" as const;
   readonly workingDirectory: string;
   readonly env?: Record<string, string>;
 
   readonly #state: LocalSandboxState;
+  readonly #workdirResolved: string;
 
   constructor(state: LocalSandboxState) {
     this.workingDirectory = state.workingDirectory;
@@ -35,22 +68,42 @@ class LocalSandbox implements Sandbox {
       this.env = state.env;
     }
     this.#state = state;
+    this.#workdirResolved = path.resolve(state.workingDirectory);
   }
 
-  async readFile(path: string, _encoding: "utf-8"): Promise<string> {
-    return fs.readFile(path, "utf-8");
+  /**
+   * Reject paths resolving outside `workingDirectory`. Returns the
+   * resolved (absolute) path on success.
+   */
+  #assertWithinWorkdir(p: string): string {
+    const resolved = path.resolve(p);
+    const root = this.#workdirResolved;
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+      throw new Error(
+        `Path '${p}' is outside the sandbox working directory '${root}'`,
+      );
+    }
+    return resolved;
   }
 
-  async readFileBuffer(path: string): Promise<Buffer> {
-    return fs.readFile(path);
+  async readFile(p: string, _encoding: "utf-8"): Promise<string> {
+    this.#assertWithinWorkdir(p);
+    return fs.readFile(p, "utf-8");
   }
 
-  async writeFile(path: string, content: string, _encoding: "utf-8"): Promise<void> {
-    await fs.writeFile(path, content, "utf-8");
+  async readFileBuffer(p: string): Promise<Buffer> {
+    this.#assertWithinWorkdir(p);
+    return fs.readFile(p);
   }
 
-  async stat(path: string): Promise<SandboxStats> {
-    const s = await fs.stat(path);
+  async writeFile(p: string, content: string, _encoding: "utf-8"): Promise<void> {
+    this.#assertWithinWorkdir(p);
+    await fs.writeFile(p, content, "utf-8");
+  }
+
+  async stat(p: string): Promise<SandboxStats> {
+    this.#assertWithinWorkdir(p);
+    const s = await fs.stat(p);
     return {
       isDirectory: () => s.isDirectory(),
       isFile: () => s.isFile(),
@@ -59,16 +112,19 @@ class LocalSandbox implements Sandbox {
     };
   }
 
-  async access(path: string): Promise<void> {
-    await fs.access(path);
+  async access(p: string): Promise<void> {
+    this.#assertWithinWorkdir(p);
+    await fs.access(p);
   }
 
-  async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-    await fs.mkdir(path, options);
+  async mkdir(p: string, options?: { recursive?: boolean }): Promise<void> {
+    this.#assertWithinWorkdir(p);
+    await fs.mkdir(p, options);
   }
 
-  async readdir(path: string, _options: { withFileTypes: true }): Promise<Dirent[]> {
-    return fs.readdir(path, { withFileTypes: true });
+  async readdir(p: string, _options: { withFileTypes: true }): Promise<Dirent[]> {
+    this.#assertWithinWorkdir(p);
+    return fs.readdir(p, { withFileTypes: true });
   }
 
   async exec(
@@ -77,6 +133,8 @@ class LocalSandbox implements Sandbox {
     timeoutMs: number,
     options?: { signal?: AbortSignal },
   ): Promise<ExecResult> {
+    this.#assertWithinWorkdir(cwd);
+
     // Compose the per-call abort with the caller's signal (if any) so a
     // tool-level cancel and the per-exec timeout both cut the process.
     const timeoutCtl = new AbortController();
@@ -86,10 +144,11 @@ class LocalSandbox implements Sandbox {
       ? anySignal([options.signal, timeoutCtl.signal])
       : timeoutCtl.signal;
 
-    const env = {
-      ...process.env,
-      ...this.#state.env,
-    };
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (FORWARDED_ENV_KEYS.has(k) && typeof v === "string") env[k] = v;
+    }
+    if (this.#state.env) Object.assign(env, this.#state.env);
 
     const proc = Bun.spawn(["bash", "-c", command], {
       cwd,
