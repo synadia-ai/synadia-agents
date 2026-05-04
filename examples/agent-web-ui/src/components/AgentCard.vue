@@ -191,6 +191,13 @@ const sessionState = computed<"alive" | "expired">(() => {
   if (!isPiSession.value && !isCcSession.value) return "alive";
   const s = piSummary.value ?? ccSummary.value;
   if (!s) return "expired";
+  // `max_lifetime_s = 0` means the session was spawned with no expiry —
+  // it runs until explicitly stopped. The controller's summary still
+  // reports `remaining_lifetime_s = 0` in that case (the field is
+  // computed as `max - elapsed` clamped to ≥ 0, and `max = 0` short-
+  // circuits to 0), so without this guard infinite sessions would
+  // be flagged as expired.
+  if (s.max_lifetime_s === 0) return "alive";
   if (s.remaining_lifetime_s <= 0) return "expired";
   return "alive";
 });
