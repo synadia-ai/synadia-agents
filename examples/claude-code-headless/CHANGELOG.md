@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-04
+
+### Changed
+
+- **Advertise the broker's negotiated `max_payload`** instead of a
+  hardcoded `"1MB"`. The controller's prompt endpoint reads
+  `nc.info.max_payload` directly (controllers register via `Svcm`,
+  not the SDK class) and surfaces the live value (e.g. `"8MB"` on
+  NGS) in `$SRV.INFO`. Spawned sessions get the same behavior for
+  free now that `@synadia-ai/agent-service`'s `ReferenceAgent`
+  defaults `max_payload` to `nc.info.max_payload` when no
+  `maxPayload` option is passed. Matches the pattern already used by
+  `agents/pi` and `agents/claude-code`.
+
 ## [0.5.0] - 2026-05-04
 
 > **Breaking:** wire shape changes for the controller's extension

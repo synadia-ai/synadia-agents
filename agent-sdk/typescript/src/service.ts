@@ -111,9 +111,12 @@ export interface AgentServiceOptions {
   /** Harness semver (`service.version`). Defaults to `"0.0.1"`. */
   readonly version?: string;
   /**
-   * §2.1 `max_payload`. Defaults to `"1MB"`. Advertised verbatim **unless
-   * it exceeds** the connected server's negotiated limit
-   * (`nc.info.max_payload`); in that case `start()` clamps the
+   * §2.1 `max_payload`. Defaults to the broker's negotiated
+   * `nc.info.max_payload` (e.g. 8 MB on NGS, 1 MB on a default
+   * `nats-server`), so the advertised cap matches what the connection
+   * can actually carry. Falls back to `"1MB"` only if `nc.info` isn't
+   * populated. An explicit value is honored verbatim **unless it
+   * exceeds** the broker's limit; in that case `start()` clamps the
    * advertised value down to the server's limit and `console.warn`s.
    * Over-advertising would only break callers — the broker rejects
    * oversized publishes before any handler sees them.
@@ -365,13 +368,27 @@ export class AgentService {
 
   /**
    * Compute the value to advertise in the prompt endpoint's `max_payload`
-   * metadata, clamping a too-large constructor override down to the
-   * server-negotiated limit. See the §2.1 commentary in {@link start}.
+   * metadata. Two cases:
+   *
+   * - **No `maxPayload` option** → advertise the broker's negotiated
+   *   `nc.info.max_payload`. This is what most agents want: callers see
+   *   the *real* cap the connection can carry (e.g. 8 MB on NGS, 1 MB on
+   *   a default `nats-server`) without the SDK quietly hiding headroom
+   *   behind a stale "1MB" default. Falls back to {@link DEFAULT_MAX_PAYLOAD}
+   *   only if `nc.info` is missing — rare; would mean construction ran
+   *   before the connect handshake completed.
+   * - **Explicit `maxPayload` option** → honor it, but clamp **down** to
+   *   the broker's cap if the override would advertise more than the
+   *   broker can deliver (anything larger would be rejected at publish
+   *   time, so advertising it would only mislead callers).
    */
   #effectiveMaxPayload(): string {
-    const override = this.#options.maxPayload ?? DEFAULT_MAX_PAYLOAD;
-    const overrideBytes = parseHumanBytes(override);
     const serverBytes = this.#options.nc.info?.max_payload ?? 0;
+    if (this.#options.maxPayload === undefined) {
+      return serverBytes > 0 ? formatHumanBytes(serverBytes) : DEFAULT_MAX_PAYLOAD;
+    }
+    const override = this.#options.maxPayload;
+    const overrideBytes = parseHumanBytes(override);
     if (serverBytes <= 0 || overrideBytes <= serverBytes) {
       return override;
     }

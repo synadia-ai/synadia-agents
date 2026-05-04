@@ -177,6 +177,8 @@ export type ServerMessage =
       kind: "ready";
       sdkProtocolVersion: string;
       natsDescription?: string;
+      /** Live NATS server endpoint (host:port) reported by `nc.getServer()`. */
+      natsServer?: string;
     }
   | { kind: "agents"; agents: DiscoveredAgentDTO[] }
   | {

@@ -54,7 +54,14 @@ export interface ReferenceAgentOptions {
   readonly description?: string;
   /** Harness semver (`service.version`). Default: `"0.0.1"`. */
   readonly version?: string;
-  /** Endpoint metadata `max_payload`. Default: `"1MB"`. */
+  /**
+   * Endpoint metadata `max_payload`. Defaults to the broker's
+   * negotiated `nc.info.max_payload` (e.g. 8 MB on NGS, 1 MB on a
+   * default `nats-server`); falls back to `"1MB"` only if `nc.info`
+   * isn't populated. An explicit value is honored verbatim unless it
+   * exceeds the broker's limit, in which case it's clamped down with
+   * a `console.warn`.
+   */
   readonly maxPayload?: string;
   /** Endpoint metadata `attachments_ok`. Default: `true`. */
   readonly attachmentsOk?: boolean;
@@ -191,10 +198,20 @@ export class ReferenceAgent {
     }
   }
 
+  /**
+   * Mirrors `AgentService.#effectiveMaxPayload`: when no `maxPayload`
+   * option is passed, advertise the broker's negotiated
+   * `nc.info.max_payload` rather than a stale hardcoded default; when
+   * an explicit override is passed, honor it but clamp down to the
+   * broker's cap if the override exceeds it.
+   */
   #effectiveMaxPayload(): string {
-    const override = this.#options.maxPayload ?? DEFAULT_MAX_PAYLOAD;
-    const overrideBytes = parseHumanBytes(override);
     const serverBytes = this.#options.nc.info?.max_payload ?? 0;
+    if (this.#options.maxPayload === undefined) {
+      return serverBytes > 0 ? formatHumanBytes(serverBytes) : DEFAULT_MAX_PAYLOAD;
+    }
+    const override = this.#options.maxPayload;
+    const overrideBytes = parseHumanBytes(override);
     if (serverBytes <= 0 || overrideBytes <= serverBytes) {
       return override;
     }

@@ -45,6 +45,7 @@
   --bucket-headless: var(--memory-preference); /* violet — controllers */
   --bucket-openclaw: #ef4444;               /* red */
   --bucket-hermes: #f59e0b;                 /* amber / orange */
+  --bucket-open-agent: #34d399;             /* emerald — open-agent bridge */
   --bucket-other: var(--text-muted);        /* muted gray */
 
   /* Typography */

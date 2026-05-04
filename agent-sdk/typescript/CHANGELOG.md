@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-04
+
+### Changed
+
+- **`AgentService` and `ReferenceAgent` now default `max_payload` to
+  the broker's negotiated `nc.info.max_payload`** when the
+  `maxPayload` constructor option is omitted, instead of the previous
+  hardcoded `"1MB"` default. Callers that relied on an unconfigured
+  agent advertising exactly `"1MB"` regardless of broker config will
+  now see whatever the broker reports (e.g. `"8MB"` on NGS); on a
+  default `nats-server` that's still `"1MB"`. The fallback to
+  `DEFAULT_MAX_PAYLOAD = "1MB"` only kicks in when `nc.info` is
+  missing — practically never, since `info` is populated as part of
+  the connect handshake. Explicit `maxPayload` overrides retain the
+  existing clamp-down semantics.
+
 ## [0.5.0] - 2026-05-04
 
 No functional changes. Published in lockstep with `@synadia-ai/agents`

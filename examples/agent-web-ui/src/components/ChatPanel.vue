@@ -37,6 +37,7 @@ const tagLabel = computed<string>(() => {
   if (a === "openclaw" || a === "oc") return "OPENCLAW";
   if (a === "pi") return "PI";
   if (a === "hermes") return "HERMES";
+  if (a === "open-agent") return "OPEN AGENT";
   return a.toUpperCase();
 });
 
@@ -57,6 +58,8 @@ const tagColor = computed<string>(() => {
       return "var(--bucket-openclaw)";
     case BUCKETS.HERMES:
       return "var(--bucket-hermes)";
+    case BUCKETS.OPEN_AGENT:
+      return "var(--bucket-open-agent)";
     default:
       return "var(--bucket-other)";
   }

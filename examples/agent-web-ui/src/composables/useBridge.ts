@@ -80,6 +80,7 @@ function connect(): void {
 
   ws.addEventListener("close", () => {
     bridgeState.status = "closed";
+    bridgeState.natsServer = null;
     ws = null;
 
     if (pendingDiscover) {
@@ -115,6 +116,7 @@ function handleServerMessage(msg: ServerMessage): void {
   switch (msg.kind) {
     case "ready":
       bridgeState.sdkProtocolVersion = msg.sdkProtocolVersion;
+      bridgeState.natsServer = msg.natsServer ?? null;
       break;
     case "agents":
       setAgents(msg.agents);
