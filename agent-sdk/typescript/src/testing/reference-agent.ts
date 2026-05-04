@@ -54,7 +54,14 @@ export interface ReferenceAgentOptions {
   readonly description?: string;
   /** Harness semver (`service.version`). Default: `"0.0.1"`. */
   readonly version?: string;
-  /** Endpoint metadata `max_payload`. Default: `"1MB"`. */
+  /**
+   * Endpoint metadata `max_payload`. Defaults to the broker's
+   * negotiated `nc.info.max_payload` (e.g. 8 MB on NGS, 1 MB on a
+   * default `nats-server`); falls back to `"1MB"` only if `nc.info`
+   * isn't populated. An explicit value is honored verbatim unless it
+   * exceeds the broker's limit, in which case it's clamped down with
+   * a `console.warn`.
+   */
   readonly maxPayload?: string;
   /** Endpoint metadata `attachments_ok`. Default: `true`. */
   readonly attachmentsOk?: boolean;

@@ -111,9 +111,12 @@ export interface AgentServiceOptions {
   /** Harness semver (`service.version`). Defaults to `"0.0.1"`. */
   readonly version?: string;
   /**
-   * §2.1 `max_payload`. Defaults to `"1MB"`. Advertised verbatim **unless
-   * it exceeds** the connected server's negotiated limit
-   * (`nc.info.max_payload`); in that case `start()` clamps the
+   * §2.1 `max_payload`. Defaults to the broker's negotiated
+   * `nc.info.max_payload` (e.g. 8 MB on NGS, 1 MB on a default
+   * `nats-server`), so the advertised cap matches what the connection
+   * can actually carry. Falls back to `"1MB"` only if `nc.info` isn't
+   * populated. An explicit value is honored verbatim **unless it
+   * exceeds** the broker's limit; in that case `start()` clamps the
    * advertised value down to the server's limit and `console.warn`s.
    * Over-advertising would only break callers — the broker rejects
    * oversized publishes before any handler sees them.
