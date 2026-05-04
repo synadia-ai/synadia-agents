@@ -191,10 +191,20 @@ export class ReferenceAgent {
     }
   }
 
+  /**
+   * Mirrors `AgentService.#effectiveMaxPayload`: when no `maxPayload`
+   * option is passed, advertise the broker's negotiated
+   * `nc.info.max_payload` rather than a stale hardcoded default; when
+   * an explicit override is passed, honor it but clamp down to the
+   * broker's cap if the override exceeds it.
+   */
   #effectiveMaxPayload(): string {
-    const override = this.#options.maxPayload ?? DEFAULT_MAX_PAYLOAD;
-    const overrideBytes = parseHumanBytes(override);
     const serverBytes = this.#options.nc.info?.max_payload ?? 0;
+    if (this.#options.maxPayload === undefined) {
+      return serverBytes > 0 ? formatHumanBytes(serverBytes) : DEFAULT_MAX_PAYLOAD;
+    }
+    const override = this.#options.maxPayload;
+    const overrideBytes = parseHumanBytes(override);
     if (serverBytes <= 0 || overrideBytes <= serverBytes) {
       return override;
     }
