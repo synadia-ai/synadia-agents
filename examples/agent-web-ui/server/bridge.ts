@@ -132,7 +132,22 @@ export class Bridge {
 
   private async handleDiscover(): Promise<void> {
     try {
-      const discovered = await this.agents.discover();
+      let discovered: Agent[];
+      try {
+        discovered = await this.agents.discover();
+      } catch (err) {
+        // NoRespondersError on `$SRV.INFO.agents` means zero agents are
+        // registered — a normal empty state, not an error. The SDK already
+        // catches this internally, but a `file:`-linked install can produce
+        // two copies of `@nats-io/nats-core` whose `NoRespondersError`
+        // classes differ, so the SDK's `instanceof` check misses and the
+        // error escapes. Duck-type as a safety net.
+        if (isNoRespondersError(err)) {
+          discovered = [];
+        } else {
+          throw err;
+        }
+      }
       this.agentsByInstanceId.clear();
       const dto: DiscoveredAgentDTO[] = [];
       const seenIds = new Set<string>();
@@ -676,6 +691,13 @@ export class Bridge {
 
 function queryKey(promptId: string, queryId: string): string {
   return `${promptId}:${queryId}`;
+}
+
+function isNoRespondersError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { name?: unknown; message?: unknown };
+  if (e.name === "NoRespondersError") return true;
+  return typeof e.message === "string" && e.message.includes("no responders");
 }
 
 /**
