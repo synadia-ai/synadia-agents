@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import AgentGroup from "./AgentGroup.vue";
-import { agentsState, agentsByBucket } from "../stores/agents.ts";
+import { agentsState, agentSections } from "../stores/agents.ts";
 
-const groups = computed(() => agentsByBucket.value);
+const groups = computed(() => agentSections.value);
 const isEmpty = computed(() => groups.value.length === 0);
 </script>
 
@@ -32,7 +32,7 @@ const isEmpty = computed(() => groups.value.length === 0);
       <div v-else class="groups">
         <AgentGroup
           v-for="g in groups"
-          :key="g.bucket"
+          :key="g.id"
           :label="g.label"
           :agents="g.agents"
         />
