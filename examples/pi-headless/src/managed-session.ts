@@ -167,6 +167,24 @@ export class ManagedSession {
       return;
     }
 
+    // Reject prompts to a session whose lifetime ran out. The manager's
+    // sweep loop disposes expired sessions on a tick; without this guard,
+    // a prompt that arrives between expiry and the next sweep would be
+    // served normally — accepting work the session is about to drop.
+    if (this.expired()) {
+      try {
+        msg.respondError(410, "session expired");
+      } catch {
+        /* connection gone */
+      }
+      try {
+        msg.respond("");
+      } catch {
+        /* connection gone */
+      }
+      return;
+    }
+
     let envelope: ReturnType<typeof decodeEnvelope>;
     try {
       envelope = decodeEnvelope(msg.data);

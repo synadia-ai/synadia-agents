@@ -19,7 +19,11 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import { ManagedSession, type SessionSummary } from "./managed-session.js";
 import { generateSessionId, validateSessionId } from "./subjects.js";
 
-const LIFETIME_CHECK_INTERVAL_MS = 30_000;
+// 2s — quick enough that an expired session is disposed within a couple
+// of seconds of hitting its limit (so the NATS service drops off the bus
+// promptly), and well below any reasonable session lifetime so the timer
+// itself is negligible CPU even with hundreds of sessions in the map.
+const LIFETIME_CHECK_INTERVAL_MS = 2_000;
 const STALE_PRUNE_INTERVAL_MS = 60_000;
 const STALE_REQUEST_CUTOFF_MS = 30 * 60 * 1000;
 
