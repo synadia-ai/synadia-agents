@@ -36,7 +36,7 @@ spec to catch up.
 | SDK                        | Wire behaviour                                                                                  | Spec ref   |
 | -------------------------- | ----------------------------------------------------------------------------------------------- | ---------- |
 | `AgentService.start()`     | `ServiceConfig(name="agents", ...)` - the single shared name from §3.1.                        | §3.1     |
-| Service metadata emitted   | `{agent, owner, session, protocol_version}` — `session` mirrors the 5th subject token; session-less callers see `"default"` per §3.2's allowance. | §3.2       |
+| Service metadata emitted   | `{agent, owner, protocol_version}` — exactly three fields under v0.3; the session lives in the subject's 5th token. | §3.2       |
 | `protocol_version` value   | `"0.3"` - MAJOR.MINOR only (§11.1).                                                             | §3.2, §11.1 |
 | Endpoint `prompt` metadata | `{max_payload, attachments_ok}`. Boolean serialised as `"true"`/`"false"` on the wire.          | §2.1       |
 | `prompt` queue group       | `"agents"` - pinned explicitly; framework defaults differ between SDKs and would break interop. | §3.3       |
@@ -98,7 +98,7 @@ spec to catch up.
 | ---------------------------- | ------------------------------------------------------------------------------------------------ | ---------- |
 | Subject                      | `agents.hb.{agent}.{owner}.{session_name}` (v0.3 verb-first; `hb` abbreviates `heartbeat`).      | §8.1       |
 | Default interval             | `AgentService(heartbeat_interval_s=30)` (spec recommendation).                                   | §8.2       |
-| Payload fields               | `{agent, owner, session, instance_id, ts, interval_s}` — `session` mirrors `metadata.session` (== subject token 5); decoder tolerates absence to interop with spec-compliant session-less peers that omit the field. | §8.3 |
+| Payload fields               | `{agent, owner, instance_id, ts, interval_s}` — no `session` (the publishing subject IS the session under v0.3). | §8.3 |
 | `HeartbeatPayload` tolerance | `extra="ignore"` - unknown fields silently accepted per §8.3.                                    | §8.3       |
 | `instance_id` source         | `service.id` assigned by nats-py's micro framework (matches `$SRV.INFO` `id`).                   | §3.4, §8.3 |
 | First heartbeat              | Published immediately after service registration so subscribe-then-discover sees liveness.       | §8.5       |

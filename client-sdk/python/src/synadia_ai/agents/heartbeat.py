@@ -42,24 +42,21 @@ DEFAULT_LIVENESS_SLACK = 3
 class HeartbeatPayload(BaseModel):
     """Heartbeat wire payload per §8.3.
 
-    ``session`` mirrors ``$SRV.INFO.metadata.session`` (§3.2): present
-    iff the metadata field is set. The Python ``AgentService`` always
-    advertises a session (using ``"default"`` for session-less callers,
-    per §3.2's allowance), so its own publishes always carry the field;
-    the field is optional on the model so we can decode heartbeats from
-    spec-compliant session-less peers (e.g. a TS harness that omits
-    ``options.session``). The tracker keys on ``payload.instance_id``
-    per §8.3 so multiple instances of the same logical session stay
-    distinguishable. ``extra="ignore"`` because §8.3 requires callers
-    to tolerate unknown fields for forward compat; pydantic silently
-    drops them on decode.
+    The payload no longer carries a session field — under v0.3 the
+    publishing subject IS the session
+    (``agents.hb.{agent}.{owner}.{session_name}``). Receivers that want
+    the session name read it from the 5th subject token. The tracker
+    keys on ``payload.instance_id`` per §8.3 so multiple instances of
+    the same logical session stay distinguishable. ``extra="ignore"``
+    because §8.3 requires callers to tolerate unknown fields for forward
+    compat; pydantic will silently drop them during decode (a stray
+    ``session`` from a non-compliant v0.2 peer is dropped here).
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
     agent: str
     owner: str
-    session: str | None = None
     instance_id: str
     ts: str  # UTC ISO 8601
     interval_s: int

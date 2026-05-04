@@ -45,17 +45,14 @@ v0.3 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
   internally - an SDK implementation detail, not a protocol contract
   (see `src/synadia_ai/agents/subjects.py::_sanitize`).
 - **Service registration** (§3): every agent registers as a NATS micro
-  service named `agents` with `metadata = {agent, owner, session,
-  protocol_version = "0.3"}`. `session` mirrors the 5th subject token
-  per §3.2; session-less harnesses MAY omit it OR set it to `"default"`,
-  and the agent-sdk takes a required `session_name` and always
-  advertises the value (defaulting to `"default"` when callers don't
-  care). The `prompt` endpoint MUST be registered with queue group
-  `"agents"` (§3.3) - the framework default differs between SDKs, so
-  we pin the spec value explicitly. The service name is shared across
-  all compliant agents - callers filter by this single value. The
-  `status` endpoint (v0.3 §8.7) registers alongside with the same
-  queue group.
+  service named `agents` with `metadata = {agent, owner,
+  protocol_version = "0.3"}` — exactly three fields under v0.3; the
+  session lives in the subject, not in metadata. The `prompt` endpoint
+  MUST be registered with queue group `"agents"` (§3.3) - the framework
+  default differs between SDKs, so we pin the spec value explicitly.
+  The service name is shared across all compliant agents - callers
+  filter by this single value. The `status` endpoint (v0.3 §-TBD)
+  registers alongside with the same queue group.
 - **Request envelope** (§5.1): `{prompt: str, attachments?: [{filename,
   content: <base64>}]}`. Plain-text request payloads are promoted to
   `{"prompt": <text>}` (§5.3). The envelope no longer carries a
@@ -64,14 +61,11 @@ v0.3 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
   order, terminated by a zero-byte body with no NATS headers.
 - **Mid-stream queries** (§7): agent-initiated questions via
   `PromptStream.ask`; caller replies via `Query.reply`.
-- **Heartbeat** (§8.3): `{agent, owner, session, instance_id, ts,
-  interval_s}` on `agents.hb.{a}.{o}.{session_name}` (v0.3; verb is
-  the abbreviation `hb`). `session` mirrors `metadata.session` per
-  §8.3 ("present iff metadata field is set"); the shared
-  `HeartbeatPayload` decoder accepts its absence so we interop with
-  spec-compliant session-less peers, while the sibling agent-sdk
-  always emits the value.
-- **Status** (v0.3 §8.7): request/response on `agents.status.{a}.{o}.{n}`
+- **Heartbeat** (§8.3): `{agent, owner, instance_id, ts, interval_s}`
+  on `agents.hb.{a}.{o}.{session_name}` (v0.3; verb is the abbreviation
+  `hb`). No `session` field on the payload — the publishing subject is
+  the session.
+- **Status** (v0.3 §-TBD): request/response on `agents.status.{a}.{o}.{n}`
   returns the same payload shape as a heartbeat, freshly built per
   request. Future PRs extend the response with richer agent metadata
   in one place — `heartbeat.publish_one` and the status handler share

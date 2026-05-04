@@ -1,6 +1,6 @@
 [project]
 name = "synadia-ai-agents"
-version = "0.7.0"
+version = "0.6.0"
 description = "Python client SDK for the NATS Agent Protocol — discover and prompt spec-compliant agents over NATS"
 readme = "README.md"
 requires-python = ">=3.11"

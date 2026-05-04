@@ -158,14 +158,11 @@ deferred to a follow-up. All shapes are imported from
   wants to host N sessions registers N services. The agent-sdk picks
   the session names; the client filters on them.
 - **Service registration** (§3): every agent registers as a NATS micro
-  service named `agents` with `metadata = {agent, owner, session,
-  protocol_version = "0.3"}`. `session` mirrors the 5th subject token
-  per §3.2 — session-less harnesses MAY omit it or set it to
-  `"default"`; this SDK takes a required `session_name` constructor
-  arg and always advertises the value, defaulting callers pass
-  `"default"`. The `prompt` endpoint MUST be registered with queue
-  group `"agents"` (§3.3); ditto the `status` endpoint. The framework
-  default differs between SDKs, so we pin the spec value explicitly.
+  service named `agents` with `metadata = {agent, owner,
+  protocol_version = "0.3"}` — exactly three fields under v0.3. The
+  `prompt` endpoint MUST be registered with queue group `"agents"`
+  (§3.3); ditto the `status` endpoint. The framework default differs
+  between SDKs, so we pin the spec value explicitly.
 - **Request envelope** (§5.1): `{prompt: str, attachments?:
   [{filename, content: <base64>}]}`. Plain-text request payloads are
   promoted to `{"prompt": <text>}` (§5.3). The agent-sdk decodes
@@ -179,14 +176,10 @@ deferred to a follow-up. All shapes are imported from
   the agent's response handler via the API equivalent of TS's
   `PromptStream.ask`. Caller replies via `Query.reply`. The agent-sdk
   owns the *initiation* path; reply decoding is shared.
-- **Heartbeat** (§8.3): `{agent, owner, session, instance_id, ts,
-  interval_s}` on `agents.hb.{a}.{o}.{session_name}`. `session`
-  mirrors `metadata.session` per §8.3 ("present iff metadata field
-  is set"); this SDK always populates it from `subject.session_name`
-  on emission, and the shared `HeartbeatPayload` decoder accepts its
-  absence so we interop with spec-compliant session-less peers. The
-  publisher loop lives here; the wire model `HeartbeatPayload` is
-  imported from `synadia_ai.agents`.
+- **Heartbeat** (§8.3): `{agent, owner, instance_id, ts, interval_s}`
+  on `agents.hb.{a}.{o}.{session_name}`. The publisher loop lives
+  here; the wire model `HeartbeatPayload` is imported from
+  `synadia_ai.agents`.
 - **Status** (v0.3 §-TBD): request/response on
   `agents.status.{a}.{o}.{session_name}` returns the same payload
   shape as a heartbeat, freshly built per request. Handler lives
@@ -298,7 +291,7 @@ The session-scoped `nats-server` log sits alongside at
 `tests/_evidence/_nats-server-logs/`. Read these when a test fails or
 when verifying protocol compliance by eye — for an agent-side test,
 `srv-info.json` is the load-bearing artifact (does it advertise the
-right `metadata = {agent, owner, session, protocol_version}`? does the
+right `metadata = {agent, owner, protocol_version}`? does the
 `prompt` endpoint carry queue group `"agents"`?).
 
 ## Testing — no-bullshit, concrete evidence

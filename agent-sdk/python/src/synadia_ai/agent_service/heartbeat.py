@@ -43,7 +43,6 @@ def build_heartbeat_payload(
     return HeartbeatPayload(
         agent=subject.agent,
         owner=subject.owner,
-        session=subject.session_name,
         instance_id=instance_id,
         ts=now_iso(),
         interval_s=interval_s,
