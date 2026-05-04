@@ -16,6 +16,7 @@ import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 import { ClaudeSessionManager } from "./claude-session-manager.js";
 import { Controller } from "./controller.js";
 import { loadConfig, parseCliOverrides } from "./config.js";
+import { resolveControllerName } from "./subjects.js";
 
 const log = (line: string): void => {
   process.stderr.write(`${line}\n`);
@@ -81,10 +82,18 @@ async function main(): Promise<void> {
   });
   await manager.start();
 
+  // Probe for an unclaimed controller name. With the default `control`,
+  // a second claude-code-headless on the same NATS lands on `control-2`,
+  // a third on `control-3`, and so on.
+  const resolvedName = await resolveControllerName(nc, config.name, config.owner);
+  if (resolvedName !== config.name) {
+    log(`claude-code-headless: name "${config.name}" is taken; using "${resolvedName}"`);
+  }
+
   const controller = new Controller({
     nc,
     owner: config.owner,
-    name: config.name,
+    name: resolvedName,
     manager,
   });
   await controller.start();

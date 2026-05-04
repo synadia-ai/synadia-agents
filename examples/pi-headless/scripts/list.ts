@@ -1,12 +1,13 @@
 // CLI helper: list active pi-headless sessions on every reachable controller.
 //
 // Usage:
-//   bun run scripts/list.ts [--owner USER] [--name exec]
+//   bun run scripts/list.ts [--owner USER] [--name control]
 //                           [--context demo | --url nats://...]
 
 import process from "node:process";
 
 import { openCliClient, parseArgs, ownerFilter, nameFilter } from "./_common.js";
+import { controllerListSubject } from "../src/subjects.js";
 
 interface SessionSummary {
   session_id: string;
@@ -29,8 +30,8 @@ async function main(): Promise<void> {
     const name = nameFilter(args);
     const controllers = agents.filter(
       (a) =>
-        a.agent === "pi" &&
-        a.metadata["role"] === "pi-headless-controller" &&
+        a.agent === "pi-headless" &&
+        a.metadata["role"] === "controller" &&
         (!owner || a.owner === owner) &&
         (!name || a.name === name),
     );
@@ -39,7 +40,7 @@ async function main(): Promise<void> {
       process.exit(0);
     }
     for (const controller of controllers) {
-      const listSubject = `${controller.promptEndpoint.subject}.list`;
+      const listSubject = controllerListSubject(controller.owner, controller.name);
       const rep = await cli.nc.request(listSubject, "", { timeout: 5_000 });
       const body = JSON.parse(rep.string()) as { sessions: SessionSummary[] };
       process.stdout.write(

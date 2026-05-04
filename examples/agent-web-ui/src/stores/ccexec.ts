@@ -32,14 +32,15 @@ export const ccexecState = reactive<{
 
 /**
  * The currently selected claude-code-headless controller, or null when the
- * selected agent isn't a claude-code-headless-controller.
+ * selected agent isn't a claude-code-headless controller.
  */
 export const selectedCcController = computed(() => {
   const id = agentsState.selectedInstanceId;
   if (!id) return null;
   const agent = agentsState.list.find((a) => a.instanceId === id);
   if (!agent) return null;
-  if (agent.metadata?.["role"] !== "claude-code-headless-controller") return null;
+  if (agent.agent !== "cc-headless") return null;
+  if (agent.metadata?.["role"] !== "controller") return null;
   return agent;
 });
 

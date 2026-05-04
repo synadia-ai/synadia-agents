@@ -193,17 +193,18 @@ const sessionState = computed<"alive" | "expired">(() => {
 });
 const isExpired = computed(() => sessionState.value === "expired");
 
-// Find the controller that spawned this session (matched by spawner role +
-// owner). Returns null if the controller has vanished — in which case the
-// stop button is shown disabled with a tooltip.
+// Find the controller that spawned this session (matched by agent token +
+// role + owner). Returns null if the controller has vanished — in which case
+// the stop button is shown disabled with a tooltip.
 const parentController = computed(() => {
   if (!isPiSession.value && !isCcSession.value) return null;
-  const role = isPiSession.value
-    ? "pi-headless-controller"
-    : "claude-code-headless-controller";
+  const agentToken = isPiSession.value ? "pi-headless" : "cc-headless";
   return (
     agentsState.list.find(
-      (a) => a.metadata?.["role"] === role && a.owner === props.agent.owner,
+      (a) =>
+        a.agent === agentToken &&
+        a.metadata?.["role"] === "controller" &&
+        a.owner === props.agent.owner,
     ) ?? null
   );
 });

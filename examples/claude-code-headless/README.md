@@ -2,7 +2,7 @@
 
 A headless NATS agent host that spawns [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions on demand via the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and exposes each one as a first-class NATS Agent Protocol **v0.3** instance (verb-first subjects + `status` endpoint). Built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `ReferenceAgent`).
 
-Each spawned session registers as its own NATS agent under `agents.prompt.cc.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.cc.<owner>.<name>` (default `name = "exec"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
+Each spawned session registers as its own NATS agent under `agents.prompt.cc-headless.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.cc-headless.<owner>.<name>` (default `name = "control"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
 
 In short: one process, many Claude Code sessions, all first-class NATS agents.
 
@@ -28,8 +28,8 @@ npx @synadia-ai/nats-claude-code-headless --context localhost
 and prints:
 
 ```
-claude-code-headless: controller listening on agents.prompt.cc.<you>.exec
-claude-code-headless: extra endpoints — …exec.spawn  …exec.stop  …exec.list
+claude-code-headless: controller listening on agents.prompt.cc-headless.<you>.control
+claude-code-headless: control endpoints — agents.spawn.cc-headless.<you>.control  …  agents.stop.…  agents.list.…
 ```
 
 For a permanent install:
@@ -88,7 +88,7 @@ Optional defaults live in `~/.claude-code-headless/config.json`:
 ```json
 {
   "context": "localhost",
-  "name": "exec",
+  "name": "control",
   "defaultModel": "claude-sonnet-4-6",
   "defaultPermissionMode": "dontAsk",
   "defaultAllowedTools": ["Read", "Glob", "Grep"],
@@ -103,7 +103,7 @@ Env overrides:
 | Variable | Overrides | Default |
 | --- | --- | --- |
 | `CLAUDE_CODE_HEADLESS_OWNER` | Owner subject token (3rd segment) | `$USER` |
-| `CLAUDE_CODE_HEADLESS_NAME` | Controller instance name (4th token) | `exec` |
+| `CLAUDE_CODE_HEADLESS_NAME` | Controller instance name (4th token) | `control` |
 | `CLAUDE_CODE_HEADLESS_DEFAULT_MODEL` | Default Claude model id for spawns | `claude-sonnet-4-6` |
 | `CLAUDE_CODE_HEADLESS_DEFAULT_PERMISSION_MODE` | Default permission mode for spawns | `dontAsk` |
 | `CLAUDE_CODE_HEADLESS_DEFAULT_ALLOWED_TOOLS` | Default tool allowlist (comma-separated) | `Read,Glob,Grep` |
@@ -149,36 +149,38 @@ The out-of-the-box defaults are deliberately conservative for a public reference
 
 ## Subject layout
 
-```
-agents.prompt.cc.<owner>.<name>             ← controller prompt endpoint (help text)
-agents.status.cc.<owner>.<name>             ← controller status (§8.7 (v0.3); replies with heartbeat-shaped payload)
-agents.hb.cc.<owner>.<name>                 ← controller heartbeat (§8.1 v0.3, 30 s)
-agents.cc.<owner>.<name>.spawn              ← POST JSON → session descriptor (custom; non-verb-first)
-agents.cc.<owner>.<name>.stop               ← POST { session_id } → { ok: true }    (custom)
-agents.cc.<owner>.<name>.list               ← (empty) → { sessions: [...] }          (custom)
+Verb-first throughout — protocol verbs and claude-code-headless extension verbs share the same `agents.<verb>.cc-headless.<owner>.<token>` shape, so a tracer or audit layer can subscribe to `agents.<verb>.>` and parse identity positionally.
 
-agents.prompt.cc.<owner>.<session_id>       ← spawned session prompt (§5/§6, v0.3)
-agents.status.cc.<owner>.<session_id>       ← spawned session status (§8.7 (v0.3))
-agents.hb.cc.<owner>.<session_id>           ← spawned session heartbeat (§8.1 v0.3, 30 s)
+```
+agents.prompt.cc-headless.<owner>.<name>      ← controller prompt endpoint (help text)
+agents.status.cc-headless.<owner>.<name>      ← controller status (replies with heartbeat-shaped payload)
+agents.hb.cc-headless.<owner>.<name>          ← controller heartbeat (30 s)
+agents.spawn.cc-headless.<owner>.<name>       ← POST JSON → session descriptor
+agents.stop.cc-headless.<owner>.<name>        ← POST { session_id } → { ok: true }
+agents.list.cc-headless.<owner>.<name>        ← (empty) → { sessions: [...] }
+
+agents.prompt.cc-headless.<owner>.<session_id>  ← spawned session prompt
+agents.status.cc-headless.<owner>.<session_id>  ← spawned session status
+agents.hb.cc-headless.<owner>.<session_id>      ← spawned session heartbeat (30 s)
 ```
 
-The `cc` token is shared with [`agents/claude-code/`](../../agents/claude-code), which speaks the inverse direction (Claude Code as MCP-driven NATS *client*). They co-exist because the controller name and per-session ids disambiguate the 4th subject token.
+The `cc-headless` token disambiguates this controller (and its spawned sessions) from the regular Claude Code agent at [`agents/claude-code/`](../../agents/claude-code), which uses the `cc` token for the opposite direction (Claude Code as MCP-driven NATS *client*).
 
 ## Wire examples
 
 ### Spawn
 
 ```bash
-nats req agents.cc.$USER.exec.spawn \
+nats req agents.spawn.cc-headless.$USER.control \
   '{"cwd":"/tmp/cc-sandbox","model":"claude-sonnet-4-6","allowed_tools":["Read","Glob","Grep","Edit"],"permission_mode":"acceptEdits","max_lifetime_s":900}' \
   --timeout=15s
-# → { "session_id":"sess-a1b2c3d4", "subject":"agents.prompt.cc.$USER.sess-a1b2c3d4", "status_subject":"agents.status.cc.$USER.sess-a1b2c3d4", ... }
+# → { "session_id":"sess-a1b2c3d4", "subject":"agents.prompt.cc-headless.$USER.sess-a1b2c3d4", "status_subject":"agents.status.cc-headless.$USER.sess-a1b2c3d4", ... }
 ```
 
 ### Prompt (protocol-standard — no custom format)
 
 ```bash
-nats req agents.prompt.cc.$USER.sess-a1b2c3d4 \
+nats req agents.prompt.cc-headless.$USER.sess-a1b2c3d4 \
   'list the files here and summarise what you see' --replies=0 --timeout=120s
 # → {"type":"status","data":"ack"}
 # → {"type":"response","data":"There are three files: …"}
@@ -207,14 +209,14 @@ await nc.close();
 ### Stop
 
 ```bash
-nats req agents.cc.$USER.exec.stop '{"session_id":"sess-a1b2c3d4"}'
+nats req agents.stop.cc-headless.$USER.control '{"session_id":"sess-a1b2c3d4"}'
 # → { "ok": true, "session_id":"sess-a1b2c3d4" }
 ```
 
 ### List
 
 ```bash
-nats req agents.cc.$USER.exec.list ''
+nats req agents.list.cc-headless.$USER.control ''
 # → { "sessions": [ { "session_id":"sess-a1b2c3d4", "cwd":"/tmp/cc-sandbox", "remaining_lifetime_s": 867, ... } ] }
 ```
 
@@ -238,9 +240,9 @@ Session prompt endpoints follow protocol §9.
 
 ## Notes
 
-- **Session identity.** The 4th subject token is the session id; `metadata.session` echoes it. Controllers use `name = "exec"` by default.
-- **Metadata marker.** The controller carries `metadata.role = "claude-code-headless-controller"` so clients can tell it apart from other `cc` agents.
-- **One controller per `(owner, name)`.** The custom `spawn` / `stop` / `list` endpoints are NATS micro-service endpoints, which load-balance across all instances sharing the same subject. If you need multiple controllers side-by-side, give each one a distinct `--name` (e.g. `--name exec-a`, `--name exec-b`).
+- **Session identity.** The 4th subject token is the session id; `metadata.session` echoes it. Controllers use `name = "control"` by default and sessions carry `metadata.role = "session"`.
+- **Metadata marker.** The controller carries `metadata.role = "controller"` so clients can tell it apart from sessions. The shared `agent: "cc-headless"` token already disambiguates this from the regular `agent: "cc"` (Claude Code as MCP-driven NATS client).
+- **Multiple controllers per host.** On startup the controller probes `$SRV.INFO.agents` and, if its target prompt subject is already claimed, picks the next free `<name>-2`, `<name>-3`, … suffix automatically. So booting a second claude-code-headless with default settings leaves the first as `control` and the second as `control-2` without explicit `--name` flags. (For deterministic naming or two stable controllers side-by-side, still pass `--name` explicitly.)
 - **Serial drain per session.** Per session, prompts are queued and processed one at a time; the Claude Agent SDK's `query()` is one full multi-turn round-trip per call, and concurrent re-entry into the same session would interleave context.
 - **Session resumption.** Each prompt after the first is sent to the SDK with `resume: <sdkSessionId>` so context carries forward within a session for its full lifetime.
 - **Lifetime & pruning.** `max_lifetime_s` bounds a session's wall-clock life; pending requests older than 30 min are evicted (active requests are never evicted).

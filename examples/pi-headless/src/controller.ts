@@ -1,17 +1,18 @@
 // pi-headless controller service.
 //
-// One protocol-compliant NATS agent that uses the 3rd subject token `pi`
-// (the verb `prompt` lives at token 2 per §2 v0.3) and exposes endpoints:
+// One protocol-compliant NATS agent that registers under the agent token
+// `pi-headless` (3rd subject token, see subjects.ts for the full layout)
+// and exposes endpoints:
 //
 //   - `prompt`  (§5/§6-compliant)  — returns a help-text response, so the
 //                                    controller is usable with `nats req`.
-//   - `status`  (§8.7 (v0.3))       — replies with a heartbeat-shaped payload.
+//   - `status`                     — replies with a heartbeat-shaped payload.
 //   - `spawn`   (request/reply)    — creates a new PI session, registers it
 //                                    as its own NATS agent instance.
 //   - `stop`    (request/reply)    — disposes a session.
 //   - `list`    (request/reply)    — returns an array of session summaries.
 //
-// Heartbeats go to `agents.hb.pi.<owner>.<name>` every 30s (§8.1 v0.3).
+// Heartbeats go to `agents.hb.pi-headless.<owner>.<name>` every 30s.
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";
@@ -57,8 +58,8 @@ const helpText = (
     "",
     "This is a control-plane agent. It spawns, stops, and lists PI coding-agent",
     "sessions. Each spawned session registers as its OWN NATS agent at",
-    "`agents.prompt.pi.<owner>.<session_id>` and speaks the standard NATS Agent",
-    "Protocol v0.3 — discover it via $SRV.INFO.agents and prompt it like any agent.",
+    "`agents.prompt.pi-headless.<owner>.<session_id>` and speaks the standard NATS",
+    "Agent Protocol v0.3 — discover it via $SRV.INFO.agents and prompt it like any agent.",
     "",
     "Custom endpoints on this controller:",
     `  spawn : ${spawnSubject}`,
@@ -103,10 +104,10 @@ export class Controller {
     const svcm = new Svcm(this.opts.nc);
 
     const metadata: Record<string, string> = {
-      agent: "pi",
+      agent: "pi-headless",
       owner: this.opts.owner,
       protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
-      role: "pi-headless-controller",
+      role: "controller",
     };
 
     this.service = await svcm.add({
@@ -130,7 +131,7 @@ export class Controller {
       },
     });
 
-    // §8.7 (v0.3) status endpoint — replies with a heartbeat-shaped payload.
+    // Status endpoint — replies with a heartbeat-shaped payload.
     this.service.addEndpoint(STATUS_ENDPOINT_NAME, {
       subject: this.statusSubject,
       queue: STATUS_QUEUE_GROUP,
@@ -140,7 +141,7 @@ export class Controller {
       },
     });
 
-    // Custom control endpoints — not protocol-standard, but allowed.
+    // Extension endpoints (verb-first, agents.<verb>.pi-headless.<owner>.<name>).
     this.service.addEndpoint("spawn", {
       subject: controllerSpawnSubject(this.opts.owner, this.opts.name),
       handler: (err, msg) => {
@@ -168,7 +169,7 @@ export class Controller {
     this.startHeartbeats();
     this.log(`pi-headless: controller listening on ${this.promptSubject}`);
     this.log(
-      `pi-headless: extra endpoints — ${controllerSpawnSubject(this.opts.owner, this.opts.name)}, ${controllerStopSubject(this.opts.owner, this.opts.name)}, ${controllerListSubject(this.opts.owner, this.opts.name)}`,
+      `pi-headless: control endpoints — ${controllerSpawnSubject(this.opts.owner, this.opts.name)}, ${controllerStopSubject(this.opts.owner, this.opts.name)}, ${controllerListSubject(this.opts.owner, this.opts.name)}`,
     );
   }
 
@@ -216,7 +217,7 @@ export class Controller {
     if (!this.service) return;
     const intervalS = this.opts.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S;
     const payload = {
-      agent: "pi",
+      agent: "pi-headless",
       owner: this.opts.owner,
       instance_id: this.service.info().id,
       ts: new Date().toISOString(),
@@ -301,7 +302,7 @@ export class Controller {
     const publish = (): void => {
       if (!this.service) return;
       const payload = {
-        agent: "pi",
+        agent: "pi-headless",
         owner: this.opts.owner,
         instance_id: this.service.info().id,
         ts: new Date().toISOString(),

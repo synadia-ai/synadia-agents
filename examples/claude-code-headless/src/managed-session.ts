@@ -130,7 +130,7 @@ export class ManagedSession {
     this.statusSubject = sessionStatusSubject(this.owner, this.sessionId);
 
     const extraMetadata: Record<string, string> = {
-      spawner: "claude-code-headless",
+      role: "session",
       cwd: this.cwd,
       model: this.model,
       permission_mode: this.permissionMode,
@@ -141,7 +141,7 @@ export class ManagedSession {
 
     this.refAgent = new ReferenceAgent({
       nc: this.nc,
-      agent: "cc",
+      agent: "cc-headless",
       owner: this.owner,
       name: this.sessionId,
       session: this.sessionId,

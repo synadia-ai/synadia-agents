@@ -350,7 +350,8 @@ export class Bridge {
       // The session_id equals the 4th-token `name` of a pi-headless session.
       for (const [instanceId, agent] of this.agentsByInstanceId) {
         if (
-          agent.metadata["spawner"] === "pi-headless" &&
+          agent.agent === "pi-headless" &&
+          agent.metadata["role"] === "session" &&
           agent.name === sessionId
         ) {
           this.forgetAgent(instanceId);
@@ -396,44 +397,52 @@ export class Bridge {
     id: string,
     controllerInstanceId: string,
     endpoint: "spawn" | "stop" | "list",
-    role: string = "pi-headless-controller",
-    label: string = "pi-headless",
+    expectedAgent: "pi-headless" | "cc-headless" = "pi-headless",
   ): string | null {
     const agent = this.agentsByInstanceId.get(controllerInstanceId);
     if (!agent) {
       this.sendError(
         id,
         "agent_not_found",
-        `no ${label} controller with instance id ${controllerInstanceId} in last discovery result — click Refresh`,
+        `no ${expectedAgent} controller with instance id ${controllerInstanceId} in last discovery result — click Refresh`,
       );
       return null;
     }
-    if (agent.metadata["role"] !== role) {
+    // Both pi-headless and cc-headless controllers carry `metadata.role
+    // = "controller"`, so the agent token is what disambiguates which
+    // handler this controller belongs under. Without this check, a
+    // mis-dispatched cc controller id into a pi handler would silently
+    // construct a `cc-headless` extension subject and call it.
+    if (agent.agent !== expectedAgent) {
+      this.sendError(
+        id,
+        "wrong_agent_token",
+        `instance ${controllerInstanceId} is agent="${agent.agent}", expected "${expectedAgent}"`,
+      );
+      return null;
+    }
+    if (agent.metadata["role"] !== "controller") {
       this.sendError(
         id,
         "not_a_controller",
-        `instance ${controllerInstanceId} is not a ${label} controller`,
+        `instance ${controllerInstanceId} is not a ${expectedAgent} controller`,
       );
       return null;
     }
-    // The controller's custom endpoints (`spawn` / `stop` / `list`) live on the
-    // pre-v0.3-shape subject `agents.<token>.<owner>.<name>.<endpoint>`, NOT
-    // on the v0.3 verb-first prompt subject. Strip the `prompt` verb token
-    // out before appending the custom-endpoint suffix.
-    //
-    // prompt subject: `agents.prompt.<subjectToken>.<owner>.<name>` (5 tokens)
-    // custom subject: `agents.<subjectToken>.<owner>.<name>.<endpoint>` (5 tokens)
+    // Verb-first throughout: swap `prompt` for the extension verb in the
+    // controller's prompt subject.
+    //   prompt subject:    agents.prompt.<agent>.<owner>.<name>     (5 tokens)
+    //   extension subject: agents.<endpoint>.<agent>.<owner>.<name> (5 tokens)
     const tokens = agent.promptEndpoint.subject.split(".");
     if (tokens.length !== 5 || tokens[0] !== "agents" || tokens[1] !== "prompt") {
       this.sendError(
         id,
         "bad_prompt_subject",
-        `controller's prompt subject doesn't match v0.3 verb-first shape: ${agent.promptEndpoint.subject}`,
+        `controller's prompt subject doesn't match the verb-first shape: ${agent.promptEndpoint.subject}`,
       );
       return null;
     }
-    const customRoot = `${tokens[0]}.${tokens[2]}.${tokens[3]}.${tokens[4]}`;
-    return `${customRoot}.${endpoint}`;
+    return `${tokens[0]}.${endpoint}.${tokens[2]}.${tokens[3]}.${tokens[4]}`;
   }
 
   // ─── claude-code-headless control plane ───────────────────────────────────
@@ -447,8 +456,7 @@ export class Bridge {
       id,
       controllerInstanceId,
       "spawn",
-      "claude-code-headless-controller",
-      "claude-code-headless",
+      "cc-headless",
     );
     if (!subject) return;
     try {
@@ -479,8 +487,7 @@ export class Bridge {
       id,
       controllerInstanceId,
       "stop",
-      "claude-code-headless-controller",
-      "claude-code-headless",
+      "cc-headless",
     );
     if (!subject) return;
     try {
@@ -499,10 +506,11 @@ export class Bridge {
         return;
       }
       // Drop the stopped session from this bridge's agent map + UI eagerly.
-      // The session_id equals the 4th-token `name` of a claude-code-headless session.
+      // The session_id equals the 4th-token `name` of a cc-headless session.
       for (const [instanceId, agent] of this.agentsByInstanceId) {
         if (
-          agent.metadata["spawner"] === "claude-code-headless" &&
+          agent.agent === "cc-headless" &&
+          agent.metadata["role"] === "session" &&
           agent.name === sessionId
         ) {
           this.forgetAgent(instanceId);
@@ -523,8 +531,7 @@ export class Bridge {
       id,
       controllerInstanceId,
       "list",
-      "claude-code-headless-controller",
-      "claude-code-headless",
+      "cc-headless",
     );
     if (!subject) return;
     try {

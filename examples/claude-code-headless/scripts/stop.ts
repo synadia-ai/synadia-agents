@@ -1,12 +1,13 @@
 // CLI helper: stop a claude-code-headless session.
 //
 // Usage:
-//   bun run scripts/stop.ts SESSION_ID [--owner USER] [--name exec]
+//   bun run scripts/stop.ts SESSION_ID [--owner USER] [--name control]
 //                                      [--context demo | --url nats://...]
 
 import process from "node:process";
 
 import { openCliClient, findController, parseArgs } from "./_common.js";
+import { controllerStopSubject } from "../src/subjects.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -19,7 +20,7 @@ async function main(): Promise<void> {
   const cli = await openCliClient(args);
   try {
     const controller = await findController(cli.agents, args);
-    const stopSubject = `${controller.promptEndpoint.subject}.stop`;
+    const stopSubject = controllerStopSubject(controller.owner, controller.name);
     const rep = await cli.nc.request(
       stopSubject,
       JSON.stringify({ session_id: sessionId }),

@@ -12,6 +12,7 @@
 import process from "node:process";
 
 import { openCliClient, findController, parseArgs, waitForSession } from "./_common.js";
+import { controllerSpawnSubject, controllerStopSubject } from "../src/subjects.js";
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
   const cli = await openCliClient(args);
   try {
     const controller = await findController(cli.agents, args);
-    const spawnSubject = `${controller.promptEndpoint.subject}.spawn`;
+    const spawnSubject = controllerSpawnSubject(controller.owner, controller.name);
     process.stderr.write(`claude-code-headless-cli: calling ${spawnSubject}\n`);
 
     const rep = await cli.nc.request(spawnSubject, JSON.stringify(spec), { timeout: 15_000 });
@@ -79,7 +80,7 @@ async function main(): Promise<void> {
       process.stdout.write("\n");
 
       if (stopAfter) {
-        const stopSubject = `${controller.promptEndpoint.subject}.stop`;
+        const stopSubject = controllerStopSubject(controller.owner, controller.name);
         await cli.nc.request(
           stopSubject,
           JSON.stringify({ session_id: descriptor.session_id }),
