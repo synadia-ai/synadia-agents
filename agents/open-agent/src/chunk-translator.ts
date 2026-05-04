@@ -5,6 +5,20 @@
 // The wire format for the agent protocol is `{type:"response", text}` /
 // `{type:"status"}` / `{type:"query"}` chunks per spec §6. This module is
 // the seam — pure functions, no I/O.
+//
+// Tool calls are emitted as `status` chunks with a `<prefix>:<json>`
+// payload, mirroring the convention `agents/claude-code` already uses
+// and `examples/agent-web-ui/server/bridge.ts` already parses
+// generically:
+//
+//   status: "tool_use:{\"id\":\"…\",\"name\":\"bash\",\"input\":{…}}"
+//   status: "tool_result:{\"tool_use_id\":\"…\",\"output\":\"…\",\"is_error\":false}"
+//
+// Spec §6.4 requires callers to silently ignore unrecognised status
+// values — that's the documented forward-compat hook. Dumb clients
+// (e.g. `nats req`) get the model's `response` text without seeing any
+// tool I/O; rich clients that opt into the convention get structured
+// tool-call cards.
 
 import type { Chunk } from "@synadia-ai/agent-service";
 
@@ -18,7 +32,7 @@ export interface UIPart {
  * Translate one UI part into zero or more wire chunks.
  *
  * Returns `[]` for parts that are bookkeeping-only (start/finish, text
- * boundaries, error parts that the caller should reraise as a 500). The
+ * boundaries, error parts that the bridge re-raises as a 500). The
  * bridge concatenates the result and forwards each chunk to
  * `PromptResponse.send`. Long `response` text is the bridge's
  * responsibility to split via `splitResponseText`; this module emits
@@ -32,36 +46,51 @@ export function translatePart(part: UIPart): Chunk[] {
       return [{ type: "response", text: delta }];
     }
 
-    case "tool-input-start": {
-      const toolName = readString(part, "toolName");
-      return [{ type: "response", text: `\n[${toolName}] ` }];
-    }
+    case "tool-input-start":
+      // The tool announcement is now carried by the `tool_use` status
+      // chunk emitted on `tool-input-available` once the input is
+      // ready. No need to write a separate text marker.
+      return [];
 
     case "tool-input-available": {
+      const toolCallId = readString(part, "toolCallId");
       const toolName = readString(part, "toolName");
-      const input = part["input"];
-      const summary = summarizeToolInput(toolName, input);
-      if (summary === "") return [];
-      return [{ type: "response", text: summary }];
+      if (toolCallId === "" || toolName === "") return [];
+      const input = isObject(part["input"]) ? part["input"] : {};
+      const payload: ToolUsePayload = { id: toolCallId, name: toolName, input };
+      const encoded = safeStringify(payload);
+      if (encoded === undefined) return [];
+      return [{ type: "status", status: `tool_use:${encoded}` }];
     }
 
     case "tool-output-available": {
+      const toolCallId = readString(part, "toolCallId");
       const toolName = readString(part, "toolName");
-      const output = part["output"];
-      const summary = summarizeToolOutput(toolName, output);
-      if (summary === "") return [];
-      return [{ type: "response", text: `\n${summary}` }];
+      if (toolCallId === "") return [];
+      const output = summarizeToolOutput(toolName, part["output"]);
+      const payload: ToolResultPayload = {
+        tool_use_id: toolCallId,
+        output,
+        is_error: false,
+      };
+      const encoded = safeStringify(payload);
+      if (encoded === undefined) return [];
+      return [{ type: "status", status: `tool_result:${encoded}` }];
     }
 
     case "tool-output-error": {
-      const toolName = readString(part, "toolName");
-      const errorText = readString(part, "errorText") || readString(part, "error");
-      return [
-        {
-          type: "response",
-          text: `\n[${toolName} error] ${errorText || "(no message)"}`,
-        },
-      ];
+      const toolCallId = readString(part, "toolCallId");
+      if (toolCallId === "") return [];
+      const errorText =
+        readString(part, "errorText") || readString(part, "error") || "(no message)";
+      const payload: ToolResultPayload = {
+        tool_use_id: toolCallId,
+        output: errorText,
+        is_error: true,
+      };
+      const encoded = safeStringify(payload);
+      if (encoded === undefined) return [];
+      return [{ type: "status", status: `tool_result:${encoded}` }];
     }
 
     // Bookkeeping events — silent on the wire.
@@ -86,44 +115,21 @@ export function translatePart(part: UIPart): Chunk[] {
   }
 }
 
+interface ToolUsePayload {
+  readonly id: string;
+  readonly name: string;
+  readonly input: Record<string, unknown>;
+}
+
+interface ToolResultPayload {
+  readonly tool_use_id: string;
+  readonly output: string;
+  readonly is_error: boolean;
+}
+
 function readString(part: UIPart, key: string): string {
   const value = part[key];
   return typeof value === "string" ? value : "";
-}
-
-function summarizeToolInput(toolName: string, input: unknown): string {
-  if (input === undefined || input === null) return "";
-  const obj = isObject(input) ? input : {};
-  switch (toolName) {
-    case "bash": {
-      const command = readObjectString(obj, "command");
-      return command ? `$ ${command}` : "";
-    }
-    case "read": {
-      const filePath = readObjectString(obj, "filePath");
-      return filePath ? `read ${filePath}` : "";
-    }
-    case "write": {
-      const filePath = readObjectString(obj, "filePath");
-      return filePath ? `write ${filePath}` : "";
-    }
-    case "edit": {
-      const filePath = readObjectString(obj, "filePath");
-      return filePath ? `edit ${filePath}` : "";
-    }
-    case "grep": {
-      const pattern = readObjectString(obj, "pattern");
-      return pattern ? `grep ${pattern}` : "";
-    }
-    case "glob": {
-      const pattern = readObjectString(obj, "pattern") || readObjectString(obj, "filePattern");
-      return pattern ? `glob ${pattern}` : "";
-    }
-    default: {
-      const j = safeStringify(input);
-      return j === undefined ? "" : truncate(j, 80);
-    }
-  }
 }
 
 function summarizeToolOutput(toolName: string, output: unknown): string {

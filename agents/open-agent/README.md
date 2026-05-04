@@ -130,6 +130,31 @@ Programmatic users can pass any `(modelId: string) => LanguageModel` to
 `@synadia-ai/agents`'s `loadContextOptions`. `NATS_URL` overrides the
 context.
 
+## Wire format for tool calls
+
+The bridge mirrors the convention `agents/claude-code` uses on the
+wire: tool I/O rides on `status` chunks (§6.4) with a
+`<prefix>:<json>` payload. Spec §6.4 requires callers to silently
+ignore unrecognised status values, so this is forward-compatible —
+dumb clients (`nats req`, raw subscribers) just see the model's
+`response` text without tool noise; rich clients that opt into the
+convention (e.g. `examples/agent-web-ui`) get structured tool-call
+cards.
+
+```text
+status: "tool_use:{\"id\":\"<toolCallId>\",\"name\":\"bash\",\"input\":{\"command\":\"ls\"}}"
+status: "tool_result:{\"tool_use_id\":\"<toolCallId>\",\"output\":\"exit 0\\nfoo.txt\\nbar.txt\",\"is_error\":false}"
+```
+
+`tool_use` carries the AI SDK's `toolCallId` as `id` and the raw tool
+input verbatim. `tool_result` pairs to the same id via
+`tool_use_id` and carries a compact summary of the output (matches
+what the previous text-only flattening produced). On a tool error,
+`is_error: true` and `output` carries the error text.
+
+The model's `text-delta` parts continue to come through as ordinary
+`response` chunks, unchanged.
+
 ## Subject layout
 
 The bridge advertises:
