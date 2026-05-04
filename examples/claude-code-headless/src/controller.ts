@@ -22,6 +22,7 @@ import {
   PROMPT_QUEUE_GROUP,
   STATUS_ENDPOINT_NAME,
   STATUS_QUEUE_GROUP,
+  formatHumanBytes,
 } from "@synadia-ai/agents";
 
 import { responseText, statusAck } from "./chunk-encoder.js";
@@ -121,7 +122,12 @@ export class Controller {
       metadata,
     });
 
-    // §5/§6 prompt endpoint — returns help text.
+    // §5/§6 prompt endpoint — returns help text. Reflect the broker's
+    // negotiated `max_payload` rather than hardcoding "1MB", so the
+    // controller's advertised cap matches what callers can actually send.
+    const serverMaxPayload = this.opts.nc.info?.max_payload;
+    const maxPayloadStr = serverMaxPayload ? formatHumanBytes(serverMaxPayload) : "1MB";
+
     this.service.addEndpoint("prompt", {
       subject: this.promptSubject,
       queue: PROMPT_QUEUE_GROUP,
@@ -130,7 +136,7 @@ export class Controller {
         void this.handleHelp(msg);
       },
       metadata: {
-        max_payload: "1MB",
+        max_payload: maxPayloadStr,
         attachments_ok: "false",
       },
     });

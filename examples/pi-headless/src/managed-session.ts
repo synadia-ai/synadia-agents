@@ -103,6 +103,10 @@ export class ManagedSession {
     if (this.model) extraMetadata["model"] = this.model;
     if (this.thinkingLevel) extraMetadata["thinking_level"] = this.thinkingLevel;
 
+    // `maxPayload` is intentionally omitted — `ReferenceAgent` defaults to
+    // the broker's negotiated `nc.info.max_payload` (e.g. 8 MB on NGS, 1 MB
+    // on a default `nats-server`), which is exactly what we want each
+    // session to advertise.
     this.refAgent = new ReferenceAgent({
       nc: this.nc,
       agent: "pi-headless",
@@ -111,7 +115,6 @@ export class ManagedSession {
       session: this.sessionId,
       description: `pi-headless session ${this.sessionId} (${this.cwd})`,
       version: "0.4.0",
-      maxPayload: "1MB",
       attachmentsOk: true,
       heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
       extraMetadata,
