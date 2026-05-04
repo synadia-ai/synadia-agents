@@ -155,6 +155,19 @@ what the previous text-only flattening produced). On a tool error,
 The model's `text-delta` parts continue to come through as ordinary
 `response` chunks, unchanged.
 
+## Permissions (dangerous bash commands)
+
+The vendored `bash` tool flags commands matching `\brm\s+-rf\b` or
+referencing `.env` files as needing approval. The bridge wires that
+hook through the spec §7 `query` mechanism: when the model proposes a
+flagged command, the caller receives a `query` chunk asking to
+approve. Reply with one of `yes` / `y` / `approve` / `allow` / `ok` /
+`1` to authorize execution; anything else (or a timeout) denies, and
+the model sees a tool error it can react to.
+
+Same primitive as `ask_user_question`. The `examples/agent-web-ui`
+client renders both the same way.
+
 ## Subject layout
 
 The bridge advertises:

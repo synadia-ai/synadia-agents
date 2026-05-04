@@ -62,7 +62,9 @@ export function buildBridgeAgent(opts: BuildBridgeAgentOptions) {
     edit: editFileTool(),
     grep: grepTool(),
     glob: globTool(),
-    bash: bashTool(),
+    bash: bashTool({
+      needsApproval: bashApprovalViaNats(opts.response, opts.askUserQuestionTimeoutMs),
+    }),
     task: taskTool,
     ask_user_question: askUserQuestionViaNats(opts.response, opts.askUserQuestionTimeoutMs),
     skill: skillTool,
@@ -178,6 +180,54 @@ function parseAnswer(replyText: string, input: AskUserQuestionInput) {
   }
 
   return { answers };
+}
+
+/**
+ * Approval set used to decide whether the user has greenlit a dangerous
+ * bash command. Anything outside this set — empty replies, "no",
+ * "decline", or unparseable text — is treated as a denial.
+ */
+const BASH_APPROVAL_TOKENS: ReadonlySet<string> = new Set([
+  "y",
+  "yes",
+  "approve",
+  "approved",
+  "allow",
+  "ok",
+  "okay",
+  "1",
+]);
+
+/**
+ * Wire the vendored `bashTool`'s `needsApproval` hook through the spec
+ * §7 query mechanism. When the upstream `commandNeedsApproval` flags a
+ * command as dangerous (`rm -rf`, `.env` references), we round-trip
+ * through `PromptResponse.ask`:
+ *
+ *   - User replies with one of {y, yes, approve, allow, ok, 1} → return
+ *     `false` (i.e. "no further approval needed") so the AI SDK
+ *     proceeds to `bash.execute`.
+ *   - Any other reply (or a query timeout) → throw, which the AI SDK
+ *     surfaces as a `tool-output-error` UIPart. The model sees a
+ *     denial and can pick a different approach.
+ *
+ * Returning `true` here would tell the AI SDK the call still needs
+ * approval — and there's no UI to grant it from a NATS bridge, so
+ * that path would deadlock. That's why a denial is signalled by
+ * throwing rather than by returning `true`.
+ */
+export function bashApprovalViaNats(response: PromptResponse, timeoutMs: number) {
+  return async ({ command }: { command: string }) => {
+    const reply = await response.ask(
+      `bash command requires approval — reply 'yes' to allow, anything else denies.\n\n  $ ${command}`,
+      { timeoutMs },
+    );
+    const trimmed = reply.prompt.trim().toLowerCase();
+    if (BASH_APPROVAL_TOKENS.has(trimmed)) return false;
+    throw new Error(
+      `bash command denied by user (reply: ${JSON.stringify(reply.prompt)}): ${command}`,
+    );
+  };
 }
 
 function matchOption(
