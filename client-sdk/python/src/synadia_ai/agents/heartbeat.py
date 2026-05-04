@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SerializerFunctionWrapHandler, model_serializer
 
 from ._logging import get_logger
 
@@ -53,6 +53,11 @@ class HeartbeatPayload(BaseModel):
     distinguishable. ``extra="ignore"`` because §8.3 requires callers
     to tolerate unknown fields for forward compat; pydantic silently
     drops them on decode.
+
+    The model's serializer drops ``session`` when it is ``None`` so that
+    a payload decoded from a session-less peer round-trips through
+    ``model_dump`` / ``model_dump_json`` without surfacing a
+    spec-illegal ``"session": null`` (§8.3 requires absence, not null).
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
@@ -63,6 +68,13 @@ class HeartbeatPayload(BaseModel):
     instance_id: str
     ts: str  # UTC ISO 8601
     interval_s: int
+
+    @model_serializer(mode="wrap")
+    def _drop_none_session(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
+        data: dict[str, object] = handler(self)
+        if data.get("session") is None:
+            data.pop("session", None)
+        return data
 
 
 @dataclass(frozen=True, slots=True)

@@ -53,6 +53,28 @@ def test_decoder_tolerates_missing_session() -> None:
     assert hb.session is None
 
 
+def test_encoder_omits_none_session() -> None:
+    """§8.3: ``session`` is present iff ``metadata.session`` is set —
+    "absent," not "null." A ``HeartbeatPayload`` decoded from a
+    session-less peer (``session=None``) MUST re-encode without a
+    ``"session"`` key, not as ``"session": null``. Locks in the
+    ``@model_serializer`` that strips the field when it is ``None`` so
+    forwarding paths stay spec-compliant.
+    """
+    hb = HeartbeatPayload(
+        agent="openclaw",
+        owner="alice",
+        session=None,
+        instance_id="X",
+        ts="2026-04-21T00:00:00Z",
+        interval_s=30,
+    )
+    parsed = json.loads(hb.model_dump_json())
+    assert "session" not in parsed
+    # ``model_dump`` (dict form) honours the same contract.
+    assert "session" not in hb.model_dump()
+
+
 def test_unknown_fields_tolerated() -> None:
     """§8.3: receivers MUST tolerate additional unknown fields."""
     wire = (

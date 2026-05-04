@@ -34,6 +34,15 @@ Restores wire-shape parity with the spec and TS SDK after the
   the wrong shape ("the publishing subject IS the session — no
   payload field"), which is why no review caught it. Spec §8.3 +
   appendix B.11 + B.11a are the source of truth.
+- **`HeartbeatPayload` no longer round-trips `"session": null`** —
+  a payload decoded from a session-less peer (no `session` on the
+  wire → `payload.session = None`) now re-encodes without a
+  `"session"` key rather than as `"session": null`. §8.3 defines
+  the field as "present iff `metadata.session` is set," i.e. absent
+  vs. set; null is neither. A `@model_serializer` on
+  `HeartbeatPayload` drops `session` when `None`, so any forwarding
+  path (`model_dump` / `model_dump_json`) stays spec-compliant
+  without callers needing to remember `exclude_none=True`.
 
 ## [0.6.0] - 2026-05-03
 
