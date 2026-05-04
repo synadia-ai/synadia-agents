@@ -648,10 +648,17 @@ export class Bridge {
       // and headless **controllers** still auto-evict — for those the
       // card carries no transcript worth preserving and removing it
       // just reflects reality.
+      //
+      // Drop the timestamp once we've decided to exempt — otherwise
+      // every subsequent sweep re-iterates the same stale entry and
+      // re-makes the same decision. If the session ever resumes
+      // heartbeats (rare; disposed sessions don't typically come
+      // back), the wildcard tracker will re-seed the entry.
       if (
         (agent.agent === "pi-headless" || agent.agent === "cc-headless") &&
         agent.metadata["role"] === "session"
       ) {
+        this.lastHeartbeatAt.delete(instanceId);
         continue;
       }
       this.forgetAgent(instanceId);

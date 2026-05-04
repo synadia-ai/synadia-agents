@@ -200,6 +200,15 @@ export class ManagedSession {
 
   private async handlePrompt(msg: ServiceMsg): Promise<void> {
     if (this.disposed) {
+      // Send an error header before the §6.5 terminator so callers can
+      // tell "session was stopped" apart from "stream completed cleanly
+      // with no chunks." Both have a zero-byte body, so without the
+      // error header they look identical on the wire.
+      try {
+        msg.respondError(503, "session stopped");
+      } catch {
+        /* connection gone */
+      }
       try {
         msg.respond("");
       } catch {

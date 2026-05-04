@@ -17,6 +17,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   that arrived between expiry and the next sweep tick was served
   normally — the session accepted work it was about to drop. The
   session itself is unchanged; the guard only refuses new requests.
+- **Reject prompts to disposed sessions with `503 session stopped`.**
+  The pre-existing `disposed` short-circuit emitted only a §6.5
+  terminator — indistinguishable on the wire from "stream completed
+  cleanly with no chunks." Now sends an error header first so callers
+  can tell "session was stopped" apart from "session ran and produced
+  no output."
 
 ### Changed
 
