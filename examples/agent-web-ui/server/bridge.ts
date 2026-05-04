@@ -42,7 +42,23 @@ export class Bridge {
   private heartbeatTracker: HeartbeatTracker | null = null;
   private heartbeatWatchUnsub: (() => void) | null = null;
   private pendingInstanceLookups = new Set<string>();
+  /** Last heartbeat receipt per instance, used to evict silent agents. */
+  private lastHeartbeatAt = new Map<string, { atMs: number; intervalS: number }>();
+  private staleSweepTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
+
+  /**
+   * Stale-heartbeat eviction. After {@link STALE_MISS_FACTOR} missed
+   * heartbeats from an instance, the bridge gives up on it and emits
+   * `agent-removed` to the UI — without this, a disposed pi/cc-headless
+   * session leaves a zombie card on screen until the user hits Refresh.
+   * `STALE_SWEEP_INTERVAL_MS` is the cadence at which we evaluate the
+   * map; the actual eviction threshold is `intervalS * STALE_MISS_FACTOR`
+   * (so an agent with `intervalS = 30` is evicted after ~90 s of silence).
+   */
+  private static readonly STALE_SWEEP_INTERVAL_MS = 5_000;
+  private static readonly STALE_MISS_FACTOR = 3;
+  private static readonly DEFAULT_HB_INTERVAL_S = 30;
 
   constructor(
     private readonly agents: Agents,
@@ -62,6 +78,7 @@ export class Bridge {
       ...(natsServer ? { natsServer } : {}),
     });
     this.startHeartbeatWatch();
+    this.startStaleSweep();
   }
 
   onMessage(raw: string): void {
@@ -129,6 +146,11 @@ export class Bridge {
       void this.heartbeatTracker.stop();
       this.heartbeatTracker = null;
     }
+    if (this.staleSweepTimer) {
+      clearInterval(this.staleSweepTimer);
+      this.staleSweepTimer = null;
+    }
+    this.lastHeartbeatAt.clear();
     this.pendingInstanceLookups.clear();
     this.ws = null;
   }
@@ -580,9 +602,67 @@ export class Bridge {
     });
     this.heartbeatWatchUnsub = tracker.onAnyHeartbeat((hb) => {
       if (this.closed) return;
+      // Record receipt regardless of whether the instance is already
+      // tracked — stale-sweep needs the timestamp for both newly-seen
+      // and already-known instances.
+      this.lastHeartbeatAt.set(hb.instanceId, {
+        atMs: Date.now(),
+        intervalS: hb.intervalS || Bridge.DEFAULT_HB_INTERVAL_S,
+      });
       if (this.agentsByInstanceId.has(hb.instanceId)) return;
       void this.ensureAgentKnown(hb.instanceId);
     });
+  }
+
+  /**
+   * Sweep `lastHeartbeatAt` and forget any instance whose last heartbeat
+   * is older than `intervalS * STALE_MISS_FACTOR`. Runs on a single
+   * unref'd timer so it doesn't keep the process alive on its own.
+   */
+  private startStaleSweep(): void {
+    if (this.staleSweepTimer) return;
+    this.staleSweepTimer = setInterval(
+      () => this.evictStaleAgents(),
+      Bridge.STALE_SWEEP_INTERVAL_MS,
+    );
+    this.staleSweepTimer.unref?.();
+  }
+
+  private evictStaleAgents(): void {
+    if (this.closed) return;
+    const now = Date.now();
+    for (const [instanceId, last] of this.lastHeartbeatAt) {
+      const cutoffMs = last.intervalS * 1000 * Bridge.STALE_MISS_FACTOR;
+      if (now - last.atMs <= cutoffMs) continue;
+      const agent = this.agentsByInstanceId.get(instanceId);
+      if (!agent) {
+        // Wildcard heartbeat from an instance whose lookup is still
+        // pending. Drop the timestamp; it'll be re-seeded by the next
+        // heartbeat (if one ever arrives) or by registerAgent.
+        this.lastHeartbeatAt.delete(instanceId);
+        continue;
+      }
+      // Disposed pi/cc-headless **sessions** are deliberately kept on
+      // screen so the user can copy / read past chat messages from
+      // them; the trash button removes them manually. Regular agents
+      // and headless **controllers** still auto-evict — for those the
+      // card carries no transcript worth preserving and removing it
+      // just reflects reality.
+      //
+      // Drop the timestamp once we've decided to exempt — otherwise
+      // every subsequent sweep re-iterates the same stale entry and
+      // re-makes the same decision. If the session ever resumes
+      // heartbeats (rare; disposed sessions don't typically come
+      // back), the wildcard tracker will re-seed the entry.
+      if (
+        (agent.agent === "pi-headless" || agent.agent === "cc-headless") &&
+        agent.metadata["role"] === "session"
+      ) {
+        this.lastHeartbeatAt.delete(instanceId);
+        continue;
+      }
+      this.forgetAgent(instanceId);
+    }
   }
 
   /**
@@ -612,8 +692,22 @@ export class Bridge {
 
   private registerAgent(agent: Agent): void {
     this.agentsByInstanceId.set(agent.instanceId, agent);
+    // Seed the stale-sweep clock at registration time so a freshly-
+    // discovered agent isn't immediately evicted before its first
+    // heartbeat arrives. The wildcard tracker may have already set a
+    // newer timestamp; don't overwrite it.
+    if (!this.lastHeartbeatAt.has(agent.instanceId)) {
+      this.lastHeartbeatAt.set(agent.instanceId, {
+        atMs: Date.now(),
+        intervalS: Bridge.DEFAULT_HB_INTERVAL_S,
+      });
+    }
     if (!this.heartbeatSubs.has(agent.instanceId)) {
       const unsub = this.agents.onHeartbeat(agent.instanceId, (hb) => {
+        this.lastHeartbeatAt.set(agent.instanceId, {
+          atMs: Date.now(),
+          intervalS: hb.intervalS || Bridge.DEFAULT_HB_INTERVAL_S,
+        });
         this.send({
           kind: "heartbeat",
           instanceId: agent.instanceId,
@@ -628,6 +722,7 @@ export class Bridge {
 
   private forgetAgent(instanceId: string): void {
     if (!this.agentsByInstanceId.delete(instanceId)) return;
+    this.lastHeartbeatAt.delete(instanceId);
     const unsub = this.heartbeatSubs.get(instanceId);
     if (unsub) {
       try {

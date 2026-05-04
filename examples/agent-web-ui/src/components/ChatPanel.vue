@@ -11,7 +11,8 @@ import {
   messagesFor,
   type Message,
 } from "../stores/chat.ts";
-import { bumpCcSessionCost } from "../stores/ccexec.ts";
+import { ccexecState, bumpCcSessionCost } from "../stores/ccexec.ts";
+import { piexecState } from "../stores/piexec.ts";
 import { bucketOf, BUCKETS } from "../stores/agents.ts";
 import { randomUUID } from "../uuid.ts";
 import type { DiscoveredAgentDTO } from "../wire.ts";
@@ -26,6 +27,30 @@ const isCcSession = computed(
     props.agent.agent === "cc-headless" &&
     props.agent.metadata?.["role"] === "session",
 );
+
+const isPiSession = computed(
+  () =>
+    props.agent.agent === "pi-headless" &&
+    props.agent.metadata?.["role"] === "session",
+);
+
+/**
+ * True for a headless session that's no longer accepting prompts —
+ * either the controller cleaned it up (no summary) or its lifetime
+ * ran out (`remaining_lifetime_s <= 0`). Mirrors the corresponding
+ * `sessionState` computed in AgentCard. Infinite-lifetime sessions
+ * (`max_lifetime_s = 0`) are explicitly excluded so they stay
+ * promptable forever, matching the badge behavior on the card.
+ */
+const isExpired = computed<boolean>(() => {
+  if (!isPiSession.value && !isCcSession.value) return false;
+  const s = isPiSession.value
+    ? piexecState.summaries.get(props.agent.name)
+    : ccexecState.summaries.get(props.agent.name);
+  if (!s) return true;
+  if (s.max_lifetime_s === 0) return false;
+  return s.remaining_lifetime_s <= 0;
+});
 
 // Human label for the chat-header pill. Mirrors AgentCard's tagLabel
 // so a card and its chat header always show the same friendly name.
@@ -224,9 +249,12 @@ function onStop(): void {
     </header>
     <div v-if="error" class="error mono">{{ error }}</div>
     <MessageList :messages="currentMessages" @reply="onQueryReply" />
+    <div v-if="isExpired" class="expired-banner mono">
+      Session expired — past messages are read-only. Start a new session to keep working.
+    </div>
     <PromptArea
       :busy="busy"
-      :disabled="false"
+      :disabled="isExpired"
       :attachments-ok="attachmentsOk"
       :max-payload-bytes="maxPayloadBytes"
       @submit="onSubmit"
@@ -283,5 +311,14 @@ function onStop(): void {
   color: var(--error);
   background: var(--error-dim);
   border-bottom: 1px solid rgba(248, 113, 113, 0.3);
+}
+.expired-banner {
+  padding: var(--space-sm) var(--space-lg);
+  font-size: var(--text-xs);
+  color: var(--error);
+  background: var(--error-dim);
+  border-top: 1px solid rgba(248, 113, 113, 0.3);
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
 }
 </style>
