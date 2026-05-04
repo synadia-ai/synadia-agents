@@ -6,6 +6,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
 the 0.x line is explicitly unstable per protocol spec §11.2.
 
+## [0.3.0] - 2026-05-04
+
+Restores wire-shape parity with the spec and TS SDK after the
+2026-04-28 session-name collapse mistakenly dropped `session` from
+service metadata and §8.3 / §8.7 payloads. Reported as
+[issue #73](https://github.com/synadia-ai/synadia-agents/issues/73).
+
+### Fixed
+
+- **`metadata.session` (§3.2)** — `AgentService.start()` now advertises
+  `metadata.session = session_name` alongside the existing
+  `{agent, owner, protocol_version}` triple. Per §3.2 a session-less
+  harness MAY omit the field OR set it to `"default"`; since the
+  Python constructor takes a required `session_name` (callers pass
+  `"default"` when session-less), we always emit it for a uniform
+  shape across both styles.
+- **`HeartbeatPayload.session` (§8.3)** — `build_heartbeat_payload`
+  now populates `session=subject.session_name`, so periodic
+  heartbeats published on `agents.hb.{a}.{o}.{session_name}` mirror
+  `metadata.session` per §8.3 / appendix B.11.
+- **Status reply `session` (§8.7)** — the same builder feeds the
+  `agents.status.{a}.{o}.{session_name}` request/reply endpoint, so
+  a §8.7 status reply carries `session` matching the heartbeat. §8.7
+  + appendix B.11a explicitly require the same §8.3 schema.
+
+### Changed
+
+- **Dependency floor bumped to `synadia-ai-agents>=0.7`** so the
+  shared `HeartbeatPayload` model has the `session` field — needed
+  for the publisher and status handler to populate it.
+
 ## [0.2.0] - 2026-05-03
 
 ### Changed

@@ -295,9 +295,16 @@ class AgentService:
         # limit (§2.1). See ``_effective_max_payload`` for the rule.
         max_payload_str = self._effective_max_payload()
 
+        # §3.2: metadata.session matches the 5th subject token. For session-
+        # less harnesses (e.g. openclaw) the spec allows omitting the field
+        # OR setting it to "default"; the Python constructor takes a required
+        # `session_name` (defaulting callers pass "default"), so we always
+        # advertise it. Callers that filter on metadata.session see a
+        # consistent shape across session-aware and session-less agents.
         metadata: dict[str, str] = {
             "agent": self.subject.agent,
             "owner": self.subject.owner,
+            "session": self.subject.session_name,
             "protocol_version": _PROTOCOL_VERSION,
         }
         config = ServiceConfig(

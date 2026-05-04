@@ -24,64 +24,71 @@ if TYPE_CHECKING:
 
 
 def test_decodes_spec_example() -> None:
-    """v0.3 wire shape — heartbeat payload no longer carries a session."""
+    """Round-trips the canonical §8.3 / appendix B.11 wire example."""
     wire = (
-        b'{"agent":"claude-code","owner":"aconnolly",'
+        b'{"agent":"claude-code","owner":"aconnolly","session":"synadia-com-2",'
         b'"instance_id":"VMKS6MHK71PCPWGY38A7N5",'
         b'"ts":"2026-04-21T14:23:01Z","interval_s":30}'
     )
     hb = HeartbeatPayload.model_validate_json(wire)
     assert hb.agent == "claude-code"
     assert hb.owner == "aconnolly"
+    assert hb.session == "synadia-com-2"
     assert hb.instance_id == "VMKS6MHK71PCPWGY38A7N5"
     assert hb.ts == "2026-04-21T14:23:01Z"
     assert hb.interval_s == 30
 
 
-def test_inbound_session_is_silently_dropped() -> None:
-    """A non-compliant v0.2 peer might send a stray `session`; §8.3 says
-    receivers MUST tolerate unknown fields. ``HeartbeatPayload`` uses
-    ``extra="ignore"``, so the stray field is dropped on decode rather
-    than surfacing as a first-class attribute or riding into a re-encode."""
+def test_decoder_tolerates_missing_session() -> None:
+    """§8.3: ``session`` is present iff ``metadata.session`` is set, so the
+    decoder MUST accept payloads from spec-compliant session-less peers
+    that omit the field entirely. ``payload.session`` is ``None`` in that
+    case; the receiver can fall back to the 5th subject token if it cares.
+    """
     wire = (
-        b'{"agent":"claude-code","owner":"alice","session":"legacy",'
-        b'"instance_id":"ABC","ts":"2026-04-21T00:00:00Z","interval_s":30}'
+        b'{"agent":"openclaw","owner":"alice",'
+        b'"instance_id":"X","ts":"2026-04-21T00:00:00Z","interval_s":30}'
     )
     hb = HeartbeatPayload.model_validate_json(wire)
-    assert hb.agent == "claude-code"
-    # `session` is no longer a HeartbeatPayload field at all.
-    assert "session" not in HeartbeatPayload.model_fields
-    # And the stray field did NOT round-trip — `extra="ignore"` drops it.
-    parsed = json.loads(hb.model_dump_json())
-    assert "session" not in parsed
+    assert hb.session is None
 
 
 def test_unknown_fields_tolerated() -> None:
     """§8.3: receivers MUST tolerate additional unknown fields."""
     wire = (
-        b'{"agent":"claude-code","owner":"alice","instance_id":"X",'
-        b'"ts":"2026-04-21T00:00:00Z","interval_s":30,'
+        b'{"agent":"claude-code","owner":"alice","session":"default",'
+        b'"instance_id":"X","ts":"2026-04-21T00:00:00Z","interval_s":30,'
         b'"future_field":42,"another":"ok"}'
     )
     hb = HeartbeatPayload.model_validate_json(wire)
     assert hb.agent == "claude-code"
+    # ``extra="ignore"`` drops the unknowns on re-encode.
+    parsed = json.loads(hb.model_dump_json())
+    assert "future_field" not in parsed
+    assert "another" not in parsed
 
 
-def test_encoded_form_carries_no_session_key() -> None:
-    """Regression guard: the §8.3 payload MUST NOT carry a `session` key
-    on the wire — under v0.3 the publishing subject IS the session."""
+def test_encoded_form_carries_session_key() -> None:
+    """§8.3 / appendix B.11: the heartbeat payload carries `session` on the wire.
+
+    Mirrors ``metadata.session`` per §3.2; for session-less harnesses the
+    Python SDK emits ``"default"`` rather than omitting the field, so the
+    on-wire shape stays uniform across session-aware and session-less
+    callers.
+    """
     hb = HeartbeatPayload(
         agent="openclaw",
         owner="rene",
+        session="default",
         instance_id="X",
         ts="2026-04-21T00:00:00Z",
         interval_s=30,
     )
     parsed = json.loads(hb.model_dump_json())
-    assert "session" not in parsed
     assert parsed == {
         "agent": "openclaw",
         "owner": "rene",
+        "session": "default",
         "instance_id": "X",
         "ts": "2026-04-21T00:00:00Z",
         "interval_s": 30,
@@ -105,6 +112,7 @@ async def test_tracker_keys_on_instance_id_not_subject(nc: NATSClient) -> None:
             payload = HeartbeatPayload(
                 agent="test",
                 owner="pytest",
+                session="shared",
                 instance_id=instance_id,
                 ts="2026-04-21T00:00:00Z",
                 interval_s=5,
@@ -148,6 +156,7 @@ async def test_tracker_liveness_is_offline_when_stale(nc: NATSClient) -> None:
         payload = HeartbeatPayload(
             agent="test",
             owner="pytest",
+            session="stale",
             instance_id="stale-id",
             ts="2026-04-21T00:00:00Z",
             interval_s=5,
@@ -188,6 +197,7 @@ async def test_tracker_on_heartbeat_listener_fires_and_unsubscribes(
             payload = HeartbeatPayload(
                 agent="test",
                 owner="pytest",
+                session="listener",
                 instance_id="listener-id",
                 ts="2026-04-21T00:00:00Z",
                 interval_s=5,
@@ -208,6 +218,7 @@ async def test_tracker_on_heartbeat_listener_fires_and_unsubscribes(
             HeartbeatPayload(
                 agent="test",
                 owner="pytest",
+                session="listener",
                 instance_id="listener-id",
                 ts="2026-04-21T00:00:00Z",
                 interval_s=5,
@@ -228,6 +239,7 @@ async def test_tracker_on_heartbeat_listener_fires_and_unsubscribes(
                 HeartbeatPayload(
                     agent="test",
                     owner="pytest",
+                    session="listener",
                     instance_id="listener-id",
                     ts="2026-04-21T00:00:00Z",
                     interval_s=5,
