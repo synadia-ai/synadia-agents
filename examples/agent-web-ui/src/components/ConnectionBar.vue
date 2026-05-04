@@ -5,9 +5,10 @@ import { agentsState } from "../stores/agents.ts";
 
 const emit = defineEmits<{ refresh: [] }>();
 
-// Dashboard's own version — Vite-`define`d at build time from package.json
-// so `bun run build` always picks up the current value without a runtime
-// fetch. Sits next to the protocol version in the bar for parity.
+// Build version — Vite-`define`d at build time from package.json so
+// `bun run build` always picks up the current value without a runtime
+// fetch. No longer rendered visibly in the bar; surfaced on the brand
+// title's hover tooltip alongside the SDK protocol version.
 const appVersion = __APP_VERSION__;
 
 const statusLabel = computed(() => {
@@ -41,13 +42,10 @@ const statusLabel = computed(() => {
     </div>
 
     <div class="brand">
-      <span class="brand-title">NATS Agent Dashboard</span>
       <span
-        class="brand-versions mono"
-        :title="`Dashboard build v${appVersion}` + (bridgeState.sdkProtocolVersion ? ` · protocol v${bridgeState.sdkProtocolVersion}` : '')"
-      >
-        (v{{ appVersion }}<template v-if="bridgeState.sdkProtocolVersion"> / protocol v{{ bridgeState.sdkProtocolVersion }}</template>)
-      </span>
+        class="brand-title"
+        :title="`Build v${appVersion}` + (bridgeState.sdkProtocolVersion ? ` · protocol v${bridgeState.sdkProtocolVersion}` : '')"
+      >NATS Agent Console</span>
     </div>
 
     <div class="right">
@@ -106,12 +104,6 @@ const statusLabel = computed(() => {
   font-size: var(--text-sm);
   color: var(--text-secondary);
   letter-spacing: 0.04em;
-}
-
-.brand-versions {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-  letter-spacing: 0.02em;
 }
 
 .dot {
