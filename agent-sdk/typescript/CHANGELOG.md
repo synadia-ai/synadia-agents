@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-04
+
+No functional changes. Published in lockstep with `@synadia-ai/agents`
+0.5.0 so consumers installing both packages stay version-aligned. The
+`dependencies."@synadia-ai/agents"` pin tracks `^0.5.0`.
+
 ## [0.4.0] - 2026-05-01
 
 Initial release. Sister package to `@synadia-ai/agents` 0.4.0 — agent
