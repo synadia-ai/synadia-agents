@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false,
+    "noEmit": true,
+    "types": ["bun", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@open-agents/sandbox": ["../../agents/open-agent/vendor/sandbox/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "vendor/**/*.ts"],
+  "exclude": ["vendor/vercel/**/*.test.ts"]
+}
