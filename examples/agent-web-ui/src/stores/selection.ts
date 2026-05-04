@@ -32,14 +32,15 @@ export function clearSelection(): void {
   selectionState.ids.clear();
 }
 
-// Drop selections for agents that vanished from discovery. The watch fires
-// whenever the list changes; we diff against the current set so a normal
-// list refresh that returns the same agents is a no-op. Selections survive
-// transient empties (controller hiccup, brief disconnect) only because the
-// list itself doesn't churn — if the bridge clears the list, selection
-// follows it down.
+// Drop selections for agents that vanished from discovery. We watch the
+// list reference: every mutator in `agents.ts` (`setAgents`, `addAgent`,
+// `removeAgent`) reassigns `agentsState.list`, so reference equality is
+// exactly the right key — fires on add / remove / wholesale refresh, and
+// stays inert on pure selection toggles. Avoids serialising instanceIds
+// into a string key (which would risk false equality if an id ever
+// contained the separator).
 watch(
-  () => agentsState.list.map((a) => a.instanceId).join(","),
+  () => agentsState.list,
   () => {
     const present = new Set(agentsState.list.map((a) => a.instanceId));
     for (const id of [...selectionState.ids]) {

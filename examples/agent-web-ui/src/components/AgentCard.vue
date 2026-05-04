@@ -283,7 +283,11 @@ function onTrash(): void {
 
 <template>
   <div class="card-wrap" :style="{ '--tag-color': tagColor }">
-    <button
+    <!-- div+role=button (not a real <button>) so the inner select-circle
+         button is valid markup. Nesting interactive elements inside an
+         actual <button> violates the HTML spec and confuses screen readers,
+         which can merge them into a single control. -->
+    <div
       class="card"
       :class="{
         selected,
@@ -291,21 +295,22 @@ function onTrash(): void {
         'is-session': isPiSession || isCcSession,
         'is-multi-selected': isMultiSelected,
       }"
-      type="button"
+      role="button"
+      tabindex="0"
       @click="$emit('select', agent.instanceId)"
+      @keydown.enter.prevent="$emit('select', agent.instanceId)"
+      @keydown.space.prevent="$emit('select', agent.instanceId)"
     >
       <header class="card-head">
-        <span
+        <button
           v-if="multiSelectable"
+          type="button"
           class="select-circle"
           :class="{ active: isMultiSelected }"
           role="checkbox"
-          tabindex="0"
           :aria-checked="isMultiSelected ? 'true' : 'false'"
           :title="isMultiSelected ? 'Deselect for multi-prompt' : 'Select for multi-prompt'"
           @click="onToggleSelect"
-          @keydown.space.prevent="onToggleSelect"
-          @keydown.enter.prevent="onToggleSelect"
         >
           <svg
             v-if="isMultiSelected"
@@ -318,7 +323,7 @@ function onTrash(): void {
             stroke-linejoin="round"
             aria-hidden="true"
           ><polyline points="20 6 9 17 4 12" /></svg>
-        </span>
+        </button>
         <div class="head-tags">
           <span class="agent-tag mono">{{ tagLabel }}</span>
           <span v-if="isController" class="role-badge mono" title="headless controller — spawns sessions">CONTROLLER</span>
@@ -384,7 +389,7 @@ function onTrash(): void {
       </div>
 
       <p v-if="isController" class="hint">click to spawn or fan out</p>
-    </button>
+    </div>
 
     <button
       v-if="isPiSession || isCcSession"
@@ -508,6 +513,13 @@ function onTrash(): void {
   background: var(--bg-tertiary);
   border-color: color-mix(in srgb, var(--tag-color, var(--text-muted)) 45%, transparent);
   transform: translateY(-1px);
+}
+.card:focus-visible {
+  /* The card root is a div+role=button (not a real <button>) so the global
+     :focus-visible rule on form controls doesn't apply automatically.
+     Keep keyboard focus visible. */
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
 }
 .card.selected {
   border-color: var(--accent-primary);

@@ -67,6 +67,13 @@ export function startPromptStream(
     });
   }
 
+  // `bridge.prompt` invokes `onError` synchronously when the WebSocket is
+  // closed at call time (see `useBridge.ts` — the send guard rejects the
+  // payload before any async hop). The handler clears `activePromptId`,
+  // but we must not then *re-stamp* it with the returned id below — that
+  // would leave the session permanently flagged busy until reload, which
+  // for fan-out would lock every targeted agent on a single network blip.
+  let syncErrored = false;
   let promptId = "";
   promptId = bridge.prompt(instanceId, text, attachments, {
     onResponse(chunk, responseAttachments) {
@@ -129,6 +136,7 @@ export function startPromptStream(
       session.activePromptId = null;
     },
     onError(message, code, details) {
+      syncErrored = true;
       const m = findMessage(instanceId, currentAgentMsgId);
       if (m) {
         const detail = code ? ` [${code}]` : "";
@@ -139,6 +147,6 @@ export function startPromptStream(
       session.activePromptId = null;
     },
   });
-  session.activePromptId = promptId;
+  if (!syncErrored) session.activePromptId = promptId;
   return promptId;
 }

@@ -141,10 +141,11 @@ export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
  *   Claude Code → CC Headless Sessions → Hermes → Open Agent →
  *   OpenClaw → PI → PI Headless Sessions → Other
  *
- * Controller buckets are not in this section; they get -1 so a future stray
- * controller can't silently land in the wrong group.
+ * Controller buckets are deliberately absent — they're sorted by the separate
+ * `sortControllers` path. `Partial<>` lets us read with a sentinel fallback
+ * so a future stray bucket sorts to the end instead of crashing.
  */
-const PROMPTABLE_RANK: Record<Bucket, number> = {
+const PROMPTABLE_RANK: Partial<Record<Bucket, number>> = {
   [BUCKETS.CC_AGENT]: 1,
   [BUCKETS.CC_EXEC_SESSION]: 2,
   [BUCKETS.HERMES]: 3,
@@ -153,23 +154,32 @@ const PROMPTABLE_RANK: Record<Bucket, number> = {
   [BUCKETS.PI_AGENT]: 6,
   [BUCKETS.PI_EXEC_SESSION]: 7,
   [BUCKETS.OTHER]: 99,
-  [BUCKETS.PI_EXEC_CONTROL]: -1,
-  [BUCKETS.CC_EXEC_CONTROL]: -1,
 };
 
 function isController(bucket: Bucket): boolean {
   return bucket === BUCKETS.PI_EXEC_CONTROL || bucket === BUCKETS.CC_EXEC_CONTROL;
 }
 
+function byOwnerThenName(a: DiscoveredAgentDTO, b: DiscoveredAgentDTO): number {
+  const o = a.owner.localeCompare(b.owner);
+  if (o !== 0) return o;
+  return a.name.localeCompare(b.name);
+}
+
 function sortPromptables(list: DiscoveredAgentDTO[]): DiscoveredAgentDTO[] {
   return [...list].sort((a, b) => {
-    const ra = PROMPTABLE_RANK[bucketOf(a)];
-    const rb = PROMPTABLE_RANK[bucketOf(b)];
+    const ra = PROMPTABLE_RANK[bucketOf(a)] ?? 99;
+    const rb = PROMPTABLE_RANK[bucketOf(b)] ?? 99;
     if (ra !== rb) return ra - rb;
-    const byOwner = a.owner.localeCompare(b.owner);
-    if (byOwner !== 0) return byOwner;
-    return a.name.localeCompare(b.name);
+    return byOwnerThenName(a, b);
   });
+}
+
+function sortControllers(list: DiscoveredAgentDTO[]): DiscoveredAgentDTO[] {
+  // Controllers don't carry a family rank — there are at most a handful
+  // online at once and they all belong to the same conceptual "Controllers"
+  // group, so a flat owner→name sort is plenty.
+  return [...list].sort(byOwnerThenName);
 }
 
 export type AgentSectionId = "promptables" | "controllers";
@@ -195,7 +205,7 @@ export const agentSections = computed<{ id: AgentSectionId; label: string; agent
     out.push({ id: "promptables", label: "Agents / Sessions", agents: sortPromptables(promptables) });
   }
   if (controllers.length > 0) {
-    out.push({ id: "controllers", label: "Controllers", agents: sortPromptables(controllers) });
+    out.push({ id: "controllers", label: "Controllers", agents: sortControllers(controllers) });
   }
   return out;
 });
