@@ -397,14 +397,27 @@ export class Bridge {
     id: string,
     controllerInstanceId: string,
     endpoint: "spawn" | "stop" | "list",
-    label: string = "pi-headless",
+    expectedAgent: "pi-headless" | "cc-headless" = "pi-headless",
   ): string | null {
     const agent = this.agentsByInstanceId.get(controllerInstanceId);
     if (!agent) {
       this.sendError(
         id,
         "agent_not_found",
-        `no ${label} controller with instance id ${controllerInstanceId} in last discovery result — click Refresh`,
+        `no ${expectedAgent} controller with instance id ${controllerInstanceId} in last discovery result — click Refresh`,
+      );
+      return null;
+    }
+    // Both pi-headless and cc-headless controllers carry `metadata.role
+    // = "controller"`, so the agent token is what disambiguates which
+    // handler this controller belongs under. Without this check, a
+    // mis-dispatched cc controller id into a pi handler would silently
+    // construct a `cc-headless` extension subject and call it.
+    if (agent.agent !== expectedAgent) {
+      this.sendError(
+        id,
+        "wrong_agent_token",
+        `instance ${controllerInstanceId} is agent="${agent.agent}", expected "${expectedAgent}"`,
       );
       return null;
     }
@@ -412,7 +425,7 @@ export class Bridge {
       this.sendError(
         id,
         "not_a_controller",
-        `instance ${controllerInstanceId} is not a ${label} controller`,
+        `instance ${controllerInstanceId} is not a ${expectedAgent} controller`,
       );
       return null;
     }
@@ -443,7 +456,7 @@ export class Bridge {
       id,
       controllerInstanceId,
       "spawn",
-      "claude-code-headless",
+      "cc-headless",
     );
     if (!subject) return;
     try {
@@ -474,7 +487,7 @@ export class Bridge {
       id,
       controllerInstanceId,
       "stop",
-      "claude-code-headless",
+      "cc-headless",
     );
     if (!subject) return;
     try {
@@ -518,7 +531,7 @@ export class Bridge {
       id,
       controllerInstanceId,
       "list",
-      "claude-code-headless",
+      "cc-headless",
     );
     if (!subject) return;
     try {

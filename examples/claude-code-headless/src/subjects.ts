@@ -107,6 +107,20 @@ export function generateSessionId(): string {
   return `sess-${rand}`;
 }
 
+// `maxWait: 200` caps cold-boot latency at 200 ms; on a local NATS all
+// responses arrive in <5 ms, and 200 ms is well above any sane WAN RTT
+// to NGS. (The @nats-io/nats-core stall timer is hardcoded at 300 ms for
+// `strategy: "stall"`, so anything under 300 ms means maxWait wins —
+// which is what we want here.)
+const SRV_INFO_MAX_WAIT_MS = 200;
+const SRV_INFO_MAX_MESSAGES = 50;
+
+// Hard cap on auto-suffix attempts. Bounded implicitly by `maxMessages`
+// above, but an explicit guard makes failure visible rather than letting
+// the loop spin indefinitely if the wire ever returns more responses
+// than expected.
+const MAX_SUFFIX_ATTEMPTS = 100;
+
 /**
  * Probe `$SRV.INFO.agents` and pick the first controller name whose prompt
  * subject is unclaimed. Auto-suffixes `-2`, `-3`, … until a free slot is
@@ -121,14 +135,25 @@ export async function resolveControllerName(
   owner: string,
 ): Promise<string> {
   const svcm = new Svcm(nc);
-  const client = svcm.client({ strategy: "stall", maxWait: 1000, maxMessages: 50 });
+  const client = svcm.client({
+    strategy: "stall",
+    maxWait: SRV_INFO_MAX_WAIT_MS,
+    maxMessages: SRV_INFO_MAX_MESSAGES,
+  });
 
-  const taken = new Set<string>();
+  // Collect only `agents.prompt.<AGENT_TOKEN>.*` subjects — those are the
+  // only ones the suffix loop ever checks. Filtering at collection time
+  // makes the intent self-documenting and skips bookkeeping for the
+  // status/hb/spawn/stop/list/etc subjects we don't care about here.
+  const promptPrefix = `agents.prompt.${AGENT_TOKEN}.`;
+  const takenPromptSubjects = new Set<string>();
   try {
     const iter = await client.info(SERVICE_NAME);
     for await (const si of iter) {
       for (const ep of si.endpoints ?? []) {
-        taken.add(ep.subject);
+        if (ep.subject.startsWith(promptPrefix)) {
+          takenPromptSubjects.add(ep.subject);
+        }
       }
     }
   } catch {
@@ -136,9 +161,14 @@ export async function resolveControllerName(
   }
 
   let candidate = base;
-  let suffix = 2;
-  while (taken.has(controllerPromptSubject(owner, candidate))) {
-    candidate = `${base}-${suffix++}`;
+  for (let attempt = 0; attempt < MAX_SUFFIX_ATTEMPTS; attempt++) {
+    if (!takenPromptSubjects.has(controllerPromptSubject(owner, candidate))) {
+      return candidate;
+    }
+    candidate = `${base}-${attempt + 2}`;
   }
-  return candidate;
+  throw new Error(
+    `claude-code-headless: could not find a free controller name after ${MAX_SUFFIX_ATTEMPTS} attempts ` +
+      `(base="${base}", owner="${owner}"). Pass an explicit --name to override.`,
+  );
 }
