@@ -16,6 +16,30 @@ companion example at `examples/open-agent-vercel/` swaps in
 `@vercel/sandbox` to prove the sandbox interface is genuinely
 interchangeable.
 
+## ⚠️ Security: `LocalSandbox` is not isolated
+
+The `LocalSandbox` is for **trusted-operator** demos and dev work — it is
+**not** an isolation boundary. The recent reviewer pass added FS path
+confinement (every `read` / `write` / `stat` etc. is fenced to
+`workingDirectory`) and a subprocess env allowlist (parent-process
+secrets like `OPENROUTER_API_KEY` / `AI_GATEWAY_API_KEY` /
+`NATS_CREDS` are stripped before `bash` spawns) — but **the `bash` tool
+itself runs as the bridge user with full host filesystem privileges**.
+A model running `ls /Users/you/Downloads`, `cat ~/.ssh/known_hosts`, or
+similar via `bash` succeeds — that's not a regression, it's the
+inherent limitation of running shell commands on the host.
+
+If the model can reach the bridge, treat it as having shell access on
+the box. For real isolation, run the **`examples/open-agent-vercel/`**
+companion (or another `Sandbox` impl behind a chroot / container /
+namespace boundary) instead. The seam is the same; only the
+`sandboxFactory` differs.
+
+The CLI flow is built around a per-session tmp `workdir`
+(`${TMPDIR}/open-agent/<session>/`) so the model has a natural place
+to operate without trampling your repo, but that's ergonomics, not a
+fence.
+
 ## Quickstart
 
 ```bash
@@ -153,4 +177,5 @@ deferred to a follow-up PR.
 
 `AgentService` returns 500 for every handler error in v1; richer
 status-code granularity is a follow-up. `attachments_ok` is `false`
-for now. The `LocalSandbox` is not isolated — trust the operator.
+for now. The `LocalSandbox` is not isolated — see the security warning
+at the top.
