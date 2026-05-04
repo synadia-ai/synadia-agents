@@ -26,11 +26,12 @@ export function selectAgent(instanceId: string | null): void {
 export function setAgents(list: DiscoveredAgentDTO[]): void {
   agentsState.list = list;
   agentsState.lastDiscoveredAt = Date.now();
-  // If the previously selected agent vanished, clear selection.
-  if (
-    agentsState.selectedInstanceId &&
-    !list.some((a) => a.instanceId === agentsState.selectedInstanceId)
-  ) {
+  // If the previously selected agent vanished, clear selection — but
+  // skip this for virtual-session ids (`virtual:<uuid>`) which are
+  // UI-only entities not present in `list` and shouldn't be wiped on
+  // every refresh.
+  const sel = agentsState.selectedInstanceId;
+  if (sel && !sel.startsWith("virtual:") && !list.some((a) => a.instanceId === sel)) {
     agentsState.selectedInstanceId = null;
   }
 }

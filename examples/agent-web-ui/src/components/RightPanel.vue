@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import ChatPanel from "./ChatPanel.vue";
+import VirtualChatPanel from "./VirtualChatPanel.vue";
 import PiSpawnForm from "./piexec/SpawnForm.vue";
 import PiFanoutPanel from "./piexec/FanoutPanel.vue";
 import CcSpawnForm from "./ccexec/SpawnForm.vue";
@@ -9,6 +10,7 @@ import { selectedAgent } from "../stores/agents.ts";
 import { selectAgent } from "../stores/agents.ts";
 import { piexecState } from "../stores/piexec.ts";
 import { ccexecState } from "../stores/ccexec.ts";
+import { selectedVirtualSession } from "../stores/virtualSessions.ts";
 import type { PiExecSpawnDescriptor, CcExecSpawnDescriptor } from "../wire.ts";
 
 type Tab = "spawn" | "fanout";
@@ -46,8 +48,15 @@ function focusSpawnedSession(d: PiExecSpawnDescriptor | CcExecSpawnDescriptor): 
 
 <template>
   <aside class="right-panel">
+    <!-- Virtual session: aggregate fan-out chat. Wins over the real-agent
+         routing because virtual ids never resolve to a `selectedAgent`. -->
+    <VirtualChatPanel
+      v-if="selectedVirtualSession"
+      :session="selectedVirtualSession"
+    />
+
     <!-- Empty state -->
-    <div v-if="!agent" class="empty">
+    <div v-else-if="!agent" class="empty">
       <div class="empty-inner">
         <h2>Pick something</h2>
         <p>
