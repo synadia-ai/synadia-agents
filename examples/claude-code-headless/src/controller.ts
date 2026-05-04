@@ -1,17 +1,18 @@
 // claude-code-headless controller service.
 //
-// One protocol-compliant NATS agent that uses the 3rd subject token `cc`
-// (the verb `prompt` lives at token 2 per §2 v0.3) and exposes endpoints:
+// One protocol-compliant NATS agent that registers under the agent token
+// `cc-headless` (3rd subject token, see subjects.ts for the full layout)
+// and exposes endpoints:
 //
 //   - `prompt`  (§5/§6-compliant)  — returns a help-text response, so the
 //                                    controller is usable with `nats req`.
-//   - `status`  (§8.7 (v0.3))       — replies with a heartbeat-shaped payload.
+//   - `status`                     — replies with a heartbeat-shaped payload.
 //   - `spawn`   (request/reply)    — creates a new Claude Code session,
 //                                    registers it as its own NATS agent.
 //   - `stop`    (request/reply)    — disposes a session.
 //   - `list`    (request/reply)    — returns an array of session summaries.
 //
-// Heartbeats go to `agents.hb.cc.<owner>.<name>` every 30s (§8.1 v0.3).
+// Heartbeats go to `agents.hb.cc-headless.<owner>.<name>` every 30s.
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";
@@ -58,7 +59,7 @@ const helpText = (
     "",
     "This is a control-plane agent. It spawns, stops, and lists Claude Code",
     "sessions backed by @anthropic-ai/claude-agent-sdk. Each spawned session",
-    "registers as its OWN NATS agent at `agents.prompt.cc.<owner>.<session_id>`",
+    "registers as its OWN NATS agent at `agents.prompt.cc-headless.<owner>.<session_id>`",
     "and speaks the standard NATS Agent Protocol v0.3 — discover it via",
     "$SRV.INFO.agents and prompt it like any agent.",
     "",
@@ -107,10 +108,10 @@ export class Controller {
     const svcm = new Svcm(this.opts.nc);
 
     const metadata: Record<string, string> = {
-      agent: "cc",
+      agent: "cc-headless",
       owner: this.opts.owner,
       protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
-      role: "claude-code-headless-controller",
+      role: "controller",
     };
 
     this.service = await svcm.add({
@@ -134,7 +135,7 @@ export class Controller {
       },
     });
 
-    // §8.7 (v0.3) status endpoint — replies with a heartbeat-shaped payload.
+    // Status endpoint — replies with a heartbeat-shaped payload.
     this.service.addEndpoint(STATUS_ENDPOINT_NAME, {
       subject: this.statusSubject,
       queue: STATUS_QUEUE_GROUP,
@@ -144,7 +145,7 @@ export class Controller {
       },
     });
 
-    // Custom control endpoints — not protocol-standard, but allowed.
+    // Extension endpoints (verb-first, agents.<verb>.cc-headless.<owner>.<name>).
     this.service.addEndpoint("spawn", {
       subject: controllerSpawnSubject(this.opts.owner, this.opts.name),
       handler: (err, msg) => {
@@ -172,7 +173,7 @@ export class Controller {
     this.startHeartbeats();
     this.log(`claude-code-headless: controller listening on ${this.promptSubject}`);
     this.log(
-      `claude-code-headless: extra endpoints — ${controllerSpawnSubject(this.opts.owner, this.opts.name)}, ${controllerStopSubject(this.opts.owner, this.opts.name)}, ${controllerListSubject(this.opts.owner, this.opts.name)}`,
+      `claude-code-headless: control endpoints — ${controllerSpawnSubject(this.opts.owner, this.opts.name)}, ${controllerStopSubject(this.opts.owner, this.opts.name)}, ${controllerListSubject(this.opts.owner, this.opts.name)}`,
     );
   }
 
@@ -219,7 +220,7 @@ export class Controller {
     if (!this.service) return;
     const intervalS = this.opts.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S;
     const payload = {
-      agent: "cc",
+      agent: "cc-headless",
       owner: this.opts.owner,
       instance_id: this.service.info().id,
       ts: new Date().toISOString(),
@@ -304,7 +305,7 @@ export class Controller {
     const publish = (): void => {
       if (!this.service) return;
       const payload = {
-        agent: "cc",
+        agent: "cc-headless",
         owner: this.opts.owner,
         instance_id: this.service.info().id,
         ts: new Date().toISOString(),

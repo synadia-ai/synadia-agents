@@ -1,63 +1,69 @@
 // Subject builders + session-id sanitizer for claude-code-headless.
 //
-// Wire layout (v0.3 — verb-first per spec §2):
-//   agents.prompt.cc.<owner>.<name>     → controller's prompt endpoint
-//   agents.hb.cc.<owner>.<name>         → controller heartbeat
-//   agents.status.cc.<owner>.<name>     → controller status (§8.7 (v0.3))
-//   agents.prompt.cc.<owner>.<session>  → spawned session's prompt endpoint
-//   agents.hb.cc.<owner>.<session>      → spawned session heartbeat
-//   agents.status.cc.<owner>.<session>  → spawned session status
+// Wire layout (verb-first throughout):
 //
-// Custom endpoints stay on a non-verb-first form so they're clearly
-// application extensions (not protocol endpoints):
-//   agents.cc.<owner>.<name>.spawn      → POST JSON → session descriptor
-//   agents.cc.<owner>.<name>.stop       → POST {session_id} → ok
-//   agents.cc.<owner>.<name>.list       → (empty) → {sessions:[...]}
+//   agents.prompt.cc-headless.<owner>.<name>     → controller's prompt endpoint
+//   agents.hb.cc-headless.<owner>.<name>         → controller heartbeat
+//   agents.status.cc-headless.<owner>.<name>     → controller status
+//   agents.spawn.cc-headless.<owner>.<name>      → controller spawn endpoint
+//   agents.stop.cc-headless.<owner>.<name>       → controller stop endpoint
+//   agents.list.cc-headless.<owner>.<name>       → controller list endpoint
+//   agents.prompt.cc-headless.<owner>.<session>  → spawned session prompt
+//   agents.hb.cc-headless.<owner>.<session>      → spawned session heartbeat
+//   agents.status.cc-headless.<owner>.<session>  → spawned session status
 //
-// The `cc` token is shared with `agents/claude-code/` (Claude Code as
-// MCP-driven NATS client). They co-exist because the controller name
-// and per-session ids disambiguate the trailing subject tokens.
+// `cc-headless` distinguishes this controller (and its spawned sessions) from
+// the regular Claude Code agent at `agents/claude-code/` (which uses the
+// `cc` token). The wire layout is verb-first for every endpoint — the
+// protocol-mandated verbs (`prompt`, `hb`, `status`) share the same
+// `agents.<verb>.<agent>.<owner>.<name>` shape as the extension verbs
+// (`spawn`, `stop`, `list`), so any tracer or audit layer can subscribe to
+// `agents.<verb>.>` and parse identity positionally.
 
-export const AGENT_TOKEN = "cc";
+import type { NatsConnection } from "@nats-io/nats-core";
+import { Svcm } from "@nats-io/services";
+import { SERVICE_NAME } from "@synadia-ai/agents";
+
+export const AGENT_TOKEN = "cc-headless";
+
+function subject(verb: string, owner: string, name: string): string {
+  return `agents.${verb}.${AGENT_TOKEN}.${owner}.${name}`;
+}
 
 export function controllerPromptSubject(owner: string, name: string): string {
-  return `agents.prompt.${AGENT_TOKEN}.${owner}.${name}`;
+  return subject("prompt", owner, name);
 }
 
 export function controllerHeartbeatSubject(owner: string, name: string): string {
-  return `agents.hb.${AGENT_TOKEN}.${owner}.${name}`;
+  return subject("hb", owner, name);
 }
 
 export function controllerStatusSubject(owner: string, name: string): string {
-  return `agents.status.${AGENT_TOKEN}.${owner}.${name}`;
+  return subject("status", owner, name);
 }
 
-/** Custom endpoints — application-specific, NOT part of the v0.3 verb-first scheme. */
-const customSubjectRoot = (owner: string, name: string): string =>
-  `agents.${AGENT_TOKEN}.${owner}.${name}`;
-
 export function controllerSpawnSubject(owner: string, name: string): string {
-  return `${customSubjectRoot(owner, name)}.spawn`;
+  return subject("spawn", owner, name);
 }
 
 export function controllerStopSubject(owner: string, name: string): string {
-  return `${customSubjectRoot(owner, name)}.stop`;
+  return subject("stop", owner, name);
 }
 
 export function controllerListSubject(owner: string, name: string): string {
-  return `${customSubjectRoot(owner, name)}.list`;
+  return subject("list", owner, name);
 }
 
 export function sessionPromptSubject(owner: string, sessionId: string): string {
-  return `agents.prompt.${AGENT_TOKEN}.${owner}.${sessionId}`;
+  return subject("prompt", owner, sessionId);
 }
 
 export function sessionHeartbeatSubject(owner: string, sessionId: string): string {
-  return `agents.hb.${AGENT_TOKEN}.${owner}.${sessionId}`;
+  return subject("hb", owner, sessionId);
 }
 
 export function sessionStatusSubject(owner: string, sessionId: string): string {
-  return `agents.status.${AGENT_TOKEN}.${owner}.${sessionId}`;
+  return subject("status", owner, sessionId);
 }
 
 // Tokens MUST follow §2.2: [a-z0-9_-], not starting with $, 1..63 chars.
@@ -99,4 +105,40 @@ export function generateSessionId(): string {
   globalThis.crypto.getRandomValues(bytes);
   const rand = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   return `sess-${rand}`;
+}
+
+/**
+ * Probe `$SRV.INFO.agents` and pick the first controller name whose prompt
+ * subject is unclaimed. Auto-suffixes `-2`, `-3`, … until a free slot is
+ * found, so two claude-code-headless processes booted with the default
+ * `control` land on `control` and `control-2` respectively. The probe is
+ * best-effort (a small race window remains between discovery and svcm.add)
+ * — the trade-off is acceptable for a developer convenience.
+ */
+export async function resolveControllerName(
+  nc: NatsConnection,
+  base: string,
+  owner: string,
+): Promise<string> {
+  const svcm = new Svcm(nc);
+  const client = svcm.client({ strategy: "stall", maxWait: 1000, maxMessages: 50 });
+
+  const taken = new Set<string>();
+  try {
+    const iter = await client.info(SERVICE_NAME);
+    for await (const si of iter) {
+      for (const ep of si.endpoints ?? []) {
+        taken.add(ep.subject);
+      }
+    }
+  } catch {
+    // No existing services or timeout — fine.
+  }
+
+  let candidate = base;
+  let suffix = 2;
+  while (taken.has(controllerPromptSubject(owner, candidate))) {
+    candidate = `${base}-${suffix++}`;
+  }
+  return candidate;
 }

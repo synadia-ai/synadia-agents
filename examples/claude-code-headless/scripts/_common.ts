@@ -9,7 +9,7 @@ export interface CliArgs {
   readonly context?: string;
   readonly natsUrl?: string;
   readonly owner?: string;
-  readonly name?: string; // controller name, default "exec"
+  readonly name?: string; // controller name, default "control"
   readonly rest: ReadonlyMap<string, string>;
   readonly positional: ReadonlyArray<string>;
 }
@@ -91,7 +91,7 @@ export function ownerFilter(args: CliArgs): string {
 }
 
 export function nameFilter(args: CliArgs): string {
-  return args.name ?? "exec";
+  return args.name ?? "control";
 }
 
 export async function findController(agents: Agents, args: CliArgs): Promise<Agent> {
@@ -99,8 +99,8 @@ export async function findController(agents: Agents, args: CliArgs): Promise<Age
   const owner = ownerFilter(args);
   const name = nameFilter(args);
   const candidates = found.filter((a) => {
-    if (a.agent !== "cc") return false;
-    if (a.metadata["role"] !== "claude-code-headless-controller") return false;
+    if (a.agent !== "cc-headless") return false;
+    if (a.metadata["role"] !== "controller") return false;
     if (owner && a.owner !== owner) return false;
     if (name && a.name !== name) return false;
     return true;

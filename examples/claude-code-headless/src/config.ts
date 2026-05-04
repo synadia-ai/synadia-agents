@@ -45,7 +45,7 @@ export interface ClaudeCodeHeadlessConfig {
 const CONFIG_FILE = join(homedir(), ".claude-code-headless", "config.json");
 
 const BUILT_IN_DEFAULTS = {
-  name: "exec",
+  name: "control",
   // Sonnet is the right cost/quality default for a per-request spawner;
   // callers can override per-spawn or via config.json.
   defaultModel: "claude-sonnet-4-6",
