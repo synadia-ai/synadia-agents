@@ -18,7 +18,6 @@ import {
 } from "@synadia-ai/agents";
 import {
   DEFAULT_ATTACHMENTS_OK,
-  DEFAULT_HEARTBEAT_INTERVAL_S,
   DEFAULT_MAX_PAYLOAD,
   buildHeartbeatPayload,
   encodeChunk,
@@ -41,6 +40,13 @@ import { cleanupAgentStaging, stageAttachmentsIntoPrompt } from "./attachments.j
 // media-access allowlist (openclaw/src/media/local-roots.ts → `<stateDir>/media`)
 // accepts the paths we hand to image/pdf tools. Resolved once per process.
 const ATTACHMENT_BASE_DIR = join(resolveStateDir(), "media", "nats-channel");
+
+// Heartbeat cadence on `agents.hb.openclaw.<owner>.<name>`. Locally
+// pinned at 5s so the dashboard's stale-eviction loop (3× intervalS)
+// drops a dead `openclaw` agent in ~15s instead of ~90s. The SDK's
+// `DEFAULT_HEARTBEAT_INTERVAL_S` stays at 30s as a sensible third-party
+// default — first-party harnesses opt into the snappier cadence.
+const HEARTBEAT_INTERVAL_S = 5;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gateway state (module-level; one account runs at a time)
@@ -169,7 +175,7 @@ export async function startNatsGateway(
     handler: (err, msg: ServiceMsg) => {
       if (err) return;
       try {
-        const payload = buildHeartbeatPayload(subject, DEFAULT_HEARTBEAT_INTERVAL_S, instanceId, {
+        const payload = buildHeartbeatPayload(subject, HEARTBEAT_INTERVAL_S, instanceId, {
           session: DEFAULT_SESSION,
         });
         msg.respond(encodeHeartbeatPayload(payload));
@@ -187,7 +193,7 @@ export async function startNatsGateway(
   //    beacon can resolve metadata via $SRV.INFO (spec §8.2).
   const publishHeartbeat = (): void => {
     try {
-      const payload = buildHeartbeatPayload(subject, DEFAULT_HEARTBEAT_INTERVAL_S, instanceId, {
+      const payload = buildHeartbeatPayload(subject, HEARTBEAT_INTERVAL_S, instanceId, {
         session: DEFAULT_SESSION,
       });
       nc.publish(subject.heartbeat, encodeHeartbeatPayload(payload));
@@ -196,7 +202,7 @@ export async function startNatsGateway(
     }
   };
   publishHeartbeat(); // emit one immediately so discovery is prompt
-  activeHeartbeat = setInterval(publishHeartbeat, DEFAULT_HEARTBEAT_INTERVAL_S * 1000);
+  activeHeartbeat = setInterval(publishHeartbeat, HEARTBEAT_INTERVAL_S * 1000);
   activeHeartbeat.unref?.();
 
   ctx.log?.info?.(

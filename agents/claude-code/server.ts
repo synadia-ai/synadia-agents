@@ -49,7 +49,6 @@ import {
 } from '@synadia-ai/agents'
 import {
   DEFAULT_ATTACHMENTS_OK,
-  DEFAULT_HEARTBEAT_INTERVAL_S,
   DEFAULT_MAX_PAYLOAD,
   buildHeartbeatPayload,
   encodeChunk,
@@ -67,6 +66,13 @@ const AGENT_SUBJECT_TOKEN = 'cc'        // 3rd subject token (abbreviation per A
 const ACK_INTERVAL_MS = 30_000          // keep-alive cadence; caller inactivity timeout is 60s
 const PERMISSION_TIMEOUT_MS = 120_000   // query reply timeout for permission prompts
 const REQUEST_TTL_MS = 30 * 60 * 1000
+
+// Heartbeat cadence on `agents.hb.cc.<owner>.<name>`. Locally pinned at
+// 5s so the dashboard's stale-eviction loop (3× intervalS) drops a dead
+// `claude-code` agent in ~15s instead of ~90s. The SDK's
+// `DEFAULT_HEARTBEAT_INTERVAL_S` stays at 30s as a sensible third-party
+// default — first-party harnesses opt into the snappier cadence.
+const HEARTBEAT_INTERVAL_S = 5
 
 /** Fallback used only when `nc.info.max_payload` is unavailable. The live
  *  cap comes from the broker after connect. */
@@ -408,7 +414,7 @@ const instanceId = service.info().id
 // transport (request/response instead of pub/sub).
 function buildHeartbeatBytes(): Uint8Array {
   return encodeHeartbeatPayload(
-    buildHeartbeatPayload(agentSubject, DEFAULT_HEARTBEAT_INTERVAL_S, instanceId, {
+    buildHeartbeatPayload(agentSubject, HEARTBEAT_INTERVAL_S, instanceId, {
       session: sessionName,
     }),
   )
@@ -439,7 +445,7 @@ function publishHeartbeat(): void {
   nc.publish(heartbeatSubject, buildHeartbeatBytes())
 }
 publishHeartbeat()
-const heartbeatTimer = setInterval(publishHeartbeat, DEFAULT_HEARTBEAT_INTERVAL_S * 1000)
+const heartbeatTimer = setInterval(publishHeartbeat, HEARTBEAT_INTERVAL_S * 1000)
 heartbeatTimer.unref()
 
 // ── MCP server ─────────────────────────────────────────────────────────

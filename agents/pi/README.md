@@ -102,7 +102,7 @@ Available inside a running PI session:
 # Find your session (and any other agents on the same NATS)
 nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
 
-# Watch heartbeats — your session should beat every ~30 s
+# Watch heartbeats — your session beats every ~5 s
 nats sub 'agents.hb.*.*.*'
 ```
 

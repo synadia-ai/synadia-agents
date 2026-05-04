@@ -128,7 +128,7 @@ This plugin implements the **NATS Agent Protocol v0.3** end-to-end:
 - Publishes periodic `{"type":"status","data":"ack"}` keep-alives (§6.4)
   every 30 s while a request is open, resetting the caller's 60-second
   inactivity timeout.
-- Publishes heartbeats at `agents.hb.cc.<owner>.<name>` (§8.1 v0.3) every 30 s with the full
+- Publishes heartbeats at `agents.hb.cc.<owner>.<name>` (§8.1 v0.3) every 5 s with the full
   §8.3 payload including `instance_id` (§8).
 - Relays Claude Code permission prompts as mid-stream `query` chunks
   (§7) when `permissions.mode = query`.

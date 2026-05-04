@@ -47,7 +47,9 @@ export interface ControllerOptions {
 }
 
 const DEFAULT_VERSION = "0.4.0";
-const DEFAULT_HEARTBEAT_INTERVAL_S = 30;
+// Mirrors the session-side `HEARTBEAT_INTERVAL_S` so a controller
+// and its spawned sessions share the same cadence on `agents.hb.*`.
+const DEFAULT_HEARTBEAT_INTERVAL_S = 5;
 
 const helpText = (
   promptSubject: string,

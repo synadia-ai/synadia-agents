@@ -58,6 +58,16 @@ export class Bridge {
    */
   private static readonly STALE_SWEEP_INTERVAL_MS = 5_000;
   private static readonly STALE_MISS_FACTOR = 3;
+  // Worst-case fallback used in two places: (1) when an inbound
+  // heartbeat omits `intervalS` (rare — `buildHeartbeatPayload` always
+  // populates it), and (2) when seeding `lastHeartbeatAt` at
+  // registration time before the first heartbeat arrives. Pin at the
+  // SDK's `DEFAULT_HEARTBEAT_INTERVAL_S` (30 s) so an agent whose
+  // first heartbeat is slow gets a generous ~90 s grace before
+  // eviction. First-party harnesses publish at 5 s with `intervalS=5`
+  // baked into the payload, so the dashboard adapts to their faster
+  // cadence as soon as the first heartbeat arrives — this fallback
+  // is just the safety floor for the unknown-interval case.
   private static readonly DEFAULT_HB_INTERVAL_S = 30;
 
   constructor(
