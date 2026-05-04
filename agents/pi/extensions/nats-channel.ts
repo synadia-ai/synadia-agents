@@ -73,10 +73,9 @@ const SERVICE_VERSION = "0.4.0";
 
 // Heartbeat cadence on `agents.hb.pi.<owner>.<name>`. Locally pinned at
 // 5s so the dashboard's stale-eviction loop (3× intervalS) drops a dead
-// `pi` agent in ~15s instead of ~90s. The SDK's own
-// SDK's `DEFAULT_HEARTBEAT_INTERVAL_S` stays at 30s as a sensible
-// third-party default — first-party harnesses opt into the snappier
-// cadence.
+// `pi` agent in ~15s instead of ~90s. The SDK's
+// `DEFAULT_HEARTBEAT_INTERVAL_S` stays at 30s as a sensible third-party
+// default — first-party harnesses opt into the snappier cadence.
 const HEARTBEAT_INTERVAL_S = 5;
 
 // Spec §2, Appendix C: `pi` is both the canonical agent identifier and its
