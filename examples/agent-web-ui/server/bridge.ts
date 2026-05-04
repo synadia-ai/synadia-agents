@@ -13,6 +13,7 @@ import {
   AttachmentsNotSupportedError,
   PayloadTooLargeError,
   ServiceError,
+  StreamMaxWaitExceededError,
   StreamStalledError,
   type NatsConnection,
   type QueryEvent,
@@ -632,6 +633,10 @@ export class Bridge {
     }
     if (err instanceof StreamStalledError) {
       this.sendError(id, "stream_stalled", err.message, { timeoutMs: err.timeoutMs });
+      return;
+    }
+    if (err instanceof StreamMaxWaitExceededError) {
+      this.sendError(id, "stream_max_wait_exceeded", err.message, { maxWaitMs: err.maxWaitMs });
       return;
     }
     // AbortError from user-initiated cancel — surface as a neutral "stopped" status
