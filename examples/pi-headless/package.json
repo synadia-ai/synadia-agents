@@ -22,7 +22,7 @@
     "url": "https://github.com/synadia-ai/synadia-agents/issues"
   },
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "type": "module",
   "engines": {
@@ -34,6 +34,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
