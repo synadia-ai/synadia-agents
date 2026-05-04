@@ -31,16 +31,23 @@ const statusLabel = computed(() => {
     <div class="left">
       <span class="dot" :data-status="bridgeState.status" />
       <span class="label mono">{{ statusLabel }}</span>
-      <span v-if="bridgeState.sdkProtocolVersion" class="proto mono">
-        protocol {{ bridgeState.sdkProtocolVersion }}
-      </span>
-      <span class="proto mono" :title="`Dashboard build v${appVersion}`">
-        ui v{{ appVersion }}
+      <span
+        v-if="bridgeState.natsServer"
+        class="nats-server mono"
+        :title="`NATS server ${bridgeState.natsServer}`"
+      >
+        <span class="dim">›</span>{{ bridgeState.natsServer }}
       </span>
     </div>
 
     <div class="brand">
       <span class="brand-title">NATS Agent Dashboard</span>
+      <span
+        class="brand-versions mono"
+        :title="`Dashboard build v${appVersion}` + (bridgeState.sdkProtocolVersion ? ` · protocol v${bridgeState.sdkProtocolVersion}` : '')"
+      >
+        (v{{ appVersion }}<template v-if="bridgeState.sdkProtocolVersion"> / protocol v{{ bridgeState.sdkProtocolVersion }}</template>)
+      </span>
     </div>
 
     <div class="right">
@@ -85,7 +92,13 @@ const statusLabel = computed(() => {
 }
 
 .brand {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--space-sm);
   text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .brand-title {
@@ -93,6 +106,12 @@ const statusLabel = computed(() => {
   font-size: var(--text-sm);
   color: var(--text-secondary);
   letter-spacing: 0.04em;
+}
+
+.brand-versions {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
 }
 
 .dot {
@@ -115,10 +134,19 @@ const statusLabel = computed(() => {
   letter-spacing: 0.08em;
 }
 
-.proto {
+.nats-server {
   font-size: var(--text-xs);
-  color: var(--text-dim);
-  margin-left: var(--space-xs);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28ch;
+}
+.nats-server .dim {
+  color: var(--accent-primary);
+  opacity: 0.6;
+  margin-right: 4px;
 }
 
 .agents-count {

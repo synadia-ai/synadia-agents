@@ -103,6 +103,7 @@ export const BUCKETS = {
   CC_AGENT: "cc-agent",
   OPENCLAW: "openclaw",
   HERMES: "hermes",
+  OPEN_AGENT: "open-agent",
   OTHER: "other",
 } as const;
 
@@ -117,6 +118,7 @@ export const BUCKET_ORDER: Bucket[] = [
   BUCKETS.CC_AGENT,
   BUCKETS.OPENCLAW,
   BUCKETS.HERMES,
+  BUCKETS.OPEN_AGENT,
   BUCKETS.OTHER,
 ];
 
@@ -131,6 +133,7 @@ export const BUCKET_LABELS: Record<Bucket, string> = {
   [BUCKETS.CC_AGENT]: "Claude Code",
   [BUCKETS.OPENCLAW]: "OpenClaw",
   [BUCKETS.HERMES]: "Hermes",
+  [BUCKETS.OPEN_AGENT]: "Open Agent",
   [BUCKETS.OTHER]: "Other",
 };
 
@@ -152,6 +155,7 @@ export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
   }
   if (agent.agent === "openclaw" || agent.agent === "oc") return BUCKETS.OPENCLAW;
   if (agent.agent === "hermes") return BUCKETS.HERMES;
+  if (agent.agent === "open-agent") return BUCKETS.OPEN_AGENT;
   return BUCKETS.OTHER;
 }
 

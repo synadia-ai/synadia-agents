@@ -46,6 +46,7 @@ const tagLabel = computed<string>(() => {
   if (a === "openclaw" || a === "oc") return "OPENCLAW";
   if (a === "pi") return "PI";
   if (a === "hermes") return "HERMES";
+  if (a === "open-agent") return "OPEN AGENT";
   return a.toUpperCase();
 });
 
@@ -67,6 +68,8 @@ const tagColor = computed<string>(() => {
       return "var(--bucket-openclaw)";
     case BUCKETS.HERMES:
       return "var(--bucket-hermes)";
+    case BUCKETS.OPEN_AGENT:
+      return "var(--bucket-open-agent)";
     default:
       return "var(--bucket-other)";
   }
@@ -283,7 +286,7 @@ function onTrash(): void {
       <p v-if="cwd" class="cwd mono" :title="cwd">{{ cwd }}</p>
 
       <p
-        v-if="agent.promptEndpoint.subject && (!cwd || isPiSession || isCcSession)"
+        v-if="agent.promptEndpoint.subject"
         class="subject mono"
         :title="agent.promptEndpoint.subject"
       ><span class="dim">›</span>{{ agent.promptEndpoint.subject }}</p>
@@ -306,14 +309,21 @@ function onTrash(): void {
         </div>
       </dl>
 
-      <div v-if="!isPiSession && !isCcSession" class="badges">
-        <span v-if="humanPayload" class="badge">{{ humanPayload }}</span>
+      <div
+        v-if="(humanPayload && !isController) || agent.promptEndpoint.attachmentsOk || (agent.protocolVersion && !isPiSession && !isCcSession)"
+        class="badges"
+        :class="{ 'badges-session': isPiSession || isCcSession }"
+      >
+        <span v-if="humanPayload && !isController" class="badge">{{ humanPayload }}</span>
         <span
           v-if="agent.promptEndpoint.attachmentsOk"
           class="badge attachments-ok"
           title="attachments_ok = true"
         >📎 attachments</span>
-        <span v-if="agent.protocolVersion" class="badge subtle-badge">v{{ agent.protocolVersion }}</span>
+        <span
+          v-if="agent.protocolVersion && !isPiSession && !isCcSession"
+          class="badge subtle-badge"
+        >v{{ agent.protocolVersion }}</span>
       </div>
 
       <p v-if="isController" class="hint">click to spawn or fan out</p>
@@ -592,6 +602,11 @@ function onTrash(): void {
   flex-wrap: wrap;
   gap: var(--space-xs);
   margin-top: var(--space-xs);
+}
+/* Session cards have an absolute-positioned trash button anchored to
+   bottom-right; reserve room so the rightmost badge doesn't slide under it. */
+.badges-session {
+  padding-right: 26px;
 }
 .badge {
   font-family: var(--font-mono);
