@@ -139,7 +139,7 @@ async def test_tracker_keys_on_instance_id_not_subject(nc: NATSClient) -> None:
                 ts="2026-04-21T00:00:00Z",
                 interval_s=5,
             )
-            await nc.publish(subject, payload.model_dump_json(exclude_none=True).encode())
+            await nc.publish(subject, payload.model_dump_json().encode())
 
         # Wait for both heartbeats to land in the tracker. We poll rather
         # than sleep so the test is fast and deterministic.
@@ -183,7 +183,7 @@ async def test_tracker_liveness_is_offline_when_stale(nc: NATSClient) -> None:
             ts="2026-04-21T00:00:00Z",
             interval_s=5,
         )
-        await nc.publish(subject, payload.model_dump_json(exclude_none=True).encode())
+        await nc.publish(subject, payload.model_dump_json().encode())
 
         deadline = asyncio.get_event_loop().time() + 2.0
         while asyncio.get_event_loop().time() < deadline:
@@ -224,7 +224,7 @@ async def test_tracker_on_heartbeat_listener_fires_and_unsubscribes(
                 ts="2026-04-21T00:00:00Z",
                 interval_s=5,
             )
-            await nc.publish(subject, payload.model_dump_json(exclude_none=True).encode())
+            await nc.publish(subject, payload.model_dump_json().encode())
 
         deadline = asyncio.get_event_loop().time() + 2.0
         while asyncio.get_event_loop().time() < deadline:
@@ -245,7 +245,7 @@ async def test_tracker_on_heartbeat_listener_fires_and_unsubscribes(
                 ts="2026-04-21T00:00:00Z",
                 interval_s=5,
             )
-            .model_dump_json(exclude_none=True)
+            .model_dump_json()
             .encode(),
         )
         # Give the broker a moment to deliver — then assert NO new entry.
@@ -266,7 +266,7 @@ async def test_tracker_on_heartbeat_listener_fires_and_unsubscribes(
                     ts="2026-04-21T00:00:00Z",
                     interval_s=5,
                 )
-                .model_dump_json(exclude_none=True)
+                .model_dump_json()
                 .encode(),
             )
             await asyncio.sleep(0.1)
