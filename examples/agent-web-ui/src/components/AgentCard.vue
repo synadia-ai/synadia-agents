@@ -277,7 +277,10 @@ function onTrash(): void {
       @click="$emit('select', agent.instanceId)"
     >
       <header class="card-head">
-        <span class="agent-tag mono">{{ tagLabel }}</span>
+        <div class="head-tags">
+          <span class="agent-tag mono">{{ tagLabel }}</span>
+          <span v-if="isController" class="role-badge mono" title="headless controller — spawns sessions">CONTROLLER</span>
+        </div>
         <AgentStatusDot class="status-led" :instance-id="agent.instanceId" />
       </header>
 
@@ -480,7 +483,27 @@ function onTrash(): void {
   justify-content: space-between;
   gap: var(--space-sm);
 }
+.head-tags {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  flex-wrap: wrap;
+}
 .status-led { flex-shrink: 0; }
+
+.role-badge {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: var(--border-radius-sm);
+  color: var(--memory-preference);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--memory-preference) 45%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 
 .agent-tag {
   font-size: var(--text-xs);
