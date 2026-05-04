@@ -696,7 +696,10 @@ function queryKey(promptId: string, queryId: string): string {
 function isNoRespondersError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as { name?: unknown; message?: unknown };
-  if (e.name === "NoRespondersError") return true;
+  // The class is `NoRespondersError` but the constructor sets
+  // `this.name = "NoResponders"` (no `Error` suffix) — match the actual
+  // runtime value, not the class name.
+  if (e.name === "NoResponders") return true;
   return typeof e.message === "string" && e.message.includes("no responders");
 }
 
