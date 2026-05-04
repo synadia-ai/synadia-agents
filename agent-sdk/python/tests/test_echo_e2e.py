@@ -75,19 +75,22 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         assert srv_info_parsed["metadata"]["agent"] == AGENT
         assert srv_info_parsed["metadata"]["owner"] == OWNER
         assert srv_info_parsed["metadata"]["protocol_version"] == "0.3"
-        # Spec §3.2 forbids echoing the session/instance name into metadata.
+        # §3.2: metadata.session matches the 5th subject token. The Python
+        # SDK always advertises it (defaulting to "default" for session-less
+        # callers), per §3.2's "MAY be omitted or set to default" allowance.
+        assert srv_info_parsed["metadata"]["session"] == SESSION_NAME
+        # Spec §3.2 forbids echoing the instance name into metadata under
+        # any other key.
         assert "name" not in srv_info_parsed["metadata"]
-        # v0.3 collapsed name + session into the subject — `session` is no
-        # longer carried in metadata. Regression guard against re-introducing it.
-        assert "session" not in srv_info_parsed["metadata"]
         # And the removed v0.0.1-era keys MUST be gone.
         assert "type" not in srv_info_parsed["metadata"]
         assert "platform" not in srv_info_parsed["metadata"]
         assert "protocol" not in srv_info_parsed["metadata"]
-        # Metadata is now exactly three fields under v0.3.
+        # Metadata is exactly four fields under v0.3 (§3.2).
         assert set(srv_info_parsed["metadata"].keys()) == {
             "agent",
             "owner",
+            "session",
             "protocol_version",
         }
 
@@ -162,6 +165,8 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
             evidence.write_json("heartbeat.json", json.loads(hb_payload.model_dump_json()))
             assert hb_payload.agent == AGENT
             assert hb_payload.owner == OWNER
+            # §8.3: payload.session mirrors metadata.session (== subject token 5).
+            assert hb_payload.session == SESSION_NAME
             assert hb_payload.instance_id, "heartbeat MUST carry instance_id (§8.3)"
             assert hb_payload.interval_s == HEARTBEAT_INTERVAL_S
 
@@ -199,6 +204,8 @@ async def test_status_endpoint_e2e(nc: NATSClient, evidence: EvidenceRecorder) -
         payload = HeartbeatPayload.model_validate_json(reply.data)
         assert payload.agent == AGENT
         assert payload.owner == OWNER
+        # §8.7 reply uses exactly the §8.3 schema, so `session` must round-trip too.
+        assert payload.session == SESSION_NAME
         assert payload.interval_s == HEARTBEAT_INTERVAL_S
         assert payload.instance_id, "status payload MUST carry instance_id (§8.3 shape)"
         # `ts` is freshly built per request — non-empty ISO 8601 string is enough.

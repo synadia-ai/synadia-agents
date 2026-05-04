@@ -6,6 +6,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
 the 0.x line is explicitly unstable per protocol spec §11.2.
 
+## [0.7.0] - 2026-05-04
+
+Restores wire-shape parity with the spec and TS SDK after the
+2026-04-28 session-name collapse mistakenly dropped `session` from
+`HeartbeatPayload`. Reported as
+[issue #73](https://github.com/synadia-ai/synadia-agents/issues/73).
+
+### Added
+
+- **`HeartbeatPayload.session`** — restored as an optional field
+  (`str | None`, default `None`) on the §8.3 wire model. Spec §8.3
+  defines `session` as "present iff `metadata.session` is set," so
+  the decoder must tolerate absence to interop with spec-compliant
+  session-less peers (e.g. a TS harness that omits `options.session`);
+  optional matches that contract while still surfacing the value
+  when present. The peer `synadia-ai-agent-service@0.3.0` always
+  populates the field on emission, so a Python-on-Python wire
+  carries `session` on every beat.
+
+### Fixed
+
+- **§8.3 / §8.7 `session` parity with the spec** — heartbeat and
+  status payloads emitted by the (sibling) `AgentService` now carry
+  `session`, matching `metadata.session`. Was a regression introduced
+  alongside the session-name collapse; the prior local docs codified
+  the wrong shape ("the publishing subject IS the session — no
+  payload field"), which is why no review caught it. Spec §8.3 +
+  appendix B.11 + B.11a are the source of truth.
+
 ## [0.6.0] - 2026-05-03
 
 Catch-up to the TypeScript SDK's

@@ -44,21 +44,21 @@ INSTANCE_ID = "publisher-instance-A"
 
 
 def test_build_heartbeat_payload_populates_required_fields() -> None:
-    """§8.3: agent, owner, instance_id, ts, interval_s — no session field."""
+    """§8.3: agent, owner, session, instance_id, ts, interval_s."""
     subject = AgentSubject.new(agent=AGENT, owner=OWNER, session_name=SESSION_NAME)
     payload = build_heartbeat_payload(subject, interval_s=7, instance_id=INSTANCE_ID)
 
     assert payload.agent == AGENT
     assert payload.owner == OWNER
+    assert payload.session == SESSION_NAME
     assert payload.instance_id == INSTANCE_ID
     assert payload.interval_s == 7
     # `ts` is UTC ISO 8601 with seconds precision and a Z suffix.
     assert payload.ts.endswith("Z")
 
+    # §8.3: `session` mirrors the 5th subject token (== metadata.session).
     encoded = json.loads(payload.model_dump_json())
-    assert "session" not in encoded, (
-        "v0.3 §8.3 payload MUST NOT carry a session key — the publishing subject IS the session."
-    )
+    assert encoded["session"] == SESSION_NAME
 
 
 async def test_publish_one_emits_single_frame_on_heartbeat_subject(
@@ -74,6 +74,7 @@ async def test_publish_one_emits_single_frame_on_heartbeat_subject(
         payload = HeartbeatPayload.model_validate_json(msg.data)
         assert payload.agent == AGENT
         assert payload.owner == OWNER
+        assert payload.session == "publisher-one"
         assert payload.instance_id == INSTANCE_ID
         assert payload.interval_s == 5
         # No second frame should arrive — `publish_one` is one-shot.
