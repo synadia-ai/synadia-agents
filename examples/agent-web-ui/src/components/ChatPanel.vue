@@ -3,18 +3,11 @@ import { computed, ref } from "vue";
 import MessageList from "./MessageList.vue";
 import PromptArea from "./PromptArea.vue";
 import { fileToAttachment, useBridge } from "../composables/useBridge.ts";
-import {
-  appendMessage,
-  findMessage,
-  findMessageByToolId,
-  getSession,
-  messagesFor,
-  type Message,
-} from "../stores/chat.ts";
-import { ccexecState, bumpCcSessionCost } from "../stores/ccexec.ts";
+import { startPromptStream } from "../composables/promptStreaming.ts";
+import { getSession, messagesFor, type Message } from "../stores/chat.ts";
+import { ccexecState } from "../stores/ccexec.ts";
 import { piexecState } from "../stores/piexec.ts";
 import { bucketOf, BUCKETS } from "../stores/agents.ts";
-import { randomUUID } from "../uuid.ts";
 import type { DiscoveredAgentDTO } from "../wire.ts";
 
 const props = defineProps<{ agent: DiscoveredAgentDTO }>();
@@ -103,7 +96,6 @@ const maxPayloadBytes = computed(() => props.agent.promptEndpoint.maxPayloadByte
 
 async function onSubmit(text: string, files: File[]): Promise<void> {
   const agent = props.agent;
-  const session = getSession(agent.instanceId);
 
   let attachments: Awaited<ReturnType<typeof fileToAttachment>>[] | undefined;
   if (files.length > 0) {
@@ -115,112 +107,7 @@ async function onSubmit(text: string, files: File[]): Promise<void> {
     }
   }
 
-  const userMsg = appendMessage(agent.instanceId, {
-    id: randomUUID(),
-    role: "user",
-    content: text,
-    streaming: false,
-    timestamp: Date.now(),
-  });
-  if (attachments) {
-    userMsg.attachments = attachments.map((a) => ({ filename: a.filename, base64: a.base64 }));
-  }
-
-  let currentAgentMsgId = randomUUID();
-  appendMessage(agent.instanceId, {
-    id: currentAgentMsgId,
-    role: "agent",
-    content: "",
-    streaming: true,
-    timestamp: Date.now(),
-  });
-
-  function newAgentBubble(): void {
-    currentAgentMsgId = randomUUID();
-    appendMessage(agent.instanceId, {
-      id: currentAgentMsgId,
-      role: "agent",
-      content: "",
-      streaming: true,
-      timestamp: Date.now(),
-    });
-  }
-
-  let promptId = "";
-  promptId = bridge.prompt(agent.instanceId, text, attachments, {
-    onResponse(chunk, responseAttachments) {
-      const m = findMessage(agent.instanceId, currentAgentMsgId);
-      if (!m) return;
-      m.content += chunk;
-      if (responseAttachments && responseAttachments.length > 0) {
-        m.attachments = [...(m.attachments ?? []), ...responseAttachments];
-      }
-    },
-    onStatus(status) {
-      const m = findMessage(agent.instanceId, currentAgentMsgId);
-      if (!m) return;
-      if (status === "stopped") m.statusNote = "(stopped)";
-    },
-    onQuery(queryId, queryPrompt, queryAttachments) {
-      const prev = findMessage(agent.instanceId, currentAgentMsgId);
-      if (prev) prev.streaming = false;
-      appendMessage(agent.instanceId, {
-        id: randomUUID(),
-        role: "query",
-        content: queryPrompt,
-        streaming: false,
-        timestamp: Date.now(),
-        queryId,
-        promptId,
-        replied: false,
-        attachments: queryAttachments,
-      });
-      newAgentBubble();
-    },
-    onToolUse(toolUseId, toolName, input) {
-      const prev = findMessage(agent.instanceId, currentAgentMsgId);
-      if (prev) prev.streaming = false;
-      appendMessage(agent.instanceId, {
-        id: randomUUID(),
-        role: "tool",
-        content: "",
-        streaming: false,
-        timestamp: Date.now(),
-        tool: { id: toolUseId, name: toolName, input },
-      });
-      newAgentBubble();
-    },
-    onToolResult(toolUseId, output, isError) {
-      const m = findMessageByToolId(agent.instanceId, toolUseId);
-      if (m && m.tool) {
-        m.tool.result = output;
-        m.tool.isError = isError;
-      }
-    },
-    onCost(turnCostUsd, totalCostUsd) {
-      const m = findMessage(agent.instanceId, currentAgentMsgId);
-      if (m) m.costUsd = turnCostUsd;
-      // For claude-code-headless sessions the running total drives the
-      // session-card cost line in the agent grid.
-      if (isCcSession.value) bumpCcSessionCost(agent.name, totalCostUsd);
-    },
-    onDone() {
-      const m = findMessage(agent.instanceId, currentAgentMsgId);
-      if (m) m.streaming = false;
-      session.activePromptId = null;
-    },
-    onError(message, code, details) {
-      const m = findMessage(agent.instanceId, currentAgentMsgId);
-      if (m) {
-        const detail = code ? ` [${code}]` : "";
-        const extra = details ? ` ${JSON.stringify(details)}` : "";
-        m.error = `${message}${detail}${extra}`;
-        m.streaming = false;
-      }
-      session.activePromptId = null;
-    },
-  });
-  session.activePromptId = promptId;
+  startPromptStream(agent, text, attachments);
 }
 
 function onQueryReply(message: Message, answer: string): void {

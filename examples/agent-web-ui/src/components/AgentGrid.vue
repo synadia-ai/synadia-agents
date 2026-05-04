@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import AgentGroup from "./AgentGroup.vue";
-import { agentsState, agentsByBucket } from "../stores/agents.ts";
+import MultiSelectBar from "./MultiSelectBar.vue";
+import { agentsState, agentSections } from "../stores/agents.ts";
+import { selectionState } from "../stores/selection.ts";
 
-const groups = computed(() => agentsByBucket.value);
+const groups = computed(() => agentSections.value);
 const isEmpty = computed(() => groups.value.length === 0);
+const hasSelection = computed(() => selectionState.ids.size > 0);
 </script>
 
 <template>
@@ -32,12 +35,16 @@ const isEmpty = computed(() => groups.value.length === 0);
       <div v-else class="groups">
         <AgentGroup
           v-for="g in groups"
-          :key="g.bucket"
+          :key="g.id"
           :label="g.label"
           :agents="g.agents"
         />
       </div>
     </div>
+
+    <Transition name="bar">
+      <MultiSelectBar v-if="hasSelection" />
+    </Transition>
   </main>
 </template>
 
@@ -96,5 +103,24 @@ const isEmpty = computed(() => groups.value.length === 0);
   color: var(--accent-primary);
   background: transparent;
   padding: 0;
+}
+
+/* Slide the multi-select action bar up from below the grid pane.
+   Transform-only animation so the layout reflow (grid-body shrinking to
+   make room for the bar) is the only DOM resize — the bar itself just
+   slides into the space that opens up. */
+.bar-enter-active,
+.bar-leave-active {
+  transition: transform 0.22s ease, opacity 0.18s ease;
+}
+.bar-enter-from,
+.bar-leave-to {
+  transform: translateY(100%);
+  opacity: 0;
+}
+.bar-enter-to,
+.bar-leave-from {
+  transform: translateY(0);
+  opacity: 1;
 }
 </style>

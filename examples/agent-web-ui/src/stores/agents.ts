@@ -91,8 +91,10 @@ export const ccexecSessions = computed<DiscoveredAgentDTO[]>(() =>
 );
 
 /**
- * Coarse classification used by the agent grid to group cards. Order maps 1:1
- * with `BUCKET_ORDER` below.
+ * Coarse classification used to colour cards (`AgentCard`) and to split the
+ * grid into the two top-level sections (see `agentSections` below). The
+ * tokens line up with the wire-level `agent` + `metadata.role` so the UI
+ * vocabulary stays one term away from the spec.
  */
 export const BUCKETS = {
   PI_EXEC_SESSION: "pi-exec-session",
@@ -108,34 +110,6 @@ export const BUCKETS = {
 } as const;
 
 export type Bucket = (typeof BUCKETS)[keyof typeof BUCKETS];
-
-export const BUCKET_ORDER: Bucket[] = [
-  BUCKETS.PI_EXEC_SESSION,
-  BUCKETS.PI_EXEC_CONTROL,
-  BUCKETS.CC_EXEC_SESSION,
-  BUCKETS.CC_EXEC_CONTROL,
-  BUCKETS.PI_AGENT,
-  BUCKETS.CC_AGENT,
-  BUCKETS.OPENCLAW,
-  BUCKETS.HERMES,
-  BUCKETS.OPEN_AGENT,
-  BUCKETS.OTHER,
-];
-
-export const BUCKET_LABELS: Record<Bucket, string> = {
-  // Labels track the on-wire `agent` token + `metadata.role` so the UI
-  // vocabulary stays one term away from the docs.
-  [BUCKETS.PI_EXEC_SESSION]: "PI Headless Sessions",
-  [BUCKETS.PI_EXEC_CONTROL]: "PI Headless Controllers",
-  [BUCKETS.CC_EXEC_SESSION]: "Claude Code Headless Sessions",
-  [BUCKETS.CC_EXEC_CONTROL]: "Claude Code Headless Controllers",
-  [BUCKETS.PI_AGENT]: "PI Interactive",
-  [BUCKETS.CC_AGENT]: "Claude Code",
-  [BUCKETS.OPENCLAW]: "OpenClaw",
-  [BUCKETS.HERMES]: "Hermes",
-  [BUCKETS.OPEN_AGENT]: "Open Agent",
-  [BUCKETS.OTHER]: "Other",
-};
 
 export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
   const role = agent.metadata?.["role"];
@@ -159,20 +133,79 @@ export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
   return BUCKETS.OTHER;
 }
 
-/** Returns sorted-by-bucket groups; empty buckets are omitted. */
-export const agentsByBucket = computed<{ bucket: Bucket; label: string; agents: DiscoveredAgentDTO[] }[]>(() => {
-  const map = new Map<Bucket, DiscoveredAgentDTO[]>();
-  for (const b of BUCKET_ORDER) map.set(b, []);
+/**
+ * Top-section ("Agents / Sessions") sort rank. Families ordered alphabetically
+ * by their human label; within a family, the registered agent precedes its
+ * headless sessions so a PI agent and its live PI sessions sit adjacent.
+ *
+ *   Claude Code → CC Headless Sessions → Hermes → Open Agent →
+ *   OpenClaw → PI → PI Headless Sessions → Other
+ *
+ * Controller buckets are deliberately absent — they're sorted by the separate
+ * `sortControllers` path. `Partial<>` lets us read with a sentinel fallback
+ * so a future stray bucket sorts to the end instead of crashing.
+ */
+const PROMPTABLE_RANK: Partial<Record<Bucket, number>> = {
+  [BUCKETS.CC_AGENT]: 1,
+  [BUCKETS.CC_EXEC_SESSION]: 2,
+  [BUCKETS.HERMES]: 3,
+  [BUCKETS.OPEN_AGENT]: 4,
+  [BUCKETS.OPENCLAW]: 5,
+  [BUCKETS.PI_AGENT]: 6,
+  [BUCKETS.PI_EXEC_SESSION]: 7,
+  [BUCKETS.OTHER]: 99,
+};
+
+function isController(bucket: Bucket): boolean {
+  return bucket === BUCKETS.PI_EXEC_CONTROL || bucket === BUCKETS.CC_EXEC_CONTROL;
+}
+
+function byOwnerThenName(a: DiscoveredAgentDTO, b: DiscoveredAgentDTO): number {
+  const o = a.owner.localeCompare(b.owner);
+  if (o !== 0) return o;
+  return a.name.localeCompare(b.name);
+}
+
+function sortPromptables(list: DiscoveredAgentDTO[]): DiscoveredAgentDTO[] {
+  return [...list].sort((a, b) => {
+    const ra = PROMPTABLE_RANK[bucketOf(a)] ?? 99;
+    const rb = PROMPTABLE_RANK[bucketOf(b)] ?? 99;
+    if (ra !== rb) return ra - rb;
+    return byOwnerThenName(a, b);
+  });
+}
+
+function sortControllers(list: DiscoveredAgentDTO[]): DiscoveredAgentDTO[] {
+  // Controllers don't carry a family rank — there are at most a handful
+  // online at once and they all belong to the same conceptual "Controllers"
+  // group, so a flat owner→name sort is plenty.
+  return [...list].sort(byOwnerThenName);
+}
+
+export type AgentSectionId = "promptables" | "controllers";
+
+/**
+ * Two-section view of the agent list:
+ *  - `promptables` — every prompt-target (registered agents + headless
+ *    sessions), one flat alphabetical grid.
+ *  - `controllers` — pi-headless + cc-headless controller cards.
+ *
+ * Empty sections are omitted entirely so the grid doesn't show vacant
+ * headers on a fresh dashboard.
+ */
+export const agentSections = computed<{ id: AgentSectionId; label: string; agents: DiscoveredAgentDTO[] }[]>(() => {
+  const promptables: DiscoveredAgentDTO[] = [];
+  const controllers: DiscoveredAgentDTO[] = [];
   for (const agent of agentsState.list) {
-    const list = map.get(bucketOf(agent));
-    if (list) list.push(agent);
+    if (isController(bucketOf(agent))) controllers.push(agent);
+    else promptables.push(agent);
   }
-  for (const list of map.values()) sortAgents(list).forEach(() => {}); // sortAgents returns a copy
-  const out: { bucket: Bucket; label: string; agents: DiscoveredAgentDTO[] }[] = [];
-  for (const b of BUCKET_ORDER) {
-    const raw = map.get(b) ?? [];
-    if (raw.length === 0) continue;
-    out.push({ bucket: b, label: BUCKET_LABELS[b], agents: sortAgents(raw) });
+  const out: { id: AgentSectionId; label: string; agents: DiscoveredAgentDTO[] }[] = [];
+  if (promptables.length > 0) {
+    out.push({ id: "promptables", label: "Agents / Sessions", agents: sortPromptables(promptables) });
+  }
+  if (controllers.length > 0) {
+    out.push({ id: "controllers", label: "Controllers", agents: sortControllers(controllers) });
   }
   return out;
 });
