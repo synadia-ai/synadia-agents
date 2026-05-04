@@ -62,24 +62,32 @@ export function sortAgents(list: DiscoveredAgentDTO[]): DiscoveredAgentDTO[] {
   });
 }
 
-/** Discovered pi-headless controllers (agents flagged via `metadata.role`). */
+/** Discovered pi-headless controllers (agent token + role). */
 export const piexecControllers = computed<DiscoveredAgentDTO[]>(() =>
-  agentsState.list.filter((a) => a.metadata?.["role"] === "pi-headless-controller"),
+  agentsState.list.filter(
+    (a) => a.agent === "pi-headless" && a.metadata?.["role"] === "controller",
+  ),
 );
 
-/** Discovered pi-headless sessions (spawned by a controller; identified via `metadata.spawner`). */
+/** Discovered pi-headless sessions (agent token + role). */
 export const piexecSessions = computed<DiscoveredAgentDTO[]>(() =>
-  agentsState.list.filter((a) => a.metadata?.["spawner"] === "pi-headless"),
+  agentsState.list.filter(
+    (a) => a.agent === "pi-headless" && a.metadata?.["role"] === "session",
+  ),
 );
 
-/** Discovered claude-code-headless controllers (agents flagged via `metadata.role`). */
+/** Discovered claude-code-headless controllers (agent token + role). */
 export const ccexecControllers = computed<DiscoveredAgentDTO[]>(() =>
-  agentsState.list.filter((a) => a.metadata?.["role"] === "claude-code-headless-controller"),
+  agentsState.list.filter(
+    (a) => a.agent === "cc-headless" && a.metadata?.["role"] === "controller",
+  ),
 );
 
-/** Discovered claude-code-headless sessions (spawned by a controller; identified via `metadata.spawner`). */
+/** Discovered claude-code-headless sessions (agent token + role). */
 export const ccexecSessions = computed<DiscoveredAgentDTO[]>(() =>
-  agentsState.list.filter((a) => a.metadata?.["spawner"] === "claude-code-headless"),
+  agentsState.list.filter(
+    (a) => a.agent === "cc-headless" && a.metadata?.["role"] === "session",
+  ),
 );
 
 /**
@@ -113,10 +121,8 @@ export const BUCKET_ORDER: Bucket[] = [
 ];
 
 export const BUCKET_LABELS: Record<Bucket, string> = {
-  // "Headless" matches the canonical protocol vocabulary used in
-  // metadata.role / metadata.spawner ("pi-headless-controller",
-  // "claude-code-headless"); aligning UI labels keeps users one term away
-  // from the docs they'll read next.
+  // Labels track the on-wire `agent` token + `metadata.role` so the UI
+  // vocabulary stays one term away from the docs.
   [BUCKETS.PI_EXEC_SESSION]: "PI Headless Sessions",
   [BUCKETS.PI_EXEC_CONTROL]: "PI Headless Controllers",
   [BUCKETS.CC_EXEC_SESSION]: "Claude Code Headless Sessions",
@@ -130,11 +136,12 @@ export const BUCKET_LABELS: Record<Bucket, string> = {
 
 export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
   const role = agent.metadata?.["role"];
-  const spawner = agent.metadata?.["spawner"];
-  if (spawner === "pi-headless") return BUCKETS.PI_EXEC_SESSION;
-  if (spawner === "claude-code-headless") return BUCKETS.CC_EXEC_SESSION;
-  if (role === "pi-headless-controller") return BUCKETS.PI_EXEC_CONTROL;
-  if (role === "claude-code-headless-controller") return BUCKETS.CC_EXEC_CONTROL;
+  if (agent.agent === "pi-headless") {
+    return role === "controller" ? BUCKETS.PI_EXEC_CONTROL : BUCKETS.PI_EXEC_SESSION;
+  }
+  if (agent.agent === "cc-headless") {
+    return role === "controller" ? BUCKETS.CC_EXEC_CONTROL : BUCKETS.CC_EXEC_SESSION;
+  }
   // `agent.agent` carries the value of `metadata.agent` (per Appendix C of
   // the spec). Each runtime publishes its own canonical token — match the
   // actual values the runtimes set, plus the legacy short aliases that

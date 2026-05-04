@@ -18,12 +18,10 @@ const agent = computed(() => selectedAgent.value);
 const role = computed<"pi-controller" | "cc-controller" | "session" | "agent" | null>(() => {
   const a = agent.value;
   if (!a) return null;
-  if (a.metadata?.["role"] === "pi-headless-controller") return "pi-controller";
-  if (a.metadata?.["role"] === "claude-code-headless-controller") return "cc-controller";
-  if (
-    a.metadata?.["spawner"] === "pi-headless" ||
-    a.metadata?.["spawner"] === "claude-code-headless"
-  ) return "session";
+  const meta = a.metadata?.["role"];
+  if (a.agent === "pi-headless" && meta === "controller") return "pi-controller";
+  if (a.agent === "cc-headless" && meta === "controller") return "cc-controller";
+  if ((a.agent === "pi-headless" || a.agent === "cc-headless") && meta === "session") return "session";
   return "agent";
 });
 

@@ -22,7 +22,9 @@ const bridge = useBridge();
 const error = ref<string | null>(null);
 
 const isCcSession = computed(
-  () => props.agent.metadata?.["spawner"] === "claude-code-headless",
+  () =>
+    props.agent.agent === "cc-headless" &&
+    props.agent.metadata?.["role"] === "session",
 );
 
 // Human label for the chat-header pill. Mirrors AgentCard's tagLabel

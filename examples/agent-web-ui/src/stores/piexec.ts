@@ -47,14 +47,15 @@ export const piexecState = reactive<{
 
 /**
  * The currently selected pi-headless controller, or null when the selected
- * agent isn't a pi-headless-controller (or nothing is selected).
+ * agent isn't a pi-headless controller (or nothing is selected).
  */
 export const selectedController = computed(() => {
   const id = agentsState.selectedInstanceId;
   if (!id) return null;
   const agent = agentsState.list.find((a) => a.instanceId === id);
   if (!agent) return null;
-  if (agent.metadata?.["role"] !== "pi-headless-controller") return null;
+  if (agent.agent !== "pi-headless") return null;
+  if (agent.metadata?.["role"] !== "controller") return null;
   return agent;
 });
 
