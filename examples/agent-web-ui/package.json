@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/nats-ai-testui",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Bun + Vue 3 web test client for the @synadia-ai/agents SDK — prompt NATS agents with optional attachments and stream responses.",
   "keywords": [
     "nats",
