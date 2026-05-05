@@ -6,8 +6,8 @@
 
 import process from "node:process";
 
-import { connect } from "@nats-io/transport-node";
 import {
+  connectFrom,
   gatewayModelFactory,
   openRouterModelFactory,
   runBridge,
@@ -15,11 +15,32 @@ import {
 } from "@synadia-ai/open-agent";
 import { connectVercelSandbox } from "../vendor/vercel/index.js";
 
-const NATS_URL = process.env["NATS_URL"] ?? "nats://127.0.0.1:4222";
+// Same flag plumbing as the CLI in agents/open-agent: only --nats-context is
+// a flag; everything else is env. NATS_URL still wins over a context if set.
+const NATS_CONTEXT = parseNatsContextFlag(process.argv.slice(2));
+const NATS_URL = process.env["NATS_URL"];
 const OWNER = process.env["OPEN_AGENT_OWNER"] ?? process.env["USER"] ?? "vercel-demo";
 const SESSION = process.env["OPEN_AGENT_SESSION"] ?? "default";
 const REPO_URL = process.env["OPEN_AGENT_REPO_URL"]; // optional GitHub URL to clone
 const MODEL = process.env["OPEN_AGENT_MODEL"];
+
+function parseNatsContextFlag(argv: ReadonlyArray<string>): string | undefined {
+  const args = [...argv];
+  while (args.length > 0) {
+    const a = args.shift() as string;
+    if (a === "--nats-context") {
+      const next = args[0];
+      // Guard against the next token being another flag (e.g.
+      // `--nats-context --provider openrouter`), which would otherwise
+      // silently consume `--provider` as the context name and surface as
+      // a confusing context-not-found error.
+      if (next !== undefined && !next.startsWith("--")) return args.shift();
+      return undefined;
+    }
+    if (a.startsWith("--nats-context=")) return a.slice("--nats-context=".length);
+  }
+  return undefined;
+}
 
 if (!process.env["VERCEL_TOKEN"]) {
   console.error(
@@ -71,7 +92,12 @@ if (provider === "openrouter") {
   modelFactory = gatewayModelFactory();
 }
 
-const nc = await connect({ servers: NATS_URL });
+const nc = await connectFrom({
+  ...(NATS_CONTEXT !== undefined && NATS_CONTEXT.length > 0
+    ? { natsContext: NATS_CONTEXT }
+    : {}),
+  ...(NATS_URL !== undefined && NATS_URL.length > 0 ? { natsUrl: NATS_URL } : {}),
+});
 
 const { stop } = await runBridge({
   nc,
