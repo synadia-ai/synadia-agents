@@ -18,7 +18,7 @@ Set env vars and start the gateway — the channel auto-bootstraps on first star
 # Pick one connection path:
 export NATS_CONTEXT=ngs                       # a NATS CLI context (recommended for NGS / managed NATS)
 # — or —
-export NATS_URL=nats://demo.nats.io:4222      # raw URL
+export NATS_URL=nats://demo.nats.io            # raw URL
 export NATS_CREDENTIALS=/path/to/your.creds   # optional, for NKEY/JWT auth
 
 export NATS_AGENT_NAME=my-agent               # required: agent identity (5th subject token)
@@ -27,7 +27,7 @@ export NATS_OWNER=my-org                      # optional: 4th subject token (def
 openclaw gateway
 ```
 
-On first start the plugin writes `channels.nats.accounts.default = {}` into `~/.openclaw/openclaw.json` and brings up the channel — your agent is then reachable at `agents.prompt.oc.<owner>.<agentName>`. No `openclaw configure` step, no manual JSON edit, no extensions/ symlink.
+The channel comes up on first start at `agents.prompt.oc.<owner>.<agentName>`. **No edits to `~/.openclaw/openclaw.json` needed** — the plugin's account resolver falls back to a `"default"` account when none is configured and fills every field from env vars. No `openclaw configure` step, no extensions/ symlink.
 
 > **Only one account is active at a time.** The plugin runs a single gateway process and registers one account on it. Adding multiple `accounts.<id>` blocks in your config doesn't register multiple agents simultaneously — pick the one you want active.
 
