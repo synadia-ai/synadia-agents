@@ -527,6 +527,20 @@ bun_install_each() {
     # peer dep is the canonical case — burns CPU forever otherwise).
     ( cd "$dir" && timeout "$BUN_INSTALL_TIMEOUT" bun install --silent ) \
       >"$log" 2>&1 || rc=$?
+    # bun@1.3.x can SIGILL (exit 132 = 128+SIGILL) while reconciling an
+    # existing bun.lock whose shape it can't parse. The deterministic
+    # workaround is to drop the lockfile and let bun rebuild from
+    # scratch. Only retry on this specific signal, only when a lock
+    # exists — most consumers track bun.lock in git, so unconditional
+    # deletion would dirty the working tree on every devmode toggle.
+    if (( rc == 132 )) && [[ -f "$dir/bun.lock" ]]; then
+      sayf '  %b…%b %s%b (bun SIGILL — removing bun.lock and retrying)%b\n' \
+        "$C_YELLOW$C_BOLD" "$C_RESET" "$rel" "$C_DIM" "$C_RESET"
+      rm -f "$dir/bun.lock"
+      rc=0
+      ( cd "$dir" && timeout "$BUN_INSTALL_TIMEOUT" bun install --silent ) \
+        >"$log" 2>&1 || rc=$?
+    fi
     if (( rc == 0 )); then
       sayf '  %b✓%b %s\n' "$C_GREEN$C_BOLD" "$C_RESET" "$rel"
       ok=$((ok + 1))
