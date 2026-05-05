@@ -1,4 +1,4 @@
-import type { ChannelPlugin, OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import type { ChannelPlugin, OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 import { natsPlugin } from "./src/channel.js";
 import { setNatsRuntime } from "./src/runtime.js";
@@ -8,16 +8,25 @@ export default defineChannelPluginEntry({
   name: "NATS",
   description: "NATS agent connectivity channel plugin",
   plugin: natsPlugin as ChannelPlugin,
-  setRuntime: setNatsRuntime,
+  setRuntime: (runtime: PluginRuntime) => {
+    setNatsRuntime(runtime);
+    // Fires in "discovery" mode (openclaw's load mode for npm-installed
+    // channel plugins that aren't yet in `cfg.channels.<id>`). Without this,
+    // a fresh install never bootstraps `channels.nats.accounts.default = {}`,
+    // so the gateway never iterates the channel and env-var-only quickstart
+    // breaks. registerFull below is a belt-and-suspenders for the full-mode
+    // path used by bundled/catalog-known plugins.
+    ensureNatsChannelConfig(runtime);
+  },
   registerFull(api: OpenClawPluginApi) {
-    ensureNatsChannelConfig(api);
+    ensureNatsChannelConfig(api.runtime);
   },
 });
 
 /** Ensure channels.nats.accounts.default exists so the gateway starts the channel. */
-function ensureNatsChannelConfig(api: OpenClawPluginApi): void {
+function ensureNatsChannelConfig(runtime: PluginRuntime): void {
   try {
-    const cfg = api.runtime.config.loadConfig() as Record<string, unknown>;
+    const cfg = runtime.config.loadConfig() as Record<string, unknown>;
     const channels = (cfg.channels ?? {}) as Record<string, unknown>;
     const nats = (channels.nats ?? {}) as Record<string, unknown>;
     const accounts = (nats.accounts ?? {}) as Record<string, unknown>;
@@ -29,10 +38,12 @@ function ensureNatsChannelConfig(api: OpenClawPluginApi): void {
     nats.accounts = accounts;
     channels.nats = nats;
     cfg.channels = channels;
-    api.runtime.config.writeConfigFile(cfg as Record<string, unknown>);
-    api.logger.info?.("nats: created default channel config entry");
+    Promise.resolve(runtime.config.writeConfigFile(cfg as Record<string, unknown>)).catch(
+      (err) => console.warn(`[nats] could not persist channel config skeleton: ${err}`),
+    );
+    console.log("[nats] created default channel config entry");
   } catch (err) {
-    api.logger.warn?.(`nats: could not ensure channel config: ${err}`);
+    console.warn(`[nats] could not ensure channel config: ${err}`);
   }
 }
 
