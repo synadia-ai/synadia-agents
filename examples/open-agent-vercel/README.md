@@ -15,12 +15,30 @@ sandbox shape that fits their threat model.
 
 ## Prerequisites
 
-- A `nats-server` running locally (or any NATS endpoint via
-  `NATS_URL`).
+- A reachable NATS endpoint — local `nats-server`, a `NATS_URL`, or a
+  saved `nats` CLI context (see **Connecting to NATS** below).
 - `VERCEL_TOKEN` — a Vercel API token with sandbox-create scope.
 - A model API key (see **Models** below).
 - `bun install` resolves `@vercel/sandbox` from npm; the rest of the
   graph is wired by `file:` links to the sibling packages.
+
+## Connecting to NATS
+
+Same precedence as the `agents/open-agent/` CLI:
+
+1. `NATS_URL` env var, if set — wins over everything.
+2. `--nats-context <name>` flag — resolves a saved `nats` CLI context
+   via `@synadia-ai/agents`'s `loadContextOptions`. Use `current` to
+   pick whichever context `nats context select` last chose.
+3. Otherwise: `nats://127.0.0.1:4222`.
+
+```bash
+# Saved context (e.g. an NGS account)
+bun start --nats-context my-ngs-account
+
+# Direct URL — overrides any context
+NATS_URL=nats://nats.example.com:4222 bun start
+```
 
 ## Models
 
@@ -65,8 +83,20 @@ nats req 'agents.prompt.open-agent.'"$USER"'.demo' --timeout=5m \
   "list the top-level files in this sandbox"
 ```
 
-`OPEN_AGENT_REPO_URL` (optional) clones a GitHub repo into the sandbox
-at boot — passed straight through to Vercel's `source.url`.
+`OPEN_AGENT_REPO_URL` (optional) clones a public GitHub repository
+into the sandbox at boot. The value is passed verbatim to Vercel's
+`source.url`, which expects a `https://github.com/<owner>/<repo>`
+URL — for example:
+
+```bash
+OPEN_AGENT_REPO_URL=https://github.com/synadia-io/nats.go \
+  VERCEL_TOKEN=... AI_GATEWAY_API_KEY=... \
+  OPEN_AGENT_OWNER=$USER OPEN_AGENT_SESSION=demo \
+  bun start
+```
+
+Private repos need a `githubToken` on the underlying Vercel sandbox
+config — not currently surfaced as an env var by this example.
 
 ## Vendoring
 

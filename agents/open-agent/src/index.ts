@@ -18,6 +18,11 @@ export {
   type OpenRouterFactoryOptions,
 } from "./model-factory.js";
 export { translatePart, type UIPart } from "./chunk-translator.js";
+export {
+  connectFrom,
+  resolveConnectionOptions,
+  type ResolveNatsOptions,
+} from "./nats-context.js";
 export { connectLocalSandbox, type LocalSandboxState } from "../vendor/sandbox/local.js";
 export {
   connectSandbox,
