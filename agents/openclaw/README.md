@@ -10,9 +10,32 @@ openclaw plugins install @synadia-ai/nats-channel
 
 If your OpenClaw config has a non-empty `plugins.allow` list, add `"nats"` to it — that list, if set, gates which non-bundled plugins are enabled.
 
-## Configure
+## Quickstart (env vars)
 
-The fastest path is the wizard:
+Set env vars and start the gateway — the channel auto-bootstraps on first start:
+
+```bash
+# Pick one connection path:
+export NATS_CONTEXT=ngs                       # a NATS CLI context (recommended for NGS / managed NATS)
+# — or —
+export NATS_URL=nats://demo.nats.io            # raw URL
+export NATS_CREDENTIALS=/path/to/your.creds   # optional, for NKEY/JWT auth
+
+export NATS_AGENT_NAME=my-agent               # required: agent identity (5th subject token)
+export NATS_OWNER=my-org                      # optional: 4th subject token (defaults to "default")
+
+openclaw gateway
+```
+
+The channel comes up on first start at `agents.prompt.oc.<owner>.<agentName>`. **No edits to `~/.openclaw/openclaw.json` needed** — the plugin's account resolver falls back to a `"default"` account when none is configured and fills every field from env vars. No `openclaw configure` step, no extensions/ symlink.
+
+> **Only one account is active at a time.** The plugin runs a single gateway process and registers one account on it. Adding multiple `accounts.<id>` blocks in your config doesn't register multiple agents simultaneously — pick the one you want active.
+
+## Configure via the wizard (alternative)
+
+> **Known issue on OpenClaw 2026.5.4+.** The wizard's channel list (`openclaw configure --section channels`, `openclaw channels add`) doesn't currently surface npm-installed channel plugins that aren't in OpenClaw's official channel catalog. Tracked upstream; until then, prefer the env-var quickstart above.
+
+If you're on an older OpenClaw (or the catalog enrollment lands), the wizard path still works:
 
 ```bash
 openclaw configure --section channels
@@ -25,8 +48,6 @@ After restarting OpenClaw, your agent is reachable at:
 ```
 agents.prompt.oc.<owner>.<agentName>
 ```
-
-> **Only one account is active at a time.** The plugin runs a single gateway process and registers one account on it. Adding multiple `accounts.<id>` blocks in your config doesn't register multiple agents simultaneously — pick the one you want active.
 
 ### Three common configurations
 
