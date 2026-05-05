@@ -2,6 +2,9 @@
   "id": "nats",
   "kind": "channel",
   "channels": ["nats"],
+  "activation": {
+    "onStartup": true
+  },
   "channelConfigs": {
     "nats": {
       "label": "NATS",
