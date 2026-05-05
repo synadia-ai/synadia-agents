@@ -247,9 +247,15 @@ The agent subject layout has no per-tenant slot. For real isolation between tena
 
 ```bash
 bun install
+bun run build          # compile ./index.ts + ./setup-entry.ts → ./dist (required before publish)
 bun run test           # protocol unit tests, no nats-server needed
 bun run test:smoke     # wire-level smoke against nats-server on 127.0.0.1:4222
 ```
+
+The npm tarball ships **compiled** entries under `dist/` (declared via
+`openclaw.runtimeExtensions` and `openclaw.runtimeSetupEntry`).
+OpenClaw 2026.5.4+ refuses to install plugins that only ship TS source.
+`prepublishOnly` runs the build automatically.
 
 The smoke test needs a `nats-server` running on `127.0.0.1:4222` — install per [the upstream docs](https://docs.nats.io/running-a-nats-service/introduction/installation) (`brew install nats-server` on macOS) then start it in another terminal with `nats-server`.
 

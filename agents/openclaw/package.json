@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/nats-channel",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "NATS Agent Protocol channel for OpenClaw. Makes every OpenClaw agent a discoverable, spec-compliant agent on NATS.",
   "keywords": [
     "openclaw",
@@ -26,6 +26,7 @@
   },
   "type": "module",
   "files": [
+    "dist",
     "src",
     "index.ts",
     "setup-entry.ts",
@@ -37,7 +38,11 @@
     "extensions": [
       "./index.ts"
     ],
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ],
     "setupEntry": "./setup-entry.ts",
+    "runtimeSetupEntry": "./dist/setup-entry.js",
     "channel": {
       "id": "nats",
       "label": "NATS",
@@ -47,8 +52,10 @@
     }
   },
   "scripts": {
+    "build": "tsup",
     "test": "vitest run",
-    "test:smoke": "bun test/smoke.mjs"
+    "test:smoke": "bun test/smoke.mjs",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@nats-io/services": "^3.3.0",
@@ -66,6 +73,8 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^25.6.0"
+    "@types/node": "^25.6.0",
+    "tsup": "^8.3.0",
+    "typescript": "~5.6.0"
   }
 }
