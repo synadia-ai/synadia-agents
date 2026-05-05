@@ -95,6 +95,16 @@ const subtitle = computed<string | null>(() => {
   ) {
     return null;
   }
+  // OpenClaw agents share the NATS service name "agents" and almost
+  // always run a single account named "default" — so both `name` and
+  // `session` are non-distinguishing across multiple openclaw instances
+  // on the same bus. The configured agentName is the differentiator and
+  // lives only in the prompt subject's last token (spec layout
+  // `agents.prompt.<platform>.<owner>.<agentName>`). Pull it from there.
+  if (bucket.value === BUCKETS.OPENCLAW) {
+    const last = props.agent.promptEndpoint.subject.split(".").pop();
+    if (last) return last;
+  }
   return props.agent.session ?? props.agent.name;
 });
 
