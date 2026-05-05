@@ -23,25 +23,35 @@ export default defineChannelPluginEntry({
   },
 });
 
+// In "full" mode openclaw fires both setRuntime AND registerFull. The
+// writeConfigFile is async, so without this guard both callbacks pass the
+// idempotency check before the first write lands and we double-log
+// "created default channel config entry" on a single gateway start.
+let bootstrapAttempted = false;
+
 /** Ensure channels.nats.accounts.default exists so the gateway starts the channel. */
 function ensureNatsChannelConfig(runtime: PluginRuntime): void {
+  if (bootstrapAttempted) return;
   try {
     const cfg = runtime.config.loadConfig() as Record<string, unknown>;
     const channels = (cfg.channels ?? {}) as Record<string, unknown>;
     const nats = (channels.nats ?? {}) as Record<string, unknown>;
     const accounts = (nats.accounts ?? {}) as Record<string, unknown>;
 
-    if (channels.nats && accounts.default !== undefined) return; // already set
+    if (channels.nats && accounts.default !== undefined) {
+      bootstrapAttempted = true; // nothing to do, but don't re-check the cfg
+      return;
+    }
 
     // Write skeleton so the gateway discovers this channel
     accounts.default = accounts.default ?? {};
     nats.accounts = accounts;
     channels.nats = nats;
     cfg.channels = channels;
-    Promise.resolve(runtime.config.writeConfigFile(cfg as Record<string, unknown>)).catch(
-      (err) => console.warn(`[nats] could not persist channel config skeleton: ${err}`),
-    );
-    console.log("[nats] created default channel config entry");
+    bootstrapAttempted = true;
+    Promise.resolve(runtime.config.writeConfigFile(cfg as Record<string, unknown>))
+      .then(() => console.log("[nats] created default channel config entry"))
+      .catch((err) => console.warn(`[nats] could not persist channel config skeleton: ${err}`));
   } catch (err) {
     console.warn(`[nats] could not ensure channel config: ${err}`);
   }
