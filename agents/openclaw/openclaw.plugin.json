@@ -2,6 +2,60 @@
   "id": "nats",
   "kind": "channel",
   "channels": ["nats"],
+  "channelConfigs": {
+    "nats": {
+      "label": "NATS",
+      "description": "NATS Agent Protocol channel — exposes each OpenClaw agent on the NATS network so other clients can discover and prompt it.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "accounts": {
+            "type": "object",
+            "description": "Per-account NATS connections. Key is the account id (use \"default\" for the single-account case).",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "agentName": {
+                  "type": "string",
+                  "description": "Agent identity advertised on the NATS network (becomes the discoverable agent name)."
+                },
+                "url": {
+                  "type": "string",
+                  "description": "NATS server URL (e.g. nats://demo.nats.io:4222). Comma-separated list supported for clusters."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Free-form blurb shown during agent discovery."
+                },
+                "credentials": {
+                  "type": "string",
+                  "description": "Path to a NATS .creds file. Overridden by $NATS_CREDENTIALS at runtime."
+                },
+                "context": {
+                  "type": "string",
+                  "description": "Name of a NATS CLI context (file under ~/.config/nats/context/<name>.json) to source url + credentials from. Per-field url/credentials and the $NATS_* env vars still take precedence."
+                },
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Disable this account without removing it from the config."
+                },
+                "owner": {
+                  "type": "string",
+                  "description": "Operator/account segment used in the NATS subject namespace (3rd token). Defaults to \"default\" when unset."
+                },
+                "org": {
+                  "type": "string",
+                  "description": "Deprecated alias of `owner`, still accepted for backward compatibility. Emits a warning at resolve time — please rename to `owner`."
+                }
+              },
+              "required": ["agentName"]
+            }
+          }
+        }
+      }
+    }
+  },
   "configSchema": {
     "type": "object",
     "properties": {
@@ -17,8 +71,10 @@
                 "url": { "type": "string", "description": "NATS server URL" },
                 "description": { "type": "string", "description": "Shown during agent discovery" },
                 "credentials": { "type": "string", "description": "NATS auth credentials" },
+                "context": { "type": "string", "description": "NATS CLI context name; sources url + credentials" },
                 "enabled": { "type": "boolean", "default": true },
-                "org": { "type": "string", "description": "Organization namespace for subject isolation" }
+                "owner": { "type": "string", "description": "Operator/account segment in the NATS subject namespace" },
+                "org": { "type": "string", "description": "Deprecated alias of `owner`" }
               },
               "required": ["agentName"]
             }
