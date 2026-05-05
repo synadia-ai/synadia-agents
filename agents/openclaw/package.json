@@ -55,7 +55,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:smoke": "bun test/smoke.mjs",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "tsup"
   },
   "dependencies": {
     "@nats-io/services": "^3.3.0",
