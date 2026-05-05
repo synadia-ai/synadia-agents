@@ -28,7 +28,15 @@ function parseNatsContextFlag(argv: ReadonlyArray<string>): string | undefined {
   const args = [...argv];
   while (args.length > 0) {
     const a = args.shift() as string;
-    if (a === "--nats-context") return args.shift();
+    if (a === "--nats-context") {
+      const next = args[0];
+      // Guard against the next token being another flag (e.g.
+      // `--nats-context --provider openrouter`), which would otherwise
+      // silently consume `--provider` as the context name and surface as
+      // a confusing context-not-found error.
+      if (next !== undefined && !next.startsWith("--")) return args.shift();
+      return undefined;
+    }
     if (a.startsWith("--nats-context=")) return a.slice("--nats-context=".length);
   }
   return undefined;

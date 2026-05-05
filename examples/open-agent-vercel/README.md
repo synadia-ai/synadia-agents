@@ -27,9 +27,9 @@ sandbox shape that fits their threat model.
 Same precedence as the `agents/open-agent/` CLI:
 
 1. `NATS_URL` env var, if set — wins over everything.
-2. `--nats-context <name>` flag — resolves a saved `nats` CLI context
-   via `@synadia-ai/agents`'s `loadContextOptions`. Use `current` to
-   pick whichever context `nats context select` last chose.
+2. `--nats-context <name>` flag — resolves a saved `nats` CLI context.
+   Use `current` to pick whichever context `nats context select` last
+   chose.
 3. Otherwise: `nats://127.0.0.1:4222`.
 
 ```bash
