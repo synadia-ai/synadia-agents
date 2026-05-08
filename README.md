@@ -22,8 +22,8 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [OpenClaw](agents/openclaw/) | `oc` | `@synadia-ai/nats-channel` |
 | [PI Agent](agents/pi/) | `pi` | `@synadia-ai/nats-pi-channel` |
 | [Hermes](agents/hermes/) | `hermes` | upstream fork — see [`agents/hermes/`](agents/hermes/) (work in progress) |
-| [open-agent](agents/open-agent/) | `@synadia-ai/open-agent` (private) | inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
-| [DSPy ReAct](examples/dspy/) | (example, not published) | standalone agent built from scratch with ax-llm ReAct |
+| [open-agent](agents/open-agent/) | `open-agent` | `@synadia-ai/open-agent` (private) — inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
+| [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 
 Subjects follow a verb-first pattern: `agents.{verb}.{token}.{owner}.{session}` where `verb` is `prompt`, `hb`, or `status`.
 
