@@ -1,7 +1,18 @@
 {
   "name": "claude-channel-nats",
   "version": "0.5.1",
+  "description": "NATS Agent Protocol channel for Claude Code. Exposes a Claude Code session as a discoverable, spec-compliant agent on NATS via an MCP server.",
+  "author": "Synadia Communications",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "agents/claude-code"
+  },
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agents/claude-code",
+  "bugs": {
+    "url": "https://github.com/synadia-ai/synadia-agents/issues"
+  },
   "type": "module",
   "bin": "./server.ts",
   "scripts": {

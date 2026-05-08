@@ -21,9 +21,9 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [Claude Code](agents/claude-code/) | `cc` | `claude-channel-nats` |
 | [OpenClaw](agents/openclaw/) | `oc` | `@synadia-ai/nats-channel` |
 | [PI Agent](agents/pi/) | `pi` | `@synadia-ai/nats-pi-channel` |
-| [Hermes](agents/hermes/) | `hermes` | upstream fork (work in progress) |
-| [open-agent](agents/open-agent/) | `open-agent` | inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
-| [DSPy ReAct](examples/dspy/) | `dspy` | example, not published |
+| [Hermes](agents/hermes/) | `hermes` | upstream fork — see [`agents/hermes/`](agents/hermes/) (work in progress) |
+| [open-agent](agents/open-agent/) | `@synadia-ai/open-agent` (private) | inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
+| [DSPy ReAct](examples/dspy/) | (example, not published) | standalone agent built from scratch with ax-llm ReAct |
 
 Subjects follow a verb-first pattern: `agents.{verb}.{token}.{owner}.{session}` where `verb` is `prompt`, `hb`, or `status`.
 
@@ -144,12 +144,14 @@ synadia-agents/
 │   ├── claude-code/
 │   ├── openclaw/
 │   ├── pi/
-│   └── hermes/
+│   ├── hermes/
+│   └── open-agent/              ← inbound bridge for vercel-labs/open-agents
 └── examples/              ← apps built with the SDKs (callers and agents)
     ├── agent-web-ui/             ← Vue 3 + Bun browser client
     ├── claude-code-headless/     ← spawn/stop many Claude Code sessions
     ├── pi-headless/              ← spawn/stop many PI sessions
-    └── dspy/                     ← standalone agent built from scratch (ax-llm ReAct)
+    ├── dspy/                     ← standalone agent built from scratch (ax-llm ReAct)
+    └── open-agent-vercel/        ← runs the open-agent bridge against @vercel/sandbox
 ```
 
 Each subtree has its own `README.md` and the index READMEs (`client-sdk/README.md`, `agent-sdk/README.md`, `agents/README.md`, `examples/README.md`) describe what lives at each level. See [`README-DEV.md`](README-DEV.md) for local-dev build and install recipes.
