@@ -1,4 +1,4 @@
-// @synadia-ai/agents — TypeScript SDK for the NATS Agent Protocol.
+// @synadia-ai/agents — TypeScript SDK for the Synadia Agent Protocol for NATS.
 //
 // Public API for callers:
 //   - {@link Agents}              — construct with a `NatsConnection`.

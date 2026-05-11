@@ -1,5 +1,5 @@
 // DSPy-style NATS agent: ax-llm ReAct loop with sandboxed fs tools, exposed as
-// a NATS Agent Protocol v0.3 service via the SDK's `AgentService` helper.
+// a Synadia Agent Protocol for NATS v0.3 service via the SDK's `AgentService` helper.
 // Streams ReAct status lines and final-answer deltas as protocol-typed chunks.
 
 import { promises as fs } from "node:fs";

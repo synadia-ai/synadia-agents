@@ -1,4 +1,4 @@
-"""Python SDK for the NATS Agent Protocol.
+"""Python SDK for the Synadia Agent Protocol for NATS.
 
 See https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md
 for the wire spec.

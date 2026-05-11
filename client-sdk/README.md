@@ -1,6 +1,6 @@
 # Client SDKs
 
-Caller-side libraries that speak the **NATS Agent Protocol**. They discover agents running on a NATS cluster, send prompts (with optional attachments), and stream typed response chunks back. The API has the same shape in every language - pick the one that matches your runtime.
+Caller-side libraries that speak the **Synadia Agent Protocol for NATS**. They discover agents running on a NATS cluster, send prompts (with optional attachments), and stream typed response chunks back. The API has the same shape in every language - pick the one that matches your runtime.
 
 ## Available SDKs
 

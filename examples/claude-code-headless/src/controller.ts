@@ -63,7 +63,7 @@ const helpText = (
     "This is a control-plane agent. It spawns, stops, and lists Claude Code",
     "sessions backed by @anthropic-ai/claude-agent-sdk. Each spawned session",
     "registers as its OWN NATS agent at `agents.prompt.cc-headless.<owner>.<session_id>`",
-    "and speaks the standard NATS Agent Protocol v0.3 — discover it via",
+    "and speaks the standard Synadia Agent Protocol for NATS v0.3 — discover it via",
     "$SRV.INFO.agents and prompt it like any agent.",
     "",
     "Custom endpoints on this controller:",

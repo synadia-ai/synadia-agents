@@ -1,6 +1,6 @@
 # @synadia-ai/nats-channel
 
-NATS channel plugin for [OpenClaw](https://openclaw.ai). Every configured OpenClaw agent becomes discoverable, addressable, and streamable over NATS — anyone running a [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) client (e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) or [`synadia-ai-agents`](../../client-sdk/python)) can find your agent, prompt it, and stream the reply back.
+NATS channel plugin for [OpenClaw](https://openclaw.ai). Every configured OpenClaw agent becomes discoverable, addressable, and streamable over NATS — anyone running a [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs) client (e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) or [`synadia-ai-agents`](../../client-sdk/python)) can find your agent, prompt it, and stream the reply back.
 
 ## Install
 

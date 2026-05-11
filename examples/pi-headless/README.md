@@ -1,6 +1,6 @@
 # pi-headless
 
-A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `ReferenceAgent`) and conforming to the NATS Agent Protocol **v0.3** (verb-first subjects + `status` endpoint).
+A headless NATS agent host for the [PI coding agent](https://github.com/badlogic/pi-mono), built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `ReferenceAgent`) and conforming to the Synadia Agent Protocol for NATS **v0.3** (verb-first subjects + `status` endpoint).
 
 Each spawned PI session registers as its own NATS agent instance under `agents.prompt.pi-headless.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.pi-headless.<owner>.<name>` (default `name = "control"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
 

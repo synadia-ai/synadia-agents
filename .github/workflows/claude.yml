@@ -23,7 +23,7 @@ jobs:
       checkout_mode: base
       review_focus: |
         Additionally focus on:
-        - NATS Agent Protocol compliance (spec: https://github.com/synadia-ai/nats-agent-sdk-docs).
+        - Synadia Agent Protocol for NATS compliance (spec: https://github.com/synadia-ai/nats-agent-sdk-docs).
         - Cross-SDK wire compatibility between client-sdk/typescript and client-sdk/python — anything that changes the wire shape must keep both SDKs interoperable.
         - Attachment handling: base64 validation (strict RFC 4648), filename safety (no absolute paths, no ".." traversal, no NUL bytes), and path safety in per-agent staging directories.
         - Public API stability in @synadia-ai/agents (TypeScript) and synadia-ai-agents (Python). Call out breaking changes explicitly.

@@ -1,8 +1,8 @@
 # Synadia Agents
 
-**SDKs and ready-to-run agent plugins for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs).**
+**SDKs and ready-to-run agent plugins for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs).**
 
-The NATS Agent Protocol lets any AI agent — Claude Code, OpenClaw, PI, Hermes, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official **caller** and **host** SDKs (TypeScript and Python — see [SDKs](#sdks) below), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
+The Synadia Agent Protocol for NATS lets any AI agent — Claude Code, OpenClaw, PI, Hermes, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official **caller** and **host** SDKs (TypeScript and Python — see [SDKs](#sdks) below), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
 
 ## Get started — pick your path
 

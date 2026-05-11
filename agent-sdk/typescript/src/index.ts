@@ -1,4 +1,4 @@
-// @synadia-ai/agent-service — server-side TypeScript SDK for the NATS Agent Protocol.
+// @synadia-ai/agent-service — server-side TypeScript SDK for the Synadia Agent Protocol for NATS.
 //
 // Pairs with @synadia-ai/agents (caller-side). Agent harness authors install
 // both packages — this one re-exports nothing from the caller, keeping the

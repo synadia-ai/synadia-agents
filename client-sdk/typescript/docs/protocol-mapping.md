@@ -1,6 +1,6 @@
 # Protocol mapping
 
-Every SDK call mapped to its NATS Agent Protocol section, for implementers of other SDKs or reviewers auditing this one. Section numbers refer to `core-protocol.md`.
+Every SDK call mapped to its Synadia Agent Protocol for NATS section, for implementers of other SDKs or reviewers auditing this one. Section numbers refer to `core-protocol.md`.
 
 ## Discovery (§4)
 

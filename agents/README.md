@@ -1,6 +1,6 @@
 # Agents
 
-Plugins that wrap existing AI harnesses - PI, OpenClaw, Claude Code, Hermes - as NATS micro services speaking the **NATS Agent Protocol**, so any SDK in `../client-sdk/` can drive them the same way.
+Plugins that wrap existing AI harnesses - PI, OpenClaw, Claude Code, Hermes - as NATS micro services speaking the **Synadia Agent Protocol for NATS**, so any SDK in `../client-sdk/` can drive them the same way.
 
 The plugins are built on the SDK pair: caller-side primitives from [`../client-sdk/`](../client-sdk/) for subjects, envelope types, and the error hierarchy; server-side helpers from [`../agent-sdk/`](../agent-sdk/) (`encodeChunk`, `splitResponseText`, the heartbeat-payload encoders, and — when the harness fits — `AgentService`) for putting an agent on the wire. The OpenClaw, PI, and Claude Code harnesses currently call the encoders directly; the controller agents in [`../examples/pi-headless/`](../examples/pi-headless/) and [`../examples/claude-code-headless/`](../examples/claude-code-headless/) are obvious migration candidates for `AgentService` once their custom `spawn` / `stop` / `list` endpoints land on `extraEndpoints`.
 

@@ -1,7 +1,7 @@
 # Protocol mapping
 
 Every SDK call mapped to its section in the
-[NATS Agent Protocol spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+[Synadia Agent Protocol for NATS spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
 (spec target: v0.3 verb-first wire). Intended for implementers of other
 SDKs and for reviewers auditing this one. The Python SDK currently ships
 **ahead** of the spec text — see "Open questions flagged upstream" below

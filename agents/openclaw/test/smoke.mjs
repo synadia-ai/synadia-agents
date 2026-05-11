@@ -1,4 +1,4 @@
-// Wire-level smoke test for the NATS Agent Protocol v0.3 layer of
+// Wire-level smoke test for the Synadia Agent Protocol for NATS v0.3 layer of
 // @synadia-ai/nats-channel (OpenClaw).
 //
 // This test does NOT boot a full OpenClaw pipeline. Instead it assembles a

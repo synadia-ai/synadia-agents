@@ -8,7 +8,7 @@
   "channelConfigs": {
     "nats": {
       "label": "NATS",
-      "description": "NATS Agent Protocol channel — exposes each OpenClaw agent on the NATS network so other clients can discover and prompt it.",
+      "description": "Synadia Agent Protocol for NATS channel — exposes each OpenClaw agent on the NATS network so other clients can discover and prompt it.",
       "schema": {
         "type": "object",
         "properties": {

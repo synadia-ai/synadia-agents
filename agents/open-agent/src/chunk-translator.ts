@@ -1,4 +1,4 @@
-// AI SDK UI-message-part → NATS Agent Protocol chunk translation.
+// AI SDK UI-message-part → Synadia Agent Protocol for NATS chunk translation.
 //
 // The vendored open-agents `ToolLoopAgent.stream(...).toUIMessageStream(...)`
 // emits AI SDK v6 UI parts: text deltas, tool-input/output events, etc.

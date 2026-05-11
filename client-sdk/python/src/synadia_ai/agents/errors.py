@@ -14,7 +14,10 @@ class NatsAgentError(Exception):
 
 
 class ProtocolError(NatsAgentError):
-    """Wire payload violates the NATS Agent Protocol (malformed envelope, bad chunk, etc.)."""
+    """Wire payload violates the Synadia Agent Protocol for NATS.
+
+    (malformed envelope, bad chunk, etc.)
+    """
 
 
 class StreamStalledError(ProtocolError):

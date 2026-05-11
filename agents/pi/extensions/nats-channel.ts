@@ -1,7 +1,7 @@
 /**
- * NATS Agent Protocol channel for PI Agent.
+ * Synadia Agent Protocol for NATS channel for PI Agent.
  *
- * Implements the NATS Agent Protocol v0.3 (see
+ * Implements the Synadia Agent Protocol for NATS v0.3 (see
  * `https://github.com/synadia-ai/nats-agent-sdk-docs`). Every PI session becomes a
  * spec-compliant agent instance: discoverable via `$SRV.PING/INFO`,
  * addressable at `agents.prompt.pi.{owner}.{name}`, emitting typed response

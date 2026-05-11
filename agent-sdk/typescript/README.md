@@ -1,6 +1,6 @@
 # @synadia-ai/agent-service
 
-**Server-side TypeScript SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs).** Host an agent — register the `agents` micro service, serve the `prompt` and `status` endpoints, publish heartbeats, and stream typed chunks back to callers.
+**Server-side TypeScript SDK for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs).** Host an agent — register the `agents` micro service, serve the `prompt` and `status` endpoints, publish heartbeats, and stream typed chunks back to callers.
 
 Pairs with [`@synadia-ai/agents`](../../client-sdk/typescript/) (the caller-side SDK). Agent harness authors install both — caller imports stay on `@synadia-ai/agents` (subjects, envelope types, errors), host imports come from `@synadia-ai/agent-service` (`AgentService`, `ReferenceAgent`, server-side wire helpers). The two packages release in lockstep.
 

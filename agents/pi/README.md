@@ -1,6 +1,6 @@
 # @synadia-ai/nats-pi-channel
 
-NATS channel extension for [PI Agent](https://github.com/badlogic/pi-mono). Every running PI session becomes discoverable, addressable, and streamable over NATS — anyone with a [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) client (e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) or [`synadia-ai-agents`](../../client-sdk/python)) can find your session, prompt it, and stream the reply back.
+NATS channel extension for [PI Agent](https://github.com/badlogic/pi-mono). Every running PI session becomes discoverable, addressable, and streamable over NATS — anyone with a [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs) client (e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) or [`synadia-ai-agents`](../../client-sdk/python)) can find your session, prompt it, and stream the reply back.
 
 ## Install
 
