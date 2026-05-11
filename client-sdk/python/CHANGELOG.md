@@ -6,6 +6,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
 the 0.x line is explicitly unstable per protocol spec §11.2.
 
+## [Unreleased]
+
+### Notes
+
+- **Spec §6.4 clarification — leading ack from spec-compliant agents.**
+  Spec §6.4 was sharpened: spec-compliant agents now emit exactly one
+  `{"type":"status","data":"ack"}` chunk as the **first** message on
+  the reply subject, before any `response`/`query` chunk. No
+  functional change in this package — `decode_chunk` already parses
+  the chunk into `StatusChunk(status="ack")`, the per-read inactivity
+  timeout in `Agent.prompt` naturally resets on every delivered chunk
+  (so the leading ack satisfies §6.6 with no special-case code), and
+  `StatusChunk`s are yielded to user code alongside `ResponseChunk` as
+  before. The sibling `synadia-ai-agent-service` has been updated to
+  emit the leading ack unconditionally; consumer code that filtered on
+  `ResponseChunk` already ignores ack chunks correctly. Tweaked
+  `examples/06-chat.py` so its "thinking…" spinner keeps spinning
+  through the leading ack rather than stopping prematurely.
+
 ## [0.7.0] - 2026-05-04
 
 Restores wire-shape parity with the spec and TS SDK after the

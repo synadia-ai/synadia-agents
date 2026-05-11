@@ -27,6 +27,7 @@ from synadia_ai.agents import (
     Query,
     QueryTimeout,
     ResponseChunk,
+    StatusChunk,
 )
 
 from synadia_ai.agent_service import AgentService, PromptStream
@@ -42,7 +43,7 @@ OWNER = "pytest"
 HEARTBEAT_INTERVAL_S = 30  # Long enough that no beacon fires during the test.
 
 
-def _snapshot(msg: ResponseChunk | Query | Any) -> dict[str, object]:
+def _snapshot(msg: ResponseChunk | StatusChunk | Query | Any) -> dict[str, object]:
     """Render an async-iterator item to a JSON-safe dict for evidence capture."""
     if isinstance(msg, Query):
         return {
@@ -89,7 +90,7 @@ async def test_query_happy_path(nc: NATSClient, evidence: EvidenceRecorder) -> N
             found = await agents.discover(timeout=1.0)
             agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
-            messages: list[ResponseChunk | Query | object] = []
+            messages: list[ResponseChunk | StatusChunk | Query | object] = []
             async for msg in agent.prompt("run it", timeout=5.0):
                 messages.append(msg)
                 if isinstance(msg, Query):
@@ -97,8 +98,13 @@ async def test_query_happy_path(nc: NATSClient, evidence: EvidenceRecorder) -> N
 
             evidence.write_jsonl("chunks.jsonl", [_snapshot(m) for m in messages])
 
-            assert len(messages) == 3, f"expected 3 yielded items, got {len(messages)}"
-            first, second, third = messages
+            # Filter out the SDK's §6.4 leading ack — the test cares about the
+            # handler's own emissions: "thinking…", the query, then "done".
+            payload = [m for m in messages if not isinstance(m, StatusChunk)]
+            assert len(payload) == 3, (
+                f"expected 3 non-status items, got {len(payload)}: {messages!r}"
+            )
+            first, second, third = payload
             assert isinstance(first, ResponseChunk)
             assert first.text == "thinking…"
 
@@ -147,7 +153,7 @@ async def test_query_concurrent_asks(nc: NATSClient, evidence: EvidenceRecorder)
             found = await agents.discover(timeout=1.0)
             agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
-            messages: list[ResponseChunk | Query | object] = []
+            messages: list[ResponseChunk | StatusChunk | Query | object] = []
             queries: list[Query] = []
             async for msg in agent.prompt("kick off", timeout=5.0):
                 messages.append(msg)
@@ -205,7 +211,7 @@ async def test_query_timeout(nc: NATSClient, evidence: EvidenceRecorder) -> None
             found = await agents.discover(timeout=1.0)
             agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
-            messages: list[ResponseChunk | Query | object] = []
+            messages: list[ResponseChunk | StatusChunk | Query | object] = []
             async for msg in agent.prompt("ping", timeout=5.0):
                 messages.append(msg)
                 # Deliberately do NOT reply — let the agent-side timeout fire.

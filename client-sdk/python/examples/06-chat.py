@@ -116,13 +116,18 @@ async def _run_turn(
     console.print(Text(f"  {agent_name}  ", style="bold green"), end="")
     thinking = console.status("agent is thinking…", spinner="dots")
     thinking.start()
-    first_chunk = True
+    first_visible_chunk = True
     try:
         stream = agent.prompt(text, timeout=timeout)
         async for msg in stream:
-            if first_chunk:
+            # Keep the spinner spinning through the §6.4 leading ack (and any
+            # mid-stream keep-alive acks) so the user sees "thinking…" until
+            # the agent's actual text starts arriving. Without this the
+            # spinner stops within milliseconds of `await stream.__aiter__()`,
+            # leaving a visible silent gap before the first response chunk.
+            if first_visible_chunk and not isinstance(msg, StatusChunk):
                 thinking.stop()
-                first_chunk = False
+                first_visible_chunk = False
             if isinstance(msg, ResponseChunk):
                 console.print(msg.text, end="", highlight=False)
                 if msg.attachments:
@@ -145,13 +150,13 @@ async def _run_turn(
                 )
                 await msg.reply("ok")
     except asyncio.CancelledError:
-        if not first_chunk:
+        if not first_visible_chunk:
             console.print(Text("\n  [turn cancelled]", style="yellow"))
         else:
             console.print(Text("[turn cancelled]", style="yellow"))
         raise
     except NatsAgentError as err:
-        if not first_chunk:
+        if not first_visible_chunk:
             console.print()
         console.print(Text(f"  [{type(err).__name__}: {err}]", style="bold red"))
         return

@@ -323,6 +323,34 @@ either guides them to success or frustrates them.
 
 ## Alignment milestones
 
+- **2026-05-11 - §6.4 leading-ack compliance (agent-sdk-only).** Spec
+  §6.4 was sharpened: every prompt handler MUST emit exactly one
+  `{"type":"status","data":"ack"}` chunk as the **first** message on
+  the reply subject, before any `response`/`query` chunk and before
+  any work that introduces observable latency. Three of three Python
+  agents in the repo (reference agent, `demo_echo`, in-tree test
+  handlers) treated ack as optional under the previous wording. Fixed
+  at a single chokepoint: `AgentService._on_prompt_request` now
+  publishes the ack unconditionally after a successful envelope
+  decode and before invoking the user handler, so every Python agent
+  becomes spec-compliant on upgrade with no per-agent code change.
+  The ack is independent of `keepalive_interval_s` — passing `None`
+  only disables the periodic keep-alive cadence, not the leading ack.
+  Malformed envelopes still produce `error(400) → terminator` with no
+  spurious ack (ack lives after decode validation). Client-sdk
+  unchanged — `decode_chunk` already parsed the chunk and the
+  per-read inactivity timeout naturally resets on every delivered
+  chunk; the `06-chat.py` spinner trigger was tweaked to wait for
+  the first `ResponseChunk`/`Query` rather than the leading
+  `StatusChunk` to avoid a visible silent gap. Test surface updated:
+  new `test_leading_ack_e2e.py` covers the wire-shape ordering and
+  the no-ack-before-400 invariant; existing
+  `test_keepalive_skips_ack_for_fast_handler` /
+  `test_keepalive_disabled_emits_no_ack` were rewritten to expect
+  exactly one ack (the leading one), not zero;
+  `test_handler_exception_emits_error_then_terminator` extended from
+  2 frames to 3 (ack + error + terminator). Pairs with a TS-side fix
+  shipped in parallel; protocol version stays at `"0.3"`.
 - **2026-05-03 - prompt-stream catch-up to TS PR #66 (`requestMany` +
   sentinel).** Python-side analogue of the TS reshape, mirroring TS's
   shape exactly: prompt streams ride a shared

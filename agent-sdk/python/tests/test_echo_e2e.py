@@ -27,6 +27,7 @@ from synadia_ai.agents import (
     Agents,
     Envelope,
     ResponseChunk,
+    StatusChunk,
 )
 from synadia_ai.agents.heartbeat import HeartbeatPayload
 
@@ -125,17 +126,26 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
             assert discovered.prompt_endpoint.max_payload_bytes == 1024 * 1024
             assert discovered.prompt_endpoint.attachments_ok is True
 
-            received: list[ResponseChunk] = []
+            received: list[ResponseChunk | StatusChunk] = []
             async for msg in discovered.prompt("hello world", timeout=5.0):
-                assert isinstance(msg, ResponseChunk), (
+                assert isinstance(msg, ResponseChunk | StatusChunk), (
                     f"unexpected chunk type: {type(msg).__name__}"
                 )
                 received.append(msg)
 
             # The iterator returning normally means the empty-payload terminator arrived (§6.5).
-            assert len(received) == 1, f"expected 1 chunk, got {len(received)}"
-            assert received[0].text == "hello world"
-            assert received[0].attachments is None
+            # The SDK auto-emits a §6.4 leading ack before the handler runs, so
+            # every spec-compliant prompt yields a StatusChunk first; the
+            # handler's response chunks follow.
+            responses = [c for c in received if isinstance(c, ResponseChunk)]
+            acks = [c for c in received if isinstance(c, StatusChunk) and c.status == "ack"]
+            assert len(acks) >= 1, f"expected leading ack chunk, got: {received!r}"
+            assert isinstance(received[0], StatusChunk) and received[0].status == "ack", (
+                f"first chunk must be the §6.4 leading ack, got: {received[0]!r}"
+            )
+            assert len(responses) == 1, f"expected 1 response chunk, got {len(responses)}"
+            assert responses[0].text == "hello world"
+            assert responses[0].attachments is None
             evidence.write_jsonl(
                 "chunks.jsonl",
                 [json.loads(chunk.model_dump_json()) for chunk in received],

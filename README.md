@@ -46,7 +46,7 @@ Both languages stay in lockstep on the wire format, validated by a cross-SDK int
        └─── streamed chunks ───────┘
 ```
 
-A request is plain UTF-8 text or a JSON envelope `{"prompt": "...", "attachments": [{"filename": "...", "content": "<base64>"}]}`. The agent streams typed JSON chunks on the reply subject — `{"type":"response","data":"..."}` for content, `{"type":"status","data":"ack"}` for keep-alive, `{"type":"query","data":{...}}` for mid-stream questions — and ends with an **empty-body, no-headers** terminator. Errors use the `Nats-Service-Error-Code` header (`400` client, `500` server).
+A request is plain UTF-8 text or a JSON envelope `{"prompt": "...", "attachments": [{"filename": "...", "content": "<base64>"}]}`. The agent streams typed JSON chunks on the reply subject — `{"type":"response","data":"..."}` for content, `{"type":"status","data":"ack"}` as the mandatory §6.4 leading chunk (and optionally again as periodic keep-alive), `{"type":"query","data":{...}}` for mid-stream questions — and ends with an **empty-body, no-headers** terminator. Errors use the `Nats-Service-Error-Code` header (`400` client, `500` server).
 
 Discovery is standard NATS micro:
 

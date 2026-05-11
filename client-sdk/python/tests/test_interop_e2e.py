@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from synadia_ai.agents import Agents, ResponseChunk
+from synadia_ai.agents import Agents, ResponseChunk, StatusChunk
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -195,16 +195,26 @@ async def test_python_client_prompts_ts_reference_agent(
         found = await agents.discover(timeout=3.0)
         discovered = next(a for a in found if a.prompt_subject == ts_reference_agent.prompt_subject)
 
-        received: list[ResponseChunk] = []
+        received: list[ResponseChunk | StatusChunk] = []
         async for msg in discovered.prompt("hello from python", timeout=10.0):
-            assert isinstance(msg, ResponseChunk), (
+            # Spec-compliant agents emit a §6.4 leading `status=ack` chunk
+            # before the handler's first response chunk. The TS reference
+            # agent was updated to do this in lockstep with the Python
+            # agent-sdk (parallel branch `sdk-mandatory-initial-ack`); pre-
+            # update it sent only ResponseChunks. Accept both, then filter
+            # responses for the content assertion so this test stays green
+            # across the cross-SDK rollout window.
+            assert isinstance(msg, ResponseChunk | StatusChunk), (
                 f"TS agent emitted unexpected chunk type: {type(msg).__name__}"
             )
             received.append(msg)
 
-        # The reference agent is hardcoded to emit exactly one response chunk.
-        assert len(received) == 1
-        assert received[0].text == "demo agent received your prompt."
+        # The reference agent is hardcoded to emit exactly one response chunk;
+        # the §6.4 leading ack (if present) is an SDK-level concern, not a
+        # property of the reference-agent handler under test here.
+        responses = [c for c in received if isinstance(c, ResponseChunk)]
+        assert len(responses) == 1, f"expected 1 response chunk, got: {received!r}"
+        assert responses[0].text == "demo agent received your prompt."
     finally:
         await agents.close()
 

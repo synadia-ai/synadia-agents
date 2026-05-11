@@ -97,6 +97,11 @@ DEFAULT_ATTACHMENTS_OK = True
 # `{type:"status",data:"ack"}` periodically while a request is in flight. We
 # match that behaviour by default; agent authors who don't want it pass
 # `keepalive_interval_s=None`.
+#
+# Note: the §6.4-MUST *leading* ack is emitted unconditionally by
+# ``_on_prompt_request`` before the handler runs — it is independent of
+# this keep-alive cadence, and disabling keep-alive does NOT disable the
+# leading ack.
 DEFAULT_KEEPALIVE_INTERVAL_S: float = 30.0
 
 
@@ -198,13 +203,17 @@ class AgentService:
     session lives in the subject (token 5 — the ``session_name``); a
     worker that wants to serve N sessions registers N services.
 
-    ``keepalive_interval_s`` controls per-request keep-alive: while a
-    handler is running, the agent emits ``{"type":"status","data":"ack"}``
-    every ``keepalive_interval_s`` seconds so callers using a stream
-    inactivity timeout (the TS SDK default is 60 s) don't fire on slow
-    handlers. Defaults to 30 s, matching the TS reference harnesses.
-    Pass ``None`` to disable — for example when the handler emits its
-    own status chunks at a finer cadence.
+    ``keepalive_interval_s`` controls the per-request keep-alive
+    *cadence*: while a handler is running, the agent emits
+    ``{"type":"status","data":"ack"}`` every ``keepalive_interval_s``
+    seconds so callers using a stream inactivity timeout (the TS SDK
+    default is 60 s) don't fire on slow handlers. Defaults to 30 s,
+    matching the TS reference harnesses. Pass ``None`` to disable the
+    periodic cadence — for example when the handler emits its own
+    status chunks at a finer cadence. Note: the §6.4 *leading* ack
+    (emitted before the handler runs) is mandatory and fires
+    unconditionally regardless of this flag; ``None`` disables only
+    the periodic mid-stream cadence, not the leading ack.
 
     ``max_payload`` is honored up to the connected server's negotiated
     limit (``nc.max_payload``). If you pass a value *larger* than the
@@ -416,6 +425,16 @@ class AgentService:
                 log.warning("rejecting malformed prompt on %s: %s", request.subject, exc)
                 await request.respond_error("400", _sanitize_error_desc(str(exc)))
                 return
+
+            # §6.4: emit the leading ack BEFORE any handler work so warm-up
+            # latency stays inside the §6.6 budget and the stream is observable
+            # to plain `nats req --wait-for-empty`. Best-effort, mirroring the
+            # terminator path below — if respond() fails, log and continue;
+            # the next send (handler chunk or terminator) will surface it.
+            try:
+                await request.respond(encode_chunk(StatusChunk(status="ack")))
+            except Exception:
+                log.exception("failed to emit leading ack on %s", request.subject)
 
             stream = PromptStream(request, self._nc)
             handler = self._prompt_handler
