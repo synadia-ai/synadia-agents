@@ -1,6 +1,6 @@
 # `@synadia-ai/open-agent`
 
-A Synadia Agent Protocol for NATS bridge for
+A bridge implementing the **Synadia Agent Protocol for NATS** for
 [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents).
 Exposes an open-agents `ToolLoopAgent` (read / write / edit / grep / glob /
 bash / task / skill / web_fetch / ask_user_question) on
