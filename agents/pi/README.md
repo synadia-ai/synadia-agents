@@ -146,13 +146,17 @@ From the CLI:
 
 ```bash
 # Plain text prompt
-nats req agents.prompt.pi.<owner>.<session> "What files are here?" --wait-for-empty --timeout 120s
+nats req agents.prompt.pi.<owner>.<session> "What files are here?" \
+  --wait-for-empty --reply-timeout 30s --timeout 120s
 
 # JSON envelope (caller SDKs use this form)
-nats req agents.prompt.pi.<owner>.<session> '{"prompt":"What files are here?"}' --wait-for-empty --timeout 120s
+nats req agents.prompt.pi.<owner>.<session> '{"prompt":"What files are here?"}' \
+  --wait-for-empty --reply-timeout 30s --timeout 120s
 ```
 
 `--wait-for-empty` is required: replies stream as multiple chunks and end with an empty terminator message.
+
+`--reply-timeout` matters too. Its default is **300 ms** — the maximum gap allowed between consecutive replies. The agent publishes an immediate `{type:"status",data:"ack"}` chunk on request receipt, but the LLM's first response chunk typically lands 1–2 s later, so the default fires before the first response and the CLI exits after just the ack. Setting `--reply-timeout 30s` gives the LLM enough warm-up time. SDK callers (`requestMany` with `strategy:"sentinel"`) don't hit this — they wait the full `maxWait` regardless of inter-arrival gaps.
 
 From TypeScript using `@synadia-ai/agents`:
 
@@ -214,6 +218,7 @@ Deliberate deferrals:
 - **`NATS: disconnected` in footer** — run `/nats-status`, then check the context file at `~/.config/nats/context/<context>.json` and that the NATS server is reachable.
 - **`NATS: reconnecting…`** — the connection dropped; the client restores it automatically.
 - **My session got a `-2` suffix** — another PI session was already registered on the same `owner + session`. Use `/nats-configure session <name>` to pick a different one.
+- **`nats req` returns only the initial ack and exits** — pass `--reply-timeout 30s` (default is 300 ms, shorter than the gap between the ack chunk and the LLM's first response). See the "Talk to your session" section above for the full command. `--wait-for-empty` alone isn't enough.
 - **`nats req` hangs or returns nothing** — pass `--wait-for-empty`. The protocol ends streams with an empty-body message, not a single response.
 - **`400 attachment[N] has invalid base64 content`** — the caller emitted URL-safe base64 or unpadded output. `Buffer.from(bytes).toString("base64")` (Node) produces the right form.
 - **`400 attachment[N] has unsafe filename`** — send the basename only (`"report.pdf"`), not a path (`"./reports/report.pdf"`).
