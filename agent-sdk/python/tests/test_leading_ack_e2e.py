@@ -74,9 +74,7 @@ async def _drain_reply(
 
 
 @pytest.mark.asyncio
-async def test_prompt_emits_leading_ack(
-    nc: NATSClient, evidence: EvidenceRecorder
-) -> None:
+async def test_prompt_emits_leading_ack(nc: NATSClient, evidence: EvidenceRecorder) -> None:
     """§6.4: the FIRST frame on the reply subject MUST be ``status=ack``."""
 
     async def _echo(envelope: Envelope, stream: PromptStream) -> None:
@@ -123,8 +121,7 @@ async def test_prompt_emits_leading_ack(
         # First frame: the §6.4 leading ack.
         ack_chunk = decode_chunk(ack_msg.data)
         assert isinstance(ack_chunk, StatusChunk), (
-            f"first frame must be a StatusChunk; got {type(ack_chunk).__name__}: "
-            f"{ack_msg.data!r}"
+            f"first frame must be a StatusChunk; got {type(ack_chunk).__name__}: {ack_msg.data!r}"
         )
         assert ack_chunk.status == "ack", (
             f"leading status chunk must carry status=ack; got status={ack_chunk.status!r}"

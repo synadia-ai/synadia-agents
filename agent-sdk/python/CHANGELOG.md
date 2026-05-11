@@ -6,6 +6,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html);
 the 0.x line is explicitly unstable per protocol spec §11.2.
 
+## [Unreleased]
+
+### Changed
+
+- **Leading `status=ack` chunk is now emitted unconditionally (§6.4).**
+  Spec §6.4 was sharpened to require that every prompt handler emit
+  exactly one `{"type":"status","data":"ack"}` chunk as the **first**
+  message on the reply subject, **before** any work that introduces
+  observable latency. `AgentService._on_prompt_request` now publishes
+  the ack after a successful envelope decode and before invoking the
+  user-supplied handler — so every Python agent in the repo
+  (reference agent, `demo_echo`, in-tree test handlers) becomes
+  spec-compliant on upgrade with no code change. The ack is emitted
+  regardless of `keepalive_interval_s`; passing `None` only disables
+  the periodic keep-alive cadence, not the leading ack. A malformed
+  envelope still produces `error(400) → terminator` with no
+  spurious ack — the ack lives after decode validation.
+
 ## [0.3.0] - 2026-05-04
 
 Restores wire-shape parity with the spec and TS SDK after the
