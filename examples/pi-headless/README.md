@@ -135,11 +135,14 @@ nats req agents.spawn.pi-headless.$USER.control \
 
 ```bash
 nats req agents.prompt.pi-headless.$USER.sess-a1b2c3d4 \
-  'summarise the files in this directory' --replies=0 --timeout=60s
+  'summarise the files in this directory' \
+  --replies=0 --reply-timeout=30s --timeout=60s
 # → {"type":"status","data":"ack"}
 # → {"type":"response","data":"There are three files: …"}
 # → (empty terminator)
 ```
+
+`--reply-timeout=30s` is important: the default 300 ms is shorter than the gap between the immediate ack chunk and the LLM's first response, so `nats req` exits after the ack alone. SDK callers (`requestMany` with `strategy:"sentinel"`) wait the full `maxWait` regardless of inter-arrival gaps and don't need this flag.
 
 Programmatically with the SDK:
 

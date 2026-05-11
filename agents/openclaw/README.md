@@ -188,19 +188,23 @@ From the CLI:
 
 ```bash
 # Plain text prompt
-nats req agents.prompt.oc.<owner>.<agentName> "Hello!" --wait-for-empty --timeout 60s
+nats req agents.prompt.oc.<owner>.<agentName> "Hello!" \
+  --wait-for-empty --reply-timeout 30s --timeout 60s
 
 # JSON envelope (caller SDKs use this form under the hood)
-nats req agents.prompt.oc.<owner>.<agentName> '{"prompt":"Hello!"}' --wait-for-empty --timeout 60s
+nats req agents.prompt.oc.<owner>.<agentName> '{"prompt":"Hello!"}' \
+  --wait-for-empty --reply-timeout 30s --timeout 60s
 
 # With an attachment
 nats req agents.prompt.oc.<owner>.<agentName> '{
   "prompt": "describe this image",
   "attachments": [{"filename":"pic.png","content":"<base64>"}]
-}' --wait-for-empty --timeout 120s
+}' --wait-for-empty --reply-timeout 30s --timeout 120s
 ```
 
 `--wait-for-empty` is required: replies stream as multiple chunks and end with an empty terminator message.
+
+`--reply-timeout` matters too. Its default is **300 ms** — the maximum gap allowed between consecutive replies. The agent publishes an immediate `{type:"status",data:"ack"}` chunk on request receipt, but the LLM's first response chunk typically lands 1–2 s later, so the default fires before the first response and the CLI exits after just the ack. Setting `--reply-timeout 30s` gives the LLM enough warm-up time. SDK callers (`requestMany` with `strategy:"sentinel"`) don't hit this — they wait the full `maxWait` regardless of inter-arrival gaps.
 
 From TypeScript using `@synadia-ai/agents`:
 
@@ -259,6 +263,7 @@ The agent subject layout has no per-tenant slot. For real isolation between tena
 
 - **`config field 'org' is deprecated`** — rename `org` → `owner` in `openclaw.json`. The old name still works, just noisy in logs.
 - **`NATS: disconnected`** — check `url` and (if using credentials) that the `.creds` file exists and is readable by the gateway process.
+- **`nats req` returns only the initial ack and exits** — pass `--reply-timeout 30s` (default is 300 ms, shorter than the gap between the ack chunk and the LLM's first response). See the "Talk to your agent" section above for the full command. `--wait-for-empty` alone isn't enough.
 - **`nats req` hangs or returns nothing** — pass `--wait-for-empty`. The protocol ends streams with an empty-body message, not a single response.
 - **`400 attachment[N] has invalid base64 content`** — the caller emitted URL-safe base64 or unpadded output. `Buffer.from(bytes).toString("base64")` (Node) produces the right form.
 - **`400 attachment[N] has unsafe filename`** — send the basename only (`"pic.png"`), not a path (`"./images/pic.png"`).
