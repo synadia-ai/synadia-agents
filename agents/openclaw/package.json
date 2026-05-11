@@ -7,7 +7,7 @@
     "nats",
     "agent",
     "channel",
-    "nats-agent-protocol",
+    "synadia-agent-protocol",
     "synadia-agents"
   ],
   "license": "Apache-2.0",
