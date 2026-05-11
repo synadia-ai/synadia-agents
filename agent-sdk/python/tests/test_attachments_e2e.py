@@ -28,6 +28,7 @@ from synadia_ai.agents import (
     Attachment,
     Envelope,
     ResponseChunk,
+    StatusChunk,
 )
 
 from synadia_ai.agent_service import AgentService, PromptStream
@@ -89,9 +90,9 @@ async def _run_roundtrip(
             found = await agents.discover(timeout=1.0)
             agent = next(a for a in found if a.prompt_subject == service.subject.inbox)
 
-            received: list[ResponseChunk] = []
+            received: list[ResponseChunk | StatusChunk] = []
             async for msg in agent.prompt(prompt_text, attachments=[attachment], timeout=5.0):
-                assert isinstance(msg, ResponseChunk), (
+                assert isinstance(msg, ResponseChunk | StatusChunk), (
                     f"unexpected chunk type: {type(msg).__name__}"
                 )
                 received.append(msg)
@@ -101,9 +102,11 @@ async def _run_roundtrip(
                 [json.loads(chunk.model_dump_json()) for chunk in received],
             )
 
-            # Exactly one ResponseChunk: summary text + one attachment.
-            assert len(received) == 1, f"expected 1 chunk, got {len(received)}"
-            chunk = received[0]
+            # The SDK emits a §6.4 leading ack before invoking the handler, so
+            # the stream is ack + the handler's single ResponseChunk.
+            responses = [c for c in received if isinstance(c, ResponseChunk)]
+            assert len(responses) == 1, f"expected 1 response chunk, got {len(responses)}"
+            chunk = responses[0]
             assert chunk.attachments is not None
             assert len(chunk.attachments) == 1
             received_att = chunk.attachments[0]

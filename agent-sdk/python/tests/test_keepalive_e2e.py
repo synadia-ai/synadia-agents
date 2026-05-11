@@ -6,14 +6,23 @@ while a handler is running, the agent emits ``{"type":"status","data":"ack"}``
 every ``keepalive_interval_s`` so callers using a stream inactivity timeout
 don't fire on slow handlers.
 
+These tests focus on the **keep-alive cadence** — the periodic ack the
+loop emits while a handler is running. The SDK also emits a §6.4
+*leading* ack before the handler runs (covered separately by
+``test_leading_ack_e2e.py``); the leading ack is independent of the
+keep-alive flag and so every scenario here observes ≥1 ack
+unconditionally. Each test below normalises against that by counting
+acks beyond the leading one.
+
 Three integration scenarios:
 
-* **default-on, slow handler** — at least one ack appears in the streamed
-  chunks.
-* **disabled, slow handler** — no ack, even when the handler runs longer
-  than the (non-)interval.
-* **default-on, fast handler** — no ack (the loop's first emit is ``after``
-  the first ``asyncio.sleep``, so a sub-interval handler never trips it).
+* **default-on, slow handler** — multiple keep-alive acks appear in
+  addition to the leading ack.
+* **disabled, slow handler** — only the leading ack appears (the
+  keep-alive loop never runs).
+* **default-on, fast handler** — only the leading ack appears (the
+  handler completes within one interval, so the keep-alive loop's
+  first periodic emit never fires).
 
 Plus a unit test guarding the constructor's input validation.
 """
@@ -108,7 +117,10 @@ async def test_keepalive_emits_ack_during_slow_handler(
 
         acks = [c for c in received if isinstance(c, StatusChunk) and c.status == "ack"]
         responses = [c for c in received if isinstance(c, ResponseChunk)]
-        assert len(acks) >= 1, f"expected ≥1 keep-alive ack, saw chunks: {received!r}"
+        # 1 leading ack + ≥1 keep-alive ack (handler runs ~4 intervals).
+        assert len(acks) >= 2, (
+            f"expected ≥2 acks (leading + ≥1 keep-alive), saw chunks: {received!r}"
+        )
         assert any(r.text == "done" for r in responses), (
             f"expected the handler's final 'done' response, saw: {received!r}"
         )
@@ -117,8 +129,17 @@ async def test_keepalive_emits_ack_during_slow_handler(
 
 
 @pytest.mark.asyncio
-async def test_keepalive_disabled_emits_no_ack(nc: NATSClient, evidence: EvidenceRecorder) -> None:
-    """`keepalive_interval_s=None` suppresses keep-alive even on slow handlers."""
+async def test_keepalive_disabled_emits_only_leading_ack(
+    nc: NATSClient, evidence: EvidenceRecorder
+) -> None:
+    """`keepalive_interval_s=None` suppresses the keep-alive loop entirely.
+
+    The SDK still emits the §6.4 *leading* ack before the handler runs —
+    that is unconditional and separate from the keep-alive cadence — so
+    a slow handler observed under this flag shows exactly one ack on the
+    wire (the leading one), with no further periodic acks regardless of
+    how long the handler takes.
+    """
     handler_duration = 0.3
 
     service = AgentService(
@@ -151,7 +172,14 @@ async def test_keepalive_disabled_emits_no_ack(nc: NATSClient, evidence: Evidenc
             [json.loads(chunk.model_dump_json()) for chunk in received],
         )
         acks = [c for c in received if isinstance(c, StatusChunk) and c.status == "ack"]
-        assert acks == [], f"expected no keep-alive acks when disabled, got: {acks!r}"
+        assert len(acks) == 1, (
+            f"expected exactly one ack (the leading one) with keep-alive disabled, "
+            f"got {len(acks)}: {acks!r}"
+        )
+        # And the leading ack must be the first chunk on the stream.
+        assert isinstance(received[0], StatusChunk) and received[0].status == "ack", (
+            f"first chunk must be the leading ack, got: {received[0]!r}"
+        )
     finally:
         await service.stop()
 
@@ -243,10 +271,17 @@ async def test_keepalive_no_ack_between_error_frame_and_terminator(
 
 
 @pytest.mark.asyncio
-async def test_keepalive_skips_ack_for_fast_handler(
+async def test_keepalive_emits_only_leading_ack_for_fast_handler(
     nc: NATSClient,
 ) -> None:
-    """A handler that completes within one interval never trips the keep-alive."""
+    """A handler that completes within one interval never trips the keep-alive loop.
+
+    The leading §6.4 ack still fires (the SDK emits it unconditionally
+    before the handler runs), so the stream shows exactly one ack — but
+    the periodic keep-alive loop's first emit is gated behind
+    ``await asyncio.sleep(interval)`` and is cancelled when the handler
+    returns, so no additional ack appears.
+    """
     interval = 1.0  # well above the handler's duration
 
     async def fast_handler(envelope: Envelope, stream: PromptStream) -> None:
@@ -277,6 +312,9 @@ async def test_keepalive_skips_ack_for_fast_handler(
             await agents.close()
 
         acks = [c for c in received if isinstance(c, StatusChunk) and c.status == "ack"]
-        assert acks == [], f"fast handler must not emit any keep-alive acks, got: {acks!r}"
+        assert len(acks) == 1, (
+            f"fast handler must emit exactly one ack (the §6.4 leading one), "
+            f"got {len(acks)}: {acks!r}"
+        )
     finally:
         await service.stop()

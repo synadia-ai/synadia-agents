@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from synadia_ai.agents import Agents, Attachment, ResponseChunk
+from synadia_ai.agents import Agents, Attachment, ResponseChunk, StatusChunk
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -134,15 +134,20 @@ async def test_reference_agent_echoes_prefix_and_saves_attachment(
             f"python reference agent not discovered; subjects={[a.prompt_subject for a in found]}"
         )
 
-        received: list[ResponseChunk] = []
+        received: list[ResponseChunk | StatusChunk] = []
         async for msg in discovered.prompt(
             "hello", attachments=[Attachment.from_bytes("note.txt", b"ping")], timeout=10.0
         ):
-            assert isinstance(msg, ResponseChunk), f"unexpected chunk type: {type(msg).__name__}"
+            assert isinstance(msg, ResponseChunk | StatusChunk), (
+                f"unexpected chunk type: {type(msg).__name__}"
+            )
             received.append(msg)
 
-        assert len(received) == 1
-        assert received[0].text == "py-ref: hello [received 1 attachment(s): note.txt]"
+        # The reference agent inherits the §6.4 leading ack from the SDK; the
+        # handler contributes a single ResponseChunk.
+        responses = [c for c in received if isinstance(c, ResponseChunk)]
+        assert len(responses) == 1
+        assert responses[0].text == "py-ref: hello [received 1 attachment(s): note.txt]"
 
         saved = save_dir / "note.txt"
         assert saved.exists(), (

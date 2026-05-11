@@ -1,11 +1,13 @@
 """End-to-end coverage of §9.3 error completion.
 
-An error-terminated stream MUST consist of two messages published to the
-reply subject: first an error-headered frame (§9.1), then the zero-byte
-headerless terminator (§6.5). This test provokes the error path from both
-sides — a malformed envelope (agent-side ``400``) and a handler exception
-(``500``) — then inspects the raw wire bytes captured on the reply inbox
-to confirm both messages are present in order.
+An error-terminated stream ends with an error-headered frame (§9.1)
+followed by the zero-byte headerless terminator (§6.5). On the handler-
+exception (``500``) path the SDK has already emitted a §6.4 leading ack
+before the handler ran, so the full wire shape is ``ack → error(500) →
+terminator``. On the malformed-envelope (``400``) path the decode fails
+before any ack would be emitted, so the wire is just ``error(400) →
+terminator``. This test provokes both paths and inspects the raw wire
+bytes captured on the reply inbox.
 
 The client-facing surface raises :class:`ProtocolError` on the error frame
 and does not re-raise when the trailing terminator arrives; the
@@ -15,6 +17,7 @@ subscription on the reply subject picks them up directly for assertions.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -36,14 +39,15 @@ HEARTBEAT_INTERVAL_S = 30  # Long enough to never fire mid-test.
 
 
 async def _collect_replies(nc: NATSClient, subject: str, inbox: str) -> list[Msg]:
-    """Publish a prompt to `subject` and collect every reply that arrives."""
+    """Publish a prompt to `subject` and collect every reply that arrives.
+
+    Stops once the §6.5 empty-body, no-headers terminator arrives — the
+    list is always terminated by the terminator on a well-behaved agent.
+    """
     sub = await nc.subscribe(inbox)
     try:
         await nc.publish(subject, b"hi", reply=inbox)
         collected: list[Msg] = []
-        # Two messages expected per §9.3 (error frame + terminator); allow a
-        # generous window so flakiness from scheduler jitter doesn't mask the
-        # assertion failure we actually want.
         deadline = asyncio.get_event_loop().time() + 1.0
         while asyncio.get_event_loop().time() < deadline:
             try:
@@ -51,7 +55,7 @@ async def _collect_replies(nc: NATSClient, subject: str, inbox: str) -> list[Msg
             except TimeoutError:
                 break
             collected.append(msg)
-            if len(collected) >= 2 and msg.data == b"" and not msg.headers:
+            if msg.data == b"" and not msg.headers:
                 break
         return collected
     finally:
@@ -91,11 +95,22 @@ async def test_handler_exception_emits_error_then_terminator(
             ],
         )
 
-        # §9.3: two messages — error frame, then terminator.
-        assert len(messages) == 2, (
-            f"expected 2 wire messages (error + terminator); got {len(messages)}"
+        # §6.4 + §9.3: leading ack, then error frame, then terminator. The
+        # ack is emitted before the handler runs, so even a handler that
+        # raises immediately gets the leading-ack prefix on the wire.
+        assert len(messages) == 3, (
+            f"expected 3 wire messages (ack + error + terminator); got {len(messages)}: "
+            f"{[(dict(m.headers or {}), m.data[:80]) for m in messages]!r}"
         )
-        error_msg, terminator = messages
+        ack_msg, error_msg, terminator = messages
+
+        # First frame: §6.4 leading ack — no headers, status=ack payload.
+        assert not ack_msg.headers, (
+            f"leading ack MUST NOT carry NATS headers; saw {dict(ack_msg.headers or {})!r}"
+        )
+        assert json.loads(ack_msg.data) == {"type": "status", "data": "ack"}, (
+            f"first frame must be the §6.4 leading ack, got: {ack_msg.data!r}"
+        )
 
         # Error frame carries both service-error headers.
         error_headers = error_msg.headers or {}
