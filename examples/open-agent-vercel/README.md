@@ -79,7 +79,8 @@ VERCEL_TOKEN=... OPENROUTER_API_KEY=... \
   OPEN_AGENT_OWNER=$USER OPEN_AGENT_SESSION=demo \
   bun start
 
-nats req 'agents.prompt.open-agent.'"$USER"'.demo' --timeout=5m \
+nats req 'agents.prompt.open-agent.'"$USER"'.demo' \
+  --replies=0 --reply-timeout=30s --timeout=5m \
   "list the top-level files in this sandbox"
 ```
 

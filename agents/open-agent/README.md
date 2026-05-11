@@ -54,7 +54,8 @@ bun install
 AI_GATEWAY_API_KEY=... bun run cli \
   --owner $USER --session demo                     # bridge runs here
 
-nats req 'agents.prompt.open-agent.'"$USER"'.demo' --timeout=5m \
+nats req 'agents.prompt.open-agent.'"$USER"'.demo' \
+  --replies=0 --reply-timeout=30s --timeout=5m \
   "create hello.txt with 'Hello, world.' and read it back"
 ```
 
