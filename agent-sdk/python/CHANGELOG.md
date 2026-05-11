@@ -8,6 +8,8 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-11
+
 ### Changed
 
 - **Leading `status=ack` chunk is now emitted unconditionally (§6.4).**
