@@ -46,8 +46,8 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "latest",
-    "@nats-io/services": "^3.3.1",
-    "@nats-io/transport-node": "^3.3.1",
+    "@nats-io/services": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
     "@synadia-ai/agents": "file:../../client-sdk/typescript",
     "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
   },

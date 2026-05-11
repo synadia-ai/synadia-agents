@@ -71,9 +71,9 @@
     "access": "public"
   },
   "dependencies": {
-    "@nats-io/nats-core": "^3.3.0",
-    "@nats-io/services": "^3.3.0",
-    "@nats-io/transport-node": "^3.3.0"
+    "@nats-io/nats-core": "^3.4.0",
+    "@nats-io/services": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0"
   },
   "devDependencies": {
     "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",

@@ -20,8 +20,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@nats-io/transport-node": "^3.0.0",
-    "@nats-io/services": "^3.0.0",
+    "@nats-io/transport-node": "^3.4.0",
+    "@nats-io/services": "^3.4.0",
     "@synadia-ai/agents": "^0.5.0",
     "@synadia-ai/agent-service": "^0.5.0"
   },
