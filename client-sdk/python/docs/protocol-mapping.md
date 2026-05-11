@@ -250,8 +250,10 @@ the gap is, **why** it matters, and a hint at the **next step**.
    long-running handlers by default (`keepalive_interval_s=30.0`).
    This is extra wire traffic vs prior Python releases - quiet
    handlers that comfortably fit under the TS SDK's 60 s stream
-   inactivity timeout don't need it. No spec violation (§6.4 status
-   chunks are at the agent's discretion). Pass
-   `keepalive_interval_s=None` to disable. Next step: monitor for
-   integrator complaints; consider documenting "when to disable" as
-   the SDK matures.
+   inactivity timeout don't need it. The *periodic* mid-stream
+   cadence is at the agent's discretion (§6.4); the *leading* ack
+   (one chunk before the handler runs) is mandatory under v0.3 §6.4
+   and is emitted unconditionally. Pass `keepalive_interval_s=None`
+   to disable the periodic cadence only — the leading ack still
+   fires. Next step: monitor for integrator complaints; consider
+   documenting "when to disable" as the SDK matures.

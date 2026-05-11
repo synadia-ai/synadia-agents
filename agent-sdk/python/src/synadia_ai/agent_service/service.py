@@ -203,13 +203,17 @@ class AgentService:
     session lives in the subject (token 5 — the ``session_name``); a
     worker that wants to serve N sessions registers N services.
 
-    ``keepalive_interval_s`` controls per-request keep-alive: while a
-    handler is running, the agent emits ``{"type":"status","data":"ack"}``
-    every ``keepalive_interval_s`` seconds so callers using a stream
-    inactivity timeout (the TS SDK default is 60 s) don't fire on slow
-    handlers. Defaults to 30 s, matching the TS reference harnesses.
-    Pass ``None`` to disable — for example when the handler emits its
-    own status chunks at a finer cadence.
+    ``keepalive_interval_s`` controls the per-request keep-alive
+    *cadence*: while a handler is running, the agent emits
+    ``{"type":"status","data":"ack"}`` every ``keepalive_interval_s``
+    seconds so callers using a stream inactivity timeout (the TS SDK
+    default is 60 s) don't fire on slow handlers. Defaults to 30 s,
+    matching the TS reference harnesses. Pass ``None`` to disable the
+    periodic cadence — for example when the handler emits its own
+    status chunks at a finer cadence. Note: the §6.4 *leading* ack
+    (emitted before the handler runs) is mandatory and fires
+    unconditionally regardless of this flag; ``None`` disables only
+    the periodic mid-stream cadence, not the leading ack.
 
     ``max_payload`` is honored up to the connected server's negotiated
     limit (``nc.max_payload``). If you pass a value *larger* than the
