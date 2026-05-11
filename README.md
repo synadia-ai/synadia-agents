@@ -55,6 +55,8 @@ nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
 nats sub 'agents.hb.*.*.*'
 ```
 
+To prompt an agent directly from the CLI (no SDK), pass three flags — `--replies=0 --reply-timeout=30s --timeout=60s`. The full CLI cookbook (prompts, attachments, status, control-plane, gotchas) lives at [`docs/using-nats-cli.md`](docs/using-nats-cli.md).
+
 Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>.
 
 ## Quickstart

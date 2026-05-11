@@ -170,7 +170,8 @@ per protocol v0.3):
 
 ```bash
 nats micro list                                          # see "agents"
-nats req  agents.prompt.demo.alice.worker-1 "hello"      # prompt it
+nats req  agents.prompt.demo.alice.worker-1 "hello" \
+  --replies=0 --reply-timeout=30s --timeout=60s          # prompt it (see docs/using-nats-cli.md)
 nats req  agents.status.demo.alice.worker-1 ""           # heartbeat-shaped status reply
 nats sub  "agents.hb.demo.alice.worker-1"                # watch heartbeats
 ```

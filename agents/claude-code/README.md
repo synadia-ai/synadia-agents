@@ -96,7 +96,8 @@ await nc.close();
 Or directly via the NATS CLI (plain-text shorthand per spec §5.1):
 
 ```sh
-nats req agents.prompt.cc.<user>.<name> "Hello Claude" --replies=0 --timeout=90s
+nats req agents.prompt.cc.<user>.<name> "Hello Claude" \
+  --replies=0 --reply-timeout=30s --timeout=90s
 ```
 
 Claude's response streams back as typed JSON chunks on the reply subject;
