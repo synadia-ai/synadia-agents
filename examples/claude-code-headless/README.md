@@ -181,11 +181,14 @@ nats req agents.spawn.cc-headless.$USER.control \
 
 ```bash
 nats req agents.prompt.cc-headless.$USER.sess-a1b2c3d4 \
-  'list the files here and summarise what you see' --replies=0 --timeout=120s
+  'list the files here and summarise what you see' \
+  --replies=0 --reply-timeout=30s --timeout=120s
 # → {"type":"status","data":"ack"}
 # → {"type":"response","data":"There are three files: …"}
 # → (empty terminator)
 ```
+
+`--reply-timeout=30s` is important: the default 300 ms is shorter than the gap between the immediate ack chunk (sent on request receipt, before the Anthropic API call) and the LLM's first response, so `nats req` exits after the ack alone. SDK callers (`requestMany` with `strategy:"sentinel"`) wait the full `maxWait` regardless of inter-arrival gaps and don't need this flag.
 
 Programmatically with the SDK:
 
