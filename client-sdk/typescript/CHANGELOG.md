@@ -13,6 +13,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-11
+
+### Changed
+
+- **Protocol rename.** Every reference to "NATS Agent Protocol" in
+  this package's prose, package metadata, and source-file
+  headers/docstrings now reads **Synadia Agent Protocol for NATS**.
+  No API, wire shape, or protocol version (`0.3`) change.
+
 ## [0.5.0] - 2026-05-04
 
 > Breaking: removes the `PromptStream.replySubject` getter from the

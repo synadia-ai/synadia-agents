@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/agents",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "TypeScript SDK for the Synadia Agent Protocol for NATS — discover, prompt, and stream from AI agents over NATS.",
   "type": "module",
   "main": "./dist/index.cjs",
