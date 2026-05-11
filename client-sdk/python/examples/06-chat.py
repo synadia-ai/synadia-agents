@@ -116,14 +116,19 @@ async def _run_turn(
     console.print(Text(f"  {agent_name}  ", style="bold green"), end="")
     thinking = console.status("agent is thinking…", spinner="dots")
     thinking.start()
-    first_chunk = True
+    first_visible_chunk = True
     try:
         stream = agent.prompt(text, timeout=timeout)
         async for msg in stream:
-            if first_chunk:
-                thinking.stop()
-                first_chunk = False
+            # Keep the spinner spinning through the §6.4 leading ack (and any
+            # mid-stream keep-alive acks) so the user sees "thinking…" until
+            # the agent's actual text starts arriving. Without this the
+            # spinner stops within milliseconds of `await stream.__aiter__()`,
+            # leaving a visible silent gap before the first response chunk.
             if isinstance(msg, ResponseChunk):
+                if first_visible_chunk:
+                    thinking.stop()
+                    first_visible_chunk = False
                 console.print(msg.text, end="", highlight=False)
                 if msg.attachments:
                     names = ", ".join(a.filename for a in msg.attachments)
@@ -139,19 +144,23 @@ async def _run_turn(
                 # A chat REPL is not the right place for interactive query
                 # handling — send a safe default so the agent's stream can
                 # finish. Users wanting query interaction should use
-                # `04-query-reply.py` instead.
+                # `04-query-reply.py` instead. Treat a query like a visible
+                # chunk so the spinner stops before we print the prompt.
+                if first_visible_chunk:
+                    thinking.stop()
+                    first_visible_chunk = False
                 console.print(
                     Text(f"\n  [agent asked: {msg.prompt}; replying 'ok']", style="yellow")
                 )
                 await msg.reply("ok")
     except asyncio.CancelledError:
-        if not first_chunk:
+        if not first_visible_chunk:
             console.print(Text("\n  [turn cancelled]", style="yellow"))
         else:
             console.print(Text("[turn cancelled]", style="yellow"))
         raise
     except NatsAgentError as err:
-        if not first_chunk:
+        if not first_visible_chunk:
             console.print()
         console.print(Text(f"  [{type(err).__name__}: {err}]", style="bold red"))
         return
