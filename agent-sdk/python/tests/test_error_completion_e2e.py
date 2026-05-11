@@ -38,15 +38,23 @@ OWNER = "pytest"
 HEARTBEAT_INTERVAL_S = 30  # Long enough to never fire mid-test.
 
 
-async def _collect_replies(nc: NATSClient, subject: str, inbox: str) -> list[Msg]:
-    """Publish a prompt to `subject` and collect every reply that arrives.
+async def _collect_replies(
+    nc: NATSClient,
+    subject: str,
+    inbox: str,
+    payload: bytes = b"hi",
+) -> list[Msg]:
+    """Publish ``payload`` to ``subject`` and collect every reply that arrives.
 
     Stops once the §6.5 empty-body, no-headers terminator arrives — the
     list is always terminated by the terminator on a well-behaved agent.
+    Defaults to a bare-string request (`b"hi"`) which is promoted to
+    `{"prompt": "hi"}` per §5.3; pass an explicit ``payload`` (e.g. a
+    malformed JSON object) to drive the 400 path.
     """
     sub = await nc.subscribe(inbox)
     try:
-        await nc.publish(subject, b"hi", reply=inbox)
+        await nc.publish(subject, payload, reply=inbox)
         collected: list[Msg] = []
         deadline = asyncio.get_event_loop().time() + 1.0
         while asyncio.get_event_loop().time() < deadline:
@@ -157,24 +165,15 @@ async def test_malformed_envelope_emits_400_then_terminator(
     await service.start()
 
     try:
-        inbox = nc.new_inbox()
-        sub = await nc.subscribe(inbox)
-        try:
-            # Send JSON that passes the §5.3 "starts with {" test but lacks the
-            # required `prompt` field — the agent MUST reject with 400.
-            await nc.publish(service.subject.inbox, b'{"no_prompt":true}', reply=inbox)
-            collected = []
-            deadline = asyncio.get_event_loop().time() + 1.0
-            while asyncio.get_event_loop().time() < deadline:
-                try:
-                    msg = await sub.next_msg(timeout=0.3)
-                except TimeoutError:
-                    break
-                collected.append(msg)
-                if len(collected) >= 2 and msg.data == b"" and not msg.headers:
-                    break
-        finally:
-            await sub.unsubscribe()
+        # JSON that passes the §5.3 "starts with {" promotion check but lacks
+        # the required `prompt` field — the agent MUST reject with 400 before
+        # the handler runs and before any §6.4 leading ack would be emitted.
+        collected = await _collect_replies(
+            nc,
+            service.subject.inbox,
+            nc.new_inbox(),
+            payload=b'{"no_prompt":true}',
+        )
 
         evidence.write_jsonl(
             "wire.jsonl",
@@ -187,7 +186,12 @@ async def test_malformed_envelope_emits_400_then_terminator(
             ],
         )
 
-        assert len(collected) == 2
+        # Exactly 2 frames: §9.1 error frame + §6.5 terminator. NO leading
+        # ack — the ack lives after decode validation, and decode fails here.
+        assert len(collected) == 2, (
+            f"expected 2 frames (error + terminator); got {len(collected)}: "
+            f"{[(dict(m.headers or {}), m.data[:80]) for m in collected]!r}"
+        )
         error_msg, terminator = collected
         assert (error_msg.headers or {}).get("Nats-Service-Error-Code") == "400"
         assert terminator.data == b""

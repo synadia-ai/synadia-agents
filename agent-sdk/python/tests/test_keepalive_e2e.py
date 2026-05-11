@@ -316,5 +316,15 @@ async def test_keepalive_emits_only_leading_ack_for_fast_handler(
             f"fast handler must emit exactly one ack (the §6.4 leading one), "
             f"got {len(acks)}: {acks!r}"
         )
+        # Pin ORDER: the §6.4 leading ack must be `frames[0]`. Without this,
+        # a regression that emitted the ack AFTER the response chunk would
+        # still pass the count assertion above but break the spec invariant
+        # that the ack is the first frame on the reply subject. The sibling
+        # `test_keepalive_disabled_emits_only_leading_ack` already pins this
+        # under `keepalive_interval_s=None`; this test extends the same
+        # invariant to the keep-alive-enabled config.
+        assert isinstance(received[0], StatusChunk) and received[0].status == "ack", (
+            f"first chunk must be the §6.4 leading ack, got: {received[0]!r}"
+        )
     finally:
         await service.stop()
