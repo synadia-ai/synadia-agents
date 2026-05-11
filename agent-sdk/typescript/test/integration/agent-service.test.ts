@@ -90,6 +90,57 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect((lastStatus as { status: string }).status).toBe("done");
   });
 
+  it("emits the §6.4 mandatory leading `ack` as the first chunk before the handler runs", async () => {
+    // Block the handler so we can prove the ack is emitted EAGERLY — i.e.
+    // before any handler work. If the SDK only sent the ack via the
+    // setInterval keep-alive cadence, the first message wouldn't arrive
+    // until the handler produced its first response.
+    let releaseHandler: () => void;
+    const handlerCanProceed = new Promise<void>((resolve) => {
+      releaseHandler = resolve;
+    });
+
+    const service = startService();
+    service.onPrompt(async (_envelope, response) => {
+      await handlerCanProceed;
+      await response.send("late response");
+    });
+    await service.start();
+
+    const found = await client.discover({
+      timeoutMs: 1000,
+      filter: { agent: "svc-test", name: service.subject.name },
+    });
+    const remote = found[0]!;
+
+    const messages: StreamMessage[] = [];
+    const iter = (async () => {
+      for await (const m of await remote.prompt("hi")) messages.push(m);
+    })();
+
+    // try/finally: if an assertion below throws, we still release the
+    // suspended handler so the consumer iterator drains and the test
+    // framework can move on without hanging on a stuck handler.
+    try {
+      const deadline = Date.now() + 1500;
+      while (messages.length < 1 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(messages[0]).toEqual({ type: "status", status: "ack" });
+      expect(messages.some((m) => m.type === "response")).toBe(false);
+    } finally {
+      releaseHandler!();
+    }
+
+    // Handler released — verify the rest of the stream is as expected
+    // and ends on the synthetic `status:done`.
+    await iter;
+
+    expect(messages[0]).toEqual({ type: "status", status: "ack" });
+    expect(messages.some((m) => m.type === "response" && m.text === "late response")).toBe(true);
+    expect(messages.at(-1)).toEqual({ type: "status", status: "done" });
+  });
+
   it("decodes the §5.1 envelope and surfaces its prompt to the handler", async () => {
     let receivedPrompt: string | null = null;
     let receivedAttachmentCount = 0;
