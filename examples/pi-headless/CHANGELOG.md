@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-05-11
+
+### Changed
+
+- **Protocol rename.** Every reference to "NATS Agent Protocol" in
+  this package's prose and package metadata now reads **Synadia Agent
+  Protocol for NATS**. No code, wire shape, or protocol version
+  (`0.3`) change.
+
 ## [0.5.3] - 2026-05-04
 
 ### Changed
