@@ -563,13 +563,34 @@ export class AgentService {
 
     const response = new PromptResponse(msg, this.#options.nc);
 
-    // Per-request keep-alive: while the handler runs, emit ack chunks so
-    // callers using a stream inactivity timeout (§6.6) don't fire.
+    // §6.4: emit the mandatory leading `ack` status chunk as the first
+    // message on the reply subject, before the handler runs. Confirms
+    // request acceptance and resets the caller's inactivity timeout
+    // (§6.6) ahead of any latency the handler introduces (model
+    // warm-up, network round-trips). Also makes the stream observable
+    // from generic NATS tooling (`nats req --wait-for-empty`) which
+    // would otherwise time out on the gap between request receipt and
+    // the handler's first output. Mirrors the Python SDK's
+    // unconditional leading-ack emission.
+    const ack: StatusChunk = { type: "status", status: "ack" };
+    const ackBytes = encodeChunk(ack);
+    try {
+      msg.respond(ackBytes);
+    } catch {
+      // Best-effort, matching the keepalive loop and PromptResponse.send
+      // error-handling pattern: the handler will surface the same failure
+      // naturally if the reply subject is truly dead.
+    }
+
+    // Optional periodic keep-alive: while the handler runs, emit
+    // additional `ack` chunks so callers running long-tail work
+    // (§6.6 inactivity timer, 60s default) don't trip on a quiet
+    // model. The §6.4 spec mandates only the leading ack above;
+    // periodic acks remain a valid wire shape and stay in the SDK
+    // as additional defense.
     let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
     if (this.#keepaliveIntervalS !== null) {
       const intervalMs = this.#keepaliveIntervalS * 1000;
-      const ack: StatusChunk = { type: "status", status: "ack" };
-      const ackBytes = encodeChunk(ack);
       keepaliveTimer = setInterval(() => {
         try {
           msg.respond(ackBytes);

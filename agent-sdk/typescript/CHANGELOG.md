@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Leading `status=ack` chunk is now emitted unconditionally (§6.4).**
+  Spec §6.4 was sharpened to require that every prompt handler emit
+  exactly one `{"type":"status","data":"ack"}` chunk as the **first**
+  message on the reply subject, **before** any work that introduces
+  observable latency
+  ([nats-agent-sdk-docs@b1c6972](https://github.com/synadia-ai/nats-agent-sdk-docs/commit/b1c6972)).
+  `AgentService.#dispatchPrompt` now publishes the ack after a
+  successful envelope decode and before invoking the user-supplied
+  handler — so every TS agent built on `AgentService` (the reference
+  agent, `agents/open-agent`, any third-party harness) becomes
+  spec-compliant on upgrade with no code change. The ack is emitted
+  unconditionally; the `keepaliveIntervalS` option still controls only
+  the periodic mid-stream cadence (which remains a valid wire shape
+  for §6.6 inactivity-timer defense). Mirrors the parallel change in
+  `synadia-ai-agent-service` 0.4.0.
+
+  Wire-compatible: callers already accept arbitrary `status` chunks
+  (`@synadia-ai/agents` decodes them as `{type:"status", status:"ack"}`
+  events).
+
 ## [0.5.1] - 2026-05-04
 
 ### Changed
