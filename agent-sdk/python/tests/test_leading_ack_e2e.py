@@ -95,9 +95,33 @@ async def test_prompt_emits_leading_ack(nc: NATSClient, evidence: EvidenceRecord
     await service.start()
 
     try:
-        frames = await _drain_reply(
-            nc, service.subject.inbox, nc.new_inbox(), b'{"prompt":"hello"}'
-        )
+        # Inline publish+drain so we can capture the *latency* between request
+        # publish and the leading ack's arrival on the reply subject. The §6.4
+        # rationale is that the ack arrives "ahead of any warm-up gap" — a
+        # regression that wedges synchronous work between decode and the ack
+        # emit would still produce ack-first wire order but defeat the spec
+        # invariant. The latency assertion below is the guard for that case.
+        inbox = nc.new_inbox()
+        sub = await nc.subscribe(inbox)
+        try:
+            published_at = asyncio.get_event_loop().time()
+            await nc.publish(service.subject.inbox, b'{"prompt":"hello"}', reply=inbox)
+            first_msg = await sub.next_msg(timeout=2.0)
+            first_arrival = asyncio.get_event_loop().time()
+            frames = [first_msg]
+            deadline = published_at + 2.0
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    msg = await sub.next_msg(timeout=0.5)
+                except TimeoutError:
+                    break
+                frames.append(msg)
+                if msg.data == b"" and not msg.headers:
+                    break
+        finally:
+            await sub.unsubscribe()
+
+        ack_latency_s = first_arrival - published_at
         evidence.write_jsonl(
             "frames.jsonl",
             [
@@ -108,6 +132,28 @@ async def test_prompt_emits_leading_ack(nc: NATSClient, evidence: EvidenceRecord
                 }
                 for msg in frames
             ],
+        )
+        evidence.write_json(
+            "ack-latency.json",
+            {
+                "published_at_s": published_at,
+                "first_arrival_s": first_arrival,
+                "ack_latency_s": ack_latency_s,
+                "budget_s": 0.5,
+            },
+        )
+
+        # §6.4 latency budget: the leading ack must reach the caller well
+        # within the warm-up gap it's meant to mask. 500 ms is generous —
+        # healthy local NATS round-trip is ~10 ms — but tight enough to
+        # catch a regression that adds synchronous work above the ack emit
+        # (e.g. cache warm-up, model preload, attachment fetch). CI flake
+        # risk at this bound is negligible.
+        assert ack_latency_s < 0.5, (
+            f"leading ack arrived {ack_latency_s * 1000:.1f} ms after publish; "
+            f"budget is 500 ms. §6.4 requires the ack to precede observable "
+            f"warm-up latency — a slow ack defeats the spec invariant even "
+            f"though wire ordering is still ack-first."
         )
 
         # Expected wire shape: ack, response, terminator.
@@ -202,12 +248,19 @@ async def test_malformed_prompt_no_ack_before_400(
         )
         error_msg, terminator = frames
 
-        # First frame: §9.1 error frame with 400.
+        # First frame: §9.1 error frame with 400. The combination of
+        # `len(frames) == 2` above and the error-code header here pins the
+        # §6.4 "no ack before 400" invariant — a regression that emitted a
+        # leading ack would shift the error frame to position 1 and break
+        # this header assertion (an ack chunk carries no NATS headers).
         assert (error_msg.headers or {}).get("Nats-Service-Error-Code") == "400"
 
-        # And critically: no ack snuck in before the error.
+        # Belt-and-braces: explicitly verify the first frame doesn't decode
+        # as a leading-ack StatusChunk. Redundant given the assertions above,
+        # but keeps the §6.4 invariant readable at the assertion level.
         decoded = decode_chunk(error_msg.data) if error_msg.data else None
-        assert not isinstance(decoded, StatusChunk) or decoded.status != "ack", (
+        is_leading_ack = isinstance(decoded, StatusChunk) and decoded.status == "ack"
+        assert not is_leading_ack, (
             f"a 400-rejected request MUST NOT emit a leading ack; "
             f"first frame decoded as: {decoded!r}"
         )
