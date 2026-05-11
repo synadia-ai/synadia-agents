@@ -55,14 +55,19 @@ Three flags carry the weight. Skip any one and `nats req` will misbehave in a wa
 | `--reply-timeout=30s` | Max **gap between chunks** before the CLI gives up. Default is `300ms` — much shorter than the gap between the leading `status=ack` (§6.4, sent instantly) and the first `response` chunk from the LLM. Without it, the CLI exits after the ack alone and prints nothing useful. |
 | `--timeout=60s` (or larger) | Global ceiling on the whole stream. Pick a value appropriate to the work — `5m` for code-generating agents, `60s` for echo-style demos. |
 
-`--wait-for-empty` is an alternative termination signal — instead of `--replies=0`, you can use:
+`--wait-for-empty` is a more efficient alternative — instead of `--replies=0`, use:
 
 ```bash
 nats req agents.prompt.pi.alice.my-session "list files" \
   --wait-for-empty --reply-timeout=30s --timeout=60s
 ```
 
-This terminates cleanly when the protocol's empty-body terminator arrives. Both forms are correct; per-agent READMEs in this repo lean either way for historical reasons.
+The two flags terminate differently:
+
+- `--wait-for-empty` recognizes the protocol's empty-body terminator and exits **immediately** when it arrives — no dead wait.
+- `--replies=0` is the generic "collect multiple replies" mode; it doesn't know about the terminator and keeps waiting until `--reply-timeout` fires (so you eat the full 30 s gap after the last chunk before the CLI exits).
+
+Both produce the same chunks; `--wait-for-empty` is the cleaner choice for protocol-aware use. Per-agent READMEs in this repo lean either way for historical reasons.
 
 ### JSON envelope (attachments)
 
@@ -85,7 +90,7 @@ Every prompt produces a stream of one-line JSON chunks:
 {"type":"status","data":"ack"}              ← mandatory §6.4 leading chunk, sent instantly
 {"type":"response","data":"Sure, here..."}  ← model output (one or more)
 {"type":"response","data":" are the files"} ← ...
-{"type":"status","data":"keepalive"}        ← optional periodic keep-alive
+{"type":"status","data":"ack"}              ← optional periodic keep-alive (same "ack" token as the leading chunk)
 <empty body, no headers>                    ← terminator
 ```
 
@@ -127,7 +132,7 @@ The `cc-headless` controller has the same three verbs. See `examples/pi-headless
 | Symptom | Fix |
 | --- | --- |
 | `nats req` prints only `{"type":"status","data":"ack"}` and exits | Missing `--reply-timeout=30s` (the default 300 ms races the LLM's first real response). |
-| `nats req` prints chunks and then hangs forever | Missing `--wait-for-empty` AND missing `--replies=0`. One of them is needed for the CLI to recognize stream termination. |
+| `nats req` prints chunks and then sits idle for 30 s before exiting | You used `--replies=0` but not `--wait-for-empty`. `--replies=0` doesn't recognize the protocol terminator and waits the full `--reply-timeout` after the last chunk. Switch to `--wait-for-empty` for an immediate exit at the terminator. |
 | `nats req` returns nothing at all | Either the subject is wrong, the agent isn't registered, or you're in the wrong account. Run discovery first (`$SRV.INFO.agents`) to confirm the agent is visible from where you're calling. |
 | `400 attachment[N] has invalid base64 content` | The caller emitted URL-safe base64 (`-_`) or unpadded output. Use standard padded base64. |
 | `400 attachment[N] has unsafe filename` | Send the basename only (`"pic.png"`), not a path (`"./images/pic.png"`). |
