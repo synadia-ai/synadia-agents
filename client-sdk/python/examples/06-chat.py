@@ -125,10 +125,10 @@ async def _run_turn(
             # the agent's actual text starts arriving. Without this the
             # spinner stops within milliseconds of `await stream.__aiter__()`,
             # leaving a visible silent gap before the first response chunk.
+            if first_visible_chunk and not isinstance(msg, StatusChunk):
+                thinking.stop()
+                first_visible_chunk = False
             if isinstance(msg, ResponseChunk):
-                if first_visible_chunk:
-                    thinking.stop()
-                    first_visible_chunk = False
                 console.print(msg.text, end="", highlight=False)
                 if msg.attachments:
                     names = ", ".join(a.filename for a in msg.attachments)
@@ -144,11 +144,7 @@ async def _run_turn(
                 # A chat REPL is not the right place for interactive query
                 # handling — send a safe default so the agent's stream can
                 # finish. Users wanting query interaction should use
-                # `04-query-reply.py` instead. Treat a query like a visible
-                # chunk so the spinner stops before we print the prompt.
-                if first_visible_chunk:
-                    thinking.stop()
-                    first_visible_chunk = False
+                # `04-query-reply.py` instead.
                 console.print(
                     Text(f"\n  [agent asked: {msg.prompt}; replying 'ok']", style="yellow")
                 )
