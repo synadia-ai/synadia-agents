@@ -1,7 +1,7 @@
 {
   "name": "@synadia-ai/nats-channel",
   "version": "0.5.5",
-  "description": "NATS Agent Protocol channel for OpenClaw. Makes every OpenClaw agent a discoverable, spec-compliant agent on NATS.",
+  "description": "Synadia Agent Protocol for NATS channel for OpenClaw. Makes every OpenClaw agent a discoverable, spec-compliant agent on NATS.",
   "keywords": [
     "openclaw",
     "nats",

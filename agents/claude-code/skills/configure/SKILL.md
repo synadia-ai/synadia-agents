@@ -96,7 +96,7 @@ has direct terminal access, and the default when no permissions block is set.
 
 Set `permissions.mode` to `query`. When Claude needs permission to use a
 tool during an active NATS prompt, the plugin emits a protocol `query`
-chunk (§7 of the NATS Agent Protocol) on the active stream's reply
+chunk (§7 of the Synadia Agent Protocol for NATS) on the active stream's reply
 subject. The caller replies with `yes`/`no` on the query's dynamic reply
 inbox, and the plugin forwards the decision back to the Claude Code
 harness. The legacy value `"nats"` is accepted as an alias for

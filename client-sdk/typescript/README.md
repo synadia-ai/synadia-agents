@@ -1,6 +1,6 @@
 # @synadia-ai/agents
 
-**Caller-side TypeScript SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs).** Discover, prompt, and stream from AI agents over NATS.
+**Caller-side TypeScript SDK for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs).** Discover, prompt, and stream from AI agents over NATS.
 
 - **Catch errors before they hit the wire.** Oversized payloads and unsupported attachments are validated locally against the agent's advertised limits — and against the caller's own `nc.info.max_payload`, so the smaller of the two binds (a caller behind a smaller-cap broker fails fast instead of waiting for `MAX_PAYLOAD_VIOLATION`).
 - **Stream responses with `for await`.** Prompts return typed chunks (`response`, `status`, `query`) you iterate asynchronously.

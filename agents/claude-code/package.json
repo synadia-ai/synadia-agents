@@ -1,7 +1,7 @@
 {
   "name": "claude-channel-nats",
   "version": "0.5.1",
-  "description": "NATS Agent Protocol channel for Claude Code. Exposes a Claude Code session as a discoverable, spec-compliant agent on NATS via an MCP server.",
+  "description": "Synadia Agent Protocol for NATS channel for Claude Code. Exposes a Claude Code session as a discoverable, spec-compliant agent on NATS via an MCP server.",
   "author": "Synadia Communications",
   "license": "Apache-2.0",
   "repository": {

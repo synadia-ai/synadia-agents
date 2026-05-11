@@ -6,7 +6,7 @@
 > is planned but not yet filed (needs a catch-up rebase first), so the
 > install below clones the fork directly.
 
-NATS gateway for [Hermes Agent](https://github.com/NousResearch/hermes-agent), implementing the **[NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.3**.
+NATS gateway for [Hermes Agent](https://github.com/NousResearch/hermes-agent), implementing the **[Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.3**.
 
 Hermes is a self-improving coding agent with a CLI, a TUI, and a messaging gateway sharing one agent core. With the NATS gateway enabled, each running Hermes instance becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol — e.g. [`synadia-ai-agents`](../../client-sdk/python) (Python; import root `synadia_ai.agents`) or [`@synadia-ai/agents`](../../client-sdk/typescript) (TypeScript) — can enumerate running Hermes instances, prompt them (with attachments), and stream responses back.
 

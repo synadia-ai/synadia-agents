@@ -1,7 +1,7 @@
 {
   "name": "@synadia-ai/agent-service",
   "version": "0.5.1",
-  "description": "Server-side TypeScript SDK for the NATS Agent Protocol — host an agent (AgentService, ReferenceAgent, server-side helpers).",
+  "description": "Server-side TypeScript SDK for the Synadia Agent Protocol for NATS — host an agent (AgentService, ReferenceAgent, server-side helpers).",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

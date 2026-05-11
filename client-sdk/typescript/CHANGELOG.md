@@ -457,7 +457,7 @@ with 0.1**: agents and callers must be upgraded together.
 
 ## [0.1.0-dev] - initial pre-release (pre-rebrand design history)
 
-Implements the client surface of the NATS Agent Protocol `0.1.0-draft`.
+Implements the client surface of the Synadia Agent Protocol for NATS `0.1.0-draft`.
 
 ### Added
 

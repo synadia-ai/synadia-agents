@@ -3,7 +3,7 @@
   "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "NATS Agent Protocol host powered by ax-llm (DSPy-style) with a ReAct loop and sandboxed filesystem tools.",
+  "description": "Synadia Agent Protocol for NATS host powered by ax-llm (DSPy-style) with a ReAct loop and sandboxed filesystem tools.",
   "scripts": {
     "start": "bun run src/index.ts",
     "typecheck": "tsc --noEmit"

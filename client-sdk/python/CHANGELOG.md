@@ -714,7 +714,7 @@ All addressed in-PR before tagging:
 
 ## [0.2.0] - 2026-04-22
 
-Aligns the SDK with **NATS Agent Protocol v0.2** (draft dated
+Aligns the SDK with **Synadia Agent Protocol for NATS v0.2** (draft dated
 2026-04-21). v0.2 is explicitly wire-incompatible with v0.1 per spec
 §11.3 - the service name changes, the `prompt` endpoint must carry a
 specific queue group, and `metadata.protocol_version` bumps to `"0.2"`.
@@ -868,7 +868,7 @@ caller as a pair.
 ## [0.1.0] - 2026-04-21
 
 First professional-polish release. Brings the SDK into full compliance
-with the finalised **NATS Agent Protocol v0.1** and adds the
+with the finalised **Synadia Agent Protocol for NATS v0.1** and adds the
 release-engineering artifacts a public project needs.
 
 **This release is a clean break from 0.0.1** - both the wire format and

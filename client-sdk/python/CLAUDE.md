@@ -5,7 +5,7 @@ with code in this repository.
 
 ## Project
 
-This repo is a **Python SDK for the NATS Agent Protocol** - a transport
+This repo is a **Python SDK for the Synadia Agent Protocol for NATS** - a transport
 library that Python agent authors embed to add NATS as a communication
 channel. Example consumer: a Hermes-style agent would use this SDK to
 expose itself as a protocol-compliant agent over NATS.
@@ -405,7 +405,7 @@ either guides them to success or frustrates them.
   `client-sdk/typescript/src/version.ts`) and the cross-SDK interop
   test `tests/test_interop_e2e.py` is unskipped. See `CHANGELOG.md`
   [0.5.0] for full migration notes.
-- **2026-04-22 - v0.2.0 wire bump.** Aligns with NATS Agent Protocol
+- **2026-04-22 - v0.2.0 wire bump.** Aligns with Synadia Agent Protocol for NATS
   v0.2: service name `SynadiaAgents` → `agents` (§3.1); discovery
   subjects rebased to `$SRV.{PING,INFO}.agents` (§4.1/§4.2); `prompt`
   endpoint now registered with queue group `"agents"` (§3.3);

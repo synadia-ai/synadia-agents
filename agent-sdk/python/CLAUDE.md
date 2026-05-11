@@ -15,7 +15,7 @@ with code in this repository.
 
 ## Project
 
-This repo is a **Python agent-side SDK for the NATS Agent Protocol** —
+This repo is a **Python agent-side SDK for the Synadia Agent Protocol for NATS** —
 the transport library that *agent harness authors* (Hermes, claude-code,
 openclaw, pi, …) embed to expose their runtime as a protocol-compliant
 agent over NATS. It is the host-side counterpart to

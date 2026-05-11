@@ -6,7 +6,7 @@ language-specific deep dives, defer to the package-level CLAUDE.md (e.g.
 
 ## What this repo is
 
-The home for everything around the **NATS Agent Protocol** — language
+The home for everything around the **Synadia Agent Protocol for NATS** — language
 SDKs that callers use, agent plugins that host the protocol, and example
 apps that exercise both. The root `README.md` covers the user-facing
 view: layout, subject namespace, wire shape, quickstart. Read it before

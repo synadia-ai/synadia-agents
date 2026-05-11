@@ -1,7 +1,7 @@
 # Contributing to synadia-ai-agents
 
 Thanks for wanting to contribute! This project is the Python SDK for the
-NATS Agent Protocol; the wire spec at
+Synadia Agent Protocol for NATS; the wire spec at
 [`synadia-ai/nats-agent-sdk-docs/core-protocol.md`](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
 is the source of truth, and [`docs/protocol-mapping.md`](docs/protocol-mapping.md)
 shows how every SDK call maps to a spec section. When in doubt about

@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "NATS Agent Protocol bridge for vercel-labs/open-agents — exposes a per-session ToolLoopAgent on agents.prompt.open-agent.<owner>.<session>.",
+  "description": "Synadia Agent Protocol for NATS bridge for vercel-labs/open-agents — exposes a per-session ToolLoopAgent on agents.prompt.open-agent.<owner>.<session>.",
   "bin": {
     "open-agent": "./src/cli.ts"
   },

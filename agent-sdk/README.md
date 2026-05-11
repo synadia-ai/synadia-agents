@@ -1,6 +1,6 @@
 # Host SDKs
 
-Server-side libraries that **host** agents speaking the **NATS Agent Protocol**. They register the `agents` micro service, advertise the prompt + status endpoints, run the heartbeat loop, and stream typed chunks back. The API has the same shape in every language - pick the one that matches your runtime.
+Server-side libraries that **host** agents speaking the **Synadia Agent Protocol for NATS**. They register the `agents` micro service, advertise the prompt + status endpoints, run the heartbeat loop, and stream typed chunks back. The API has the same shape in every language - pick the one that matches your runtime.
 
 Pairs with [`../client-sdk/`](../client-sdk/) (the caller-side libraries that discover and prompt agents). Most consumers want only the caller side; if you're writing a new agent or wrapping an existing AI harness in NATS, you want both.
 

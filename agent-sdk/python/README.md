@@ -1,6 +1,6 @@
 # synadia-ai-agent-service
 
-Python **agent-host** SDK for the [NATS Agent Protocol](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md).
+Python **agent-host** SDK for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md).
 Embed `AgentService` in a Python agent harness (Hermes-style,
 claude-code, openclaw, pi, …) to register a spec-compliant agent on a
 NATS bus.
@@ -77,7 +77,7 @@ for cross-SDK interop.
   layout.
 - [`synadia-ai-agents`](../../client-sdk/python/) — the client surface
   this package depends on.
-- [NATS Agent Protocol spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+- [Synadia Agent Protocol for NATS spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
   — wire-level source of truth.
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes.
 - [`CLAUDE.md`](CLAUDE.md) — project context and engineering
