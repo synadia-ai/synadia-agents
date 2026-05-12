@@ -22,8 +22,8 @@
     "@nats-io/nats-core": "^3.4.0",
     "@nats-io/services": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
-    "@synadia-ai/agent-service": "^0.5.2",
-    "@synadia-ai/agents": "^0.5.1",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript",
     "ai": "^6.0.165",
     "zod": "^4.3.6"
   },
