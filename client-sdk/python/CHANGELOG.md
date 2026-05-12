@@ -8,6 +8,16 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-12
+
+### Changed
+
+- **Protocol name** — package metadata, module docstrings, README,
+  CONTRIBUTING, and `docs/protocol-mapping.md` updated to "Synadia
+  Agent Protocol for NATS" (was: "NATS Agent Protocol"). Renamed in
+  PR #103. No wire format, public identifier, exception class, or
+  behavior change — protocol version stays `"0.3"`.
+
 ### Notes
 
 - **Spec §6.4 clarification — leading ack from spec-compliant agents.**

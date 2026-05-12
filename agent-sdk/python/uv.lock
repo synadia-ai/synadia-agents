@@ -383,7 +383,7 @@ wheels = [
 
 [[package]]
 name = "synadia-ai-agent-service"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "nats-py" },
@@ -416,7 +416,7 @@ dev = [
 
 [[package]]
 name = "synadia-ai-agents"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "../../client-sdk/python" }
 dependencies = [
     { name = "nats-py" },
