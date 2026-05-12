@@ -44,7 +44,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "latest",
+    "@earendil-works/pi-coding-agent": "latest",
     "@nats-io/services": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
     "@synadia-ai/agents": "file:../../client-sdk/typescript",
