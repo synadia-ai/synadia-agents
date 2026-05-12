@@ -6,7 +6,7 @@
 > is planned but not yet filed (needs a catch-up rebase first), so the
 > install below clones the fork directly.
 
-NATS gateway for [Hermes Agent](https://github.com/NousResearch/hermes-agent), implementing the **[Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.3**.
+NATS gateway for [Hermes Agent](https://github.com/NousResearch/hermes-agent), implementing the **[Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs) v0.3**.
 
 Hermes is a self-improving coding agent with a CLI, a TUI, and a messaging gateway sharing one agent core. With the NATS gateway enabled, each running Hermes instance becomes a discoverable, addressable, streaming agent on NATS. Callers using any SDK that speaks the protocol — e.g. [`synadia-ai-agents`](../../client-sdk/python) (Python; import root `synadia_ai.agents`) or [`@synadia-ai/agents`](../../client-sdk/typescript) (TypeScript) — can enumerate running Hermes instances, prompt them (with attachments), and stream responses back.
 
@@ -337,7 +337,7 @@ Cross-machine collisions are deliberately allowed — the protocol permits multi
 
 ## Wire protocol (summary)
 
-Full spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>. Quick reference:
+Full spec: <https://github.com/synadia-ai/synadia-agent-sdk-docs>. Quick reference:
 
 - **Request**: plain UTF-8 text OR JSON `{"prompt":"…","attachments":[{"filename":"…","content":"<base64>"},…]}`. Attachment `content` must be RFC 4648 §4 base64 (standard alphabet, padded, no URL-safe variant, no whitespace). Under v0.3 the envelope no longer carries a `session` field — the session IS the subject's 5th token.
 - **Response**: typed chunks on the reply subject — `{"type":"status","data":"ack"}` (accepted / keep-alive), `{"type":"response","data":"<text>"}` (content), `{"type":"query","data":{…}}` (mid-stream approval).
@@ -372,4 +372,4 @@ Current deferrals (candidates for future phases, not bugs):
 - **Hermes user guide for the NATS channel:** [`website/docs/user-guide/messaging/nats.md`](https://github.com/synadia-ai/hermes-agent/blob/nats-gateway/website/docs/user-guide/messaging/nats.md) in the fork — deep dive on configuration, subject layout, multiple sessions via profiles, attachments, full troubleshooting table.
 - **Architecture & design:** [`docs/nats-gateway-design.md`](https://github.com/synadia-ai/hermes-agent/blob/nats-gateway/docs/nats-gateway-design.md) — protocol↔adapter mapping, streaming model, approval hook, failure modes, and §17 retrospective lessons (including the v0.3 migration addenda).
 - **Adapter source:** [`gateway/platforms/nats.py`](https://github.com/synadia-ai/hermes-agent/blob/nats-gateway/gateway/platforms/nats.py).
-- **Protocol spec:** <https://github.com/synadia-ai/nats-agent-sdk-docs>
+- **Protocol spec:** <https://github.com/synadia-ai/synadia-agent-sdk-docs>

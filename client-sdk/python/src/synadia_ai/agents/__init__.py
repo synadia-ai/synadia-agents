@@ -1,6 +1,6 @@
 """Python SDK for the Synadia Agent Protocol for NATS.
 
-See https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md
+See https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md
 for the wire spec.
 
 Public API entry points:

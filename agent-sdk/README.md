@@ -107,4 +107,4 @@ The wire is the contract — agents written with any host SDK can be driven by a
 
 </details>
 
-Full protocol spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
+Full protocol spec: <https://github.com/synadia-ai/synadia-agent-sdk-docs>

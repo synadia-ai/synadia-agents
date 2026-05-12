@@ -1,6 +1,6 @@
 # @synadia-ai/nats-pi-channel
 
-NATS channel extension for [PI Agent](https://github.com/badlogic/pi-mono). Every running PI session becomes discoverable, addressable, and streamable over NATS — anyone with a [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs) client (e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) or [`synadia-ai-agents`](../../client-sdk/python)) can find your session, prompt it, and stream the reply back.
+NATS channel extension for [PI Agent](https://github.com/badlogic/pi-mono). Every running PI session becomes discoverable, addressable, and streamable over NATS — anyone with a [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs) client (e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) or [`synadia-ai-agents`](../../client-sdk/python)) can find your session, prompt it, and stream the reply back.
 
 ## Install
 
@@ -227,7 +227,7 @@ Deliberate deferrals:
 ## See also
 
 - Sibling channel plugins: [`openclaw`](../openclaw) (OpenClaw), [`claude-code`](../claude-code) (Claude Code).
-- The wire-level protocol behind it all: [`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs).
+- The wire-level protocol behind it all: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).
 
 ## License
 

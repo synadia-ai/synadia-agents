@@ -19,7 +19,7 @@ under a generic `pysdk` value - that would pollute the subject namespace
 and break `agent`-scoped discovery.
 
 **The protocol spec is the source of truth.** Canonical location:
-[`synadia-ai/nats-agent-sdk-docs/core-protocol.md`](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md).
+[`synadia-ai/synadia-agent-sdk-docs/core-protocol.md`](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md).
 This subdir does not keep a copy — always read the canonical. The
 implementation checklist in §12 is what "compliant" means.
 

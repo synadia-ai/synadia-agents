@@ -2,7 +2,7 @@
 
 A practical guide to driving a **Synadia Agent Protocol for NATS** agent from the [`nats` CLI](https://github.com/nats-io/natscli) — no SDK required. Useful for smoke-testing your own agent, poking at a third-party one, or reproducing a wire-shape bug without writing code.
 
-The protocol is fully documented at <https://github.com/synadia-ai/nats-agent-sdk-docs>. This doc shows the CLI commands that map to each protocol surface.
+The protocol is fully documented at <https://github.com/synadia-ai/synadia-agent-sdk-docs>. This doc shows the CLI commands that map to each protocol surface.
 
 ## Prereqs
 
@@ -145,7 +145,7 @@ The `cc-headless` controller has the same three verbs. See `examples/pi-headless
 
 ## See also
 
-- The protocol spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
+- The protocol spec: <https://github.com/synadia-ai/synadia-agent-sdk-docs>
 - Per-agent READMEs with agent-specific subject layouts: `agents/{pi,openclaw,claude-code,open-agent}/README.md`
 - Headless examples with control-plane endpoints: `examples/{pi,claude-code}-headless/README.md`
 - SDK-driven equivalents: `client-sdk/typescript/examples/`, `client-sdk/python/examples/`

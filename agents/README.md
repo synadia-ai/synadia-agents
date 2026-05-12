@@ -67,4 +67,4 @@ Caller-side constraints (rejected with `400`): `content` must be strict RFC 4648
 
 Per-agent configuration, install instructions, and troubleshooting live in each subdirectory README.
 
-Full protocol spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
+Full protocol spec: <https://github.com/synadia-ai/synadia-agent-sdk-docs>
