@@ -1,6 +1,6 @@
 """Python agent-host SDK for the Synadia Agent Protocol for NATS.
 
-See https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md
+See https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md
 for the wire spec; the §12 implementation checklist is what
 ``AgentService`` enforces.
 

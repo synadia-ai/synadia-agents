@@ -2,7 +2,7 @@
 
 Thanks for wanting to contribute! This project is the Python SDK for the
 Synadia Agent Protocol for NATS; the wire spec at
-[`synadia-ai/nats-agent-sdk-docs/core-protocol.md`](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+[`synadia-ai/synadia-agent-sdk-docs/core-protocol.md`](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md)
 is the source of truth, and [`docs/protocol-mapping.md`](docs/protocol-mapping.md)
 shows how every SDK call maps to a spec section. When in doubt about
 what the code should do, check the spec.
@@ -104,7 +104,7 @@ Docs-only and pure-refactor PRs are the only exception.
 ### Protocol spec
 
 If you find the implementation contradicts the
-[canonical spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md),
+[canonical spec](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md),
 the implementation is wrong - open an issue or PR against the code.
 
 If you find the spec is ambiguous and the TS SDK at
@@ -114,7 +114,7 @@ fix. The interop test at `tests/test_interop_e2e.py` catches drifts that
 actually break cross-implementation talk.
 
 If you believe the spec itself is wrong, open an issue in the
-[`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs)
+[`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs)
 repo first; the SDK follows the spec.
 
 ## Reporting bugs and requesting features

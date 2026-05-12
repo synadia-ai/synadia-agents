@@ -1,6 +1,6 @@
 # Getting started
 
-`@synadia-ai/agents` is the TypeScript client SDK for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs). This guide walks through the complete flow: connecting, discovering agents, prompting one with attachments, and handling the three protocol-defined failure modes locally.
+`@synadia-ai/agents` is the TypeScript client SDK for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs). This guide walks through the complete flow: connecting, discovering agents, prompting one with attachments, and handling the three protocol-defined failure modes locally.
 
 ## Prerequisites
 
@@ -198,4 +198,4 @@ The underlying transport (`@nats-io/transport-node`) is explicitly supported on 
 
 - [`docs/protocol-mapping.md`](./protocol-mapping.md) - every SDK call mapped to its spec section.
 - [`examples/`](../examples) - 5 runnable scripts covering each major feature.
-- [Synadia Agent Protocol for NATS spec](https://github.com/synadia-ai/nats-agent-sdk-docs) - the authoritative wire contract.
+- [Synadia Agent Protocol for NATS spec](https://github.com/synadia-ai/synadia-agent-sdk-docs) - the authoritative wire contract.

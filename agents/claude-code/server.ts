@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * NATS channel for Claude Code — spec-compliant agent for the
- * Synadia Agent Protocol for NATS v0.3 (see https://github.com/synadia-ai/nats-agent-sdk-docs).
+ * Synadia Agent Protocol for NATS v0.3 (see https://github.com/synadia-ai/synadia-agent-sdk-docs).
  *
  * Self-contained MCP server that registers as an `agents` micro service,
  * exposes a `prompt` endpoint on agents.prompt.cc.<owner>.<name>, publishes

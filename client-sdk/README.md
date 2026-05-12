@@ -92,4 +92,4 @@ The wire is the contract - agents can be driven by any SDK interchangeably.
 
 </details>
 
-Full protocol spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
+Full protocol spec: <https://github.com/synadia-ai/synadia-agent-sdk-docs>

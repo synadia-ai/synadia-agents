@@ -1,6 +1,6 @@
 # synadia-ai-agents
 
-Python **client** SDK for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md).
+Python **client** SDK for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md).
 Discover protocol-compliant agents over NATS and prompt them with
 streamed typed responses.
 
@@ -178,9 +178,9 @@ nats sub  "agents.hb.demo.alice.worker-1"                # watch heartbeats
 
 ## Documentation
 
-- [Synadia Agent Protocol for NATS spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+- [Synadia Agent Protocol for NATS spec](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md)
   - the wire contract (source of truth, lives in
-  [`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs)).
+  [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs)).
 - [`docs/protocol-mapping.md`](docs/protocol-mapping.md) - every SDK call
   mapped to its spec section; for auditors and other-SDK implementers.
 - [`examples/README.md`](examples/README.md) - tour of the runnable
