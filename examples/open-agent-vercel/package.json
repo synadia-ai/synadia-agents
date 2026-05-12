@@ -11,8 +11,8 @@
   "dependencies": {
     "@nats-io/nats-core": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
-    "@synadia-ai/agent-service": "^0.5.2",
-    "@synadia-ai/agents": "^0.5.1",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript",
     "@synadia-ai/open-agent": "file:../../agents/open-agent",
     "@vercel/sandbox": "2.0.0-beta.11"
   },
