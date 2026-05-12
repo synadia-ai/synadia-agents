@@ -12,7 +12,7 @@ import {
 } from "@synadia-ai/agents";
 import { encodeChunk } from "@synadia-ai/agent-service";
 import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { cleanupStaged, decorateWithAttachments, stageAttachments } from "./attachments.js";
 import {
