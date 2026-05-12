@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/nats-pi-headless",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "Headless NATS agent host that spawns, prompts, and stops PI coding-agent sessions as first-class Synadia Agent Protocol for NATS v0.3 instances. Each session registers as agents.prompt.pi-headless.<owner>.<session_id>; a small controller service adds verb-first spawn/stop/list endpoints.",
   "keywords": [
     "nats",
@@ -47,8 +47,8 @@
     "@earendil-works/pi-coding-agent": "latest",
     "@nats-io/services": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
-    "@synadia-ai/agents": "file:../../client-sdk/typescript",
-    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
+    "@synadia-ai/agents": "^0.5.1",
+    "@synadia-ai/agent-service": "^0.5.2"
   },
   "devDependencies": {
     "@types/bun": "latest",
