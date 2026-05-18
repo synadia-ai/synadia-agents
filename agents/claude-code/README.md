@@ -16,7 +16,7 @@ message - the protocol's uniform end-of-stream signal.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) - the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`.
+- [Bun](https://bun.sh) - the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`, and make sure `bun` is on your `PATH`.
 - [NATS CLI](https://github.com/nats-io/natscli) - for managing contexts and testing.
 - A NATS server to connect to (local or remote) - the plugin defaults to `demo.nats.io`.
 
@@ -36,10 +36,10 @@ These are Claude Code commands - run `claude` to start a session first.
 /plugin install nats-channel@synadia-plugins
 ```
 
-**3. Launch with the channel flag.**
+**3. Launch Claude Code.**
 
 ```sh
-claude --dangerously-load-development-channels plugin:nats-channel@synadia-plugins
+claude
 ```
 
 By default, the server connects to `demo.nats.io` (no credentials required)
