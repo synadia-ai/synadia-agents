@@ -1,0 +1,33 @@
+{
+  "name": "@synadia-ai/nats-codex-channel",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Synadia Agent Protocol for NATS bridge for @zed-industries/codex-acp — exposes a Codex CLI session over ACP on agents.prompt.codex.<owner>.<session>.",
+  "bin": {
+    "nats-codex-channel": "./src/cli.ts"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "cli": "bun run src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke": "bun run test/smoke.mjs"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.22.1",
+    "@nats-io/nats-core": "^3.4.0",
+    "@nats-io/services": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "license": "Apache-2.0"
+}

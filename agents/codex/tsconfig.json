@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false,
+    "noEmit": true,
+    "types": ["bun", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@synadia-ai/agent-service": ["../../agent-sdk/typescript/src/index.ts"],
+      "@synadia-ai/agents": ["../../client-sdk/typescript/src/index.ts"],
+      "@nats-io/nats-core": ["./node_modules/@nats-io/nats-core/lib/src/mod.d.ts"],
+      "@nats-io/services": ["./node_modules/@nats-io/services/lib/src/mod.d.ts"],
+      "@nats-io/transport-node": ["./node_modules/@nats-io/transport-node/lib/src/mod.d.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
