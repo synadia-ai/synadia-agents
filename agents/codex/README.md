@@ -160,7 +160,7 @@ The bridge advertises:
 
 ## Wire format
 
-| Synadia chunk | ACP source |
+| Synadia wire chunk | ACP source |
 | --- | --- |
 | `{type:"response", data:"<text>"}` | `session/update` → `agent_message_chunk` text |
 | `{type:"status", data:"thought:<text>"}` | `agent_thought_chunk` |
