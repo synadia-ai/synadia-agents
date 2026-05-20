@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-05-12
+
+### Changed
+
+- **Track upstream PI package rename to `@earendil-works`.** PI moved
+  to the Earendil Works organisation (see
+  <https://pi.dev/news/2026/5/7/pi-has-a-new-home>); the runtime dep
+  switches from `@mariozechner/pi-coding-agent` → `@earendil-works/pi-coding-agent`
+  (and `@mariozechner/pi-ai` → `@earendil-works/pi-ai`). New floor is
+  `0.74.0`, the first release on the new scope. No wire shape, protocol
+  version, or public API change — this package's own exports are
+  unaffected; reinstall picks up the new transitive graph
+  (`pi-agent-core`, `pi-ai`, `pi-tui` all on the new scope). The old
+  `@mariozechner/*` packages are deprecated but remain published for
+  reproducibility.
+
 ## [0.5.4] - 2026-05-11
 
 ### Changed

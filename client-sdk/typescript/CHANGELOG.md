@@ -302,7 +302,7 @@ example in the monorepo to v0.3:
 - **READMEs + CLAUDE.md** across the monorepo update their subject
   layouts (root, `agents/README.md`, `examples/README.md`, every
   per-agent and per-example README).
-- **Spec docs** at `synadia-ai/nats-agent-sdk-docs` get the v0.3
+- **Spec docs** at `synadia-ai/synadia-agent-sdk-docs` get the v0.3
   verb-first subject hierarchy + `status` endpoint section in a
   follow-up PR.
 

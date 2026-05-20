@@ -10,7 +10,7 @@ For an example of *building* a fresh agent from scratch with the host SDK, see [
 
 | Path                | Type token | Underlying harness                          | Prompt subject (v0.3 verb-first)                              | `max_payload` | `attachments_ok` |
 | ------------------- | ---------- | ------------------------------------------- | ------------------------------------------------------------- | ------------- | ---------------- |
-| `pi/`               | `pi`       | [PI Agent](https://github.com/badlogic/pi-mono) | `agents.prompt.pi.<owner>.<session>`                      | server-negotiated | true |
+| `pi/`               | `pi`       | [PI Agent](https://github.com/earendil-works/pi) | `agents.prompt.pi.<owner>.<session>`                      | server-negotiated | true |
 | `openclaw/`         | `oc`       | [OpenClaw](https://openclaw.ai)             | `agents.prompt.oc.<owner>.<agentName>`                        | server-negotiated | true |
 | `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | server-negotiated | true |
 | `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | server-negotiated (config can request a smaller cap) | true |
@@ -67,4 +67,4 @@ Caller-side constraints (rejected with `400`): `content` must be strict RFC 4648
 
 Per-agent configuration, install instructions, and troubleshooting live in each subdirectory README.
 
-Full protocol spec: <https://github.com/synadia-ai/nats-agent-sdk-docs>
+Full protocol spec: <https://github.com/synadia-ai/synadia-agent-sdk-docs>

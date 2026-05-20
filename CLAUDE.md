@@ -13,7 +13,7 @@ view: layout, subject namespace, wire shape, quickstart. Read it before
 making changes that touch user-visible surface.
 
 The protocol spec is **not vendored here**. Canonical source:
-[`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs)
+[`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs)
 — always link to the GitHub URL when reasoning about wire shape. Local
 `docs/protocol-mapping.md` files inside each SDK translate spec → impl;
 they are not the spec itself.
@@ -147,7 +147,7 @@ subtree affects another. Before finishing a change, walk the list:
     Python is a hard requirement; the interop test catches drift.
   - Update every agent harness that hard-codes the protocol version
     string.
-  - Re-read the spec at `synadia-ai/nats-agent-sdk-docs` — the spec
+  - Re-read the spec at `synadia-ai/synadia-agent-sdk-docs` — the spec
     doc, not the local `protocol-mapping.md`, is the source of truth.
 - **Touched an agent harness** (`agents/*`)?
   - Update its README if user-visible config / subject layout changed.

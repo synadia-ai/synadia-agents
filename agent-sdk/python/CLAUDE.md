@@ -43,7 +43,7 @@ discovery. (This rule originated in the client-sdk's `AgentService`
 and travels with it into this package.)
 
 **The protocol spec is the source of truth.** Canonical location:
-[`synadia-ai/nats-agent-sdk-docs/core-protocol.md`](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md).
+[`synadia-ai/synadia-agent-sdk-docs/core-protocol.md`](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md).
 The §12 implementation checklist is what "compliant" means; the §3
 service-registration rules and §6/§7/§8 emission rules are the
 load-bearing parts for *this* SDK specifically.

@@ -1,7 +1,7 @@
 # NATS Channel for Claude Code
 
 Connect Claude Code to NATS messaging as a spec-compliant
-[Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs) v0.3 agent
+[Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs) v0.3 agent
 (verb-first subjects + `status` endpoint).
 
 The MCP server registers an `agents` micro service, exposes a
@@ -16,7 +16,7 @@ message - the protocol's uniform end-of-stream signal.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) - the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`.
+- [Bun](https://bun.sh) - the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`, and make sure `bun` is on your `PATH`.
 - [NATS CLI](https://github.com/nats-io/natscli) - for managing contexts and testing.
 - A NATS server to connect to (local or remote) - the plugin defaults to `demo.nats.io`.
 

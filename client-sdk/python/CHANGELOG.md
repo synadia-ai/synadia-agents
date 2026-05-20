@@ -432,7 +432,7 @@ separately:
   version string and use raw `@nats-io/*` to publish heartbeats / serve
   prompts; each picks up the new subject layout independently.
 - **The protocol spec** at
-  [`synadia-ai/nats-agent-sdk-docs`](https://github.com/synadia-ai/nats-agent-sdk-docs)
+  [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs)
   gains the v0.3 verb-first subject hierarchy (§2), the `status`
   endpoint section, and the bumped `metadata.protocol_version`.
 - **Root-level `README.md`** and any monorepo-wide docs that show the

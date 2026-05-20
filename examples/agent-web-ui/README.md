@@ -6,7 +6,7 @@ stream responses back, and — when a [`pi-headless`](../pi-headless) or
 [`claude-code-headless`](../claude-code-headless) controller is online — spawn,
 prompt, and manage sessions from the browser.
 
-Primary use: manually poking at the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/nats-agent-sdk-docs)
+Primary use: manually poking at the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs)
 implementations - [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-code),
 [`openclaw`](../../agents/openclaw), [`hermes`](../../agents/hermes),
 [`pi-headless`](../pi-headless), and the SDK's own reference agent.

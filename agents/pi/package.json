@@ -1,6 +1,6 @@
 {
   "name": "@synadia-ai/nats-pi-channel",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Synadia Agent Protocol for NATS channel for PI Agent. Makes every PI session a discoverable, spec-compliant agent on NATS.",
   "keywords": [
     "pi-package",
@@ -46,6 +46,6 @@
     "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*"
   }
 }

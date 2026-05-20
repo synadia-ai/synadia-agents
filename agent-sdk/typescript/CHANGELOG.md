@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   exactly one `{"type":"status","data":"ack"}` chunk as the **first**
   message on the reply subject, **before** any work that introduces
   observable latency
-  ([nats-agent-sdk-docs@b1c6972](https://github.com/synadia-ai/nats-agent-sdk-docs/commit/b1c6972)).
+  ([synadia-agent-sdk-docs@b1c6972](https://github.com/synadia-ai/synadia-agent-sdk-docs/commit/b1c6972)).
   `AgentService.#dispatchPrompt` now publishes the ack after a
   successful envelope decode and before invoking the user-supplied
   handler — so every TS agent built on `AgentService` (the reference

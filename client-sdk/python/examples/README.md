@@ -115,5 +115,5 @@ point `04` at an agent whose handler calls `stream.ask(...)`.
 
 - [Root README](../README.md) - conceptual quickstarts for the two
   personas (agent author, client author).
-- [Protocol spec](https://github.com/synadia-ai/nats-agent-sdk-docs/blob/main/core-protocol.md)
+- [Protocol spec](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md)
   - wire-level source of truth.

@@ -2,7 +2,7 @@
  * Synadia Agent Protocol for NATS channel for PI Agent.
  *
  * Implements the Synadia Agent Protocol for NATS v0.3 (see
- * `https://github.com/synadia-ai/nats-agent-sdk-docs`). Every PI session becomes a
+ * `https://github.com/synadia-ai/synadia-agent-sdk-docs`). Every PI session becomes a
  * spec-compliant agent instance: discoverable via `$SRV.PING/INFO`,
  * addressable at `agents.prompt.pi.{owner}.{name}`, emitting typed response
  * chunks and a periodic heartbeat on `agents.hb.pi.{owner}.{name}`.
@@ -63,7 +63,7 @@ import {
 	splitResponseText,
 } from "@synadia-ai/agent-service";
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PI-specific protocol constants
