@@ -166,24 +166,58 @@ If you manage NATS credentials via `nats context`, set `NATS_CONTEXT` (env) or
 Protocol v0.3 collapsed `name` and `session` into a single `session_name` token:
 **one `AgentService` serves exactly one session.** To run several sessions on one
 machine, use Hermes profiles — one profile per session. Each profile gets its own
-`HERMES_HOME`, its own `.env`, and its own `AgentService`:
+`HERMES_HOME`, its own `.env`, its own `AgentService`, and **its own copy of this
+plugin** (plugins live under each profile's `HERMES_HOME`, so a fresh profile
+starts without it):
 
 ```bash
-hermes -p alice profile create
-hermes -p alice setup gateway     # pick NATS, set session_name=alice
+# 1. Create one profile per session (positional name — NOT `-p`).
+hermes profile create alice
+hermes profile create bob
 
-hermes -p bob profile create
-hermes -p bob setup gateway       # pick NATS, set session_name=bob
+# 2. Install this plugin INTO each profile and enable it (answer `y` when the
+#    wizard asks "Enable 'nats-platform' now?"). A profile does NOT inherit the
+#    default profile's plugins — skip this and the setup wizard won't offer NATS.
+hermes -p alice plugins install synadia-ai/hermes-nats-gateway
+hermes -p bob   plugins install synadia-ai/hermes-nats-gateway
 
+# 3. Configure each profile. `setup` runs the FULL wizard (LLM API keys AND
+#    platforms) — recommended. When it reaches NATS it shows "not configured";
+#    pick a transport (demo / URL / context) and set session_name to the
+#    profile name. Don't skip the transport, or the gateway fails config
+#    validation at startup.
+hermes -p alice setup
+hermes -p bob   setup
+
+# 4. Run both — each profile is its own AgentService / session.
 hermes -p alice gateway run &
 hermes -p bob   gateway run &
 ```
 
-Two profiles claiming the same `(agent, owner, session_name)` triple on one host
-is a footgun (both would receive load-balanced prompts), so the gateway acquires
-a scoped lock on the identity before connecting and the second profile fails fast
-with an actionable error. Cross-*machine* duplicates are allowed — the protocol
-permits multiple instances per identity for high availability.
+> **Configuring only NATS (no LLM keys):** use the gateway setup section instead
+> of the full wizard — `hermes -p alice gateway setup` (equivalently
+> `hermes -p alice setup gateway`). Use this to (re)configure NATS on a profile
+> whose LLM provider is already set up.
+
+> **You do _not_ re-run the SDK install (Quick install step 3) per profile.** The
+> NATS runtime SDKs live in the one shared Hermes venv that every profile's
+> `hermes` command runs from — install them once per machine. Only the plugin
+> *clone* and its *config* are per-profile; the Python deps are global.
+
+> `hermes profile create <name>` also installs a wrapper command `<name>` in
+> `~/.local/bin` (manage with `hermes profile alias`). If `~/.local/bin` is on
+> your `$PATH` you can drop the `-p` flag entirely — `alice plugins install …`,
+> `alice setup gateway`, `alice gateway run` are equivalent to the
+> `hermes -p alice …` forms above.
+
+Two instances claiming the same `(agent, owner, session_name)` triple will
+**load-balance** prompts across each other (NATS queue-group semantics). The
+gateway can't prevent this — the protocol intentionally permits multiple
+instances per identity for high availability — so at startup it does a quick
+NATS lookup and logs a clear warning if that identity is **already live**
+anywhere on the server, then starts anyway. If you didn't intend to run a
+duplicate (e.g. two local profiles sharing a `session_name`), give each a
+distinct `HERMES_NATS_SESSION_NAME`. The warning is your signal.
 
 ## Run + verify
 
@@ -328,9 +362,12 @@ startup — if NATS isn't listed, the config didn't take. If you only set values
 under `config.yaml`'s `extra`, move identity/transport to `.env` (see the
 [YAML caveat](#advanced-structured-overrides-via-configyaml)).
 
-**Second profile fails with an identity-collision error**
-Two profiles are claiming the same `(agent, owner, session_name)` triple on one
-host. Give each profile a distinct `HERMES_NATS_SESSION_NAME`.
+**Second profile shares another's `session_name`**
+Two instances are claiming the same `(agent, owner, session_name)` triple, so
+prompts load-balance (and appear duplicated) across both. The gateway no longer
+hard-fails — it logs an `identity … is ALREADY LIVE` warning at startup and runs
+anyway. If that wasn't intended, give each profile a distinct
+`HERMES_NATS_SESSION_NAME`.
 
 **`ValueError: could not parse max_payload 'foo'`**
 `max_payload` must match `^\d+(B|KB|MB|GB)$` — e.g. `"1MB"`, `"512KB"`.
