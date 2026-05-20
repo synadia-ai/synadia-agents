@@ -194,10 +194,13 @@ hermes -p alice gateway run &
 hermes -p bob   gateway run &
 ```
 
-> **Configuring only NATS (no LLM keys):** use the gateway setup section instead
-> of the full wizard — `hermes -p alice gateway setup` (equivalently
-> `hermes -p alice setup gateway`). Use this to (re)configure NATS on a profile
-> whose LLM provider is already set up.
+> **Configuring only NATS (no LLM keys):** run the gateway/messaging section
+> instead of the full `setup` wizard — `hermes -p alice setup gateway` shows the
+> platform checklist (NATS included) and never prompts for LLM keys.
+> `hermes -p alice gateway setup` reaches the same NATS configuration and
+> additionally offers gateway-service install/start (so the two are not
+> identical). Use either to (re)configure NATS on a profile whose LLM provider
+> is already set up.
 
 > **You do _not_ re-run the SDK install (Quick install step 3) per profile.** The
 > NATS runtime SDKs live in the one shared Hermes venv that every profile's
