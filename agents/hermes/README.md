@@ -4,9 +4,7 @@
 > repository — [`synadia-ai/hermes-nats-gateway`](https://github.com/synadia-ai/hermes-nats-gateway)
 > — which is the canonical, authoritative source. It is a separate repo because
 > Hermes installs plugins by git-cloning a repository (`hermes plugins install
-> owner/repo`), so each plugin must be its own repo. This copy is kept here so
-> `synadia-agents` stays the single index of NATS-speaking agents; it may lag
-> the source, so always treat the gateway repo as authoritative.
+> owner/repo`), so each plugin must be its own repo.
 
 Expose [Hermes Agent](https://github.com/NousResearch/hermes-agent) on
 [NATS](https://nats.io/) using the **Synadia Agent Protocol for NATS v0.3** —
@@ -68,17 +66,9 @@ hermes gateway run
 > automatically by `after-install.md` right after step 2. To target a
 > non-standard install, pass the venv python: `… install-sdks.sh /path/to/venv/bin/python`.
 
-### Install tracks `main` — there is no tag-pinned form
+### Updating
 
-`hermes plugins install` resolves `owner/repo` to a Git URL and clones the
-default branch; it does **not** accept an `@ref` / `@v0.1.0` suffix. The install
-always tracks `main`. The `v0.1.0` Git tag and GitHub Release exist as **release
-metadata** (changelog anchor, build artifacts) — they are *not* an install pin.
-To move to the latest `main`, re-run:
-
-```bash
-hermes plugins update nats-platform
-```
+To update the plugin to the latest version, run `hermes plugins update nats-platform`.
 
 ## Prerequisites
 
@@ -86,8 +76,7 @@ hermes plugins update nats-platform
   adapter hook, which older versions don't expose. See [Limitations](#limitations).
 - **A running NATS server** — local or remote. For first-time testing you can use
   the public demo server (`nats://demo.nats.io`); for local development run your
-  own (see [Configure](#configure) for the dev-port guidance). On production, use
-  a server with accounts / NKey / JWT / TLS.
+  own `nats-server`. On production, use a server with accounts / NKey / JWT / TLS.
 - **An LLM provider key** in `~/.hermes/.env` (e.g. `OPENROUTER_API_KEY`,
   `ANTHROPIC_API_KEY`). The `/help` and `/status` commands work without one, but
   actual prompts need a model.
@@ -136,24 +125,10 @@ HERMES_NATS_SESSION_NAME=default
 If you'd rather skip the wizard, set the same vars by hand in `~/.hermes/.env`:
 
 ```bash
-NATS_URL=nats://127.0.0.1:14222
+NATS_URL=nats://127.0.0.1:4222
 HERMES_NATS_OWNER=yourname
 HERMES_NATS_SESSION_NAME=default
 ```
-
-> **Dev/test NATS server — use a dedicated high port, not 4222.** A default
-> `nats-server` binds `4222`, which is very often already taken by another local
-> NATS instance. For development run a throwaway server on an unused high port and
-> point `NATS_URL` at it:
->
-> ```bash
-> nats-server -p 14222 -a 127.0.0.1 &
-> # in ~/.hermes/.env
-> NATS_URL=nats://127.0.0.1:14222
-> ```
->
-> This keeps the gateway off whatever is already on `4222`. For production, prefer
-> a `NATS_CONTEXT` carrying real credentials over an inline URL.
 
 ### Advanced: structured overrides via `config.yaml`
 
@@ -219,7 +194,7 @@ hermes gateway run
 On success the log shows the connection and the registered subject:
 
 ```
-NATS: connected to nats://127.0.0.1:14222
+NATS: connected to nats://127.0.0.1:4222
 NATS: subscribed at agents.prompt.hermes.yourname.default (heartbeat=30s, max_payload=1MB)
 ```
 
@@ -250,7 +225,7 @@ import nats
 from synadia_ai.agents import Agents, DiscoverFilter, ResponseChunk
 
 async def main(text: str) -> None:
-    nc = await nats.connect("nats://127.0.0.1:14222")
+    nc = await nats.connect("nats://127.0.0.1:4222")
     agents = Agents(nc=nc)
     try:
         found = await agents.discover(filter=DiscoverFilter(session_name="default"))
@@ -277,7 +252,7 @@ liveness, clone the SDK monorepo and run the examples:
 git clone https://github.com/synadia-ai/synadia-agents.git
 cd synadia-agents/client-sdk/python
 uv run python examples/02-prompt-text.py \
-    --url nats://127.0.0.1:14222 --session default \
+    --url nats://127.0.0.1:4222 --session default \
     "what is 2+2? answer in one short sentence"
 ```
 
@@ -371,29 +346,6 @@ The caller isn't handling the approval `query` frame, so the gateway's
 must read query frames as they arrive and reply to them — see `04-query-reply.py`
 in the [client SDK repo](https://github.com/synadia-ai/synadia-agents)
 (`client-sdk/python/examples/`).
-
-## Development
-
-```bash
-git clone https://github.com/synadia-ai/hermes-nats-gateway.git
-cd hermes-nats-gateway
-uv sync --all-extras
-
-uv run ruff check .
-uv run pytest -v          # offline unit suite (216 tests), no broker required
-```
-
-The default suite is fully offline — the NATS SDK is mocked, so no broker is
-needed and CI runs it on every push/PR across Python 3.11/3.12/3.13.
-
-Integration tests (marked `integration`, deselected by default) need a real
-broker. Start a throwaway `nats-server` on an **unused high port** — never bind
-the default `4222`, which a local NATS instance may already own:
-
-```bash
-nats-server -p 14222 -a 127.0.0.1 &
-NATS_URL=nats://127.0.0.1:14222 uv run pytest -m integration -v
-```
 
 ## License
 
