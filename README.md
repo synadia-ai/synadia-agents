@@ -160,6 +160,10 @@ Each subtree has its own `README.md` and the index READMEs (`client-sdk/README.m
 
 </details>
 
+## See also
+
+- **Hermes NATS Gateway:** [`synadia-ai/hermes-nats-gateway`](https://github.com/synadia-ai/hermes-nats-gateway) — the standalone, out-of-tree Hermes plugin that puts [Hermes Agent](https://github.com/NousResearch/hermes-agent) on NATS. Install it with `hermes plugins install synadia-ai/hermes-nats-gateway`; no upstream fork required.
+
 ## License
 
 Apache-2.0 across this monorepo — see each package's `LICENSE` file.
