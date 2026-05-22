@@ -18,7 +18,7 @@ Counterpart to the caller-side numbered demos in
 
 # 2. Run an example. Connection resolution:
 #      $NATS_CONTEXT  >  $NATS_URL  >  nats://127.0.0.1:4222
-cd ../..   # agent-sdk/typescript
+cd ..   # agent-sdk/typescript
 NATS_CONTEXT=my-context bun examples/01-echo.ts
 # or:
 NATS_URL=tls://connect.ngs.global bun examples/01-echo.ts
