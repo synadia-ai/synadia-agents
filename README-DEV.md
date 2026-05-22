@@ -61,6 +61,26 @@ For the browser test client `examples/agent-web-ui` only the caller
 SDK matters (it doesn't host an agent), but the install dance is the
 same.
 
+## Running the SDK-side examples
+
+Both SDKs ship runnable example scripts next to the package source —
+useful as smoke targets while iterating on the SDK or as starting
+shapes for new agents:
+
+| Path | What it does |
+| --- | --- |
+| `client-sdk/typescript/examples/01-discover.ts` … `05-liveness.ts` | Caller-side demos against a running agent. |
+| `client-sdk/typescript/examples/_run-reference-agent.ts` | Spec-compliant `ReferenceAgent` to point the caller demos at. |
+| `agent-sdk/typescript/examples/01-echo.ts` | Minimal `AgentService` echo agent. |
+
+Each script supports `$NATS_CONTEXT`, `$NATS_URL`, or falls back to
+`nats://127.0.0.1:4222`. Run with:
+
+```sh
+bun client-sdk/typescript/examples/_run-reference-agent.ts
+bun agent-sdk/typescript/examples/01-echo.ts
+```
+
 ## Installing the agent plugins locally (PI, OpenClaw, Claude Code)
 
 `agents/pi/`, `agents/openclaw/`, and `agents/claude-code/` are

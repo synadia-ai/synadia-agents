@@ -45,6 +45,8 @@ await service.start();
 console.log(`listening on ${service.subject.prompt}`);
 ```
 
+**Try it now:** [`examples/01-echo.ts`](examples/01-echo.ts) is this same code packaged as a runnable script — `bun examples/01-echo.ts` (with `$NATS_CONTEXT`, `$NATS_URL`, or localhost fallback).
+
 `service.start()` is everything: it adds the `prompt` and `status` endpoints with the right queue groups, advertises the broker-derived `max_payload`, kicks off the heartbeat publisher (with an immediate first beat so discovery is prompt), and stays running until you call `service.stop()`.
 
 The matching caller-side code lives next to [`@synadia-ai/agents`](../../client-sdk/typescript/) — see its README for `discover()` / `prompt()`.

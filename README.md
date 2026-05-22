@@ -114,6 +114,8 @@ await service.stop();
 await nc.close();
 ```
 
+**Try it now:** [`agent-sdk/typescript/examples/01-echo.ts`](agent-sdk/typescript/examples/01-echo.ts) is this code packaged as a runnable script — `bun agent-sdk/typescript/examples/01-echo.ts` (with `$NATS_CONTEXT`, `$NATS_URL`, or localhost fallback).
+
 For full install, error handling, and longer examples see the per-package READMEs: caller — [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/); host — [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/).
 
 ## Examples
