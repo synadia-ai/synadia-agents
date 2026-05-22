@@ -45,6 +45,8 @@ await service.start();
 console.log(`listening on ${service.subject.prompt}`);
 ```
 
+**Try it now:** [`typescript/examples/01-echo.ts`](typescript/examples/01-echo.ts) is this code packaged as a runnable script — `bun typescript/examples/01-echo.ts` (with `$NATS_CONTEXT`, `$NATS_URL`, or localhost fallback).
+
 `AgentService` handles registration, the `prompt` and `status` endpoints, the heartbeat loop, the per-request keep-alive ack, the §6.5 stream terminator, and translates handler exceptions into 500s.
 
 **Python**
