@@ -250,6 +250,7 @@ class AgentService:
         self._description = description or f"{agent} agent {self.subject.session_name}"
         self._heartbeat_interval_s = heartbeat_interval_s
         self._max_payload = max_payload
+        self._effective_max_payload_value = max_payload
         self._attachments_ok = attachments_ok
         self._keepalive_interval_s = keepalive_interval_s
         self._prompt_handler: PromptHandler | None = None
@@ -303,6 +304,7 @@ class AgentService:
         # Resolve and clamp ``max_payload`` against the server's negotiated
         # limit (§2.1). See ``_effective_max_payload`` for the rule.
         max_payload_str = self._effective_max_payload()
+        self._effective_max_payload_value = max_payload_str
 
         # §3.2: metadata.session matches the 5th subject token. For session-
         # less harnesses (e.g. openclaw) the spec allows omitting the field
@@ -426,6 +428,32 @@ class AgentService:
                 await request.respond_error("400", _sanitize_error_desc(str(exc)))
                 return
 
+            max_payload_bytes = parse_human_bytes(self._effective_max_payload_value)
+            if len(request.data) > max_payload_bytes:
+                log.warning(
+                    "rejecting oversized prompt on %s: %d bytes exceeds %s",
+                    request.subject,
+                    len(request.data),
+                    self._effective_max_payload_value,
+                )
+                await request.respond_error(
+                    "413",
+                    _sanitize_error_desc(
+                        f"prompt payload exceeds max_payload {self._effective_max_payload_value}"
+                    ),
+                )
+                return
+            if envelope.attachments and not self._attachments_ok:
+                log.warning(
+                    "rejecting attachments on %s: endpoint advertised attachments_ok=false",
+                    request.subject,
+                )
+                await request.respond_error(
+                    "400",
+                    _sanitize_error_desc("attachments are not supported by this endpoint"),
+                )
+                return
+
             # §6.4: emit the leading ack BEFORE any handler work so warm-up
             # latency stays inside the §6.6 budget and the stream is observable
             # to plain `nats req --wait-for-empty`. Best-effort, mirroring the
@@ -449,6 +477,15 @@ class AgentService:
 
             try:
                 await handler(envelope, stream)
+            except ProtocolError as exc:
+                log.warning(
+                    "prompt handler rejected protocol input on %s: %s",
+                    request.subject,
+                    exc,
+                )
+                await _stop_keepalive(keepalive_task)
+                keepalive_task = None
+                await request.respond_error("400", _sanitize_error_desc(str(exc)))
             except Exception as exc:
                 log.exception("prompt handler raised on %s", request.subject)
                 # Stop keep-alive BEFORE the §9 error frame so the keepalive

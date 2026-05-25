@@ -16,6 +16,9 @@ def test_defaults_include_df_agent(tmp_path: Path, monkeypatch: Any) -> None:
     assert config.agent == "df"
     assert config.session == "default"
     assert config.deerflow_url == "http://localhost:2026"
+    assert config.deerflow_timeout_s == 60.0
+    assert config.query_timeout_s == 300.0
+    assert config.max_payload == "1MB"
     assert config.redacted_dict()["prompt_subject"] == "agents.prompt.df.<owner>.default"
 
 
@@ -29,6 +32,9 @@ def test_config_file_then_env_then_cli_precedence(tmp_path: Path, monkeypatch: A
                 'session = "file-session"',
                 'deerflow_url = "http://file.example"',
                 'nats_context = "file-context"',
+                'deerflow_timeout_s = 12.5',
+                'query_timeout_s = 45',
+                'max_payload = "256KB"',
             ]
         ),
         encoding="utf-8",
@@ -36,11 +42,14 @@ def test_config_file_then_env_then_cli_precedence(tmp_path: Path, monkeypatch: A
     monkeypatch.setenv("NATS_OWNER", "env-owner")
     monkeypatch.setenv("NATS_AGENT_NAME", "env-session")
     monkeypatch.setenv("DEERFLOW_URL", "http://env.example")
+    monkeypatch.setenv("DEERFLOW_TIMEOUT_S", "20")
+    monkeypatch.setenv("DEERFLOW_QUERY_TIMEOUT_S", "90")
 
     config = resolve_config(
         config_file=config_file,
         owner="cli-owner",
         deerflow_url="http://cli.example",
+        max_payload="512KB",
     )
 
     assert config.agent == "from-file"
@@ -48,6 +57,9 @@ def test_config_file_then_env_then_cli_precedence(tmp_path: Path, monkeypatch: A
     assert config.session == "env-session"
     assert config.deerflow_url == "http://cli.example"
     assert config.nats_context == "file-context"
+    assert config.deerflow_timeout_s == 20
+    assert config.query_timeout_s == 90
+    assert config.max_payload == "512KB"
 
 
 def test_nats_url_env_is_used(tmp_path: Path, monkeypatch: Any) -> None:

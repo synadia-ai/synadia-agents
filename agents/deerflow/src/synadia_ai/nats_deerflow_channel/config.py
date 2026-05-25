@@ -11,6 +11,9 @@ from typing import Any
 DEFAULT_AGENT = "df"
 DEFAULT_SESSION = "default"
 DEFAULT_DEERFLOW_URL = "http://localhost:2026"
+DEFAULT_DEERFLOW_TIMEOUT_S = 60.0
+DEFAULT_QUERY_TIMEOUT_S = 300.0
+DEFAULT_MAX_PAYLOAD = "1MB"
 DEFAULT_CONFIG_PATH = Path("~/.config/synadia/deerflow-channel/config.toml")
 
 
@@ -28,6 +31,9 @@ class ChannelConfig:
     deerflow_url: str = DEFAULT_DEERFLOW_URL
     nats_context: str | None = None
     nats_url: str | None = None
+    deerflow_timeout_s: float = DEFAULT_DEERFLOW_TIMEOUT_S
+    query_timeout_s: float = DEFAULT_QUERY_TIMEOUT_S
+    max_payload: str = DEFAULT_MAX_PAYLOAD
     config_file: Path | None = None
 
     @property
@@ -45,6 +51,9 @@ class ChannelConfig:
             "deerflow_url": self.deerflow_url,
             "nats_context": self.nats_context,
             "nats_url": self.nats_url,
+            "deerflow_timeout_s": str(self.deerflow_timeout_s),
+            "query_timeout_s": str(self.query_timeout_s),
+            "max_payload": self.max_payload,
             "config_file": str(self.config_file) if self.config_file else None,
             "prompt_subject": f"agents.prompt.{self.subject_prefix}",
             "status_subject": f"agents.status.{self.subject_prefix}",
@@ -78,12 +87,37 @@ def _optional_str(data: dict[str, Any], key: str) -> str | None:
     return value or None
 
 
+def _optional_positive_float(data: dict[str, Any], key: str) -> float | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"config key {key!r} must be a positive number")
+    result = float(value)
+    if result <= 0:
+        raise ValueError(f"config key {key!r} must be > 0")
+    return result
+
+
 def _env(name: str) -> str | None:
     value = os.environ.get(name)
     if value is None:
         return None
     value = value.strip()
     return value or None
+
+
+def _env_positive_float(name: str) -> float | None:
+    value = _env(name)
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except ValueError as exc:
+        raise ValueError(f"environment variable {name} must be a positive number") from exc
+    if result <= 0:
+        raise ValueError(f"environment variable {name} must be > 0")
+    return result
 
 
 def _apply_file(config: ChannelConfig, data: dict[str, Any], path: Path) -> ChannelConfig:
@@ -95,6 +129,10 @@ def _apply_file(config: ChannelConfig, data: dict[str, Any], path: Path) -> Chan
         deerflow_url=_optional_str(data, "deerflow_url") or config.deerflow_url,
         nats_context=_optional_str(data, "nats_context") or config.nats_context,
         nats_url=_optional_str(data, "nats_url") or config.nats_url,
+        deerflow_timeout_s=_optional_positive_float(data, "deerflow_timeout_s")
+        or config.deerflow_timeout_s,
+        query_timeout_s=_optional_positive_float(data, "query_timeout_s") or config.query_timeout_s,
+        max_payload=_optional_str(data, "max_payload") or config.max_payload,
         config_file=path,
     )
 
@@ -108,6 +146,10 @@ def _apply_env(config: ChannelConfig) -> ChannelConfig:
         deerflow_url=_env("DEERFLOW_URL") or config.deerflow_url,
         nats_context=_env("NATS_CONTEXT") or config.nats_context,
         nats_url=_env("NATS_URL") or config.nats_url,
+        deerflow_timeout_s=_env_positive_float("DEERFLOW_TIMEOUT_S")
+        or config.deerflow_timeout_s,
+        query_timeout_s=_env_positive_float("DEERFLOW_QUERY_TIMEOUT_S") or config.query_timeout_s,
+        max_payload=_env("DEERFLOW_MAX_PAYLOAD") or config.max_payload,
     )
 
 
@@ -120,6 +162,9 @@ def resolve_config(
     deerflow_url: str | None = None,
     nats_context: str | None = None,
     nats_url: str | None = None,
+    deerflow_timeout_s: float | None = None,
+    query_timeout_s: float | None = None,
+    max_payload: str | None = None,
 ) -> ChannelConfig:
     """Resolve config as CLI flags → env vars → config file → defaults."""
     path = config_file or default_config_path()
@@ -133,4 +178,7 @@ def resolve_config(
         deerflow_url=deerflow_url or config.deerflow_url,
         nats_context=nats_context or config.nats_context,
         nats_url=nats_url or config.nats_url,
+        deerflow_timeout_s=deerflow_timeout_s or config.deerflow_timeout_s,
+        query_timeout_s=query_timeout_s or config.query_timeout_s,
+        max_payload=max_payload or config.max_payload,
     )

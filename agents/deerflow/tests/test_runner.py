@@ -9,6 +9,7 @@ from synadia_ai.nats_deerflow_channel.config import ChannelConfig
 from synadia_ai.nats_deerflow_channel.runner import (
     ClarificationEvent,
     DeerFlowGatewayClient,
+    DeerFlowGatewayError,
     TextEvent,
     _extract_clarification_from_sse_event,
     _extract_text_from_sse_event,
@@ -61,8 +62,27 @@ async def test_gateway_runner_raises_clear_error_for_non_2xx_stream() -> None:
             ChannelConfig(owner="rene", deerflow_url="http://deerflow.test"),
             http_client=http,
         )
-        with pytest.raises(RuntimeError, match="DeerFlow Gateway stream failed: 503"):
+        with pytest.raises(DeerFlowGatewayError, match="DeerFlow Gateway stream failed: 503"):
             _ = [chunk async for chunk in client.stream_prompt("hi")]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_sanitizes_non_2xx_detail() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="first line\nsecond line" + ("x" * 600))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        with pytest.raises(DeerFlowGatewayError) as err:
+            _ = [chunk async for chunk in client.stream_prompt("hi")]
+
+    message = str(err.value)
+    assert "first line | second line" in message
+    assert "\n" not in message
+    assert len(message) < 560
 
 
 @pytest.mark.asyncio

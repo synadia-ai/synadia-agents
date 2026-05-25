@@ -12,6 +12,16 @@ from .doctor import run_doctor
 from .host import run_channel
 
 
+def _positive_float(value: str) -> float:
+    try:
+        result = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive number") from exc
+    if result <= 0:
+        raise argparse.ArgumentTypeError("must be > 0")
+    return result
+
+
 def _add_config_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config-file", type=Path, help="Path to channel TOML config")
     parser.add_argument("--agent", help="Synadia Agent Protocol token; default: df")
@@ -20,6 +30,20 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--deerflow-url", help="DeerFlow Gateway URL")
     parser.add_argument("--nats-context", help="NATS CLI context name")
     parser.add_argument("--nats-url", help="Direct NATS server URL")
+    parser.add_argument(
+        "--deerflow-timeout-s",
+        type=_positive_float,
+        help="HTTP connect/read timeout for DeerFlow Gateway calls; default: 60",
+    )
+    parser.add_argument(
+        "--query-timeout-s",
+        type=_positive_float,
+        help="Seconds to wait for protocol query replies to DeerFlow clarifications; default: 300",
+    )
+    parser.add_argument(
+        "--max-payload",
+        help="Advertised prompt max_payload metadata; default: 1MB, clamped by NATS server",
+    )
 
 
 def _resolve_from_args(args: argparse.Namespace) -> ChannelConfig:
@@ -31,6 +55,9 @@ def _resolve_from_args(args: argparse.Namespace) -> ChannelConfig:
         deerflow_url=args.deerflow_url,
         nats_context=args.nats_context,
         nats_url=args.nats_url,
+        deerflow_timeout_s=args.deerflow_timeout_s,
+        query_timeout_s=args.query_timeout_s,
+        max_payload=args.max_payload,
     )
 
 

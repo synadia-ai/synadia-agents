@@ -10,13 +10,12 @@ from typing import Any, cast
 import nats
 from nats.aio.client import Client as NATSClient
 from synadia_ai.agent_service import AgentService, PromptHandler, PromptStream
-from synadia_ai.agents import Envelope, load_context_options
+from synadia_ai.agents import Envelope, ProtocolError, QueryTimeout, load_context_options
 
 from .config import ChannelConfig
 from .runner import ClarificationEvent, DeerFlowGatewayClient, TextEvent
 
 PromptRunner = Callable[[str], AsyncIterator[str]]
-QUERY_TIMEOUT_S = 300.0
 MAX_CLARIFICATION_ROUNDS = 8
 
 
@@ -44,6 +43,7 @@ def build_agent_service(config: ChannelConfig, nc: NATSClient) -> AgentService:
         nc=nc,
         description="DeerFlow channel wrapper for the Synadia Agent Protocol",
         attachments_ok=False,
+        max_payload=config.max_payload,
     )
     service.on_prompt(make_deerflow_prompt_handler(config))
     return service
@@ -59,7 +59,9 @@ def make_deerflow_prompt_handler(config: ChannelConfig) -> PromptHandler:
     """
 
     async def _handler(envelope: Envelope, stream: PromptStream) -> None:
-        client = DeerFlowGatewayClient(config)
+        if envelope.attachments:
+            raise ProtocolError("attachments are not supported by the DeerFlow wrapper")
+        client = DeerFlowGatewayClient(config, timeout=config.deerflow_timeout_s)
         prompt = envelope.prompt
         for _ in range(MAX_CLARIFICATION_ROUNDS):
             needs_followup = False
@@ -68,7 +70,15 @@ def make_deerflow_prompt_handler(config: ChannelConfig) -> PromptHandler:
                     await stream.send(event.text)
                     continue
                 if isinstance(event, ClarificationEvent):
-                    reply = await stream.ask(event.prompt, timeout=QUERY_TIMEOUT_S)
+                    try:
+                        reply = await stream.ask(event.prompt, timeout=config.query_timeout_s)
+                    except QueryTimeout as exc:
+                        raise TimeoutError(
+                            f"caller did not answer DeerFlow clarification within "
+                            f"{config.query_timeout_s:g}s"
+                        ) from exc
+                    if reply.attachments:
+                        raise ProtocolError("attachments are not supported in query replies")
                     prompt = reply.prompt
                     needs_followup = True
                     break

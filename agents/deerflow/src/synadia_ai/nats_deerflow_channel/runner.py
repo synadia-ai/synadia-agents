@@ -14,6 +14,18 @@ from .config import ChannelConfig
 
 HTTP_OK_MIN = 200
 HTTP_OK_MAX = 300
+MAX_ERROR_DETAIL_CHARS = 500
+
+
+class DeerFlowGatewayError(RuntimeError):
+    """Raised for operator-safe DeerFlow Gateway failures."""
+
+
+def _safe_error_detail(detail: str) -> str:
+    flat = " | ".join(line.strip() for line in detail.splitlines() if line.strip())
+    if len(flat) > MAX_ERROR_DETAIL_CHARS:
+        flat = flat[: MAX_ERROR_DETAIL_CHARS - 3] + "..."
+    return flat
 
 
 @dataclass(frozen=True)
@@ -71,9 +83,9 @@ class DeerFlowGatewayClient:
         ):
             if not HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX:
                 body_bytes = await response.aread()
-                detail = body_bytes.decode(errors="replace").strip()
+                detail = _safe_error_detail(body_bytes.decode(errors="replace"))
                 suffix = f": {detail}" if detail else ""
-                raise RuntimeError(
+                raise DeerFlowGatewayError(
                     f"DeerFlow Gateway stream failed: {response.status_code}{suffix}"
                 )
 

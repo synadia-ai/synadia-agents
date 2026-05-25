@@ -5,11 +5,13 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from synadia_ai.agents import Attachment, Envelope, ProtocolError
 
-from synadia_ai.nats_deerflow_channel.config import resolve_config
+from synadia_ai.nats_deerflow_channel.config import ChannelConfig, resolve_config
 from synadia_ai.nats_deerflow_channel.host import (
     _nats_connect_options,
     build_agent_service,
+    make_deerflow_prompt_handler,
     make_prompt_handler,
 )
 from synadia_ai.nats_deerflow_channel.runner import fake_deerflow_runner
@@ -58,3 +60,28 @@ def test_build_agent_service_requires_owner(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="owner is required"):
         build_agent_service(config, nc=object())  # type: ignore[arg-type]
+
+
+def test_build_agent_service_passes_hardening_metadata() -> None:
+    config = ChannelConfig(owner="rene", max_payload="256KB")
+
+    service = build_agent_service(config, nc=object())  # type: ignore[arg-type]
+
+    assert service._attachments_ok is False
+    assert service._max_payload == "256KB"
+
+
+@pytest.mark.asyncio
+async def test_deerflow_handler_rejects_attachments_before_gateway() -> None:
+    class Stream:
+        async def send(self, chunk: str) -> None:
+            raise AssertionError("handler must reject before streaming")
+
+    handler = make_deerflow_prompt_handler(ChannelConfig(owner="rene"))
+    envelope = Envelope(
+        prompt="hi",
+        attachments=[Attachment(filename="x.txt", content="aGk=")],
+    )
+
+    with pytest.raises(ProtocolError, match="attachments are not supported"):
+        await handler(envelope, cast(Any, Stream()))

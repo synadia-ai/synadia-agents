@@ -131,6 +131,9 @@ TOML
 | `deerflow_url` | no | `http://localhost:2026` | Base URL for the DeerFlow Gateway. |
 | `nats_context` | one NATS target required | — | NATS CLI context name. Recommended for NGS/managed NATS because credentials stay in the NATS context. |
 | `nats_url` | one NATS target required | — | Raw NATS server URL. Useful for local development. |
+| `deerflow_timeout_s` | no | `60` | HTTP connect/read timeout for DeerFlow Gateway health and stream calls. |
+| `query_timeout_s` | no | `300` | Seconds to wait for a caller reply to a DeerFlow clarification query before failing the stream. |
+| `max_payload` | no | `1MB` | Prompt endpoint `max_payload` metadata. The host rejects larger payloads with a protocol error and clamps to the NATS server limit when needed. |
 
 ### Environment variables
 
@@ -145,6 +148,9 @@ TOML
 | `DEERFLOW_URL` | `deerflow_url` | DeerFlow Gateway base URL. |
 | `NATS_CONTEXT` | `nats_context` | NATS CLI context. Prefer this over raw URLs in production. |
 | `NATS_URL` | `nats_url` | Direct NATS server URL. |
+| `DEERFLOW_TIMEOUT_S` | `deerflow_timeout_s` | Positive number of seconds for DeerFlow HTTP calls. |
+| `DEERFLOW_QUERY_TIMEOUT_S` | `query_timeout_s` | Positive number of seconds to wait for clarification replies. |
+| `DEERFLOW_MAX_PAYLOAD` | `max_payload` | Human byte string such as `256KB`, `1MB`, or `2MB`. |
 
 ### CLI flags
 
@@ -157,6 +163,9 @@ deerflow-nats-channel doctor \
   --owner acme \
   --session research \
   --deerflow-url http://localhost:2026 \
+  --deerflow-timeout-s 60 \
+  --query-timeout-s 300 \
+  --max-payload 1MB \
   --nats-context prod
 ```
 
@@ -242,7 +251,9 @@ asyncio.run(main())
 ## Runtime behavior
 
 - The wrapper uses `AgentService` from `synadia-ai-agent-service`.
-- `attachments_ok` is advertised as `false`; DeerFlow Gateway prompts are text-only in this MVP.
+- `attachments_ok` is advertised as `false`; DeerFlow Gateway prompts are text-only in this MVP. The host also rejects attachment-bearing prompt envelopes and clarification replies server-side, so non-validating callers get a protocol error instead of forwarding binary data into DeerFlow.
+- `max_payload` defaults to `1MB`; the protocol host advertises it, clamps it to the connected NATS server limit when needed, and rejects oversized prompt envelopes before the DeerFlow handler runs.
+- DeerFlow HTTP calls use `deerflow_timeout_s` (default `60`). Clarification replies use `query_timeout_s` (default `300`) and fail the stream if the caller does not answer in time.
 - DeerFlow SSE `messages`/`updates` events are normalized into protocol response chunks.
 - DeerFlow `ask_clarification` tool messages are bridged to Synadia Agent Protocol `query` chunks. The caller's answer is sent back to the same DeerFlow thread as the next user message.
 - A single wrapper instance serves one `(agent, owner, session)` identity. Run multiple processes for multiple exposed DeerFlow sessions.
