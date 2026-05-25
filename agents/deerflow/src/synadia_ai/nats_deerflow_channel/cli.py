@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
 from .config import ChannelConfig, resolve_config
 from .doctor import run_doctor
+from .host import run_channel
 
 
 def _add_config_flags(parser: argparse.ArgumentParser) -> None:
@@ -70,8 +72,11 @@ def main(argv: list[str] | None = None) -> int:
         if not report.ok:
             print(report.to_json(), file=sys.stderr)
             return 1
-        print("start is not implemented yet; Phase 2 adds the protocol host", file=sys.stderr)
-        return 2
+        try:
+            asyncio.run(run_channel(config))
+        except KeyboardInterrupt:
+            return 130
+        return 0
 
     parser.error(f"unknown command: {args.command}")
     return 2
