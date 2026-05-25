@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
 
@@ -13,6 +14,23 @@ from .config import ChannelConfig
 
 HTTP_OK_MIN = 200
 HTTP_OK_MAX = 300
+
+
+@dataclass(frozen=True)
+class TextEvent:
+    """Assistant-visible text emitted by DeerFlow."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class ClarificationEvent:
+    """DeerFlow ask_clarification tool message surfaced as a protocol query."""
+
+    prompt: str
+
+
+DeerFlowEvent = TextEvent | ClarificationEvent
 
 
 class DeerFlowGatewayClient:
@@ -43,8 +61,8 @@ class DeerFlowGatewayClient:
                 return False
         return HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX
 
-    async def stream_prompt(self, prompt: str) -> AsyncIterator[str]:
-        """POST a user prompt to DeerFlow Gateway and yield text chunks from SSE."""
+    async def stream_events(self, prompt: str) -> AsyncIterator[DeerFlowEvent]:
+        """POST a user prompt to DeerFlow Gateway and yield semantic stream events."""
         body = _prompt_request_body(prompt)
         path = f"/api/threads/{self._config.session}/runs/stream"
         async with (
@@ -62,9 +80,19 @@ class DeerFlowGatewayClient:
             async for event, data in _iter_sse(response):
                 if event == "end":
                     break
+                clarification = _extract_clarification_from_sse_event(event, data)
+                if clarification:
+                    yield ClarificationEvent(prompt=clarification)
+                    continue
                 text = _extract_text_from_sse_event(event, data)
                 if text:
-                    yield text
+                    yield TextEvent(text=text)
+
+    async def stream_prompt(self, prompt: str) -> AsyncIterator[str]:
+        """POST a user prompt to DeerFlow Gateway and yield text chunks from SSE."""
+        async for event in self.stream_events(prompt):
+            if isinstance(event, TextEvent):
+                yield event.text
 
     def _client(self) -> _ClientContext:
         if self._http_client is not None:
@@ -151,6 +179,36 @@ def _parse_sse_data(raw: str) -> Any:
         return raw
 
 
+def _extract_clarification_from_sse_event(event: str, data: Any) -> str | None:
+    """Extract DeerFlow ask_clarification tool text from SSE event data."""
+    if event not in {"messages", "messages-tuple", "updates", "values"}:
+        return None
+    return _extract_clarification(data)
+
+
+def _extract_clarification(value: Any) -> str | None:
+    if isinstance(value, dict):
+        if value.get("name") == "ask_clarification":
+            content = value.get("content")
+            if isinstance(content, str) and content:
+                return content
+        for key in ("messages", "message"):
+            nested = value.get(key)
+            clarification = _extract_clarification(nested)
+            if clarification:
+                return clarification
+        for nested in value.values():
+            clarification = _extract_clarification(nested)
+            if clarification:
+                return clarification
+    if isinstance(value, list):
+        for item in value:
+            clarification = _extract_clarification(item)
+            if clarification:
+                return clarification
+    return None
+
+
 def _extract_text_from_sse_event(event: str, data: Any) -> str | None:
     """Extract assistant-visible text from LangGraph/DeerFlow SSE event data."""
     if event not in {"messages", "messages-tuple", "updates", "values"}:
@@ -158,10 +216,12 @@ def _extract_text_from_sse_event(event: str, data: Any) -> str | None:
     return _extract_text(data)
 
 
-def _extract_text(value: Any) -> str | None:
+def _extract_text(value: Any) -> str | None:  # noqa: PLR0911
     if isinstance(value, str):
         return value or None
     if isinstance(value, dict):
+        if value.get("name") == "ask_clarification":
+            return None
         content = value.get("content")
         if isinstance(content, str) and content:
             return content

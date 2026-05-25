@@ -13,9 +13,11 @@ from synadia_ai.agent_service import AgentService, PromptHandler, PromptStream
 from synadia_ai.agents import Envelope, load_context_options
 
 from .config import ChannelConfig
-from .runner import deerflow_gateway_runner
+from .runner import ClarificationEvent, DeerFlowGatewayClient, TextEvent
 
 PromptRunner = Callable[[str], AsyncIterator[str]]
+QUERY_TIMEOUT_S = 300.0
+MAX_CLARIFICATION_ROUNDS = 8
 
 
 def _nats_connect_options(config: ChannelConfig) -> dict[str, object]:
@@ -43,12 +45,38 @@ def build_agent_service(config: ChannelConfig, nc: NATSClient) -> AgentService:
         description="DeerFlow channel wrapper for the Synadia Agent Protocol",
         attachments_ok=False,
     )
-    async def runner(prompt: str) -> AsyncIterator[str]:
-        async for chunk in deerflow_gateway_runner(prompt, config):
-            yield chunk
-
-    service.on_prompt(make_prompt_handler(runner))
+    service.on_prompt(make_deerflow_prompt_handler(config))
     return service
+
+
+def make_deerflow_prompt_handler(config: ChannelConfig) -> PromptHandler:
+    """Build a prompt handler that bridges DeerFlow SSE to protocol chunks.
+
+    DeerFlow surfaces human-in-the-loop clarification as an `ask_clarification`
+    tool message in the thread stream. The Synadia Agent Protocol equivalent is
+    a mid-stream query chunk, so the wrapper asks the caller and then posts the
+    answer back to the same DeerFlow thread as the next user message.
+    """
+
+    async def _handler(envelope: Envelope, stream: PromptStream) -> None:
+        client = DeerFlowGatewayClient(config)
+        prompt = envelope.prompt
+        for _ in range(MAX_CLARIFICATION_ROUNDS):
+            needs_followup = False
+            async for event in client.stream_events(prompt):
+                if isinstance(event, TextEvent):
+                    await stream.send(event.text)
+                    continue
+                if isinstance(event, ClarificationEvent):
+                    reply = await stream.ask(event.prompt, timeout=QUERY_TIMEOUT_S)
+                    prompt = reply.prompt
+                    needs_followup = True
+                    break
+            if not needs_followup:
+                return
+        raise RuntimeError("too many DeerFlow clarification rounds")
+
+    return _handler
 
 
 def make_prompt_handler(runner: PromptRunner) -> PromptHandler:
