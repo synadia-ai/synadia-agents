@@ -13,7 +13,7 @@ from synadia_ai.agent_service import AgentService, PromptHandler, PromptStream
 from synadia_ai.agents import Envelope, load_context_options
 
 from .config import ChannelConfig
-from .runner import fake_deerflow_runner
+from .runner import deerflow_gateway_runner
 
 PromptRunner = Callable[[str], AsyncIterator[str]]
 
@@ -43,7 +43,11 @@ def build_agent_service(config: ChannelConfig, nc: NATSClient) -> AgentService:
         description="DeerFlow channel wrapper for the Synadia Agent Protocol",
         attachments_ok=False,
     )
-    service.on_prompt(make_prompt_handler(fake_deerflow_runner))
+    async def runner(prompt: str) -> AsyncIterator[str]:
+        async for chunk in deerflow_gateway_runner(prompt, config):
+            yield chunk
+
+    service.on_prompt(make_prompt_handler(runner))
     return service
 
 

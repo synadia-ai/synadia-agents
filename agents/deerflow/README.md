@@ -75,4 +75,4 @@ deerflow-nats-channel start
 deerflow-nats-channel configure
 ```
 
-`doctor` currently verifies configuration resolution and performs shallow local checks. Protocol hosting and the real DeerFlow bridge are implemented in later phases.
+`doctor` verifies configuration and reports shallow DeerFlow Gateway reachability via `/health`. `start` hosts the Synadia Agent Protocol wrapper; only `prompt` forwards to DeerFlow's LangGraph-compatible `/api/threads/{session}/runs/stream` SSE endpoint. Status and heartbeat remain wrapper-owned protocol liveness concerns.
