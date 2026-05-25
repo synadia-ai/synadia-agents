@@ -1,0 +1,17 @@
+# Example config for deerflow-nats-channel.
+# Default path: ~/.config/synadia/deerflow-channel/config.toml
+# Prefer NATS_CONTEXT/NATS_URL and NATS_OWNER in the environment for deployments.
+
+# NATS CLI context name. Recommended because credentials stay in NATS config.
+nats_context = "prod"
+
+# Alternative for local development when no context is configured.
+# nats_url = "nats://127.0.0.1:4222"
+
+# Protocol identity: agents.prompt.<agent>.<owner>.<session>
+agent = "df"
+owner = "acme"
+session = "research"
+
+# DeerFlow Gateway base URL.
+deerflow_url = "http://localhost:2026"

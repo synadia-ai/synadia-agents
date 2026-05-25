@@ -15,6 +15,7 @@ For an example of *building* a fresh agent from scratch with the host SDK, see [
 | `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | server-negotiated | true |
 | `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | server-negotiated (config can request a smaller cap) | true |
 | `open-agent/`       | `open-agent` | [vercel-labs/open-agents](https://github.com/vercel-labs/open-agents) | `agents.prompt.open-agent.<owner>.<session>` | server-negotiated | false |
+| `deerflow/`         | `df`       | [DeerFlow](https://deerflow.tech/) Gateway | `agents.prompt.df.<owner>.<session>` | server-negotiated | false |
 
 `max_payload` is read from the NATS connection's `INFO` block at startup and advertised verbatim, formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar. A `nats-server` running the default 1 MB advertises `1MB`; bump `--max_payload 8MB` and the agents track it.
 
@@ -31,6 +32,7 @@ Every agent registers a NATS micro service called `agents` with an endpoint name
 - **`claude-code/`** - ships as a Claude Code plugin (`/plugin install`). Two permission modes: `terminal` (prompt locally) or `query` (relay as a `query` chunk over NATS). Attachments stage at `~/.claude/channels/nats/attachments/<request_id>/`, cleaned on reply completion.
 - **`open-agent/`** - inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents). Vendors `packages/agent` verbatim and ships a `LocalSandbox` so the harness runs without a Vercel account; first agent in the repo built directly on `AgentService` from `@synadia-ai/agent-service`. The companion [`../examples/open-agent-vercel/`](../examples/open-agent-vercel/) swaps in `@vercel/sandbox` to prove the sandbox seam is interchangeable. v1 is single-process / single-session (one bridge handles one `(owner, session)` pair).
 - **`hermes/`** - full Hermes Agent (CLI + TUI + messaging gateway). Unlike the others, each gateway registers **one** identity and multiplexes conversations via the envelope's optional `session` field (§5.1); subject stays stable per instance. Images route through Hermes's `vision_analyze` tool so the model actually sees them. Currently installed from [`synadia-ai/hermes-agent`, branch `nats-gateway`](https://github.com/synadia-ai/hermes-agent/tree/nats-gateway) - upstream PR pending.
+- **`deerflow/`** - external Python wrapper around a running DeerFlow Gateway. Built on `synadia-ai-agent-service`, advertises `attachments_ok=false`, streams Gateway SSE responses as protocol chunks, and bridges DeerFlow clarification requests to protocol `query` chunks.
 
 When an agent accepts attachments, it decodes them to disk and prepends the absolute paths to the prompt text like so:
 
