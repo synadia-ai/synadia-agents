@@ -80,6 +80,7 @@ class DeerFlowGatewayClient:
         path = f"/api/threads/{self._config.session}/runs/stream"
         async with self._client() as client:
             await self._ensure_authenticated(client)
+            await self._ensure_thread_exists(client)
             async with client.stream(
                 "POST",
                 self._url(path),
@@ -120,7 +121,9 @@ class DeerFlowGatewayClient:
         return urljoin(self._config.deerflow_url.rstrip("/") + "/", path.lstrip("/"))
 
     async def _ensure_authenticated(self, client: httpx.AsyncClient) -> None:
-        if self._logged_in or not self._config.deerflow_username:
+        if not self._config.deerflow_username:
+            return
+        if self._logged_in and client.cookies.get("csrf_token"):
             return
         if not self._config.deerflow_password:
             raise DeerFlowGatewayError(
@@ -141,6 +144,22 @@ class DeerFlowGatewayClient:
                 f"DeerFlow Gateway login failed: {response.status_code}{suffix}"
             )
         self._logged_in = True
+
+    async def _ensure_thread_exists(self, client: httpx.AsyncClient) -> None:
+        response = await client.post(
+            self._url("/api/threads"),
+            json={
+                "thread_id": self._config.session,
+                "metadata": {"source": "synadia-nats-channel"},
+            },
+            headers=self._request_headers(client),
+        )
+        if not HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX:
+            detail = _safe_error_detail(response.text)
+            suffix = f": {detail}" if detail else ""
+            raise DeerFlowGatewayError(
+                f"DeerFlow Gateway thread ensure failed: {response.status_code}{suffix}"
+            )
 
     def _request_headers(self, client: httpx.AsyncClient) -> dict[str, str]:
         headers: dict[str, str] = {}

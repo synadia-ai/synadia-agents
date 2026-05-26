@@ -274,7 +274,8 @@ asyncio.run(main())
 - `attachments_ok` is advertised as `false`; DeerFlow Gateway prompts are text-only in this MVP. The host also rejects attachment-bearing prompt envelopes and clarification replies server-side, so non-validating callers get a protocol error instead of forwarding binary data into DeerFlow.
 - `max_payload` defaults to `1MB`; the protocol host advertises it, clamps it to the connected NATS server limit when needed, and rejects oversized prompt envelopes before the DeerFlow handler runs.
 - DeerFlow HTTP calls use `deerflow_timeout_s` (default `60`). Clarification replies use `query_timeout_s` (default `300`) and fail the stream if the caller does not answer in time.
-- When `deerflow_username` and `deerflow_password` are configured, the wrapper logs into DeerFlow once via `/api/v1/auth/login/local`, stores the returned `access_token`/`csrf_token` cookies, and sends `X-CSRF-Token` automatically on Gateway stream POSTs. Manual `deerflow_cookie`/`deerflow_csrf_token` exists only as a debug fallback.
+- When `deerflow_username` and `deerflow_password` are configured, the wrapper logs into DeerFlow via `/api/v1/auth/login/local`, stores the returned `access_token`/`csrf_token` cookies, and sends `X-CSRF-Token` automatically on Gateway stream POSTs. Manual `deerflow_cookie`/`deerflow_csrf_token` exists only as a debug fallback.
+- Before each prompt, the wrapper idempotently ensures the configured DeerFlow thread exists via `POST /api/threads`, so operators do not need to pre-create the session in the Web UI.
 - DeerFlow SSE `messages`/`updates` events are normalized into protocol response chunks.
 - DeerFlow `ask_clarification` tool messages are bridged to Synadia Agent Protocol `query` chunks. The caller's answer is sent back to the same DeerFlow thread as the next user message.
 - A single wrapper instance serves one `(agent, owner, session)` identity. Run multiple processes for multiple exposed DeerFlow sessions.
@@ -286,6 +287,7 @@ asyncio.run(main())
 - **`agent token must be lowercase alphanumeric plus hyphen`** — use a subject-safe token such as `df` or `deerflow`. Do not use spaces, dots, or uppercase.
 - **`DeerFlow Gateway is not reachable at .../health`** — start DeerFlow Gateway first, confirm the port, and run `curl <DEERFLOW_URL>/health` from the same host as the wrapper.
 - **`403: CSRF token missing. Include X-CSRF-Token header.`** — configure `DEERFLOW_USERNAME` and `DEERFLOW_PASSWORD` so the wrapper can log into DeerFlow and send CSRF headers automatically. If you are debugging manually, provide both `DEERFLOW_COOKIE='access_token=...; csrf_token=...'` and `DEERFLOW_CSRF_TOKEN=...`.
+- **`404: Thread ... not found`** — upgrade/reinstall the wrapper. Current versions create the configured DeerFlow thread automatically before streaming; older editable installs required the thread to already exist.
 - **NATS CLI receives only an ack or exits early** — include both `--wait-for-empty` and a generous `--reply-timeout`, e.g. `30s`.
 - **No discovery responses** — confirm the wrapper is still running, check `NATS_CONTEXT`/`NATS_URL`, then query `$SRV.INFO.agents` on the same NATS account the wrapper uses.
 - **Prompt hangs during a clarification** — DeerFlow asked for human input and the caller must support protocol `query` chunks. Use an SDK caller that handles `query`, or avoid DeerFlow flows that require clarification.

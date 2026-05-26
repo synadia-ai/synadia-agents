@@ -22,6 +22,9 @@ async def test_gateway_runner_posts_prompt_to_deerflow_stream() -> None:
     seen: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            seen["thread_body"] = request.read().decode()
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
         seen["method"] = request.method
         seen["path"] = request.url.path
         seen["json"] = request.read().decode()
@@ -46,6 +49,7 @@ async def test_gateway_runner_posts_prompt_to_deerflow_stream() -> None:
         chunks = [chunk async for chunk in client.stream_prompt("hi")]
 
     assert chunks == ["hello", " world"]
+    assert '"thread_id":"deerflow"' in seen["thread_body"].replace(" ", "")
     assert seen["method"] == "POST"
     assert seen["path"] == "/api/threads/deerflow/runs/stream"
     assert '"content":"hi"' in seen["json"].replace(" ", "")
@@ -59,6 +63,8 @@ async def test_gateway_runner_sends_deerflow_auth_headers() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         seen["csrf"] = request.headers.get("X-CSRF-Token")
         seen["cookie"] = request.headers.get("Cookie")
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "default", "status": "idle"})
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -104,6 +110,9 @@ async def test_gateway_runner_can_login_and_use_csrf_cookie() -> None:
             )
         seen["csrf"] = request.headers.get("X-CSRF-Token")
         seen["cookie"] = request.headers.get("Cookie")
+        if request.url.path == "/api/threads":
+            seen["thread_body"] = request.read().decode()
+            return httpx.Response(200, json={"thread_id": "default", "status": "idle"})
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -128,8 +137,10 @@ async def test_gateway_runner_can_login_and_use_csrf_cookie() -> None:
     assert chunks == ["ok"]
     assert seen["paths"] == [
         "/api/v1/auth/login/local",
+        "/api/threads",
         "/api/threads/default/runs/stream",
     ]
+    assert '"thread_id":"default"' in seen["thread_body"].replace(" ", "")
     assert "username=rene%40example.com" in seen["login_body"]
     assert "password=secret" in seen["login_body"]
     assert seen["csrf"] == "csrf-from-login"
@@ -140,6 +151,8 @@ async def test_gateway_runner_can_login_and_use_csrf_cookie() -> None:
 @pytest.mark.asyncio
 async def test_gateway_runner_raises_clear_error_for_non_2xx_stream() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "default", "status": "idle"})
         return httpx.Response(503, text="not ready")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -154,6 +167,8 @@ async def test_gateway_runner_raises_clear_error_for_non_2xx_stream() -> None:
 @pytest.mark.asyncio
 async def test_gateway_runner_sanitizes_non_2xx_detail() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "default", "status": "idle"})
         return httpx.Response(500, text="first line\nsecond line" + ("x" * 600))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -216,6 +231,8 @@ def test_extract_clarification_tool_message_from_deerflow_sse() -> None:
 @pytest.mark.asyncio
 async def test_gateway_stream_events_surfaces_clarification() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -241,6 +258,8 @@ async def test_gateway_stream_events_surfaces_clarification() -> None:
 @pytest.mark.asyncio
 async def test_gateway_stream_events_preserves_text_event_type() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -260,6 +279,8 @@ async def test_gateway_stream_events_preserves_text_event_type() -> None:
 @pytest.mark.asyncio
 async def test_deerflow_gateway_runner_builds_client_from_config() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "default", "status": "idle"})
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
