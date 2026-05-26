@@ -44,6 +44,25 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
         "--max-payload",
         help="Advertised prompt max_payload metadata; default: 1MB, clamped by NATS server",
     )
+    parser.add_argument(
+        "--deerflow-cookie",
+        help=(
+            "Cookie header for authenticated DeerFlow Gateway calls; "
+            "may include access_token and csrf_token"
+        ),
+    )
+    parser.add_argument(
+        "--deerflow-csrf-token",
+        help="CSRF token sent as X-CSRF-Token for DeerFlow Gateway POST calls",
+    )
+    parser.add_argument(
+        "--deerflow-username",
+        help="DeerFlow local-login email/username; enables automatic session login",
+    )
+    parser.add_argument(
+        "--deerflow-password",
+        help="DeerFlow local-login password; prefer DEERFLOW_PASSWORD env var",
+    )
 
 
 def _resolve_from_args(args: argparse.Namespace) -> ChannelConfig:
@@ -58,6 +77,10 @@ def _resolve_from_args(args: argparse.Namespace) -> ChannelConfig:
         deerflow_timeout_s=args.deerflow_timeout_s,
         query_timeout_s=args.query_timeout_s,
         max_payload=args.max_payload,
+        deerflow_cookie=args.deerflow_cookie,
+        deerflow_csrf_token=args.deerflow_csrf_token,
+        deerflow_username=args.deerflow_username,
+        deerflow_password=args.deerflow_password,
     )
 
 

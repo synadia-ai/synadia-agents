@@ -29,12 +29,12 @@ async def test_gateway_runner_posts_prompt_to_deerflow_stream() -> None:
             200,
             headers={"content-type": "text/event-stream"},
             content=(
-                'event: messages\n'
+                "event: messages\n"
                 'data: [[{"type":"ai","content":"hello"}],{}]\n\n'
-                'event: messages\n'
+                "event: messages\n"
                 'data: [[{"type":"ai","content":" world"}],{}]\n\n'
-                'event: end\n'
-                'data: null\n\n'
+                "event: end\n"
+                "data: null\n\n"
             ),
         )
 
@@ -50,6 +50,91 @@ async def test_gateway_runner_posts_prompt_to_deerflow_stream() -> None:
     assert seen["path"] == "/api/threads/deerflow/runs/stream"
     assert '"content":"hi"' in seen["json"].replace(" ", "")
     assert '"stream_mode":["messages"]' in seen["json"].replace(" ", "")
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_sends_deerflow_auth_headers() -> None:
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["csrf"] = request.headers.get("X-CSRF-Token")
+        seen["cookie"] = request.headers.get("Cookie")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content='event: messages\ndata: [[{"type":"ai","content":"ok"}],{}]\n\n',
+        )
+
+    config = ChannelConfig(
+        deerflow_url="http://deerflow.local",
+        deerflow_cookie="access_token=session; csrf_token=csrf-123",
+        deerflow_csrf_token="csrf-123",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        chunks = [
+            chunk
+            async for chunk in deerflow_gateway_runner(
+                "question?",
+                config,
+                http_client=http,
+            )
+        ]
+        result = "".join(chunks)
+
+    assert result == "ok"
+    assert seen["csrf"] == "csrf-123"
+    assert seen["cookie"] == "access_token=session; csrf_token=csrf-123"
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_can_login_and_use_csrf_cookie() -> None:
+    seen: dict[str, Any] = {"paths": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["paths"].append(request.url.path)
+        if request.url.path == "/api/v1/auth/login/local":
+            seen["login_body"] = request.read().decode()
+            return httpx.Response(
+                200,
+                headers=[
+                    ("set-cookie", "access_token=session-token; Path=/"),
+                    ("set-cookie", "csrf_token=csrf-from-login; Path=/"),
+                ],
+                json={"expires_in": 3600, "needs_setup": False},
+            )
+        seen["csrf"] = request.headers.get("X-CSRF-Token")
+        seen["cookie"] = request.headers.get("Cookie")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content='event: messages\ndata: [[{"type":"ai","content":"ok"}],{}]\n\n',
+        )
+
+    config = ChannelConfig(
+        deerflow_url="http://deerflow.local",
+        deerflow_username="rene@example.com",
+        deerflow_password="secret",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        chunks = [
+            chunk
+            async for chunk in deerflow_gateway_runner(
+                "question?",
+                config,
+                http_client=http,
+            )
+        ]
+
+    assert chunks == ["ok"]
+    assert seen["paths"] == [
+        "/api/v1/auth/login/local",
+        "/api/threads/default/runs/stream",
+    ]
+    assert "username=rene%40example.com" in seen["login_body"]
+    assert "password=secret" in seen["login_body"]
+    assert seen["csrf"] == "csrf-from-login"
+    assert "access_token=session-token" in seen["cookie"]
+    assert "csrf_token=csrf-from-login" in seen["cookie"]
 
 
 @pytest.mark.asyncio
@@ -123,8 +208,7 @@ def test_extract_clarification_tool_message_from_deerflow_sse() -> None:
     }
 
     assert (
-        _extract_clarification_from_sse_event("updates", event)
-        == "❓ Which dataset should I use?"
+        _extract_clarification_from_sse_event("updates", event) == "❓ Which dataset should I use?"
     )
     assert _extract_text_from_sse_event("updates", event) is None
 
@@ -136,11 +220,11 @@ async def test_gateway_stream_events_surfaces_clarification() -> None:
             200,
             headers={"content-type": "text/event-stream"},
             content=(
-                'event: updates\n'
+                "event: updates\n"
                 'data: {"messages":[{"type":"tool",'
                 '"name":"ask_clarification","content":"Need input?"}]}\n\n'
-                'event: end\n'
-                'data: null\n\n'
+                "event: end\n"
+                "data: null\n\n"
             ),
         )
 

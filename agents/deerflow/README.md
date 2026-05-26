@@ -40,9 +40,10 @@ If you prefer plain pip during local development:
 
 ```bash
 cd synadia-agents/agents/deerflow
-python -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -e .
 deerflow-nats-channel doctor --owner acme --session research --nats-url nats://127.0.0.1:4222
 ```
 
@@ -65,6 +66,11 @@ export NATS_URL=nats://127.0.0.1:4222
 export NATS_OWNER=acme
 export NATS_AGENT_NAME=research
 export DEERFLOW_URL=http://localhost:2026
+
+# Preferred for current DeerFlow Gateway auth: the wrapper logs in once,
+# stores access_token/csrf_token cookies, and sends X-CSRF-Token itself.
+export DEERFLOW_USERNAME=operator@example.com
+export DEERFLOW_PASSWORD='change-me'
 
 # Optional. Defaults to df, giving agents.prompt.df.<owner>.<session>.
 export NATS_AGENT_TOKEN=df
@@ -118,6 +124,10 @@ owner = "acme"
 session = "research"
 agent = "df"
 deerflow_url = "http://localhost:2026"
+# Optional but recommended when DeerFlow auth is enabled.
+deerflow_username = "operator@example.com"
+# Prefer DEERFLOW_PASSWORD env for real deployments; shown here for field shape only.
+deerflow_password = "change-me"
 TOML
 ```
 
@@ -129,6 +139,10 @@ TOML
 | `owner` | yes | — | Operator/account namespace. It becomes the fourth subject token. |
 | `session` | no | `default` | DeerFlow thread/session name and fifth subject token. Stable names make the wrapper easy to address. |
 | `deerflow_url` | no | `http://localhost:2026` | Base URL for the DeerFlow Gateway. |
+| `deerflow_username` | no | — | DeerFlow local-login username/email. When set with `deerflow_password`, the wrapper logs in via `/api/v1/auth/login/local` and uses returned session/CSRF cookies automatically. |
+| `deerflow_password` | no | — | DeerFlow local-login password. Prefer the `DEERFLOW_PASSWORD` environment variable over TOML for real deployments. Redacted from `doctor` output. |
+| `deerflow_cookie` | no | — | Debug fallback only: raw Cookie header for DeerFlow Gateway calls, e.g. `access_token=...; csrf_token=...`. Prefer automatic login. Redacted from `doctor` output. |
+| `deerflow_csrf_token` | no | — | Debug fallback only: explicit CSRF token sent as `X-CSRF-Token`. Prefer automatic login. Redacted from `doctor` output. |
 | `nats_context` | one NATS target required | — | NATS CLI context name. Recommended for NGS/managed NATS because credentials stay in the NATS context. |
 | `nats_url` | one NATS target required | — | Raw NATS server URL. Useful for local development. |
 | `deerflow_timeout_s` | no | `60` | HTTP connect/read timeout for DeerFlow Gateway health and stream calls. |
@@ -146,6 +160,10 @@ TOML
 | `NATS_AGENT_NAME` | `session` | Preferred session env var for sibling channel consistency. |
 | `NATS_SESSION` | `session` | Alias. Used only when `NATS_AGENT_NAME` is unset. |
 | `DEERFLOW_URL` | `deerflow_url` | DeerFlow Gateway base URL. |
+| `DEERFLOW_USERNAME` | `deerflow_username` | DeerFlow local-login username/email for automatic Gateway session login. |
+| `DEERFLOW_PASSWORD` | `deerflow_password` | DeerFlow local-login password for automatic Gateway session login. Prefer env over config files. Redacted from `doctor` output. |
+| `DEERFLOW_COOKIE` | `deerflow_cookie` | Debug fallback raw Cookie header. Prefer `DEERFLOW_USERNAME`/`DEERFLOW_PASSWORD`. Redacted from `doctor` output. |
+| `DEERFLOW_CSRF_TOKEN` | `deerflow_csrf_token` | Debug fallback CSRF token sent as `X-CSRF-Token`. Prefer automatic login. Redacted from `doctor` output. |
 | `NATS_CONTEXT` | `nats_context` | NATS CLI context. Prefer this over raw URLs in production. |
 | `NATS_URL` | `nats_url` | Direct NATS server URL. |
 | `DEERFLOW_TIMEOUT_S` | `deerflow_timeout_s` | Positive number of seconds for DeerFlow HTTP calls. |
@@ -163,6 +181,8 @@ deerflow-nats-channel doctor \
   --owner acme \
   --session research \
   --deerflow-url http://localhost:2026 \
+  --deerflow-username operator@example.com \
+  --deerflow-password 'change-me' \
   --deerflow-timeout-s 60 \
   --query-timeout-s 300 \
   --max-payload 1MB \
@@ -254,6 +274,7 @@ asyncio.run(main())
 - `attachments_ok` is advertised as `false`; DeerFlow Gateway prompts are text-only in this MVP. The host also rejects attachment-bearing prompt envelopes and clarification replies server-side, so non-validating callers get a protocol error instead of forwarding binary data into DeerFlow.
 - `max_payload` defaults to `1MB`; the protocol host advertises it, clamps it to the connected NATS server limit when needed, and rejects oversized prompt envelopes before the DeerFlow handler runs.
 - DeerFlow HTTP calls use `deerflow_timeout_s` (default `60`). Clarification replies use `query_timeout_s` (default `300`) and fail the stream if the caller does not answer in time.
+- When `deerflow_username` and `deerflow_password` are configured, the wrapper logs into DeerFlow once via `/api/v1/auth/login/local`, stores the returned `access_token`/`csrf_token` cookies, and sends `X-CSRF-Token` automatically on Gateway stream POSTs. Manual `deerflow_cookie`/`deerflow_csrf_token` exists only as a debug fallback.
 - DeerFlow SSE `messages`/`updates` events are normalized into protocol response chunks.
 - DeerFlow `ask_clarification` tool messages are bridged to Synadia Agent Protocol `query` chunks. The caller's answer is sent back to the same DeerFlow thread as the next user message.
 - A single wrapper instance serves one `(agent, owner, session)` identity. Run multiple processes for multiple exposed DeerFlow sessions.
@@ -264,6 +285,7 @@ asyncio.run(main())
 - **`set NATS_CONTEXT or NATS_URL before starting the channel`** — configure one NATS target. Prefer `NATS_CONTEXT` for authenticated deployments.
 - **`agent token must be lowercase alphanumeric plus hyphen`** — use a subject-safe token such as `df` or `deerflow`. Do not use spaces, dots, or uppercase.
 - **`DeerFlow Gateway is not reachable at .../health`** — start DeerFlow Gateway first, confirm the port, and run `curl <DEERFLOW_URL>/health` from the same host as the wrapper.
+- **`403: CSRF token missing. Include X-CSRF-Token header.`** — configure `DEERFLOW_USERNAME` and `DEERFLOW_PASSWORD` so the wrapper can log into DeerFlow and send CSRF headers automatically. If you are debugging manually, provide both `DEERFLOW_COOKIE='access_token=...; csrf_token=...'` and `DEERFLOW_CSRF_TOKEN=...`.
 - **NATS CLI receives only an ack or exits early** — include both `--wait-for-empty` and a generous `--reply-timeout`, e.g. `30s`.
 - **No discovery responses** — confirm the wrapper is still running, check `NATS_CONTEXT`/`NATS_URL`, then query `$SRV.INFO.agents` on the same NATS account the wrapper uses.
 - **Prompt hangs during a clarification** — DeerFlow asked for human input and the caller must support protocol `query` chunks. Use an SDK caller that handles `query`, or avoid DeerFlow flows that require clarification.

@@ -63,6 +63,7 @@ class DeerFlowGatewayClient:
         self._config = config
         self._http_client = http_client
         self._timeout = timeout
+        self._logged_in = False
 
     async def check_reachable(self) -> bool:
         """Return whether DeerFlow Gateway's public health endpoint responds 2xx."""
@@ -77,28 +78,32 @@ class DeerFlowGatewayClient:
         """POST a user prompt to DeerFlow Gateway and yield semantic stream events."""
         body = _prompt_request_body(prompt)
         path = f"/api/threads/{self._config.session}/runs/stream"
-        async with (
-            self._client() as client,
-            client.stream("POST", self._url(path), json=body) as response,
-        ):
-            if not HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX:
-                body_bytes = await response.aread()
-                detail = _safe_error_detail(body_bytes.decode(errors="replace"))
-                suffix = f": {detail}" if detail else ""
-                raise DeerFlowGatewayError(
-                    f"DeerFlow Gateway stream failed: {response.status_code}{suffix}"
-                )
+        async with self._client() as client:
+            await self._ensure_authenticated(client)
+            async with client.stream(
+                "POST",
+                self._url(path),
+                json=body,
+                headers=self._request_headers(client),
+            ) as response:
+                if not HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX:
+                    body_bytes = await response.aread()
+                    detail = _safe_error_detail(body_bytes.decode(errors="replace"))
+                    suffix = f": {detail}" if detail else ""
+                    raise DeerFlowGatewayError(
+                        f"DeerFlow Gateway stream failed: {response.status_code}{suffix}"
+                    )
 
-            async for event, data in _iter_sse(response):
-                if event == "end":
-                    break
-                clarification = _extract_clarification_from_sse_event(event, data)
-                if clarification:
-                    yield ClarificationEvent(prompt=clarification)
-                    continue
-                text = _extract_text_from_sse_event(event, data)
-                if text:
-                    yield TextEvent(text=text)
+                async for event, data in _iter_sse(response):
+                    if event == "end":
+                        break
+                    clarification = _extract_clarification_from_sse_event(event, data)
+                    if clarification:
+                        yield ClarificationEvent(prompt=clarification)
+                        continue
+                    text = _extract_text_from_sse_event(event, data)
+                    if text:
+                        yield TextEvent(text=text)
 
     async def stream_prompt(self, prompt: str) -> AsyncIterator[str]:
         """POST a user prompt to DeerFlow Gateway and yield text chunks from SSE."""
@@ -113,6 +118,39 @@ class DeerFlowGatewayClient:
 
     def _url(self, path: str) -> str:
         return urljoin(self._config.deerflow_url.rstrip("/") + "/", path.lstrip("/"))
+
+    async def _ensure_authenticated(self, client: httpx.AsyncClient) -> None:
+        if self._logged_in or not self._config.deerflow_username:
+            return
+        if not self._config.deerflow_password:
+            raise DeerFlowGatewayError(
+                "DeerFlow username was configured but DeerFlow password is missing"
+            )
+        response = await client.post(
+            self._url("/api/v1/auth/login/local"),
+            data={
+                "username": self._config.deerflow_username,
+                "password": self._config.deerflow_password,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if not HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX:
+            detail = _safe_error_detail(response.text)
+            suffix = f": {detail}" if detail else ""
+            raise DeerFlowGatewayError(
+                f"DeerFlow Gateway login failed: {response.status_code}{suffix}"
+            )
+        self._logged_in = True
+
+    def _request_headers(self, client: httpx.AsyncClient) -> dict[str, str]:
+        headers: dict[str, str] = {}
+        cookie = self._config.deerflow_cookie
+        csrf_token = self._config.deerflow_csrf_token or client.cookies.get("csrf_token")
+        if csrf_token:
+            headers["X-CSRF-Token"] = csrf_token
+        if cookie:
+            headers["Cookie"] = cookie
+        return headers
 
 
 class _ClientContext:

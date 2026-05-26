@@ -34,6 +34,10 @@ class ChannelConfig:
     deerflow_timeout_s: float = DEFAULT_DEERFLOW_TIMEOUT_S
     query_timeout_s: float = DEFAULT_QUERY_TIMEOUT_S
     max_payload: str = DEFAULT_MAX_PAYLOAD
+    deerflow_cookie: str | None = None
+    deerflow_csrf_token: str | None = None
+    deerflow_username: str | None = None
+    deerflow_password: str | None = None
     config_file: Path | None = None
 
     @property
@@ -54,6 +58,10 @@ class ChannelConfig:
             "deerflow_timeout_s": str(self.deerflow_timeout_s),
             "query_timeout_s": str(self.query_timeout_s),
             "max_payload": self.max_payload,
+            "deerflow_cookie": "[REDACTED]" if self.deerflow_cookie else None,
+            "deerflow_csrf_token": "[REDACTED]" if self.deerflow_csrf_token else None,
+            "deerflow_username": self.deerflow_username,
+            "deerflow_password": "[REDACTED]" if self.deerflow_password else None,
             "config_file": str(self.config_file) if self.config_file else None,
             "prompt_subject": f"agents.prompt.{self.subject_prefix}",
             "status_subject": f"agents.status.{self.subject_prefix}",
@@ -133,6 +141,11 @@ def _apply_file(config: ChannelConfig, data: dict[str, Any], path: Path) -> Chan
         or config.deerflow_timeout_s,
         query_timeout_s=_optional_positive_float(data, "query_timeout_s") or config.query_timeout_s,
         max_payload=_optional_str(data, "max_payload") or config.max_payload,
+        deerflow_cookie=_optional_str(data, "deerflow_cookie") or config.deerflow_cookie,
+        deerflow_csrf_token=_optional_str(data, "deerflow_csrf_token")
+        or config.deerflow_csrf_token,
+        deerflow_username=_optional_str(data, "deerflow_username") or config.deerflow_username,
+        deerflow_password=_optional_str(data, "deerflow_password") or config.deerflow_password,
         config_file=path,
     )
 
@@ -146,10 +159,13 @@ def _apply_env(config: ChannelConfig) -> ChannelConfig:
         deerflow_url=_env("DEERFLOW_URL") or config.deerflow_url,
         nats_context=_env("NATS_CONTEXT") or config.nats_context,
         nats_url=_env("NATS_URL") or config.nats_url,
-        deerflow_timeout_s=_env_positive_float("DEERFLOW_TIMEOUT_S")
-        or config.deerflow_timeout_s,
+        deerflow_timeout_s=_env_positive_float("DEERFLOW_TIMEOUT_S") or config.deerflow_timeout_s,
         query_timeout_s=_env_positive_float("DEERFLOW_QUERY_TIMEOUT_S") or config.query_timeout_s,
         max_payload=_env("DEERFLOW_MAX_PAYLOAD") or config.max_payload,
+        deerflow_cookie=_env("DEERFLOW_COOKIE") or config.deerflow_cookie,
+        deerflow_csrf_token=_env("DEERFLOW_CSRF_TOKEN") or config.deerflow_csrf_token,
+        deerflow_username=_env("DEERFLOW_USERNAME") or config.deerflow_username,
+        deerflow_password=_env("DEERFLOW_PASSWORD") or config.deerflow_password,
     )
 
 
@@ -165,6 +181,10 @@ def resolve_config(
     deerflow_timeout_s: float | None = None,
     query_timeout_s: float | None = None,
     max_payload: str | None = None,
+    deerflow_cookie: str | None = None,
+    deerflow_csrf_token: str | None = None,
+    deerflow_username: str | None = None,
+    deerflow_password: str | None = None,
 ) -> ChannelConfig:
     """Resolve config as CLI flags → env vars → config file → defaults."""
     path = config_file or default_config_path()
@@ -181,4 +201,8 @@ def resolve_config(
         deerflow_timeout_s=deerflow_timeout_s or config.deerflow_timeout_s,
         query_timeout_s=query_timeout_s or config.query_timeout_s,
         max_payload=max_payload or config.max_payload,
+        deerflow_cookie=deerflow_cookie or config.deerflow_cookie,
+        deerflow_csrf_token=deerflow_csrf_token or config.deerflow_csrf_token,
+        deerflow_username=deerflow_username or config.deerflow_username,
+        deerflow_password=deerflow_password or config.deerflow_password,
     )

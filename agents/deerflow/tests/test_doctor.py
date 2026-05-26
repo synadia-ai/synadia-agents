@@ -12,7 +12,9 @@ def test_doctor_reports_deerflow_reachable_when_health_is_2xx() -> None:
         return httpx.Response(200, json={"status": "healthy"})
 
     report = run_doctor(
-        ChannelConfig(owner="rene", nats_url="nats://127.0.0.1:4222", deerflow_url="http://deerflow.test"),
+        ChannelConfig(
+            owner="rene", nats_url="nats://127.0.0.1:4222", deerflow_url="http://deerflow.test"
+        ),
         transport=httpx.MockTransport(handler),
     )
 
@@ -25,7 +27,9 @@ def test_doctor_reports_deerflow_unreachable_without_blocking_config_checks() ->
         return httpx.Response(503, text="starting")
 
     report = run_doctor(
-        ChannelConfig(owner="rene", nats_url="nats://127.0.0.1:4222", deerflow_url="http://deerflow.test"),
+        ChannelConfig(
+            owner="rene", nats_url="nats://127.0.0.1:4222", deerflow_url="http://deerflow.test"
+        ),
         transport=httpx.MockTransport(handler),
     )
 
