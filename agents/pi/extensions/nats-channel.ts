@@ -53,6 +53,7 @@ import {
 	formatHumanBytes,
 	parseHumanBytes,
 	parseNatsUrl,
+	withAgentReconnectDefaults,
 } from "@synadia-ai/agents";
 import {
 	DEFAULT_ATTACHMENTS_OK,
@@ -613,6 +614,18 @@ export default function (pi: ExtensionAPI) {
 					case "error":
 						ctx.ui.notify(`NATS error: ${s.error.message}`, "error");
 						break;
+					case "close":
+						// Terminal — nats.js has stopped reconnecting (typically a
+						// fatal auth error; `maxReconnectAttempts: -1` from
+						// `withAgentReconnectDefaults` means we don't expect this
+						// from transient drop-outs). Tell the operator so the UI
+						// stops claiming we're still "reconnecting…".
+						ctx.ui.setStatus("nats", "NATS: disconnected");
+						ctx.ui.notify(
+							"NATS connection closed — agent is off-bus until restart",
+							"warning",
+						);
+						break;
 				}
 			}
 		} catch {
@@ -690,7 +703,7 @@ export default function (pi: ExtensionAPI) {
 		try {
 			const opts = contextToConnectOpts(natsCtx);
 			opts.name = `pi-${owner}`;
-			nc = await connect(opts);
+			nc = await connect(withAgentReconnectDefaults(opts));
 			if (nc.info?.max_payload) {
 				maxPayloadBytes = nc.info.max_payload;
 				maxPayloadStr = formatHumanBytes(maxPayloadBytes);
