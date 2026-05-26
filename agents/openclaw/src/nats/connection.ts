@@ -4,6 +4,11 @@ import { parseNatsUrl, withAgentReconnectDefaults } from "@synadia-ai/agents";
 import { readFileSync } from "node:fs";
 import type { ConnectionConfig } from "./types.js";
 
+// Connections we initiated a drain on. The status loop checks membership
+// before logging the terminal `close` warning — drain emits `close` too,
+// and the operator already knows they asked to exit.
+const shuttingDownConnections = new WeakSet<NatsConnection>();
+
 export async function connectToNats(config: ConnectionConfig = {}): Promise<NatsConnection> {
   // Default `demo.nats.io` matches agents/pi and agents/claude-code so
   // every agent in this repo lands on the same broker out of the box.
@@ -48,7 +53,9 @@ export async function connectToNats(config: ConnectionConfig = {}): Promise<Nats
         case "close":
           // Terminal — nats.js has stopped reconnecting.
           // `withAgentReconnectDefaults` sets `maxReconnectAttempts: -1`,
-          // so this generally means a fatal auth error.
+          // so this generally means a fatal auth error. Skip the warning
+          // if we initiated the drain — the operator already knows.
+          if (shuttingDownConnections.has(nc)) break;
           console.error("[nats] connection closed — agent is off-bus until restart");
           break;
       }
@@ -60,6 +67,7 @@ export async function connectToNats(config: ConnectionConfig = {}): Promise<Nats
 }
 
 export async function drainConnection(nc: NatsConnection): Promise<void> {
+  shuttingDownConnections.add(nc);
   try {
     await nc.drain();
     console.error("[nats] connection drained");

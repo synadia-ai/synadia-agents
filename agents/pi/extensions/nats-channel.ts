@@ -313,6 +313,12 @@ export default function (pi: ExtensionAPI) {
 	let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 	let ackTimer: ReturnType<typeof setInterval> | undefined;
 
+	// Flipped by `cleanup()` so the status loop knows a subsequent `close`
+	// is the result of our own drain, not a real outage. Without this,
+	// every clean shutdown would notify the user that the agent is
+	// "off-bus until restart" — true, but uselessly alarming.
+	let shuttingDown = false;
+
 	const pendingRequests = new Map<string, PendingRequest>();
 	const requestQueue: string[] = [];
 	let activeRequestId: string | null = null;
@@ -620,6 +626,11 @@ export default function (pi: ExtensionAPI) {
 						// `withAgentReconnectDefaults` means we don't expect this
 						// from transient drop-outs). Tell the operator so the UI
 						// stops claiming we're still "reconnecting…".
+						//
+						// Skip the notification during our own shutdown — `drain()`
+						// also emits `close`, and the operator already knows they
+						// asked to exit.
+						if (shuttingDown) break;
 						ctx.ui.setStatus("nats", "NATS: disconnected");
 						ctx.ui.notify(
 							"NATS connection closed — agent is off-bus until restart",
@@ -634,6 +645,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function cleanup(): Promise<void> {
+		shuttingDown = true;
 		stopHeartbeat();
 		stopAckKeepalive();
 		if (service) {

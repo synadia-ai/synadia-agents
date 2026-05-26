@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) return;
-    shuttingDown = true;
+    shuttingDown = true; // also gates the `close`-status notification below
     log(`pi-headless: received ${signal}, shutting down (${manager.count()} sessions)`);
     // Force-exit guard — NATS close can occasionally hang.
     const forceTimer = setTimeout(() => {
@@ -122,8 +122,10 @@ async function main(): Promise<void> {
         else if (s.type === "error") log(`pi-headless: NATS error: ${s.error.message}`);
         // Terminal — nats.js has stopped reconnecting.
         // `withAgentReconnectDefaults` sets `maxReconnectAttempts: -1`,
-        // so this generally means a fatal auth error.
-        else if (s.type === "close") log("pi-headless: NATS connection closed — agent is off-bus until restart");
+        // so this generally means a fatal auth error. During our own
+        // shutdown `drain()` also emits `close`; skip the warning then.
+        else if (s.type === "close" && !shuttingDown)
+          log("pi-headless: NATS connection closed — agent is off-bus until restart");
       }
     } catch {
       /* status iterator ended */
