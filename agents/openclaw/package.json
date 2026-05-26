@@ -61,8 +61,8 @@
     "@nats-io/services": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
     "@sinclair/typebox": "^0.34.0",
-    "@synadia-ai/agents": "file:../../client-sdk/typescript",
-    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
+    "@synadia-ai/agents": "^0.5.2",
+    "@synadia-ai/agent-service": "^0.5.2"
   },
   "peerDependencies": {
     "openclaw": ""

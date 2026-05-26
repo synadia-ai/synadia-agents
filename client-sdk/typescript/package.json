@@ -76,7 +76,7 @@
     "@nats-io/transport-node": "^3.4.0"
   },
   "devDependencies": {
-    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
+    "@synadia-ai/agent-service": "^0.5.2",
     "@types/node": "^20.16.0",
     "@vitest/coverage-v8": "^3.2.0",
     "eslint": "^9.0.0",
