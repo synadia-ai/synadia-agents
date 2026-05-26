@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
 import pytest
+from synadia_ai.agents import Attachment, ProtocolError
 
 from synadia_ai.nats_deerflow_channel.config import ChannelConfig
 from synadia_ai.nats_deerflow_channel.runner import (
@@ -55,8 +57,195 @@ async def test_gateway_runner_posts_prompt_to_deerflow_stream() -> None:
     assert '"thread_id":"deerflow"' in seen["thread_body"].replace(" ", "")
     assert seen["method"] == "POST"
     assert seen["path"] == "/api/threads/deerflow/runs/stream"
-    assert '"content":"hi"' in seen["json"].replace(" ", "")
+    stream_body = json.loads(seen["json"])
+    message = stream_body["input"]["messages"][0]
+    assert message["type"] == "human"
+    assert message["content"] == [{"type": "text", "text": "hi"}]
     assert '"stream_mode":["messages"]' in seen["json"].replace(" ", "")
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_uploads_attachments_and_includes_virtual_paths_in_prompt() -> None:
+    seen: dict[str, Any] = {"paths": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["paths"].append(request.url.path)
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
+        if request.url.path == "/api/threads/deerflow/uploads":
+            body = request.read()
+            seen["upload_content_type"] = request.headers.get("content-type")
+            seen["upload_body"] = body
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "files": [
+                        {
+                            "filename": "brief.txt",
+                            "size": 15,
+                            "virtual_path": "/mnt/user-data/uploads/brief.txt",
+                            "path": "/sandbox/uploads/brief.txt",
+                            "artifact_url": (
+                                "/api/threads/deerflow/artifacts/mnt/user-data/uploads/brief.txt"
+                            ),
+                        }
+                    ],
+                    "message": "Successfully uploaded 1 file(s)",
+                    "skipped_files": [],
+                },
+            )
+        seen["stream_json"] = request.read().decode()
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content='event: messages\ndata: [[{"type":"ai","content":"ok"}],{}]\n\n',
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        chunks = [
+            chunk
+            async for chunk in client.stream_prompt(
+                "read it",
+                attachments=[Attachment.from_bytes("brief.txt", b"attachment text")],
+            )
+        ]
+
+    assert chunks == ["ok"]
+    assert seen["paths"] == [
+        "/api/threads",
+        "/api/threads/deerflow/uploads",
+        "/api/threads/deerflow/runs/stream",
+    ]
+    assert str(seen["upload_content_type"]).startswith("multipart/form-data")
+    assert b'filename="brief.txt"' in seen["upload_body"]
+    assert b"attachment text" in seen["upload_body"]
+    stream_body = json.loads(seen["stream_json"])
+    message = stream_body["input"]["messages"][0]
+    assert message["type"] == "human"
+    assert message["content"] == [{"type": "text", "text": "read it"}]
+    assert message["additional_kwargs"]["files"] == [
+        {
+            "filename": "brief.txt",
+            "path": "/mnt/user-data/uploads/brief.txt",
+            "status": "uploaded",
+            "size": 15,
+            "artifact_url": "/api/threads/deerflow/artifacts/mnt/user-data/uploads/brief.txt",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_url_escapes_thread_path_segments() -> None:
+    seen_raw_paths: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_raw_paths.append(request.url.raw_path)
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "space session/one", "status": "idle"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content='event: messages\ndata: [[{"type":"ai","content":"ok"}],{}]\n\n',
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(
+                owner="rene",
+                session="space session/one",
+                deerflow_url="http://deerflow.test",
+            ),
+            http_client=http,
+        )
+        chunks = [chunk async for chunk in client.stream_prompt("hi")]
+
+    assert chunks == ["ok"]
+    assert seen_raw_paths == [b"/api/threads", b"/api/threads/space%20session%2Fone/runs/stream"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_rejects_skipped_uploads_before_stream() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
+        if request.url.path == "/api/threads/deerflow/uploads":
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "files": [],
+                    "skipped_files": [{"filename": "too-big.pdf", "reason": "too large"}],
+                },
+            )
+        raise AssertionError("stream should not be called after skipped upload")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        with pytest.raises(ProtocolError, match="skipped"):
+            _ = [
+                chunk
+                async for chunk in client.stream_prompt(
+                    "read it",
+                    attachments=[Attachment.from_bytes("too-big.pdf", b"x")],
+                )
+            ]
+
+    assert seen_paths == ["/api/threads", "/api/threads/deerflow/uploads"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_maps_4xx_upload_failure_to_protocol_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
+        if request.url.path == "/api/threads/deerflow/uploads":
+            return httpx.Response(400, text="bad file")
+        raise AssertionError("stream should not be called after upload failure")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        with pytest.raises(ProtocolError, match="upload failed: 400"):
+            _ = [
+                chunk
+                async for chunk in client.stream_prompt(
+                    "read it",
+                    attachments=[Attachment.from_bytes("brief.txt", b"x")],
+                )
+            ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_maps_invalid_attachment_base64_to_protocol_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"HTTP should not be called with invalid base64: {request.url.path}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        with pytest.raises(ProtocolError, match="invalid base64"):
+            _ = [
+                chunk
+                async for chunk in client.stream_prompt(
+                    "read it",
+                    attachments=[Attachment(filename="brief.txt", content="not valid base64")],
+                )
+            ]
 
 
 @pytest.mark.asyncio
@@ -149,6 +338,91 @@ async def test_gateway_runner_can_login_and_use_csrf_cookie() -> None:
     assert seen["csrf"] == "csrf-from-login"
     assert "access_token=session-token" in seen["cookie"]
     assert "csrf_token=csrf-from-login" in seen["cookie"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_uploads_attachments_with_login_csrf_headers() -> None:
+    seen: dict[str, Any] = {"paths": [], "csrf_by_path": {}, "cookie_by_path": {}}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        seen["paths"].append(path)
+        if path == "/api/v1/auth/login/local":
+            return httpx.Response(
+                200,
+                headers=[
+                    ("set-cookie", "access_token=session-token; Path=/"),
+                    ("set-cookie", "csrf_token=csrf-from-login; Path=/"),
+                ],
+                json={"expires_in": 3600, "needs_setup": False},
+            )
+        seen["csrf_by_path"][path] = request.headers.get("X-CSRF-Token")
+        seen["cookie_by_path"][path] = request.headers.get("Cookie")
+        if path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "default", "status": "idle"})
+        if path == "/api/threads/default/uploads":
+            assert b'filename="brief.txt"' in request.read()
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "files": [
+                        {
+                            "filename": "brief.txt",
+                            "virtual_path": "/mnt/user-data/uploads/brief.txt",
+                        }
+                    ],
+                    "skipped_files": [],
+                },
+            )
+        if path == "/api/threads/default/runs/stream":
+            seen["stream_body"] = json.loads(request.read())
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content='event: messages\ndata: [[{"type":"ai","content":"ok"}],{}]\n\n',
+            )
+        raise AssertionError(f"unexpected request: {path}")
+
+    config = ChannelConfig(
+        deerflow_url="http://deerflow.local",
+        deerflow_username="rene@example.com",
+        deerflow_password="secret",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        chunks = [
+            chunk
+            async for chunk in deerflow_gateway_runner(
+                "question?",
+                config,
+                http_client=http,
+                attachments=[Attachment.from_bytes("brief.txt", b"attachment text")],
+            )
+        ]
+
+    assert chunks == ["ok"]
+    assert seen["paths"] == [
+        "/api/v1/auth/login/local",
+        "/api/threads",
+        "/api/threads/default/uploads",
+        "/api/threads/default/runs/stream",
+    ]
+    for path in [
+        "/api/threads",
+        "/api/threads/default/uploads",
+        "/api/threads/default/runs/stream",
+    ]:
+        assert seen["csrf_by_path"][path] == "csrf-from-login"
+        assert "access_token=session-token" in seen["cookie_by_path"][path]
+        assert "csrf_token=csrf-from-login" in seen["cookie_by_path"][path]
+    message = seen["stream_body"]["input"]["messages"][0]
+    assert message["additional_kwargs"]["files"] == [
+        {
+            "filename": "brief.txt",
+            "path": "/mnt/user-data/uploads/brief.txt",
+            "status": "uploaded",
+        }
+    ]
 
 
 @pytest.mark.asyncio

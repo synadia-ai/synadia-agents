@@ -18,7 +18,7 @@ def test_defaults_include_df_agent(tmp_path: Path, monkeypatch: Any) -> None:
     assert config.deerflow_url == "http://localhost:2026"
     assert config.deerflow_timeout_s == 60.0
     assert config.query_timeout_s == 300.0
-    assert config.max_payload == "1MB"
+    assert config.max_payload is None
     assert config.redacted_dict()["prompt_subject"] == "agents.prompt.df.<owner>.default"
 
 

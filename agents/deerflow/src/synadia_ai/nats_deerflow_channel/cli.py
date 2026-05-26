@@ -42,7 +42,7 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--max-payload",
-        help="Advertised prompt max_payload metadata; default: 1MB, clamped by NATS server",
+        help="Advertised prompt max_payload metadata; default follows NATS server max_payload",
     )
     parser.add_argument(
         "--deerflow-cookie",
