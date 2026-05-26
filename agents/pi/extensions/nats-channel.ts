@@ -711,11 +711,19 @@ export default function (pi: ExtensionAPI) {
 		// `session_shutdown` may have fired while we were stuck in the
 		// wait-on-first-connect loop. If so, drop the freshly-opened
 		// connection instead of registering on top of a shutdown.
+		// Capture `nc` into a local before clearing the shared variable —
+		// `cleanup()` may have already raced in between the connect
+		// resolving and this guard, drained the connection, and zeroed
+		// `nc`. Without the local-variable capture we'd be calling
+		// `.close()` on `undefined` and silently swallowing a TypeError.
 		if (shuttingDown) {
-			try {
-				await nc.close();
-			} catch {}
+			const conn = nc;
 			nc = undefined;
+			if (conn) {
+				try {
+					await conn.close();
+				} catch {}
+			}
 			return;
 		}
 
