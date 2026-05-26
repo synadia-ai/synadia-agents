@@ -1,0 +1,97 @@
+name: Release — agents/deerflow
+
+# Publishes synadia-ai-nats-deerflow-channel to PyPI when a tag matching
+# `python-deerflow-v*` is pushed. The tag prefix keeps this package's
+# releases distinct from the monorepo's client-sdk (`python-v*`) and
+# agent-service (`python-agent-service-v*`) releases. Verification runs
+# before publishing and the publish job uses PyPI trusted publishing.
+#
+# Before the first release, register a pending publisher on PyPI for:
+#   project: synadia-ai-nats-deerflow-channel
+#   owner: synadia-ai
+#   repo: synadia-agents
+#   workflow: release-python-deerflow.yml
+#   environment: pypi
+
+on:
+  push:
+    tags:
+      - "python-deerflow-v*"
+
+concurrency:
+  group: release-python-deerflow-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: agents/deerflow
+
+jobs:
+  verify:
+    name: Verify (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "agents/deerflow/uv.lock"
+          python-version: ${{ matrix.python-version }}
+
+      - run: uv sync --all-extras
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src tests
+      - run: uv run pytest -v
+
+  publish:
+    name: Publish to PyPI
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: write  # softprops/action-gh-release creates the tag's GitHub Release
+      id-token: write  # required for PyPI trusted publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "agents/deerflow/uv.lock"
+          python-version: "3.11"
+
+      - name: Build sdist + wheel
+        run: |
+          uv build
+          ls -lh dist/
+
+      - name: Verify tag matches pyproject version
+        run: |
+          # Strip the `python-deerflow-v` monorepo prefix before comparing.
+          TAG_VERSION="${GITHUB_REF_NAME#python-deerflow-v}"
+          PKG_VERSION="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag python-deerflow-v$TAG_VERSION does not match pyproject version $PKG_VERSION"
+            exit 1
+          fi
+          echo "Tag and pyproject.toml both at $PKG_VERSION."
+
+      - name: Publish to PyPI (trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: agents/deerflow/dist/
+
+      - name: Attach artifacts to GitHub release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            agents/deerflow/dist/*.whl
+            agents/deerflow/dist/*.tar.gz
+          generate_release_notes: true
