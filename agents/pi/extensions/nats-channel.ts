@@ -674,6 +674,136 @@ export default function (pi: ExtensionAPI) {
 	// Event wiring
 	// ───────────────────────────────────────────────────────────────────────
 
+	/**
+	 * Connect to NATS and register the microservice. May block arbitrarily
+	 * long: the SDK's `withAgentReconnectDefaults` sets `waitOnFirstConnect:
+	 * true`, so when the broker is unreachable at startup `connect()` keeps
+	 * retrying instead of throwing. Invoked from `session_start` via `void`
+	 * (NOT awaited) so pi can finish plugin init even when NATS is down —
+	 * see the comment in `session_start` for the deadlock this avoids.
+	 */
+	async function connectAndRegister(
+		natsCtx: NatsContext,
+		ctx: ExtensionContext,
+		rawSession: string,
+	): Promise<void> {
+		// Connect to NATS. May block indefinitely while the broker is
+		// unreachable; the operator sees "NATS: connecting…" in the
+		// footer the whole time.
+		try {
+			const opts = contextToConnectOpts(natsCtx);
+			opts.name = `pi-${owner}`;
+			nc = await connect(withAgentReconnectDefaults(opts));
+			if (nc.info?.max_payload) {
+				maxPayloadBytes = nc.info.max_payload;
+				maxPayloadStr = formatHumanBytes(maxPayloadBytes);
+			}
+		} catch (e) {
+			ctx.ui.notify(
+				`NATS connection failed (${serverUrl}): ${(e as Error).message}`,
+				"error",
+			);
+			ctx.ui.setStatus("nats", "NATS: disconnected");
+			nc = undefined;
+			return;
+		}
+
+		// `session_shutdown` may have fired while we were stuck in the
+		// wait-on-first-connect loop. If so, drop the freshly-opened
+		// connection instead of registering on top of a shutdown.
+		// Capture `nc` into a local before clearing the shared variable —
+		// `cleanup()` may have already raced in between the connect
+		// resolving and this guard, drained the connection, and zeroed
+		// `nc`. Without the local-variable capture we'd be calling
+		// `.close()` on `undefined` and silently swallowing a TypeError.
+		if (shuttingDown) {
+			const conn = nc;
+			nc = undefined;
+			if (conn) {
+				try {
+					await conn.close();
+				} catch {}
+			}
+			return;
+		}
+
+		// Collision-detect the session name.
+		try {
+			sessionName = await resolveSessionName(nc, rawSession, owner!);
+		} catch (e) {
+			ctx.ui.notify(
+				`NATS: session name resolution failed: ${(e as Error).message}`,
+				"error",
+			);
+			await cleanup();
+			return;
+		}
+		// `pi` is both the canonical agent identifier AND its conventional
+		// subject abbreviation (Appendix C), so the SDK's default — wire
+		// token equals `agent` — is what we want; no `subjectToken` override
+		// needed.
+		agentSubject = AgentSubject.new(AGENT_ID, owner!, sessionName);
+		promptSubject = agentSubject.prompt;
+		heartbeatSubject = agentSubject.heartbeat;
+		statusSubject = agentSubject.status;
+
+		// Register the microservice instance (§3).
+		try {
+			const svcm = new Svcm(nc);
+			service = await svcm.add({
+				name: SERVICE_NAME,
+				version: SERVICE_VERSION,
+				description: `PI agent (${sessionName}) in ${ctx.cwd}`,
+				metadata: {
+					agent: AGENT_ID,
+					owner: owner!,
+					session: sessionName,
+					protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
+					// Supplementary — preserved but not spec-normative.
+					cwd: ctx.cwd,
+				},
+				queue: "",
+			});
+			service.addEndpoint("prompt", {
+				subject: promptSubject,
+				queue: PROMPT_QUEUE_GROUP,
+				handler: handleNatsMessage,
+				metadata: {
+					max_payload: maxPayloadStr,
+					attachments_ok: DEFAULT_ATTACHMENTS_OK ? "true" : "false",
+				},
+			});
+			// §8.7 (v0.3): status request/response endpoint. Replies with a
+			// freshly-built §8.3 heartbeat payload on every request — same
+			// shape as the periodic heartbeat, different transport
+			// (request/response instead of pub/sub).
+			service.addEndpoint("status", {
+				subject: statusSubject,
+				queue: STATUS_QUEUE_GROUP,
+				handler: handleStatusRequest,
+			});
+			instanceId = service.info().id;
+		} catch (e) {
+			ctx.ui.notify(`NATS: service registration failed: ${(e as Error).message}`, "error");
+			await cleanup();
+			return;
+		}
+
+		// Start heartbeat only AFTER service registration — so anyone who
+		// discovers us via the beacon can resolve metadata via $SRV.INFO (§8.2).
+		startHeartbeat();
+
+		// UI feedback.
+		ctx.ui.setStatus("nats", `NATS: ${promptSubject}`);
+		ctx.ui.notify(
+			`Connected to NATS (${serverUrl}) as ${promptSubject}`,
+			"info",
+		);
+
+		// Monitor connection status.
+		void startStatusLoop(nc, ctx);
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		piCtx = ctx;
 		const config = loadConfig();
@@ -711,99 +841,18 @@ export default function (pi: ExtensionAPI) {
 				config.sessionName ??
 				sanitizeSubjectToken(basename(ctx.cwd))) || "pi";
 
-		// 3. Connect to NATS
-		try {
-			const opts = contextToConnectOpts(natsCtx);
-			opts.name = `pi-${owner}`;
-			nc = await connect(withAgentReconnectDefaults(opts));
-			if (nc.info?.max_payload) {
-				maxPayloadBytes = nc.info.max_payload;
-				maxPayloadStr = formatHumanBytes(maxPayloadBytes);
-			}
-		} catch (e) {
-			ctx.ui.notify(
-				`NATS connection failed (${serverUrl}): ${(e as Error).message}`,
-				"error",
-			);
-			ctx.ui.setStatus("nats", "NATS: disconnected");
-			nc = undefined;
-			return;
-		}
-
-		// 4. Collision-detect the session name
-		try {
-			sessionName = await resolveSessionName(nc, rawSession, owner);
-		} catch (e) {
-			ctx.ui.notify(
-				`NATS: session name resolution failed: ${(e as Error).message}`,
-				"error",
-			);
-			await cleanup();
-			return;
-		}
-		// `pi` is both the canonical agent identifier AND its conventional
-		// subject abbreviation (Appendix C), so the SDK's default — wire token
-		// equals `agent` — is what we want; no `subjectToken` override needed.
-		agentSubject = AgentSubject.new(AGENT_ID, owner, sessionName);
-		promptSubject = agentSubject.prompt;
-		heartbeatSubject = agentSubject.heartbeat;
-		statusSubject = agentSubject.status;
-
-		// 5. Register the microservice instance (§3)
-		try {
-			const svcm = new Svcm(nc);
-			service = await svcm.add({
-				name: SERVICE_NAME,
-				version: SERVICE_VERSION,
-				description: `PI agent (${sessionName}) in ${ctx.cwd}`,
-				metadata: {
-					agent: AGENT_ID,
-					owner,
-					session: sessionName,
-					protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
-					// Supplementary — preserved but not spec-normative.
-					cwd: ctx.cwd,
-				},
-				queue: "",
-			});
-			service.addEndpoint("prompt", {
-				subject: promptSubject,
-				queue: PROMPT_QUEUE_GROUP,
-				handler: handleNatsMessage,
-				metadata: {
-					max_payload: maxPayloadStr,
-					attachments_ok: DEFAULT_ATTACHMENTS_OK ? "true" : "false",
-				},
-			});
-			// §8.7 (v0.3): status request/response endpoint. Replies with a
-			// freshly-built §8.3 heartbeat payload on every request — same shape
-			// as the periodic heartbeat, different transport (request/response
-			// instead of pub/sub).
-			service.addEndpoint("status", {
-				subject: statusSubject,
-				queue: STATUS_QUEUE_GROUP,
-				handler: handleStatusRequest,
-			});
-			instanceId = service.info().id;
-		} catch (e) {
-			ctx.ui.notify(`NATS: service registration failed: ${(e as Error).message}`, "error");
-			await cleanup();
-			return;
-		}
-
-		// 6. Start heartbeat only AFTER service registration — so anyone who
-		//    discovers us via the beacon can resolve metadata via $SRV.INFO (§8.2).
-		startHeartbeat();
-
-		// 7. UI feedback
-		ctx.ui.setStatus("nats", `NATS: ${promptSubject}`);
-		ctx.ui.notify(
-			`Connected to NATS (${serverUrl}) as ${promptSubject}`,
-			"info",
-		);
-
-		// 8. Monitor connection status
-		void startStatusLoop(nc, ctx);
+		// 3. Kick off connect + register in the background — see
+		//    `connectAndRegister` for the rationale. Awaiting it here would
+		//    deadlock pi's plugin-init pipeline whenever the broker is
+		//    unreachable at startup, because the SDK's resilient defaults
+		//    (`waitOnFirstConnect: true`) make `connect()` retry forever
+		//    instead of throwing. Pi serializes session_start handlers; the
+		//    user would be unable to prompt their own session until NATS
+		//    came up. Returning here lets pi finish booting; the NATS
+		//    agent registers in the background once the broker is
+		//    reachable.
+		ctx.ui.setStatus("nats", "NATS: connecting…");
+		void connectAndRegister(natsCtx, ctx, rawSession);
 	});
 
 	pi.on("message_update", async (event) => {
