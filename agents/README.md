@@ -1,6 +1,6 @@
 # Agents
 
-Plugins that wrap existing AI harnesses - PI, OpenClaw, Claude Code, Hermes - as NATS micro services speaking the **Synadia Agent Protocol for NATS**, so any SDK in `../client-sdk/` can drive them the same way.
+Plugins that wrap existing AI harnesses — PI, OpenClaw, Claude Code, Hermes, DeerFlow, and open-agent — as NATS micro services speaking the **Synadia Agent Protocol for NATS**, so any SDK in `../client-sdk/` can drive them the same way.
 
 The plugins are built on the SDK pair: caller-side primitives from [`../client-sdk/`](../client-sdk/) for subjects, envelope types, and the error hierarchy; server-side helpers from [`../agent-sdk/`](../agent-sdk/) (`encodeChunk`, `splitResponseText`, the heartbeat-payload encoders, and — when the harness fits — `AgentService`) for putting an agent on the wire. The OpenClaw, PI, and Claude Code harnesses currently call the encoders directly; the controller agents in [`../examples/pi-headless/`](../examples/pi-headless/) and [`../examples/claude-code-headless/`](../examples/claude-code-headless/) are obvious migration candidates for `AgentService` once their custom `spawn` / `stop` / `list` endpoints land on `extraEndpoints`.
 
@@ -15,9 +15,9 @@ For an example of *building* a fresh agent from scratch with the host SDK, see [
 | `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | server-negotiated | true |
 | `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | server-negotiated (config can request a smaller cap) | true |
 | `open-agent/`       | `open-agent` | [vercel-labs/open-agents](https://github.com/vercel-labs/open-agents) | `agents.prompt.open-agent.<owner>.<session>` | server-negotiated | false |
-| `deerflow/`         | `df`       | [DeerFlow](https://deerflow.tech/) Gateway | `agents.prompt.df.<owner>.<session>` | server-negotiated | true |
+| `deerflow/`         | `df`       | [DeerFlow](https://deerflow.tech/) Gateway | `agents.prompt.df.<owner>.<session>` | configured cap, clamped to server limit | true |
 
-`max_payload` is read from the NATS connection's `INFO` block at startup and advertised verbatim, formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar. A `nats-server` running the default 1 MB advertises `1MB`; bump `--max_payload 8MB` and the agents track it.
+Most agents read `max_payload` from the NATS connection's `INFO` block at startup and advertise that server limit formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar. A `nats-server` running the default 1 MB advertises `1MB`; bump `--max_payload 8MB` and server-negotiated agents track it. Agents with their own configured cap, such as DeerFlow, advertise the configured cap unless the NATS server is smaller, in which case they clamp down to the server limit.
 
 Every agent also publishes heartbeats on `agents.hb.<type-token>.<owner>.<session>` every 30 s and answers `agents.status.<type-token>.<owner>.<session>` requests with the same payload (§8.7 (v0.3)).
 

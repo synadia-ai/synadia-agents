@@ -8,7 +8,11 @@ This package is deliberately narrow: it is a **Synadia Agent Protocol channel wr
 
 ## Install
 
-### From a package index
+### Package index install
+
+The package is intended to publish as `synadia-ai-nats-deerflow-channel`. Until the first release is published, install it from this monorepo using the editable flow below.
+
+After publication, the package-index flow will be:
 
 ```bash
 pip install synadia-ai-nats-deerflow-channel
@@ -50,7 +54,7 @@ deerflow-nats-channel doctor --owner acme --session research --nats-url nats://1
 ## Prerequisites
 
 - A reachable NATS server, or a NATS CLI context created with `nats context add`.
-- A running DeerFlow Gateway. The wrapper expects the Gateway HTTP API, including `/health` and `/api/threads/{session}/runs/stream`.
+- A running DeerFlow Gateway. The wrapper expects the Gateway HTTP API, including `/health`, `/api/threads/{session}/uploads`, and `/api/threads/{session}/runs/stream`.
 - Python 3.11+.
 
 ## Quickstart: env-first
@@ -297,7 +301,7 @@ asyncio.run(main())
 
 ## Limitations
 
-- Attachments are uploaded to DeerFlow's thread uploads area and referenced in prompt text. The Synadia wrapper does not invent a DeerFlow-native multimodal API; it uses DeerFlow's existing file-upload surface.
+- Attachments are uploaded to DeerFlow's thread uploads area and referenced in the Gateway run payload via `additional_kwargs.files`. The Synadia wrapper does not invent a DeerFlow-native multimodal API; it uses DeerFlow's existing file-upload surface.
 - The wrapper fronts DeerFlow Gateway HTTP/SSE. It does not embed DeerFlow Harness directly.
 - `configure` is intentionally minimal in this phase: it prints the target config path instead of running an interactive wizard.
 - No generic NATS tools are exposed to DeerFlow. This is inbound protocol hosting, not a NATS toolbox.
