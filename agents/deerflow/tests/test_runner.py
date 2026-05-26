@@ -204,11 +204,45 @@ async def test_gateway_reachability_uses_health_endpoint() -> None:
 
 
 def test_extract_text_from_langgraph_sse_shapes() -> None:
-    assert _extract_text_from_sse_event("messages", [[{"content": "hello"}], {}]) == "hello"
+    assert (
+        _extract_text_from_sse_event("messages", [[{"type": "ai", "content": "hello"}], {}])
+        == "hello"
+    )
     assert _extract_text_from_sse_event("messages", [{"content": "hi"}, {}]) == "hi"
     updates_event = {"agent": {"messages": [{"content": "done"}]}}
     assert _extract_text_from_sse_event("updates", updates_event) == "done"
     assert _extract_text_from_sse_event("metadata", {"run_id": "r"}) is None
+
+
+def test_extract_text_ignores_non_assistant_langgraph_noise() -> None:
+    assert (
+        _extract_text_from_sse_event(
+            "messages",
+            [
+                {
+                    "type": "human",
+                    "content": "Give me a two sentence summary of what DeerFlow is.",
+                },
+                {"langgraph_node": "agent"},
+            ],
+        )
+        is None
+    )
+    assert (
+        _extract_text_from_sse_event(
+            "messages",
+            [
+                {
+                    "type": "AIMessageChunk",
+                    "content": "",
+                    "response_metadata": {"model_name": "openai", "finish_reason": "stop"},
+                    "usage_metadata": {"output_token_details": "tool_calls"},
+                },
+                {"message_class": "AIMessageChunk", "langgraph_node": "agent"},
+            ],
+        )
+        is None
+    )
 
 
 def test_extract_clarification_tool_message_from_deerflow_sse() -> None:

@@ -285,27 +285,45 @@ def _extract_text_from_sse_event(event: str, data: Any) -> str | None:
     return _extract_text(data)
 
 
-def _extract_text(value: Any) -> str | None:  # noqa: PLR0911
+def _extract_text(value: Any) -> str | None:  # noqa: PLR0911,PLR0912
     if isinstance(value, str):
         return value or None
     if isinstance(value, dict):
         if value.get("name") == "ask_clarification":
             return None
         content = value.get("content")
-        if isinstance(content, str) and content:
+        if isinstance(content, str) and content and _is_assistant_message(value):
             return content
         for key in ("messages", "message"):
             nested = value.get(key)
             text = _extract_text(nested)
             if text:
                 return text
-        for nested in value.values():
-            text = _extract_text(nested)
-            if text:
-                return text
+        for key, nested in value.items():
+            if key in {"metadata", "response_metadata", "usage_metadata", "config"}:
+                continue
+            if isinstance(nested, dict | list):
+                text = _extract_text(nested)
+                if text:
+                    return text
     if isinstance(value, list):
         for item in value:
             text = _extract_text(item)
             if text:
                 return text
     return None
+
+
+def _is_assistant_message(value: dict[str, Any]) -> bool:
+    role = value.get("role")
+    if isinstance(role, str):
+        return role in {"assistant", "ai"}
+
+    message_type = value.get("type")
+    if isinstance(message_type, str):
+        return message_type in {"ai", "assistant", "AIMessage", "AIMessageChunk"}
+
+    # Some LangChain/LangGraph message chunks arrive as plain dicts with a
+    # content field after serialization. Treat absent role/type as assistant
+    # output, but reject known non-assistant payloads explicitly above.
+    return True
