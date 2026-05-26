@@ -14,6 +14,7 @@ from synadia_ai.nats_deerflow_channel.runner import (
     ToolEvent,
     _extract_clarification_from_sse_event,
     _extract_text_from_sse_event,
+    _extract_tool_status_from_sse_event,
     deerflow_gateway_runner,
 )
 
@@ -209,8 +210,8 @@ def test_extract_text_from_langgraph_sse_shapes() -> None:
         _extract_text_from_sse_event("messages", [[{"type": "ai", "content": "hello"}], {}])
         == "hello"
     )
-    assert _extract_text_from_sse_event("messages", [{"content": "hi"}, {}]) == "hi"
-    updates_event = {"agent": {"messages": [{"content": "done"}]}}
+    assert _extract_text_from_sse_event("messages", [{"type": "ai", "content": "hi"}, {}]) == "hi"
+    updates_event = {"agent": {"messages": [{"type": "AIMessage", "content": "done"}]}}
     assert _extract_text_from_sse_event("updates", updates_event) == "done"
     assert _extract_text_from_sse_event("metadata", {"run_id": "r"}) is None
 
@@ -243,6 +244,27 @@ def test_extract_text_ignores_non_assistant_langgraph_noise() -> None:
                 },
                 {"message_class": "AIMessageChunk", "langgraph_node": "agent"},
             ],
+        )
+        is None
+    )
+    assert (
+        _extract_text_from_sse_event("messages", [{"debug": {"content": "internal"}}, {}]) is None
+    )
+    assert (
+        _extract_text_from_sse_event(
+            "values",
+            {
+                "messages": [{"type": "ai", "content": "visible"}],
+                "debug": {"type": "ai", "content": "internal"},
+                "response_metadata": {"model_name": "openai"},
+            },
+        )
+        == "visible"
+    )
+    assert (
+        _extract_clarification_from_sse_event(
+            "values",
+            {"metadata": {"name": "ask_clarification", "content": "hidden"}},
         )
         is None
     )
@@ -300,7 +322,10 @@ async def test_gateway_stream_events_preserves_text_event_type() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
-            content='event: messages\ndata: [[{"content":"ok"}],{}]\n\nevent: end\ndata: null\n\n',
+            content=(
+                'event: messages\ndata: [[{"type":"AIMessageChunk","content":"ok"}],{}]\n\n'
+                "event: end\ndata: null\n\n"
+            ),
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -311,6 +336,44 @@ async def test_gateway_stream_events_preserves_text_event_type() -> None:
         events = [event async for event in client.stream_events("hi")]
 
     assert events == [TextEvent(text="ok")]
+
+
+def test_extract_tool_status_handles_common_tool_call_shapes() -> None:
+    assert (
+        _extract_tool_status_from_sse_event(
+            "messages",
+            [
+                {
+                    "type": "AIMessageChunk",
+                    "content": "",
+                    "additional_kwargs": {"tool_calls": [{"function": {"name": "web_search"}}]},
+                },
+                {},
+            ],
+        )
+        == "DeerFlow tool call: web_search"
+    )
+    assert (
+        _extract_tool_status_from_sse_event(
+            "messages",
+            [
+                {
+                    "type": "AIMessageChunk",
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "web search!?"}}],
+                },
+                {},
+            ],
+        )
+        == "DeerFlow tool call: web_search"
+    )
+    assert (
+        _extract_tool_status_from_sse_event(
+            "messages",
+            [{"type": "tool", "tool_call_id": "call_123", "content": "{}"}, {}],
+        )
+        == "DeerFlow tool result"
+    )
 
 
 @pytest.mark.asyncio
@@ -358,7 +421,10 @@ async def test_deerflow_gateway_runner_builds_client_from_config() -> None:
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
-            content='event: messages\ndata: [[{"content":"ok"}],{}]\n\nevent: end\ndata: null\n\n',
+            content=(
+                'event: messages\ndata: [[{"type":"AIMessageChunk","content":"ok"}],{}]\n\n'
+                "event: end\ndata: null\n\n"
+            ),
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:

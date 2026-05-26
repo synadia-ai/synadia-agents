@@ -259,58 +259,165 @@ def _parse_sse_data(raw: str) -> Any:
         return raw
 
 
+MESSAGE_EVENTS = {"messages", "messages-tuple", "updates", "values"}
+INTERNAL_KEYS = {
+    "additional_kwargs",
+    "artifact",
+    "config",
+    "kwargs",
+    "lc_kwargs",
+    "metadata",
+    "response_metadata",
+    "usage_metadata",
+}
+ASSISTANT_TYPES = {"ai", "assistant", "AIMessage", "AIMessageChunk"}
+ASSISTANT_ROLES = {"assistant", "ai"}
+MAX_TOOL_NAME_CHARS = 80
+LANGGRAPH_TUPLE_ITEMS = 2
+
+
 def _extract_clarification_from_sse_event(event: str, data: Any) -> str | None:
     """Extract DeerFlow ask_clarification tool text from SSE event data."""
-    if event not in {"messages", "messages-tuple", "updates", "values"}:
-        return None
-    return _extract_clarification(data)
+    for message in _iter_message_payloads(event, data):
+        clarification = _extract_clarification(message)
+        if clarification:
+            return clarification
+    return None
 
 
 def _extract_tool_status_from_sse_event(event: str, data: Any) -> str | None:
     """Extract meaningful DeerFlow tool activity without leaking metadata noise."""
-    if event not in {"messages", "messages-tuple", "updates", "values"}:
-        return None
-    return _extract_tool_status(data)
+    for message in _iter_message_payloads(event, data):
+        status = _extract_tool_status(message)
+        if status:
+            return status
+    return None
 
 
-def _extract_tool_status(value: Any) -> str | None:  # noqa: PLR0911,PLR0912
+def _extract_text_from_sse_event(event: str, data: Any) -> str | None:
+    """Extract assistant-visible text from LangGraph/DeerFlow SSE event data."""
+    for message in _iter_message_payloads(event, data):
+        text = _extract_text(message)
+        if text:
+            return text
+    return None
+
+
+def _walk_message_payloads(event: str, data: Any) -> list[Any]:
+    if event not in MESSAGE_EVENTS:
+        return []
+    if event in {"messages", "messages-tuple"}:
+        return list(_message_event_payloads(data))
+    return list(_state_message_payloads(data))
+
+
+def _iter_message_payloads(event: str, data: Any) -> list[Any]:
+    return _walk_message_payloads(event, data)
+
+
+def _message_event_payloads(data: Any) -> list[Any]:
+    """Return only the message half of LangGraph `[message, metadata]` tuples."""
+    if isinstance(data, list):
+        if len(data) == LANGGRAPH_TUPLE_ITEMS and isinstance(data[1], dict):
+            return _coerce_message_list(data[0])
+        return [item for item in data if _looks_like_message(item)]
+    if _looks_like_message(data):
+        return [data]
+    if isinstance(data, dict):
+        return _state_message_payloads(data)
+    return []
+
+
+def _state_message_payloads(value: Any) -> list[Any]:
+    messages: list[Any] = []
     if isinstance(value, dict):
-        tool_calls = value.get("tool_calls") or value.get("tool_call_chunks")
+        for key in ("messages", "message"):
+            if key in value:
+                messages.extend(_coerce_message_list(value[key]))
+        for key, nested in value.items():
+            if key in INTERNAL_KEYS or key in {"content", "text"}:
+                continue
+            if isinstance(nested, dict | list):
+                messages.extend(_state_message_payloads(nested))
+    elif isinstance(value, list):
+        for item in value:
+            if _looks_like_message(item):
+                messages.append(item)
+            elif isinstance(item, dict | list):
+                messages.extend(_state_message_payloads(item))
+    return messages
+
+
+def _coerce_message_list(value: Any) -> list[Any]:
+    if _looks_like_message(value):
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if _looks_like_message(item)]
+    return []
+
+
+def _looks_like_message(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    if value.get("name") == "ask_clarification":
+        return True
+    role = value.get("role")
+    if isinstance(role, str) and role in ASSISTANT_ROLES | {"user", "human", "tool"}:
+        return True
+    message_type = value.get("type")
+    if isinstance(message_type, str) and message_type in ASSISTANT_TYPES | {
+        "human",
+        "user",
+        "tool",
+    }:
+        return True
+    if "tool_calls" in value or "tool_call_chunks" in value or "tool_call_id" in value:
+        return True
+    return (
+        isinstance(value.get("additional_kwargs"), dict)
+        and "tool_calls" in value["additional_kwargs"]
+    )
+
+
+def _extract_tool_status(value: Any) -> str | None:  # noqa: PLR0911
+    if not isinstance(value, dict):
+        return None
+    if value.get("name") == "ask_clarification":
+        return None
+
+    for tool_calls in (
+        value.get("tool_calls"),
+        value.get("tool_call_chunks"),
+        _additional_tool_calls(value),
+    ):
         status = _extract_tool_call_status(tool_calls)
         if status:
             return status
 
-        name = value.get("name")
-        message_type = value.get("type")
-        if isinstance(name, str) and name and message_type == "tool":
-            return f"DeerFlow tool result: {name}"
-        if isinstance(name, str) and name and value.get("id", "").startswith("call_"):
-            return f"DeerFlow tool call: {name}"
+    name = value.get("name")
+    message_type = value.get("type")
+    if message_type == "tool":
+        if isinstance(name, str) and name:
+            return f"DeerFlow tool result: {_safe_tool_name(name)}"
+        if isinstance(value.get("tool_call_id"), str):
+            return "DeerFlow tool result"
+    if isinstance(name, str) and name and str(value.get("id", "")).startswith("call_"):
+        return f"DeerFlow tool call: {_safe_tool_name(name)}"
+    return None
 
-        for key in ("messages", "message"):
-            status = _extract_tool_status(value.get(key))
-            if status:
-                return status
-        for key, nested in value.items():
-            if key in {"metadata", "response_metadata", "usage_metadata", "config"}:
-                continue
-            if isinstance(nested, dict | list):
-                status = _extract_tool_status(nested)
-                if status:
-                    return status
-    if isinstance(value, list):
-        for item in value:
-            status = _extract_tool_status(item)
-            if status:
-                return status
+
+def _additional_tool_calls(value: dict[str, Any]) -> Any:
+    additional_kwargs = value.get("additional_kwargs")
+    if isinstance(additional_kwargs, dict):
+        return additional_kwargs.get("tool_calls")
     return None
 
 
 def _extract_tool_call_status(tool_calls: Any) -> str | None:
     if isinstance(tool_calls, dict):
-        name = tool_calls.get("name")
-        if isinstance(name, str) and name:
-            return f"DeerFlow tool call: {name}"
+        name = _tool_call_name(tool_calls)
+        if name:
+            return f"DeerFlow tool call: {_safe_tool_name(name)}"
     if isinstance(tool_calls, list):
         for item in tool_calls:
             status = _extract_tool_call_status(item)
@@ -319,75 +426,70 @@ def _extract_tool_call_status(tool_calls: Any) -> str | None:
     return None
 
 
-def _extract_clarification(value: Any) -> str | None:
-    if isinstance(value, dict):
-        if value.get("name") == "ask_clarification":
-            content = value.get("content")
-            if isinstance(content, str) and content:
-                return content
-        for key in ("messages", "message"):
-            nested = value.get(key)
-            clarification = _extract_clarification(nested)
-            if clarification:
-                return clarification
-        for nested in value.values():
-            clarification = _extract_clarification(nested)
-            if clarification:
-                return clarification
-    if isinstance(value, list):
-        for item in value:
-            clarification = _extract_clarification(item)
-            if clarification:
-                return clarification
+def _tool_call_name(tool_call: dict[str, Any]) -> str | None:
+    name = tool_call.get("name")
+    if isinstance(name, str) and name:
+        return name
+    function = tool_call.get("function")
+    if isinstance(function, dict):
+        function_name = function.get("name")
+        if isinstance(function_name, str) and function_name:
+            return function_name
     return None
 
 
-def _extract_text_from_sse_event(event: str, data: Any) -> str | None:
-    """Extract assistant-visible text from LangGraph/DeerFlow SSE event data."""
-    if event not in {"messages", "messages-tuple", "updates", "values"}:
+def _safe_tool_name(name: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in name).strip("_")
+    if not safe:
+        return "unknown"
+    if len(safe) > MAX_TOOL_NAME_CHARS:
+        safe = safe[: MAX_TOOL_NAME_CHARS - 1] + "…"
+    return safe
+
+
+def _extract_clarification(value: Any) -> str | None:
+    if not isinstance(value, dict) or value.get("name") != "ask_clarification":
         return None
-    if isinstance(data, str):
-        return data or None
-    return _extract_text(data)
+    content = value.get("content")
+    if isinstance(content, str) and content:
+        return content
+    return None
 
 
 def _extract_text(value: Any) -> str | None:
-    if isinstance(value, dict):
-        if value.get("name") == "ask_clarification":
-            return None
-        content = value.get("content")
-        if isinstance(content, str) and content and _is_assistant_message(value):
-            return content
-        for key in ("messages", "message"):
-            nested = value.get(key)
-            text = _extract_text(nested)
-            if text:
-                return text
-        for key, nested in value.items():
-            if key in {"metadata", "response_metadata", "usage_metadata", "config"}:
-                continue
-            if isinstance(nested, dict | list):
-                text = _extract_text(nested)
-                if text:
-                    return text
-    if isinstance(value, list):
-        for item in value:
-            text = _extract_text(item)
-            if text:
-                return text
+    if not isinstance(value, dict):
+        return None
+    if value.get("name") == "ask_clarification" or not _is_assistant_message(value):
+        return None
+    return _extract_text_content(value.get("content"))
+
+
+def _extract_text_content(content: Any) -> str | None:
+    if isinstance(content, str):
+        return content or None
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") not in {None, "text"}:
+                    continue
+                text = item.get("text")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+            elif isinstance(item, str) and item:
+                parts.append(item)
+        if parts:
+            return "".join(parts)
     return None
 
 
 def _is_assistant_message(value: dict[str, Any]) -> bool:
     role = value.get("role")
     if isinstance(role, str):
-        return role in {"assistant", "ai"}
+        return role in ASSISTANT_ROLES
 
     message_type = value.get("type")
     if isinstance(message_type, str):
-        return message_type in {"ai", "assistant", "AIMessage", "AIMessageChunk"}
+        return message_type in ASSISTANT_TYPES
 
-    # Some LangChain/LangGraph message chunks arrive as plain dicts with a
-    # content field after serialization. Treat absent role/type as assistant
-    # output, but reject known non-assistant payloads explicitly above.
-    return True
+    return False
