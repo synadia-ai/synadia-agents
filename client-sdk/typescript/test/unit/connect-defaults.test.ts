@@ -28,6 +28,15 @@ describe("withAgentReconnectDefaults", () => {
     expect(out.waitOnFirstConnect).toBe(true);
   });
 
+  it("fills in every default when called with no argument", () => {
+    // Parity with `connect()` — both can be called without arguments.
+    const out = withAgentReconnectDefaults();
+    expect(out.maxReconnectAttempts).toBe(-1);
+    expect(out.reconnectTimeWait).toBe(2000);
+    expect(out.reconnectJitter).toBe(200);
+    expect(out.waitOnFirstConnect).toBe(true);
+  });
+
   it("preserves a caller-set numeric override", () => {
     const out = withAgentReconnectDefaults({ maxReconnectAttempts: 5 });
     expect(out.maxReconnectAttempts).toBe(5);

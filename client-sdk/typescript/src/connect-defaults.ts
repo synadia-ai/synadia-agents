@@ -68,7 +68,9 @@ export const AGENT_RECONNECT_DEFAULTS: Readonly<Partial<NodeConnectionOptions>> 
  * actually-dead connection (rather than continuing to say
  * "reconnecting…").
  */
-export function withAgentReconnectDefaults(opts: NodeConnectionOptions): NodeConnectionOptions {
+export function withAgentReconnectDefaults(
+  opts: NodeConnectionOptions = {},
+): NodeConnectionOptions {
   // Spread to a fresh object so callers that mutate the result (e.g.
   // `opts.name = "pi-${owner}"` in agents/pi) don't accidentally write
   // through to the caller's original object.
