@@ -73,13 +73,30 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 
 ## What's in the box
 
-| API                                                              | Purpose                                                     |
-| ---------------------------------------------------------------- | ----------------------------------------------------------- |
-| `new Agents({ nc, ... })`                                        | Construct from a caller-owned `NatsConnection`.             |
-| `agents.discover({filter?, timeoutMs?})`                         | Return a live `Agent[]`; auto subscribe-before-ping (§8.5). |
-| `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                    |
-| `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`       | Heartbeat tracking and on-demand ping.                      |
-| `agents.close()`                                                 | Tear down SDK state; aborts all in-flight streams.          |
+| API                                                              | Purpose                                                                              |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `new Agents({ nc, ... })`                                        | Construct from a caller-owned `NatsConnection`.                                      |
+| `agents.discover({filter?, timeoutMs?})`                         | Return a live `Agent[]`; auto subscribe-before-ping (§8.5).                          |
+| `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                                             |
+| `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`       | Heartbeat tracking and on-demand ping.                                               |
+| `agents.close()`                                                 | Tear down SDK state; aborts all in-flight streams.                                   |
+| `loadContextOptions(name)` / `parseNatsUrl(url)`                 | Bridge `nats` CLI context files / URLs into `NodeConnectionOptions` for `connect()`. |
+| `withAgentReconnectDefaults(opts?)`                              | Opt-in resilient reconnect defaults for agent runtimes — see below. Pure transform.  |
+
+### Resilient reconnect defaults
+
+`@nats-io/transport-node` gives up after ~10 reconnect attempts (~20 seconds) by default, which is too aggressive for an agent process that's supposed to outlive laptop sleeps and intermittent broker reachability. Wrap your options with `withAgentReconnectDefaults` to keep retrying indefinitely (and to retry from the very first connect attempt, instead of throwing if the broker is down at startup):
+
+```ts
+import { connect } from "@nats-io/transport-node";
+import { withAgentReconnectDefaults } from "@synadia-ai/agents";
+
+const nc = await connect(withAgentReconnectDefaults({ servers: "nats://localhost:4222" }));
+```
+
+The helper merges defaults into caller-provided options, preserving any field the caller explicitly set (including `0` and `false`). The defaults — `maxReconnectAttempts: -1`, `reconnectTimeWait: 2000`, `reconnectJitter: 200`, `waitOnFirstConnect: true` — are also exported as `AGENT_RECONNECT_DEFAULTS` for introspection or selective override.
+
+When you adopt these defaults, also handle the terminal `close` status event in your `for await (const s of nc.status())` loop — it still fires on repeated identical auth errors and on explicit `nc.close()` / `nc.drain()`, and a stuck "reconnecting…" UI on a truly dead connection is worse than an honest "disconnected" one.
 
 Subpath exports:
 
