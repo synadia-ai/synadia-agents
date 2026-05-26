@@ -215,8 +215,8 @@ Deliberate deferrals:
 
 ## Troubleshooting
 
-- **`NATS: disconnected` in footer** — run `/nats-status`, then check the context file at `~/.config/nats/context/<context>.json` and that the NATS server is reachable.
-- **`NATS: reconnecting…`** — the connection dropped; the client restores it automatically.
+- **`NATS: reconnecting…`** — the connection dropped; the channel keeps retrying indefinitely (`maxReconnectAttempts: -1` from the SDK's `withAgentReconnectDefaults`), so just leave it — it will recover when the server is reachable again, including after a host sleep / network blip.
+- **`NATS: disconnected` in footer** — terminal. The client gave up reconnecting; the typical cause is repeated identical auth errors (the one path nats.js does not retry through, regardless of our defaults). Run `/nats-status`, then check the context file at `~/.config/nats/context/<context>.json` and that the NATS server is reachable. Restart PI after fixing.
 - **My session got a `-2` suffix** — another PI session was already registered on the same `owner + session`. Use `/nats-configure session <name>` to pick a different one.
 - **`nats req` returns only the initial ack and exits** — pass `--reply-timeout 30s` (default is 300 ms, shorter than the gap between the ack chunk and the LLM's first response). See the "Talk to your session" section above for the full command. `--wait-for-empty` alone isn't enough.
 - **`nats req` hangs or returns nothing** — pass `--wait-for-empty`. The protocol ends streams with an empty-body message, not a single response.

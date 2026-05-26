@@ -53,6 +53,7 @@ import {
 	formatHumanBytes,
 	parseHumanBytes,
 	parseNatsUrl,
+	withAgentReconnectDefaults,
 } from "@synadia-ai/agents";
 import {
 	DEFAULT_ATTACHMENTS_OK,
@@ -311,6 +312,12 @@ export default function (pi: ExtensionAPI) {
 
 	let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 	let ackTimer: ReturnType<typeof setInterval> | undefined;
+
+	// Flipped by `cleanup()` so the status loop knows a subsequent `close`
+	// is the result of our own drain, not a real outage. Without this,
+	// every clean shutdown would notify the user that the agent is
+	// "off-bus until restart" — true, but uselessly alarming.
+	let shuttingDown = false;
 
 	const pendingRequests = new Map<string, PendingRequest>();
 	const requestQueue: string[] = [];
@@ -613,6 +620,23 @@ export default function (pi: ExtensionAPI) {
 					case "error":
 						ctx.ui.notify(`NATS error: ${s.error.message}`, "error");
 						break;
+					case "close":
+						// Terminal — nats.js has stopped reconnecting (typically a
+						// fatal auth error; `maxReconnectAttempts: -1` from
+						// `withAgentReconnectDefaults` means we don't expect this
+						// from transient drop-outs). Tell the operator so the UI
+						// stops claiming we're still "reconnecting…".
+						//
+						// Skip the notification during our own shutdown — `drain()`
+						// also emits `close`, and the operator already knows they
+						// asked to exit.
+						if (shuttingDown) break;
+						ctx.ui.setStatus("nats", "NATS: disconnected");
+						ctx.ui.notify(
+							"NATS connection closed — agent is off-bus until restart",
+							"warning",
+						);
+						break;
 				}
 			}
 		} catch {
@@ -621,6 +645,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	async function cleanup(): Promise<void> {
+		shuttingDown = true;
 		stopHeartbeat();
 		stopAckKeepalive();
 		if (service) {
@@ -690,7 +715,7 @@ export default function (pi: ExtensionAPI) {
 		try {
 			const opts = contextToConnectOpts(natsCtx);
 			opts.name = `pi-${owner}`;
-			nc = await connect(opts);
+			nc = await connect(withAgentReconnectDefaults(opts));
 			if (nc.info?.max_payload) {
 				maxPayloadBytes = nc.info.max_payload;
 				maxPayloadStr = formatHumanBytes(maxPayloadBytes);

@@ -262,7 +262,8 @@ The agent subject layout has no per-tenant slot. For real isolation between tena
 ## Troubleshooting
 
 - **`config field 'org' is deprecated`** — rename `org` → `owner` in `openclaw.json`. The old name still works, just noisy in logs.
-- **`NATS: disconnected`** — check `url` and (if using credentials) that the `.creds` file exists and is readable by the gateway process.
+- **`[nats] disconnected from … — retrying…`** — transient. The channel keeps retrying indefinitely (`maxReconnectAttempts: -1` from the SDK's `withAgentReconnectDefaults`), so just leave it — it will recover when the server is reachable again.
+- **`[nats] connection closed — agent is off-bus until restart`** — terminal. The client gave up reconnecting; the typical cause is repeated identical auth errors (the one path nats.js does not retry through, regardless of our defaults). Check `url` and (if using credentials) that the `.creds` file exists and is readable by the gateway process, then restart.
 - **`nats req` returns only the initial ack and exits** — pass `--reply-timeout 30s` (default is 300 ms, shorter than the gap between the ack chunk and the LLM's first response). See the "Talk to your agent" section above for the full command. `--wait-for-empty` alone isn't enough.
 - **`nats req` hangs or returns nothing** — pass `--wait-for-empty`. The protocol ends streams with an empty-body message, not a single response.
 - **`400 attachment[N] has invalid base64 content`** — the caller emitted URL-safe base64 or unpadded output. `Buffer.from(bytes).toString("base64")` (Node) produces the right form.
