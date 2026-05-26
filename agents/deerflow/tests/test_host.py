@@ -14,7 +14,7 @@ from synadia_ai.nats_deerflow_channel.host import (
     make_deerflow_prompt_handler,
     make_prompt_handler,
 )
-from synadia_ai.nats_deerflow_channel.runner import fake_deerflow_runner
+from synadia_ai.nats_deerflow_channel.testing import fake_deerflow_runner
 
 
 @pytest.mark.asyncio

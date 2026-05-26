@@ -199,12 +199,6 @@ class _ClientContext:
             await self._client.aclose()
 
 
-async def fake_deerflow_runner(prompt: str) -> AsyncIterator[str]:
-    """Yield deterministic chunks for protocol-host tests."""
-    yield "DeerFlow fake runner received: "
-    yield prompt
-
-
 async def deerflow_gateway_runner(
     prompt: str,
     config: ChannelConfig,
