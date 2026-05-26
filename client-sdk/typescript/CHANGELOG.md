@@ -13,14 +13,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-05-26
+
 ### Added
 
-- `withAgentReconnectDefaults(opts)` and `AGENT_RECONNECT_DEFAULTS` —
+- `withAgentReconnectDefaults(opts?)` and `AGENT_RECONNECT_DEFAULTS` —
   opinionated reconnect defaults for agent runtimes:
   `maxReconnectAttempts: -1`, `reconnectTimeWait: 2000`,
   `reconnectJitter: 200`, `waitOnFirstConnect: true`. Pure transform
   that fills in only the fields the caller left undefined, so explicit
-  `0` / `false` overrides survive untouched. See
+  `0` / `false` overrides survive untouched. `opts` defaults to `{}`
+  for parity with `connect()`'s no-argument form. See
   [#121](https://github.com/synadia-ai/synadia-agents/issues/121).
 
 ### Behavior notes
