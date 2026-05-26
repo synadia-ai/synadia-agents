@@ -32,6 +32,7 @@ def test_doctor_fails_without_owner_or_nats_target(
     monkeypatch.delenv("NATS_OWNER", raising=False)
     monkeypatch.delenv("NATS_URL", raising=False)
     monkeypatch.delenv("NATS_CONTEXT", raising=False)
+    monkeypatch.setenv("NATS_CONFIG_HOME", str(tmp_path / "nats"))
 
     code = main(["doctor", "--config-file", str(tmp_path / "missing.toml")])
 
@@ -39,7 +40,7 @@ def test_doctor_fails_without_owner_or_nats_target(
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is False
     assert payload["checks"]["owner_configured"] is False
-    assert payload["checks"]["nats_target_configured"] is False
+    assert payload["checks"]["nats_target_valid"] is False
 
 
 def test_configure_prints_config_path(capsys: Any, tmp_path: Path) -> None:

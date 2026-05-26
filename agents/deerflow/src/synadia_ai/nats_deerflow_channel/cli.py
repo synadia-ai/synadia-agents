@@ -59,10 +59,6 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
         "--deerflow-username",
         help="DeerFlow local-login email/username; enables automatic session login",
     )
-    parser.add_argument(
-        "--deerflow-password",
-        help="DeerFlow local-login password; prefer DEERFLOW_PASSWORD env var",
-    )
 
 
 def _resolve_from_args(args: argparse.Namespace) -> ChannelConfig:
@@ -80,7 +76,6 @@ def _resolve_from_args(args: argparse.Namespace) -> ChannelConfig:
         deerflow_cookie=args.deerflow_cookie,
         deerflow_csrf_token=args.deerflow_csrf_token,
         deerflow_username=args.deerflow_username,
-        deerflow_password=args.deerflow_password,
     )
 
 

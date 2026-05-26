@@ -13,6 +13,7 @@ from synadia_ai.nats_deerflow_channel.runner import (
     TextEvent,
     ToolEvent,
     _extract_clarification_from_sse_event,
+    _extract_events_from_sse_event,
     _extract_text_from_sse_event,
     _extract_tool_status_from_sse_event,
     deerflow_gateway_runner,
@@ -151,6 +152,42 @@ async def test_gateway_runner_can_login_and_use_csrf_cookie() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gateway_client_reuses_owned_http_client_for_cookie_persistence() -> None:
+    client = DeerFlowGatewayClient(ChannelConfig(deerflow_url="http://deerflow.test"))
+    async with client._client() as first:
+        first.cookies.set("csrf_token", "csrf-one", domain="deerflow.test")
+    async with client._client() as second:
+        assert second is first
+        assert second.cookies.get("csrf_token") == "csrf-one"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_treats_existing_thread_conflict_as_success() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path == "/api/threads":
+            return httpx.Response(409, text="thread already exists")
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content='event: messages\ndata: [[{"type":"ai","content":"ok"}],{}]\n\n',
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        chunks = [chunk async for chunk in client.stream_prompt("hi")]
+
+    assert chunks == ["ok"]
+    assert seen_paths == ["/api/threads", "/api/threads/deerflow/runs/stream"]
+
+
+@pytest.mark.asyncio
 async def test_gateway_runner_raises_clear_error_for_non_2xx_stream() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/threads":
@@ -268,6 +305,24 @@ def test_extract_text_ignores_non_assistant_langgraph_noise() -> None:
         )
         is None
     )
+
+
+def test_extract_events_keeps_two_real_messages_from_one_sse_event() -> None:
+    assert _extract_events_from_sse_event(
+        "messages",
+        [
+            {"type": "ai", "content": "first"},
+            {"type": "AIMessageChunk", "content": "second"},
+        ],
+    ) == [TextEvent(text="first"), TextEvent(text="second")]
+
+
+def test_state_message_payloads_has_depth_guard() -> None:
+    nested: dict[str, Any] = {"messages": [{"type": "ai", "content": "deep"}]}
+    for _ in range(80):
+        nested = {"nested": nested}
+
+    assert _extract_text_from_sse_event("updates", nested) is None
 
 
 def test_extract_clarification_tool_message_from_deerflow_sse() -> None:

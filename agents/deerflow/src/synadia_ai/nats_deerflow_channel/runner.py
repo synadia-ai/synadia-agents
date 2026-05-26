@@ -69,6 +69,7 @@ class DeerFlowGatewayClient:
     ) -> None:
         self._config = config
         self._http_client = http_client
+        self._owned_http_client: httpx.AsyncClient | None = None
         self._timeout = timeout
         self._logged_in = False
 
@@ -105,17 +106,8 @@ class DeerFlowGatewayClient:
                 async for event, data in _iter_sse(response):
                     if event == "end":
                         break
-                    clarification = _extract_clarification_from_sse_event(event, data)
-                    if clarification:
-                        yield ClarificationEvent(prompt=clarification)
-                        continue
-                    tool_status = _extract_tool_status_from_sse_event(event, data)
-                    if tool_status:
-                        yield ToolEvent(status=tool_status)
-                        continue
-                    text = _extract_text_from_sse_event(event, data)
-                    if text:
-                        yield TextEvent(text=text)
+                    for semantic_event in _extract_events_from_sse_event(event, data):
+                        yield semantic_event
 
     async def stream_prompt(self, prompt: str) -> AsyncIterator[str]:
         """POST a user prompt to DeerFlow Gateway and yield text chunks from SSE."""
@@ -126,7 +118,16 @@ class DeerFlowGatewayClient:
     def _client(self) -> _ClientContext:
         if self._http_client is not None:
             return _ClientContext(self._http_client, close=False)
-        return _ClientContext(httpx.AsyncClient(timeout=self._timeout), close=True)
+        if self._owned_http_client is None:
+            self._owned_http_client = httpx.AsyncClient(timeout=self._timeout)
+        return _ClientContext(self._owned_http_client, close=False)
+
+    async def aclose(self) -> None:
+        """Close the owned HTTP client, if this wrapper created one."""
+        if self._owned_http_client is not None:
+            await self._owned_http_client.aclose()
+            self._owned_http_client = None
+            self._logged_in = False
 
     def _url(self, path: str) -> str:
         return urljoin(self._config.deerflow_url.rstrip("/") + "/", path.lstrip("/"))
@@ -165,6 +166,8 @@ class DeerFlowGatewayClient:
             },
             headers=self._request_headers(client),
         )
+        if response.status_code == httpx.codes.CONFLICT:
+            return
         if not HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX:
             detail = _safe_error_detail(response.text)
             suffix = f": {detail}" if detail else ""
@@ -210,8 +213,11 @@ async def deerflow_gateway_runner(
 ) -> AsyncIterator[str]:
     """Run one prompt through the configured DeerFlow Gateway."""
     client = DeerFlowGatewayClient(config, http_client=http_client)
-    async for chunk in client.stream_prompt(prompt):
-        yield chunk
+    try:
+        async for chunk in client.stream_prompt(prompt):
+            yield chunk
+    finally:
+        await client.aclose()
 
 
 def _prompt_request_body(prompt: str) -> dict[str, Any]:
@@ -274,6 +280,25 @@ ASSISTANT_TYPES = {"ai", "assistant", "AIMessage", "AIMessageChunk"}
 ASSISTANT_ROLES = {"assistant", "ai"}
 MAX_TOOL_NAME_CHARS = 80
 LANGGRAPH_TUPLE_ITEMS = 2
+MAX_STATE_TRAVERSAL_DEPTH = 32
+
+
+def _extract_events_from_sse_event(event: str, data: Any) -> list[DeerFlowEvent]:
+    """Extract all user-visible semantic events from one DeerFlow SSE frame."""
+    semantic_events: list[DeerFlowEvent] = []
+    for message in _iter_message_payloads(event, data):
+        clarification = _extract_clarification(message)
+        if clarification:
+            semantic_events.append(ClarificationEvent(prompt=clarification))
+            continue
+        status = _extract_tool_status(message)
+        if status:
+            semantic_events.append(ToolEvent(status=status))
+            continue
+        text = _extract_text(message)
+        if text:
+            semantic_events.append(TextEvent(text=text))
+    return semantic_events
 
 
 def _extract_clarification_from_sse_event(event: str, data: Any) -> str | None:
@@ -318,7 +343,12 @@ def _iter_message_payloads(event: str, data: Any) -> list[Any]:
 def _message_event_payloads(data: Any) -> list[Any]:
     """Return only the message half of LangGraph `[message, metadata]` tuples."""
     if isinstance(data, list):
-        if len(data) == LANGGRAPH_TUPLE_ITEMS and isinstance(data[1], dict):
+        if (
+            len(data) == LANGGRAPH_TUPLE_ITEMS
+            and isinstance(data[1], dict)
+            and bool(_coerce_message_list(data[0]))
+            and not _looks_like_message(data[1])
+        ):
             return _coerce_message_list(data[0])
         return [item for item in data if _looks_like_message(item)]
     if _looks_like_message(data):
@@ -328,23 +358,26 @@ def _message_event_payloads(data: Any) -> list[Any]:
     return []
 
 
-def _state_message_payloads(value: Any) -> list[Any]:
+def _state_message_payloads(value: Any, *, depth: int = 0) -> list[Any]:
+    if depth > MAX_STATE_TRAVERSAL_DEPTH:
+        return []
+
     messages: list[Any] = []
     if isinstance(value, dict):
         for key in ("messages", "message"):
             if key in value:
                 messages.extend(_coerce_message_list(value[key]))
         for key, nested in value.items():
-            if key in INTERNAL_KEYS or key in {"content", "text"}:
+            if key in INTERNAL_KEYS or key in {"content", "text", "messages", "message"}:
                 continue
             if isinstance(nested, dict | list):
-                messages.extend(_state_message_payloads(nested))
+                messages.extend(_state_message_payloads(nested, depth=depth + 1))
     elif isinstance(value, list):
         for item in value:
             if _looks_like_message(item):
                 messages.append(item)
             elif isinstance(item, dict | list):
-                messages.extend(_state_message_payloads(item))
+                messages.extend(_state_message_payloads(item, depth=depth + 1))
     return messages
 
 

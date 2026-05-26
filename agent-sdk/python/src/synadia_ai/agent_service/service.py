@@ -437,7 +437,7 @@ class AgentService:
                     self._effective_max_payload_value,
                 )
                 await request.respond_error(
-                    "413",
+                    "400",
                     _sanitize_error_desc(
                         f"prompt payload exceeds max_payload {self._effective_max_payload_value}"
                     ),

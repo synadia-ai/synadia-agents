@@ -143,8 +143,8 @@ TOML
 | `deerflow_password` | no | — | DeerFlow local-login password. Prefer the `DEERFLOW_PASSWORD` environment variable over TOML for real deployments. Redacted from `doctor` output. |
 | `deerflow_cookie` | no | — | Debug fallback only: raw Cookie header for DeerFlow Gateway calls, e.g. `access_token=...; csrf_token=...`. Prefer automatic login. Redacted from `doctor` output. |
 | `deerflow_csrf_token` | no | — | Debug fallback only: explicit CSRF token sent as `X-CSRF-Token`. Prefer automatic login. Redacted from `doctor` output. |
-| `nats_context` | one NATS target required | — | NATS CLI context name. Recommended for NGS/managed NATS because credentials stay in the NATS context. |
-| `nats_url` | one NATS target required | — | Raw NATS server URL. Useful for local development. |
+| `nats_context` | no | — | NATS CLI context name. Recommended for NGS/managed NATS because credentials stay in the NATS context. If neither `nats_context` nor `nats_url` is set, the wrapper uses the currently selected NATS CLI context. |
+| `nats_url` | no | — | Raw NATS server URL. Useful for local development. If unset, `nats_context` or the current NATS CLI context is used. |
 | `deerflow_timeout_s` | no | `60` | HTTP connect/read timeout for DeerFlow Gateway health and stream calls. |
 | `query_timeout_s` | no | `300` | Seconds to wait for a caller reply to a DeerFlow clarification query before failing the stream. |
 | `max_payload` | no | `1MB` | Prompt endpoint `max_payload` metadata. The host rejects larger payloads with a protocol error and clamps to the NATS server limit when needed. |
@@ -182,7 +182,6 @@ deerflow-nats-channel doctor \
   --session research \
   --deerflow-url http://localhost:2026 \
   --deerflow-username operator@example.com \
-  --deerflow-password 'change-me' \
   --deerflow-timeout-s 60 \
   --query-timeout-s 300 \
   --max-payload 1MB \
@@ -209,6 +208,7 @@ Example doctor output:
     "deerflow_reachable": true,
     "deerflow_url_shape": true,
     "nats_target_configured": true,
+    "nats_target_valid": true,
     "owner_configured": true
   },
   "config": {
@@ -223,7 +223,7 @@ Example doctor output:
 }
 ```
 
-`doctor` treats `owner`, NATS target, URL shape, and agent-token shape as start gates. DeerFlow reachability is reported so operators see the problem early, but the structural config can still be valid while DeerFlow is temporarily restarting.
+`doctor` treats `owner`, NATS target validity, URL shape, and agent-token shape as start gates. If no explicit NATS target is configured, `doctor` validates the currently selected NATS CLI context, matching `start`. DeerFlow reachability is reported so operators see the problem early, but the structural config can still be valid while DeerFlow is temporarily restarting.
 
 ## Verify over NATS
 

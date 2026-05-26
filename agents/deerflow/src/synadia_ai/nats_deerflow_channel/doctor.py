@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from synadia_ai.agents import NatsContextError, load_context_options, parse_nats_url
 
 from .config import ChannelConfig
 
@@ -52,6 +53,31 @@ def _check_deerflow_reachable(
     return HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX
 
 
+def _check_nats_target(config: ChannelConfig) -> tuple[bool, str | None]:
+    if config.nats_url:
+        try:
+            options = parse_nats_url(config.nats_url)
+            servers = options.get("servers", [])
+        except (NatsContextError, ValueError) as exc:
+            return False, f"NATS_URL is invalid: {exc}"
+        if not servers or any(
+            any(ch.isspace() for ch in server)
+            or urlparse(server).scheme not in {"nats", "tls", "ws", "wss"}
+            for server in servers
+        ):
+            return False, "NATS_URL is invalid: expected nats://, tls://, ws://, or wss:// URL"
+        return True, None
+
+    context = config.nats_context or "current"
+    try:
+        load_context_options(context)
+    except NatsContextError as exc:
+        if config.nats_context:
+            return False, f"NATS context {config.nats_context!r} could not be loaded: {exc}"
+        return False, f"default NATS context could not be loaded: {exc}"
+    return True, None
+
+
 def run_doctor(
     config: ChannelConfig,
     *,
@@ -71,8 +97,9 @@ def run_doctor(
         messages.append("deerflow_url must be an http(s) URL")
 
     checks["nats_target_configured"] = bool(config.nats_context or config.nats_url)
-    if not checks["nats_target_configured"]:
-        messages.append("set NATS_CONTEXT or NATS_URL before starting the channel")
+    checks["nats_target_valid"], nats_target_error = _check_nats_target(config)
+    if nats_target_error:
+        messages.append(nats_target_error)
 
     checks["agent_token_shape"] = (
         config.agent.replace("-", "").isalnum() and config.agent.lower() == config.agent
@@ -91,7 +118,7 @@ def run_doctor(
         for name in (
             "owner_configured",
             "deerflow_url_shape",
-            "nats_target_configured",
+            "nats_target_valid",
             "agent_token_shape",
         )
     )

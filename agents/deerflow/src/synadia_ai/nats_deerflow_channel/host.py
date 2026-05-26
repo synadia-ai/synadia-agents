@@ -68,32 +68,35 @@ def make_deerflow_prompt_handler(config: ChannelConfig) -> PromptHandler:
         if envelope.attachments:
             raise ProtocolError("attachments are not supported by the DeerFlow wrapper")
         client = DeerFlowGatewayClient(config, timeout=config.deerflow_timeout_s)
-        prompt = envelope.prompt
-        for _ in range(MAX_CLARIFICATION_ROUNDS):
-            needs_followup = False
-            async for event in client.stream_events(prompt):
-                if isinstance(event, TextEvent):
-                    await stream.send(event.text)
-                    continue
-                if isinstance(event, ToolEvent):
-                    await stream.send(StatusChunk(status=event.status))
-                    continue
-                if isinstance(event, ClarificationEvent):
-                    try:
-                        reply = await stream.ask(event.prompt, timeout=config.query_timeout_s)
-                    except QueryTimeout as exc:
-                        raise TimeoutError(
-                            f"caller did not answer DeerFlow clarification within "
-                            f"{config.query_timeout_s:g}s"
-                        ) from exc
-                    if reply.attachments:
-                        raise ProtocolError("attachments are not supported in query replies")
-                    prompt = reply.prompt
-                    needs_followup = True
-                    break
-            if not needs_followup:
-                return
-        raise RuntimeError("too many DeerFlow clarification rounds")
+        try:
+            prompt = envelope.prompt
+            for _ in range(MAX_CLARIFICATION_ROUNDS):
+                needs_followup = False
+                async for event in client.stream_events(prompt):
+                    if isinstance(event, TextEvent):
+                        await stream.send(event.text)
+                        continue
+                    if isinstance(event, ToolEvent):
+                        await stream.send(StatusChunk(status=event.status))
+                        continue
+                    if isinstance(event, ClarificationEvent):
+                        try:
+                            reply = await stream.ask(event.prompt, timeout=config.query_timeout_s)
+                        except QueryTimeout as exc:
+                            raise TimeoutError(
+                                f"caller did not answer DeerFlow clarification within "
+                                f"{config.query_timeout_s:g}s"
+                            ) from exc
+                        if reply.attachments:
+                            raise ProtocolError("attachments are not supported in query replies")
+                        prompt = reply.prompt
+                        needs_followup = True
+                        break
+                if not needs_followup:
+                    return
+            raise RuntimeError("too many DeerFlow clarification rounds")
+        finally:
+            await client.aclose()
 
     return _handler
 

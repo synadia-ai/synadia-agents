@@ -267,7 +267,7 @@ async def test_max_payload_rejects_before_ack(nc: NATSClient) -> None:
 
         assert len(collected) == 2
         error_msg, terminator = collected
-        assert (error_msg.headers or {}).get("Nats-Service-Error-Code") == "413"
+        assert (error_msg.headers or {}).get("Nats-Service-Error-Code") == "400"
         assert terminator.data == b""
         assert not terminator.headers
     finally:
