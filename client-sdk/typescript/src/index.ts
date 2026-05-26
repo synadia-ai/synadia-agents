@@ -133,6 +133,9 @@ export { newInbox } from "./internal/inbox.js";
 // NATS CLI context loader + URL parser (both produce NodeConnectionOptions)
 export { loadContextOptions, parseNatsUrl } from "./context.js";
 
+// Opinionated reconnect defaults for agent runtimes — see #121.
+export { AGENT_RECONNECT_DEFAULTS, withAgentReconnectDefaults } from "./connect-defaults.js";
+
 // Version metadata
 export {
   SDK_PROTOCOL_VERSION,

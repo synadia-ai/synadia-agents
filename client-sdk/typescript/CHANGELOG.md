@@ -13,6 +13,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `withAgentReconnectDefaults(opts)` and `AGENT_RECONNECT_DEFAULTS` —
+  opinionated reconnect defaults for agent runtimes:
+  `maxReconnectAttempts: -1`, `reconnectTimeWait: 2000`,
+  `reconnectJitter: 200`, `waitOnFirstConnect: true`. Pure transform
+  that fills in only the fields the caller left undefined, so explicit
+  `0` / `false` overrides survive untouched. See
+  [#121](https://github.com/synadia-ai/synadia-agents/issues/121).
+
+### Behavior notes
+
+- The new helper is opt-in. Existing callers that go straight to
+  `connect()` without wrapping their options keep the upstream
+  nats.js defaults (~20s reconnect budget, then `close`).
+- `waitOnFirstConnect: true` means `connect()` retries through a
+  server that is unreachable at startup. Misconfigured URLs or TLS
+  cert paths now manifest as a stuck "reconnecting…" UI rather than
+  an immediate throw — desirable for agent runtimes, surprising for
+  short-lived clients. Callers who want the throw-fast behavior
+  should pass `waitOnFirstConnect: false` explicitly (the helper
+  preserves it).
+
 ## [0.5.1] - 2026-05-11
 
 ### Changed
