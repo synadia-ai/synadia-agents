@@ -21,7 +21,7 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-from synadia_ai.agents import Agents, Envelope
+from synadia_ai.agents import Agents, Envelope, encode
 from synadia_ai.agents.errors import ProtocolError
 
 from synadia_ai.agent_service import AgentService, PromptStream
@@ -192,6 +192,80 @@ async def test_malformed_envelope_emits_400_then_terminator(
             f"expected 2 frames (error + terminator); got {len(collected)}: "
             f"{[(dict(m.headers or {}), m.data[:80]) for m in collected]!r}"
         )
+        error_msg, terminator = collected
+        assert (error_msg.headers or {}).get("Nats-Service-Error-Code") == "400"
+        assert terminator.data == b""
+        assert not terminator.headers
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_attachments_false_rejects_before_ack(nc: NATSClient) -> None:
+    """Server-side capability enforcement: attachments_ok=false returns 400 before handler."""
+
+    async def _never_called(envelope: Envelope, stream: PromptStream) -> None:
+        raise AssertionError("handler MUST NOT run when attachments_ok=false")
+
+    service = AgentService(
+        agent=AGENT,
+        owner=OWNER,
+        session_name="no-attachments",
+        nc=nc,
+        heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
+        attachments_ok=False,
+    )
+    service.on_prompt(_never_called)
+    await service.start()
+
+    try:
+        collected = await _collect_replies(
+            nc,
+            service.subject.inbox,
+            nc.new_inbox(),
+            payload=b'{"prompt":"hi","attachments":[{"filename":"x.txt","content":"aGk="}]}',
+        )
+
+        assert len(collected) == 2
+        error_msg, terminator = collected
+        headers = error_msg.headers or {}
+        assert headers.get("Nats-Service-Error-Code") == "400"
+        assert "attachments" in headers.get("Nats-Service-Error", "")
+        assert terminator.data == b""
+        assert not terminator.headers
+    finally:
+        await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_max_payload_rejects_before_ack(nc: NATSClient) -> None:
+    """Agent-side lower max_payload override is enforced before the handler runs."""
+
+    async def _never_called(envelope: Envelope, stream: PromptStream) -> None:
+        raise AssertionError("handler MUST NOT run on oversized prompt")
+
+    service = AgentService(
+        agent=AGENT,
+        owner=OWNER,
+        session_name="tiny-payload",
+        nc=nc,
+        heartbeat_interval_s=HEARTBEAT_INTERVAL_S,
+        max_payload="32B",
+    )
+    service.on_prompt(_never_called)
+    await service.start()
+
+    try:
+        payload = encode(Envelope(prompt="this payload is definitely larger than thirty-two bytes"))
+        assert len(payload) > 32
+        collected = await _collect_replies(
+            nc,
+            service.subject.inbox,
+            nc.new_inbox(),
+            payload=payload,
+        )
+
+        assert len(collected) == 2
         error_msg, terminator = collected
         assert (error_msg.headers or {}).get("Nats-Service-Error-Code") == "400"
         assert terminator.data == b""
