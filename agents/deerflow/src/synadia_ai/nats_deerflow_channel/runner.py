@@ -346,12 +346,12 @@ def _extract_text_from_sse_event(event: str, data: Any) -> str | None:
     """Extract assistant-visible text from LangGraph/DeerFlow SSE event data."""
     if event not in {"messages", "messages-tuple", "updates", "values"}:
         return None
+    if isinstance(data, str):
+        return data or None
     return _extract_text(data)
 
 
-def _extract_text(value: Any) -> str | None:  # noqa: PLR0911,PLR0912
-    if isinstance(value, str):
-        return value or None
+def _extract_text(value: Any) -> str | None:
     if isinstance(value, dict):
         if value.get("name") == "ask_clarification":
             return None

@@ -216,6 +216,8 @@ def test_extract_text_from_langgraph_sse_shapes() -> None:
 
 
 def test_extract_text_ignores_non_assistant_langgraph_noise() -> None:
+    assert _extract_text_from_sse_event("messages", ["branch:to:model", {}]) is None
+    assert _extract_text_from_sse_event("updates", {"agent": ["branch:to:model"]}) is None
     assert (
         _extract_text_from_sse_event(
             "messages",
