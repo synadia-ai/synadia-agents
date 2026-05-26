@@ -13,7 +13,7 @@ DEFAULT_SESSION = "default"
 DEFAULT_DEERFLOW_URL = "http://localhost:2026"
 DEFAULT_DEERFLOW_TIMEOUT_S = 60.0
 DEFAULT_QUERY_TIMEOUT_S = 300.0
-DEFAULT_MAX_PAYLOAD = "1MB"
+DEFAULT_MAX_PAYLOAD = None
 DEFAULT_CONFIG_PATH = Path("~/.config/synadia/deerflow-channel/config.toml")
 
 
@@ -33,7 +33,7 @@ class ChannelConfig:
     nats_url: str | None = None
     deerflow_timeout_s: float = DEFAULT_DEERFLOW_TIMEOUT_S
     query_timeout_s: float = DEFAULT_QUERY_TIMEOUT_S
-    max_payload: str = DEFAULT_MAX_PAYLOAD
+    max_payload: str | None = DEFAULT_MAX_PAYLOAD
     deerflow_cookie: str | None = None
     deerflow_csrf_token: str | None = None
     deerflow_username: str | None = None

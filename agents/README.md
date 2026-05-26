@@ -15,9 +15,9 @@ For an example of *building* a fresh agent from scratch with the host SDK, see [
 | `claude-code/`      | `cc`       | [Claude Code](https://claude.com/claude-code) | `agents.prompt.cc.<owner>.<name>`                          | server-negotiated | true |
 | `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | server-negotiated (config can request a smaller cap) | true |
 | `open-agent/`       | `open-agent` | [vercel-labs/open-agents](https://github.com/vercel-labs/open-agents) | `agents.prompt.open-agent.<owner>.<session>` | server-negotiated | false |
-| `deerflow/`         | `df`       | [DeerFlow](https://deerflow.tech/) Gateway | `agents.prompt.df.<owner>.<session>` | configured cap, clamped to server limit | true |
+| `deerflow/`         | `df`       | [DeerFlow](https://deerflow.tech/) Gateway | `agents.prompt.df.<owner>.<session>` | server-negotiated by default; optional smaller configured cap | true |
 
-Most agents read `max_payload` from the NATS connection's `INFO` block at startup and advertise that server limit formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar. A `nats-server` running the default 1 MB advertises `1MB`; bump `--max_payload 8MB` and server-negotiated agents track it. Agents with their own configured cap, such as DeerFlow, advertise the configured cap unless the NATS server is smaller, in which case they clamp down to the server limit.
+Most agents read `max_payload` from the NATS connection's `INFO` block at startup and advertise that server limit formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar. A `nats-server` running the default 1 MB advertises `1MB`; bump `--max_payload 8MB` and server-negotiated agents track it. Agents with their own configured cap, such as Hermes or DeerFlow when `max_payload` is explicitly set, advertise that configured cap unless the NATS server is smaller, in which case they clamp down to the server limit.
 
 Every agent also publishes heartbeats on `agents.hb.<type-token>.<owner>.<session>` every 30 s and answers `agents.status.<type-token>.<owner>.<session>` requests with the same payload (§8.7 (v0.3)).
 

@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import nats
 from nats.aio.client import Client as NATSClient
-from synadia_ai.agent_service import AgentService, PromptHandler, PromptStream
+from synadia_ai.agent_service import DEFAULT_MAX_PAYLOAD, AgentService, PromptHandler, PromptStream
 from synadia_ai.agents import (
     Attachment,
     Envelope,
@@ -27,6 +27,22 @@ PromptRunner = Callable[[str], AsyncIterator[str]]
 MAX_CLARIFICATION_ROUNDS = 8
 MAX_ATTACHMENT_FILENAME_BYTES = 255
 _SAFE_ATTACHMENT_BASENAME = re.compile(r"^[^/\\\x00]+$")
+
+
+def _format_human_bytes(byte_count: int) -> str:
+    for suffix, factor in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if byte_count >= factor and byte_count % factor == 0:
+            return f"{byte_count // factor}{suffix}"
+    return f"{byte_count}B"
+
+
+def _advertised_max_payload(config: ChannelConfig, nc: NATSClient) -> str:
+    if config.max_payload is not None:
+        return config.max_payload
+    server_bytes = getattr(nc, "max_payload", 0) or 0
+    if server_bytes > 0:
+        return _format_human_bytes(server_bytes)
+    return DEFAULT_MAX_PAYLOAD
 
 
 def _nats_connect_options(config: ChannelConfig) -> dict[str, object]:
@@ -53,7 +69,7 @@ def build_agent_service(config: ChannelConfig, nc: NATSClient) -> AgentService:
         nc=nc,
         description="DeerFlow channel wrapper for the Synadia Agent Protocol",
         attachments_ok=True,
-        max_payload=config.max_payload,
+        max_payload=_advertised_max_payload(config, nc),
     )
     service.on_prompt(make_deerflow_prompt_handler(config))
     return service

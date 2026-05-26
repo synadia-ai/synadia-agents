@@ -151,7 +151,7 @@ TOML
 | `nats_url` | no | — | Raw NATS server URL. Useful for local development. If unset, `nats_context` or the current NATS CLI context is used. |
 | `deerflow_timeout_s` | no | `60` | HTTP connect/read timeout for DeerFlow Gateway health and stream calls. |
 | `query_timeout_s` | no | `300` | Seconds to wait for a caller reply to a DeerFlow clarification query before failing the stream. |
-| `max_payload` | no | `1MB` | Prompt endpoint `max_payload` metadata. The host rejects larger payloads with a protocol error and clamps to the NATS server limit when needed. |
+| `max_payload` | no | NATS server limit | Optional smaller prompt endpoint `max_payload` cap. By default the host advertises the connected NATS server limit; if configured, the value is honored unless the server limit is smaller. |
 
 ### Environment variables
 
@@ -276,7 +276,7 @@ asyncio.run(main())
 
 - The wrapper uses `AgentService` from `synadia-ai-agent-service`.
 - `attachments_ok` is advertised as `true`. The wrapper accepts protocol inline attachments, validates basename-only filenames, uploads them to `POST /api/threads/{session}/uploads`, and includes the returned DeerFlow sandbox virtual paths in `additional_kwargs.files` on the Gateway run request.
-- `max_payload` defaults to `1MB`; the protocol host advertises it, clamps it to the connected NATS server limit when needed, and rejects oversized prompt envelopes before the DeerFlow handler runs.
+- `max_payload` follows the connected NATS server limit by default; operators may configure a smaller cap to reject expensive prompts earlier. The protocol host clamps configured values down if the NATS server is smaller and rejects oversized prompt envelopes before the DeerFlow handler runs.
 - DeerFlow HTTP calls use `deerflow_timeout_s` (default `60`). Clarification replies use `query_timeout_s` (default `300`) and fail the stream if the caller does not answer in time.
 - When `deerflow_username` and `deerflow_password` are configured, the wrapper logs into DeerFlow via `/api/v1/auth/login/local`, stores the returned `access_token`/`csrf_token` cookies, and sends `X-CSRF-Token` automatically on Gateway stream POSTs. Manual `deerflow_cookie`/`deerflow_csrf_token` exists only as a debug fallback.
 - Before each prompt, the wrapper idempotently ensures the configured DeerFlow thread exists via `POST /api/threads`, so operators do not need to pre-create the session in the Web UI.

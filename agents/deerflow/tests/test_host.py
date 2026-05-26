@@ -10,6 +10,7 @@ from synadia_ai.agents import Attachment, Envelope, ProtocolError
 from synadia_ai.nats_deerflow_channel import host as host_module
 from synadia_ai.nats_deerflow_channel.config import ChannelConfig, resolve_config
 from synadia_ai.nats_deerflow_channel.host import (
+    _advertised_max_payload,
     _nats_connect_options,
     build_agent_service,
     make_deerflow_prompt_handler,
@@ -64,13 +65,34 @@ def test_build_agent_service_requires_owner(tmp_path: Path) -> None:
         build_agent_service(config, nc=object())  # type: ignore[arg-type]
 
 
-def test_build_agent_service_passes_hardening_metadata() -> None:
+def test_build_agent_service_uses_nats_server_max_payload_by_default() -> None:
+    class Nats:
+        max_payload = 8 * 1024 * 1024
+
+    config = ChannelConfig(owner="rene")
+
+    service = build_agent_service(config, nc=Nats())  # type: ignore[arg-type]
+
+    assert service._attachments_ok is True
+    assert service._max_payload == "8MB"
+
+
+def test_build_agent_service_honors_smaller_configured_max_payload() -> None:
+    class Nats:
+        max_payload = 8 * 1024 * 1024
+
     config = ChannelConfig(owner="rene", max_payload="256KB")
 
-    service = build_agent_service(config, nc=object())  # type: ignore[arg-type]
+    service = build_agent_service(config, nc=Nats())  # type: ignore[arg-type]
 
     assert service._attachments_ok is True
     assert service._max_payload == "256KB"
+
+
+def test_advertised_max_payload_falls_back_when_nats_info_missing() -> None:
+    config = ChannelConfig(owner="rene")
+
+    assert _advertised_max_payload(config, nc=object()) == "1MB"  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
