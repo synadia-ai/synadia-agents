@@ -9,7 +9,7 @@ import process from "node:process";
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
+import { loadContextOptions, parseNatsUrl, withAgentReconnectDefaults } from "@synadia-ai/agents";
 
 import { Controller } from "./controller.js";
 import { loadConfig, parseCliOverrides } from "./config.js";
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
   log(
     `pi-headless: connecting (${config.context ? `context=${config.context}` : `url=${config.natsUrl}`})`,
   );
-  const nc: NatsConnection = await natsConnect(connOpts);
+  const nc: NatsConnection = await natsConnect(withAgentReconnectDefaults(connOpts));
   log(`pi-headless: connected`);
 
   const manager = new PiSessionManager({
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) return;
-    shuttingDown = true;
+    shuttingDown = true; // also gates the `close`-status notification below
     log(`pi-headless: received ${signal}, shutting down (${manager.count()} sessions)`);
     // Force-exit guard — NATS close can occasionally hang.
     const forceTimer = setTimeout(() => {
@@ -117,9 +117,15 @@ async function main(): Promise<void> {
   void (async () => {
     try {
       for await (const s of nc.status()) {
-        if (s.type === "disconnect") log(`pi-headless: NATS disconnected`);
-        else if (s.type === "reconnect") log(`pi-headless: NATS reconnected`);
-        else if (s.type === "error") log(`pi-headless: NATS error`);
+        if (s.type === "disconnect") log(`pi-headless: NATS disconnected from ${s.server} — retrying…`);
+        else if (s.type === "reconnect") log(`pi-headless: NATS reconnected to ${s.server}`);
+        else if (s.type === "error") log(`pi-headless: NATS error: ${s.error.message}`);
+        // Terminal — nats.js has stopped reconnecting.
+        // `withAgentReconnectDefaults` sets `maxReconnectAttempts: -1`,
+        // so this generally means a fatal auth error. During our own
+        // shutdown `drain()` also emits `close`; skip the warning then.
+        else if (s.type === "close" && !shuttingDown)
+          log("pi-headless: NATS connection closed — agent is off-bus until restart");
       }
     } catch {
       /* status iterator ended */
