@@ -271,13 +271,13 @@ asyncio.run(main())
 ## Runtime behavior
 
 - The wrapper uses `AgentService` from `synadia-ai-agent-service`.
-- `attachments_ok` is advertised as `false`; DeerFlow Gateway prompts are text-only in this MVP. The host also rejects attachment-bearing prompt envelopes and clarification replies server-side, so non-validating callers get a protocol error instead of forwarding binary data into DeerFlow.
+- `attachments_ok` is advertised as `true`. The wrapper accepts protocol inline attachments, validates basename-only filenames, uploads them to `POST /api/threads/{session}/uploads`, and includes the returned DeerFlow sandbox virtual paths in `additional_kwargs.files` on the Gateway run request.
 - `max_payload` defaults to `1MB`; the protocol host advertises it, clamps it to the connected NATS server limit when needed, and rejects oversized prompt envelopes before the DeerFlow handler runs.
 - DeerFlow HTTP calls use `deerflow_timeout_s` (default `60`). Clarification replies use `query_timeout_s` (default `300`) and fail the stream if the caller does not answer in time.
 - When `deerflow_username` and `deerflow_password` are configured, the wrapper logs into DeerFlow via `/api/v1/auth/login/local`, stores the returned `access_token`/`csrf_token` cookies, and sends `X-CSRF-Token` automatically on Gateway stream POSTs. Manual `deerflow_cookie`/`deerflow_csrf_token` exists only as a debug fallback.
 - Before each prompt, the wrapper idempotently ensures the configured DeerFlow thread exists via `POST /api/threads`, so operators do not need to pre-create the session in the Web UI.
 - DeerFlow SSE `messages`/`updates` events are normalized into protocol response chunks.
-- DeerFlow `ask_clarification` tool messages are bridged to Synadia Agent Protocol `query` chunks. The caller's answer is sent back to the same DeerFlow thread as the next user message.
+- DeerFlow `ask_clarification` tool messages are bridged to Synadia Agent Protocol `query` chunks. The caller's answer, including any safe attachments, is sent back to the same DeerFlow thread as the next user message.
 - A single wrapper instance serves one `(agent, owner, session)` identity. Run multiple processes for multiple exposed DeerFlow sessions.
 
 ## Troubleshooting
@@ -288,6 +288,8 @@ asyncio.run(main())
 - **`DeerFlow Gateway is not reachable at .../health`** — start DeerFlow Gateway first, confirm the port, and run `curl <DEERFLOW_URL>/health` from the same host as the wrapper.
 - **`403: CSRF token missing. Include X-CSRF-Token header.`** — configure `DEERFLOW_USERNAME` and `DEERFLOW_PASSWORD` so the wrapper can log into DeerFlow and send CSRF headers automatically. If you are debugging manually, provide both `DEERFLOW_COOKIE='access_token=...; csrf_token=...'` and `DEERFLOW_CSRF_TOKEN=...`.
 - **`404: Thread ... not found`** — upgrade/reinstall the wrapper. Current versions create the configured DeerFlow thread automatically before streaming; older editable installs required the thread to already exist.
+- **`unsafe attachment filename`** — attachment filenames must be plain basenames: no `/`, `\`, NUL bytes, empty names, `.`/`..`, or names longer than 255 UTF-8 bytes. The wrapper rejects unsafe names before calling DeerFlow.
+- **`DeerFlow Gateway upload failed`** — NATS routing and envelope decoding worked; inspect DeerFlow Gateway auth/CSRF, upload limits, and `/api/threads/{session}/uploads` logs next.
 - **NATS CLI receives only an ack or exits early** — include both `--wait-for-empty` and a generous `--reply-timeout`, e.g. `30s`.
 - **No discovery responses** — confirm the wrapper is still running, check `NATS_CONTEXT`/`NATS_URL`, then query `$SRV.INFO.agents` on the same NATS account the wrapper uses.
 - **Prompt hangs during a clarification** — DeerFlow asked for human input and the caller must support protocol `query` chunks. Use an SDK caller that handles `query`, or avoid DeerFlow flows that require clarification.
@@ -295,7 +297,7 @@ asyncio.run(main())
 
 ## Limitations
 
-- Text prompts only; inline attachments are not accepted by the DeerFlow wrapper yet.
+- Attachments are uploaded to DeerFlow's thread uploads area and referenced in prompt text. The Synadia wrapper does not invent a DeerFlow-native multimodal API; it uses DeerFlow's existing file-upload surface.
 - The wrapper fronts DeerFlow Gateway HTTP/SSE. It does not embed DeerFlow Harness directly.
 - `configure` is intentionally minimal in this phase: it prints the target config path instead of running an interactive wizard.
 - No generic NATS tools are exposed to DeerFlow. This is inbound protocol hosting, not a NATS toolbox.

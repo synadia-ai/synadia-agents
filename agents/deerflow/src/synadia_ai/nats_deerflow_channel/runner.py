@@ -9,6 +9,8 @@ from typing import Any
 from urllib.parse import urljoin
 
 import httpx
+from pydantic import BaseModel
+from synadia_ai.agents import Attachment
 
 from .config import ChannelConfig
 
@@ -26,6 +28,16 @@ def _safe_error_detail(detail: str) -> str:
     if len(flat) > MAX_ERROR_DETAIL_CHARS:
         flat = flat[: MAX_ERROR_DETAIL_CHARS - 3] + "..."
     return flat
+
+
+class UploadedAttachment(BaseModel):
+    """One file accepted by the DeerFlow Gateway upload API."""
+
+    filename: str
+    virtual_path: str
+    size: int | None = None
+    path: str | None = None
+    artifact_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,13 +94,19 @@ class DeerFlowGatewayClient:
                 return False
         return HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX
 
-    async def stream_events(self, prompt: str) -> AsyncIterator[DeerFlowEvent]:
+    async def stream_events(
+        self,
+        prompt: str,
+        *,
+        attachments: list[Attachment] | None = None,
+    ) -> AsyncIterator[DeerFlowEvent]:
         """POST a user prompt to DeerFlow Gateway and yield semantic stream events."""
-        body = _prompt_request_body(prompt)
         path = f"/api/threads/{self._config.session}/runs/stream"
         async with self._client() as client:
             await self._ensure_authenticated(client)
             await self._ensure_thread_exists(client)
+            uploaded = await self._upload_attachments(client, attachments or [])
+            body = _prompt_request_body(prompt, uploaded_attachments=uploaded)
             async with client.stream(
                 "POST",
                 self._url(path),
@@ -109,9 +127,14 @@ class DeerFlowGatewayClient:
                     for semantic_event in _extract_events_from_sse_event(event, data):
                         yield semantic_event
 
-    async def stream_prompt(self, prompt: str) -> AsyncIterator[str]:
+    async def stream_prompt(
+        self,
+        prompt: str,
+        *,
+        attachments: list[Attachment] | None = None,
+    ) -> AsyncIterator[str]:
         """POST a user prompt to DeerFlow Gateway and yield text chunks from SSE."""
-        async for event in self.stream_events(prompt):
+        async for event in self.stream_events(prompt, attachments=attachments):
             if isinstance(event, TextEvent):
                 yield event.text
 
@@ -156,6 +179,33 @@ class DeerFlowGatewayClient:
                 f"DeerFlow Gateway login failed: {response.status_code}{suffix}"
             )
         self._logged_in = True
+
+    async def _upload_attachments(
+        self,
+        client: httpx.AsyncClient,
+        attachments: list[Attachment],
+    ) -> list[UploadedAttachment]:
+        if not attachments:
+            return []
+        files: list[tuple[str, tuple[str, bytes]]] = [
+            ("files", (attachment.filename, attachment.to_bytes())) for attachment in attachments
+        ]
+        response = await client.post(
+            self._url(f"/api/threads/{self._config.session}/uploads"),
+            files=files,
+            headers=self._request_headers(client),
+        )
+        if not HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX:
+            detail = _safe_error_detail(response.text)
+            suffix = f": {detail}" if detail else ""
+            raise DeerFlowGatewayError(
+                f"DeerFlow Gateway upload failed: {response.status_code}{suffix}"
+            )
+        data = response.json()
+        uploaded = _parse_upload_response(data)
+        if not uploaded:
+            raise DeerFlowGatewayError("DeerFlow Gateway accepted no attachments")
+        return uploaded
 
     async def _ensure_thread_exists(self, client: httpx.AsyncClient) -> None:
         response = await client.post(
@@ -204,20 +254,81 @@ async def deerflow_gateway_runner(
     config: ChannelConfig,
     *,
     http_client: httpx.AsyncClient | None = None,
+    attachments: list[Attachment] | None = None,
 ) -> AsyncIterator[str]:
     """Run one prompt through the configured DeerFlow Gateway."""
     client = DeerFlowGatewayClient(config, http_client=http_client)
     try:
-        async for chunk in client.stream_prompt(prompt):
+        async for chunk in client.stream_prompt(prompt, attachments=attachments):
             yield chunk
     finally:
         await client.aclose()
 
 
-def _prompt_request_body(prompt: str) -> dict[str, Any]:
+def _parse_upload_response(data: Any) -> list[UploadedAttachment]:
+    if not isinstance(data, dict):
+        return []
+    files = data.get("files")
+    if not isinstance(files, list):
+        return []
+    uploaded: list[UploadedAttachment] = []
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        filename = item.get("filename")
+        virtual_path = item.get("virtual_path")
+        if not isinstance(filename, str) or not isinstance(virtual_path, str):
+            continue
+        uploaded.append(
+            UploadedAttachment(
+                filename=filename,
+                virtual_path=virtual_path,
+                size=_parse_optional_int(item.get("size")),
+                path=item.get("path") if isinstance(item.get("path"), str) else None,
+                artifact_url=(
+                    item.get("artifact_url") if isinstance(item.get("artifact_url"), str) else None
+                ),
+            )
+        )
+    return uploaded
+
+
+def _parse_optional_int(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
+
+
+def _uploaded_attachment_metadata(attachment: UploadedAttachment) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "filename": attachment.filename,
+        "path": attachment.virtual_path,
+        "status": "uploaded",
+    }
+    if attachment.size is not None:
+        data["size"] = attachment.size
+    if attachment.artifact_url is not None:
+        data["artifact_url"] = attachment.artifact_url
+    return data
+
+
+def _prompt_request_body(
+    prompt: str,
+    *,
+    uploaded_attachments: list[UploadedAttachment] | None = None,
+) -> dict[str, Any]:
+    message: dict[str, Any] = {"role": "user", "content": prompt}
+    if uploaded_attachments:
+        message["additional_kwargs"] = {
+            "files": [
+                _uploaded_attachment_metadata(attachment) for attachment in uploaded_attachments
+            ]
+        }
     return {
         "assistant_id": "lead_agent",
-        "input": {"messages": [{"role": "user", "content": prompt}]},
+        "input": {"messages": [message]},
         "config": {"recursion_limit": 50},
         "context": {
             "mode": "flash",

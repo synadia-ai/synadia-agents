@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import httpx
 import pytest
+from synadia_ai.agents import Attachment
 
 from synadia_ai.nats_deerflow_channel.config import ChannelConfig
 from synadia_ai.nats_deerflow_channel.runner import (
@@ -57,6 +59,80 @@ async def test_gateway_runner_posts_prompt_to_deerflow_stream() -> None:
     assert seen["path"] == "/api/threads/deerflow/runs/stream"
     assert '"content":"hi"' in seen["json"].replace(" ", "")
     assert '"stream_mode":["messages"]' in seen["json"].replace(" ", "")
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_uploads_attachments_and_includes_virtual_paths_in_prompt() -> None:
+    seen: dict[str, Any] = {"paths": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["paths"].append(request.url.path)
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
+        if request.url.path == "/api/threads/deerflow/uploads":
+            body = request.read()
+            seen["upload_content_type"] = request.headers.get("content-type")
+            seen["upload_body"] = body
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "files": [
+                        {
+                            "filename": "brief.txt",
+                            "size": 15,
+                            "virtual_path": "/mnt/user-data/uploads/brief.txt",
+                            "path": "/sandbox/uploads/brief.txt",
+                            "artifact_url": (
+                                "/api/threads/deerflow/artifacts/mnt/user-data/uploads/brief.txt"
+                            ),
+                        }
+                    ],
+                    "message": "Successfully uploaded 1 file(s)",
+                    "skipped_files": [],
+                },
+            )
+        seen["stream_json"] = request.read().decode()
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content='event: messages\ndata: [[{"type":"ai","content":"ok"}],{}]\n\n',
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        chunks = [
+            chunk
+            async for chunk in client.stream_prompt(
+                "read it",
+                attachments=[Attachment.from_bytes("brief.txt", b"attachment text")],
+            )
+        ]
+
+    assert chunks == ["ok"]
+    assert seen["paths"] == [
+        "/api/threads",
+        "/api/threads/deerflow/uploads",
+        "/api/threads/deerflow/runs/stream",
+    ]
+    assert str(seen["upload_content_type"]).startswith("multipart/form-data")
+    assert b'filename="brief.txt"' in seen["upload_body"]
+    assert b"attachment text" in seen["upload_body"]
+    stream_body = json.loads(seen["stream_json"])
+    message = stream_body["input"]["messages"][0]
+    assert message["content"] == "read it"
+    assert message["additional_kwargs"]["files"] == [
+        {
+            "filename": "brief.txt",
+            "path": "/mnt/user-data/uploads/brief.txt",
+            "status": "uploaded",
+            "size": 15,
+            "artifact_url": "/api/threads/deerflow/artifacts/mnt/user-data/uploads/brief.txt",
+        }
+    ]
 
 
 @pytest.mark.asyncio

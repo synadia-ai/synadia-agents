@@ -67,12 +67,12 @@ def test_build_agent_service_passes_hardening_metadata() -> None:
 
     service = build_agent_service(config, nc=object())  # type: ignore[arg-type]
 
-    assert service._attachments_ok is False
+    assert service._attachments_ok is True
     assert service._max_payload == "256KB"
 
 
 @pytest.mark.asyncio
-async def test_deerflow_handler_rejects_attachments_before_gateway() -> None:
+async def test_deerflow_handler_rejects_unsafe_attachment_filename_before_gateway() -> None:
     class Stream:
         async def send(self, chunk: str) -> None:
             raise AssertionError("handler must reject before streaming")
@@ -80,8 +80,8 @@ async def test_deerflow_handler_rejects_attachments_before_gateway() -> None:
     handler = make_deerflow_prompt_handler(ChannelConfig(owner="rene"))
     envelope = Envelope(
         prompt="hi",
-        attachments=[Attachment(filename="x.txt", content="aGk=")],
+        attachments=[Attachment(filename="../x.txt", content="aGk=")],
     )
 
-    with pytest.raises(ProtocolError, match="attachments are not supported"):
+    with pytest.raises(ProtocolError, match="unsafe attachment filename"):
         await handler(envelope, cast(Any, Stream()))

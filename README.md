@@ -22,6 +22,7 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [OpenClaw](agents/openclaw/) | `oc` | `@synadia-ai/nats-channel` |
 | [PI Agent](agents/pi/) | `pi` | `@synadia-ai/nats-pi-channel` |
 | [Hermes](agents/hermes/) | `hermes` | upstream fork — see [`agents/hermes/`](agents/hermes/) (work in progress) |
+| [DeerFlow](agents/deerflow/) | `df` | `synadia-ai-nats-deerflow-channel` — external Python wrapper for a running DeerFlow Gateway |
 | [open-agent](agents/open-agent/) | `open-agent` | `@synadia-ai/open-agent` (private) — inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
 | [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 
@@ -149,6 +150,7 @@ synadia-agents/
 │   ├── openclaw/
 │   ├── pi/
 │   ├── hermes/
+│   ├── deerflow/
 │   └── open-agent/              ← inbound bridge for vercel-labs/open-agents
 └── examples/              ← apps built with the SDKs (callers and agents)
     ├── agent-web-ui/             ← Vue 3 + Bun browser client
