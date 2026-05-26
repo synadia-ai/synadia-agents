@@ -10,10 +10,16 @@ from typing import Any, cast
 import nats
 from nats.aio.client import Client as NATSClient
 from synadia_ai.agent_service import AgentService, PromptHandler, PromptStream
-from synadia_ai.agents import Envelope, ProtocolError, QueryTimeout, load_context_options
+from synadia_ai.agents import (
+    Envelope,
+    ProtocolError,
+    QueryTimeout,
+    StatusChunk,
+    load_context_options,
+)
 
 from .config import ChannelConfig
-from .runner import ClarificationEvent, DeerFlowGatewayClient, TextEvent
+from .runner import ClarificationEvent, DeerFlowGatewayClient, TextEvent, ToolEvent
 
 PromptRunner = Callable[[str], AsyncIterator[str]]
 MAX_CLARIFICATION_ROUNDS = 8
@@ -68,6 +74,9 @@ def make_deerflow_prompt_handler(config: ChannelConfig) -> PromptHandler:
             async for event in client.stream_events(prompt):
                 if isinstance(event, TextEvent):
                     await stream.send(event.text)
+                    continue
+                if isinstance(event, ToolEvent):
+                    await stream.send(StatusChunk(status=event.status))
                     continue
                 if isinstance(event, ClarificationEvent):
                     try:

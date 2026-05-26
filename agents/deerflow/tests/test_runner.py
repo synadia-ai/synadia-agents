@@ -11,6 +11,7 @@ from synadia_ai.nats_deerflow_channel.runner import (
     DeerFlowGatewayClient,
     DeerFlowGatewayError,
     TextEvent,
+    ToolEvent,
     _extract_clarification_from_sse_event,
     _extract_text_from_sse_event,
     deerflow_gateway_runner,
@@ -308,6 +309,43 @@ async def test_gateway_stream_events_preserves_text_event_type() -> None:
         events = [event async for event in client.stream_events("hi")]
 
     assert events == [TextEvent(text="ok")]
+
+
+@pytest.mark.asyncio
+async def test_gateway_stream_events_surfaces_tool_activity_as_status() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                "event: messages\n"
+                'data: [[{"type":"AIMessageChunk","content":"",'
+                '"tool_calls":[{"name":"web_search"}],'
+                '"response_metadata":{"model_name":"openai"}}],{}]\n\n'
+                "event: messages\n"
+                'data: [[{"type":"tool","name":"web_search",'
+                '"content":"{\\"query\\": \\"deerflow\\"}"}],{}]\n\n'
+                "event: messages\n"
+                'data: [[{"type":"AIMessageChunk","content":"answer"}],{}]\n\n'
+                "event: end\n"
+                "data: null\n\n"
+            ),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        events = [event async for event in client.stream_events("hi")]
+
+    assert events == [
+        ToolEvent(status="DeerFlow tool call: web_search"),
+        ToolEvent(status="DeerFlow tool result: web_search"),
+        TextEvent(text="answer"),
+    ]
 
 
 @pytest.mark.asyncio

@@ -42,7 +42,14 @@ class ClarificationEvent:
     prompt: str
 
 
-DeerFlowEvent = TextEvent | ClarificationEvent
+@dataclass(frozen=True)
+class ToolEvent:
+    """Meaningful DeerFlow tool activity surfaced as protocol status."""
+
+    status: str
+
+
+DeerFlowEvent = TextEvent | ClarificationEvent | ToolEvent
 
 
 class DeerFlowGatewayClient:
@@ -101,6 +108,10 @@ class DeerFlowGatewayClient:
                     clarification = _extract_clarification_from_sse_event(event, data)
                     if clarification:
                         yield ClarificationEvent(prompt=clarification)
+                        continue
+                    tool_status = _extract_tool_status_from_sse_event(event, data)
+                    if tool_status:
+                        yield ToolEvent(status=tool_status)
                         continue
                     text = _extract_text_from_sse_event(event, data)
                     if text:
@@ -253,6 +264,59 @@ def _extract_clarification_from_sse_event(event: str, data: Any) -> str | None:
     if event not in {"messages", "messages-tuple", "updates", "values"}:
         return None
     return _extract_clarification(data)
+
+
+def _extract_tool_status_from_sse_event(event: str, data: Any) -> str | None:
+    """Extract meaningful DeerFlow tool activity without leaking metadata noise."""
+    if event not in {"messages", "messages-tuple", "updates", "values"}:
+        return None
+    return _extract_tool_status(data)
+
+
+def _extract_tool_status(value: Any) -> str | None:  # noqa: PLR0911,PLR0912
+    if isinstance(value, dict):
+        tool_calls = value.get("tool_calls") or value.get("tool_call_chunks")
+        status = _extract_tool_call_status(tool_calls)
+        if status:
+            return status
+
+        name = value.get("name")
+        message_type = value.get("type")
+        if isinstance(name, str) and name and message_type == "tool":
+            return f"DeerFlow tool result: {name}"
+        if isinstance(name, str) and name and value.get("id", "").startswith("call_"):
+            return f"DeerFlow tool call: {name}"
+
+        for key in ("messages", "message"):
+            status = _extract_tool_status(value.get(key))
+            if status:
+                return status
+        for key, nested in value.items():
+            if key in {"metadata", "response_metadata", "usage_metadata", "config"}:
+                continue
+            if isinstance(nested, dict | list):
+                status = _extract_tool_status(nested)
+                if status:
+                    return status
+    if isinstance(value, list):
+        for item in value:
+            status = _extract_tool_status(item)
+            if status:
+                return status
+    return None
+
+
+def _extract_tool_call_status(tool_calls: Any) -> str | None:
+    if isinstance(tool_calls, dict):
+        name = tool_calls.get("name")
+        if isinstance(name, str) and name:
+            return f"DeerFlow tool call: {name}"
+    if isinstance(tool_calls, list):
+        for item in tool_calls:
+            status = _extract_tool_call_status(item)
+            if status:
+                return status
+    return None
 
 
 def _extract_clarification(value: Any) -> str | None:
