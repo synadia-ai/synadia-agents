@@ -47,8 +47,8 @@
     "@earendil-works/pi-coding-agent": "latest",
     "@nats-io/services": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
-    "@synadia-ai/agents": "^0.5.2",
-    "@synadia-ai/agent-service": "^0.5.2"
+    "@synadia-ai/agents": "file:../../client-sdk/typescript",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
   },
   "devDependencies": {
     "@types/bun": "latest",
