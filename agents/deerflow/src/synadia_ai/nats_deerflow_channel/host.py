@@ -26,13 +26,16 @@ from .runner import ClarificationEvent, DeerFlowGatewayClient, TextEvent, ToolEv
 PromptRunner = Callable[[str], AsyncIterator[str]]
 MAX_CLARIFICATION_ROUNDS = 8
 MAX_ATTACHMENT_FILENAME_BYTES = 255
-_SAFE_ATTACHMENT_BASENAME = re.compile(r"^[^/\\\x00]+$")
+KIB = 1024
+_SAFE_ATTACHMENT_BASENAME = re.compile(r"^[^/\\\x00\r\n]+$")
 
 
 def _format_human_bytes(byte_count: int) -> str:
     for suffix, factor in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
         if byte_count >= factor and byte_count % factor == 0:
             return f"{byte_count // factor}{suffix}"
+    if byte_count >= KIB:
+        return f"{byte_count // KIB}KB"
     return f"{byte_count}B"
 
 

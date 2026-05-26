@@ -11,6 +11,7 @@ from synadia_ai.nats_deerflow_channel import host as host_module
 from synadia_ai.nats_deerflow_channel.config import ChannelConfig, resolve_config
 from synadia_ai.nats_deerflow_channel.host import (
     _advertised_max_payload,
+    _format_human_bytes,
     _nats_connect_options,
     build_agent_service,
     make_deerflow_prompt_handler,
@@ -95,8 +96,15 @@ def test_advertised_max_payload_falls_back_when_nats_info_missing() -> None:
     assert _advertised_max_payload(config, nc=object()) == "1MB"  # type: ignore[arg-type]
 
 
+def test_format_human_bytes_rounds_non_aligned_limits_down_to_kb() -> None:
+    assert _format_human_bytes((1536 * 1024) + 1) == "1536KB"
+
+
+@pytest.mark.parametrize("filename", ["../x.txt", "file.txt\r\nX-Injected: evil"])
 @pytest.mark.asyncio
-async def test_deerflow_handler_rejects_unsafe_attachment_filename_before_gateway() -> None:
+async def test_deerflow_handler_rejects_unsafe_attachment_filename_before_gateway(
+    filename: str,
+) -> None:
     class Stream:
         async def send(self, chunk: str) -> None:
             raise AssertionError("handler must reject before streaming")
@@ -104,7 +112,7 @@ async def test_deerflow_handler_rejects_unsafe_attachment_filename_before_gatewa
     handler = make_deerflow_prompt_handler(ChannelConfig(owner="rene"))
     envelope = Envelope(
         prompt="hi",
-        attachments=[Attachment(filename="../x.txt", content="aGk=")],
+        attachments=[Attachment(filename=filename, content="aGk=")],
     )
 
     with pytest.raises(ProtocolError, match="unsafe attachment filename"):
