@@ -231,9 +231,7 @@ async def test_gateway_runner_maps_4xx_upload_failure_to_protocol_error() -> Non
 @pytest.mark.asyncio
 async def test_gateway_runner_maps_invalid_attachment_base64_to_protocol_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/threads":
-            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
-        raise AssertionError("upload should not be called with invalid base64")
+        raise AssertionError(f"HTTP should not be called with invalid base64: {request.url.path}")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         client = DeerFlowGatewayClient(
@@ -340,6 +338,91 @@ async def test_gateway_runner_can_login_and_use_csrf_cookie() -> None:
     assert seen["csrf"] == "csrf-from-login"
     assert "access_token=session-token" in seen["cookie"]
     assert "csrf_token=csrf-from-login" in seen["cookie"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_uploads_attachments_with_login_csrf_headers() -> None:
+    seen: dict[str, Any] = {"paths": [], "csrf_by_path": {}, "cookie_by_path": {}}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        seen["paths"].append(path)
+        if path == "/api/v1/auth/login/local":
+            return httpx.Response(
+                200,
+                headers=[
+                    ("set-cookie", "access_token=session-token; Path=/"),
+                    ("set-cookie", "csrf_token=csrf-from-login; Path=/"),
+                ],
+                json={"expires_in": 3600, "needs_setup": False},
+            )
+        seen["csrf_by_path"][path] = request.headers.get("X-CSRF-Token")
+        seen["cookie_by_path"][path] = request.headers.get("Cookie")
+        if path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "default", "status": "idle"})
+        if path == "/api/threads/default/uploads":
+            assert b'filename="brief.txt"' in request.read()
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "files": [
+                        {
+                            "filename": "brief.txt",
+                            "virtual_path": "/mnt/user-data/uploads/brief.txt",
+                        }
+                    ],
+                    "skipped_files": [],
+                },
+            )
+        if path == "/api/threads/default/runs/stream":
+            seen["stream_body"] = json.loads(request.read())
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content='event: messages\ndata: [[{"type":"ai","content":"ok"}],{}]\n\n',
+            )
+        raise AssertionError(f"unexpected request: {path}")
+
+    config = ChannelConfig(
+        deerflow_url="http://deerflow.local",
+        deerflow_username="rene@example.com",
+        deerflow_password="secret",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        chunks = [
+            chunk
+            async for chunk in deerflow_gateway_runner(
+                "question?",
+                config,
+                http_client=http,
+                attachments=[Attachment.from_bytes("brief.txt", b"attachment text")],
+            )
+        ]
+
+    assert chunks == ["ok"]
+    assert seen["paths"] == [
+        "/api/v1/auth/login/local",
+        "/api/threads",
+        "/api/threads/default/uploads",
+        "/api/threads/default/runs/stream",
+    ]
+    for path in [
+        "/api/threads",
+        "/api/threads/default/uploads",
+        "/api/threads/default/runs/stream",
+    ]:
+        assert seen["csrf_by_path"][path] == "csrf-from-login"
+        assert "access_token=session-token" in seen["cookie_by_path"][path]
+        assert "csrf_token=csrf-from-login" in seen["cookie_by_path"][path]
+    message = seen["stream_body"]["input"]["messages"][0]
+    assert message["additional_kwargs"]["files"] == [
+        {
+            "filename": "brief.txt",
+            "path": "/mnt/user-data/uploads/brief.txt",
+            "status": "uploaded",
+        }
+    ]
 
 
 @pytest.mark.asyncio

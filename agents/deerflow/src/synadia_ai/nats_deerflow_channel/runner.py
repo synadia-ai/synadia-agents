@@ -103,10 +103,11 @@ class DeerFlowGatewayClient:
     ) -> AsyncIterator[DeerFlowEvent]:
         """POST a user prompt to DeerFlow Gateway and yield semantic stream events."""
         path = f"/api/threads/{self._thread_id_path_segment()}/runs/stream"
+        attachment_files = _attachment_files(attachments or [])
         async with self._client() as client:
             await self._ensure_authenticated(client)
             await self._ensure_thread_exists(client)
-            uploaded = await self._upload_attachments(client, attachments or [])
+            uploaded = await self._upload_attachment_files(client, attachment_files)
             body = _prompt_request_body(prompt, uploaded_attachments=uploaded)
             async with client.stream(
                 "POST",
@@ -184,22 +185,13 @@ class DeerFlowGatewayClient:
             )
         self._logged_in = True
 
-    async def _upload_attachments(
+    async def _upload_attachment_files(
         self,
         client: httpx.AsyncClient,
-        attachments: list[Attachment],
+        files: list[tuple[str, tuple[str, bytes]]],
     ) -> list[UploadedAttachment]:
-        if not attachments:
+        if not files:
             return []
-        files: list[tuple[str, tuple[str, bytes]]] = []
-        for attachment in attachments:
-            try:
-                content = attachment.to_bytes()
-            except binascii.Error as exc:
-                raise ProtocolError(
-                    f"invalid base64 content for attachment {attachment.filename!r}"
-                ) from exc
-            files.append(("files", (attachment.filename, content)))
         response = await client.post(
             self._url(f"/api/threads/{self._thread_id_path_segment()}/uploads"),
             files=files,
@@ -213,7 +205,7 @@ class DeerFlowGatewayClient:
                 raise ProtocolError(message)
             raise DeerFlowGatewayError(message)
         data = response.json()
-        uploaded = _parse_upload_response(data, expected_count=len(attachments))
+        uploaded = _parse_upload_response(data, expected_count=len(files))
         if not uploaded:
             raise ProtocolError("DeerFlow Gateway accepted no attachments")
         return uploaded
@@ -274,6 +266,19 @@ async def deerflow_gateway_runner(
             yield chunk
     finally:
         await client.aclose()
+
+
+def _attachment_files(attachments: list[Attachment]) -> list[tuple[str, tuple[str, bytes]]]:
+    files: list[tuple[str, tuple[str, bytes]]] = []
+    for attachment in attachments:
+        try:
+            content = attachment.to_bytes()
+        except binascii.Error as exc:
+            raise ProtocolError(
+                f"invalid base64 content for attachment {attachment.filename!r}"
+            ) from exc
+        files.append(("files", (attachment.filename, content)))
+    return files
 
 
 def _parse_upload_response(
