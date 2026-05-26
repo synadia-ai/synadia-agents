@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import binascii
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import httpx
 from pydantic import BaseModel
-from synadia_ai.agents import Attachment
+from synadia_ai.agents import Attachment, ProtocolError
 
 from .config import ChannelConfig
 
@@ -101,7 +102,7 @@ class DeerFlowGatewayClient:
         attachments: list[Attachment] | None = None,
     ) -> AsyncIterator[DeerFlowEvent]:
         """POST a user prompt to DeerFlow Gateway and yield semantic stream events."""
-        path = f"/api/threads/{self._config.session}/runs/stream"
+        path = f"/api/threads/{self._thread_id_path_segment()}/runs/stream"
         async with self._client() as client:
             await self._ensure_authenticated(client)
             await self._ensure_thread_exists(client)
@@ -155,6 +156,9 @@ class DeerFlowGatewayClient:
     def _url(self, path: str) -> str:
         return urljoin(self._config.deerflow_url.rstrip("/") + "/", path.lstrip("/"))
 
+    def _thread_id_path_segment(self) -> str:
+        return quote(self._config.session, safe="")
+
     async def _ensure_authenticated(self, client: httpx.AsyncClient) -> None:
         if not self._config.deerflow_username:
             return
@@ -187,24 +191,31 @@ class DeerFlowGatewayClient:
     ) -> list[UploadedAttachment]:
         if not attachments:
             return []
-        files: list[tuple[str, tuple[str, bytes]]] = [
-            ("files", (attachment.filename, attachment.to_bytes())) for attachment in attachments
-        ]
+        files: list[tuple[str, tuple[str, bytes]]] = []
+        for attachment in attachments:
+            try:
+                content = attachment.to_bytes()
+            except binascii.Error as exc:
+                raise ProtocolError(
+                    f"invalid base64 content for attachment {attachment.filename!r}"
+                ) from exc
+            files.append(("files", (attachment.filename, content)))
         response = await client.post(
-            self._url(f"/api/threads/{self._config.session}/uploads"),
+            self._url(f"/api/threads/{self._thread_id_path_segment()}/uploads"),
             files=files,
             headers=self._request_headers(client),
         )
         if not HTTP_OK_MIN <= response.status_code < HTTP_OK_MAX:
             detail = _safe_error_detail(response.text)
             suffix = f": {detail}" if detail else ""
-            raise DeerFlowGatewayError(
-                f"DeerFlow Gateway upload failed: {response.status_code}{suffix}"
-            )
+            message = f"DeerFlow Gateway upload failed: {response.status_code}{suffix}"
+            if response.status_code < httpx.codes.INTERNAL_SERVER_ERROR:
+                raise ProtocolError(message)
+            raise DeerFlowGatewayError(message)
         data = response.json()
-        uploaded = _parse_upload_response(data)
+        uploaded = _parse_upload_response(data, expected_count=len(attachments))
         if not uploaded:
-            raise DeerFlowGatewayError("DeerFlow Gateway accepted no attachments")
+            raise ProtocolError("DeerFlow Gateway accepted no attachments")
         return uploaded
 
     async def _ensure_thread_exists(self, client: httpx.AsyncClient) -> None:
@@ -265,9 +276,16 @@ async def deerflow_gateway_runner(
         await client.aclose()
 
 
-def _parse_upload_response(data: Any) -> list[UploadedAttachment]:
+def _parse_upload_response(
+    data: Any, *, expected_count: int | None = None
+) -> list[UploadedAttachment]:
     if not isinstance(data, dict):
         return []
+    if data.get("success") is False:
+        raise ProtocolError("DeerFlow Gateway rejected attachment upload")
+    skipped_files = data.get("skipped_files")
+    if isinstance(skipped_files, list) and skipped_files:
+        raise ProtocolError("DeerFlow Gateway skipped one or more attachments")
     files = data.get("files")
     if not isinstance(files, list):
         return []
@@ -290,6 +308,8 @@ def _parse_upload_response(data: Any) -> list[UploadedAttachment]:
                 ),
             )
         )
+    if expected_count is not None and len(uploaded) != expected_count:
+        raise ProtocolError("DeerFlow Gateway did not accept all attachments")
     return uploaded
 
 
@@ -319,7 +339,10 @@ def _prompt_request_body(
     *,
     uploaded_attachments: list[UploadedAttachment] | None = None,
 ) -> dict[str, Any]:
-    message: dict[str, Any] = {"role": "user", "content": prompt}
+    message: dict[str, Any] = {
+        "type": "human",
+        "content": [{"type": "text", "text": prompt}],
+    }
     if uploaded_attachments:
         message["additional_kwargs"] = {
             "files": [

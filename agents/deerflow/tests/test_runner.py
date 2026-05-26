@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
-from synadia_ai.agents import Attachment
+from synadia_ai.agents import Attachment, ProtocolError
 
 from synadia_ai.nats_deerflow_channel.config import ChannelConfig
 from synadia_ai.nats_deerflow_channel.runner import (
@@ -57,7 +57,10 @@ async def test_gateway_runner_posts_prompt_to_deerflow_stream() -> None:
     assert '"thread_id":"deerflow"' in seen["thread_body"].replace(" ", "")
     assert seen["method"] == "POST"
     assert seen["path"] == "/api/threads/deerflow/runs/stream"
-    assert '"content":"hi"' in seen["json"].replace(" ", "")
+    stream_body = json.loads(seen["json"])
+    message = stream_body["input"]["messages"][0]
+    assert message["type"] == "human"
+    assert message["content"] == [{"type": "text", "text": "hi"}]
     assert '"stream_mode":["messages"]' in seen["json"].replace(" ", "")
 
 
@@ -123,7 +126,8 @@ async def test_gateway_runner_uploads_attachments_and_includes_virtual_paths_in_
     assert b"attachment text" in seen["upload_body"]
     stream_body = json.loads(seen["stream_json"])
     message = stream_body["input"]["messages"][0]
-    assert message["content"] == "read it"
+    assert message["type"] == "human"
+    assert message["content"] == [{"type": "text", "text": "read it"}]
     assert message["additional_kwargs"]["files"] == [
         {
             "filename": "brief.txt",
@@ -133,6 +137,117 @@ async def test_gateway_runner_uploads_attachments_and_includes_virtual_paths_in_
             "artifact_url": "/api/threads/deerflow/artifacts/mnt/user-data/uploads/brief.txt",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_url_escapes_thread_path_segments() -> None:
+    seen_raw_paths: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_raw_paths.append(request.url.raw_path)
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "space session/one", "status": "idle"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content='event: messages\ndata: [[{"type":"ai","content":"ok"}],{}]\n\n',
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(
+                owner="rene",
+                session="space session/one",
+                deerflow_url="http://deerflow.test",
+            ),
+            http_client=http,
+        )
+        chunks = [chunk async for chunk in client.stream_prompt("hi")]
+
+    assert chunks == ["ok"]
+    assert seen_raw_paths == [b"/api/threads", b"/api/threads/space%20session%2Fone/runs/stream"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_rejects_skipped_uploads_before_stream() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
+        if request.url.path == "/api/threads/deerflow/uploads":
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "files": [],
+                    "skipped_files": [{"filename": "too-big.pdf", "reason": "too large"}],
+                },
+            )
+        raise AssertionError("stream should not be called after skipped upload")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        with pytest.raises(ProtocolError, match="skipped"):
+            _ = [
+                chunk
+                async for chunk in client.stream_prompt(
+                    "read it",
+                    attachments=[Attachment.from_bytes("too-big.pdf", b"x")],
+                )
+            ]
+
+    assert seen_paths == ["/api/threads", "/api/threads/deerflow/uploads"]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_maps_4xx_upload_failure_to_protocol_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
+        if request.url.path == "/api/threads/deerflow/uploads":
+            return httpx.Response(400, text="bad file")
+        raise AssertionError("stream should not be called after upload failure")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        with pytest.raises(ProtocolError, match="upload failed: 400"):
+            _ = [
+                chunk
+                async for chunk in client.stream_prompt(
+                    "read it",
+                    attachments=[Attachment.from_bytes("brief.txt", b"x")],
+                )
+            ]
+
+
+@pytest.mark.asyncio
+async def test_gateway_runner_maps_invalid_attachment_base64_to_protocol_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/threads":
+            return httpx.Response(200, json={"thread_id": "deerflow", "status": "idle"})
+        raise AssertionError("upload should not be called with invalid base64")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = DeerFlowGatewayClient(
+            ChannelConfig(owner="rene", session="deerflow", deerflow_url="http://deerflow.test"),
+            http_client=http,
+        )
+        with pytest.raises(ProtocolError, match="invalid base64"):
+            _ = [
+                chunk
+                async for chunk in client.stream_prompt(
+                    "read it",
+                    attachments=[Attachment(filename="brief.txt", content="not valid base64")],
+                )
+            ]
 
 
 @pytest.mark.asyncio
