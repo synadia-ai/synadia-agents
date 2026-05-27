@@ -22,7 +22,7 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [OpenClaw](agents/openclaw/) | `oc` | `@synadia-ai/nats-channel` |
 | [PI Agent](agents/pi/) | `pi` | `@synadia-ai/nats-pi-channel` |
 | [Hermes](agents/hermes/) | `hermes` | upstream fork — see [`agents/hermes/`](agents/hermes/) (work in progress) |
-| [DeerFlow](agents/deerflow/) | `df` | `synadia-ai-nats-deerflow-channel` — external Python wrapper for a running DeerFlow Gateway; package pending first release |
+| [DeerFlow](agents/deerflow/) | `df` | `synadia-ai-nats-deerflow-channel` — external Python wrapper for a running DeerFlow Gateway |
 | [open-agent](agents/open-agent/) | `open-agent` | `@synadia-ai/open-agent` (private) — inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
 | [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 

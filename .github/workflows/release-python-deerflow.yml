@@ -6,7 +6,7 @@ name: Release — agents/deerflow
 # agent-service (`python-agent-service-v*`) releases. Verification runs
 # before publishing and the publish job uses PyPI trusted publishing.
 #
-# Before the first release, register a pending publisher on PyPI for:
+# PyPI trusted publishing is configured with a pending publisher for:
 #   project: synadia-ai-nats-deerflow-channel
 #   owner: synadia-ai
 #   repo: synadia-agents
