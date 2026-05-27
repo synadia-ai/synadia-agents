@@ -10,10 +10,6 @@ This package is deliberately narrow: it is a **Synadia Agent Protocol channel wr
 
 ### Package index install
 
-The package is intended to publish as `synadia-ai-nats-deerflow-channel`. Until the first release is published, install it from this monorepo using the editable flow below.
-
-After publication, the package-index flow will be:
-
 ```bash
 pip install synadia-ai-nats-deerflow-channel
 ```
