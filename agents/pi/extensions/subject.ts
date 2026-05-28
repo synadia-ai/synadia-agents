@@ -29,8 +29,14 @@ export function sanitizeSubjectToken(s: string): string {
  *   3. `$USER`            — existing default; unchanged for everyone else
  *   4. `"unknown"`        — last-resort fallback
  *
- * A winner that sanitizes to the empty string (e.g. all-punctuation) also
- * falls back to `"unknown"` so the subject token is always non-empty.
+ * A winner that sanitizes to the empty string (e.g. all-punctuation) falls
+ * back to `"unknown"` so the subject token is always non-empty. Note this is
+ * `??`-then-sanitize, not a per-source cascade: the first *present* source
+ * wins even if it sanitizes to empty — it does NOT fall through to the next
+ * source. This deliberately matches open-agent's `??` precedence
+ * (`agents/open-agent/src/cli.ts`) and pi's own coerce-via-sanitize
+ * convention, and keeps a misconfigured explicit owner visible as `unknown`
+ * rather than silently re-resolving the session under a different identity.
  */
 export function resolveOwner(
 	configOwner: string | undefined,

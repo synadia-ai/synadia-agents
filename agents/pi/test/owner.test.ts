@@ -37,3 +37,12 @@ test("sanitizes an override into a legal lowercase subject token", () => {
 test("an override that sanitizes to empty falls back to 'unknown'", () => {
 	expect(resolveOwner("///", undefined, undefined)).toBe("unknown");
 });
+
+test("a present-but-empty-sanitizing config.owner does NOT cascade to lower sources", () => {
+	// `??`-then-sanitize semantics (matching open-agent's `??` precedence):
+	// the first *present* source wins. A defined-but-all-punctuation
+	// config.owner resolves to "unknown" rather than falling through to
+	// NATS_PI_OWNER / $USER — a misconfigured explicit owner stays visible
+	// instead of silently re-resolving under a different identity.
+	expect(resolveOwner("///", "svc-account", "alice")).toBe("unknown");
+});
