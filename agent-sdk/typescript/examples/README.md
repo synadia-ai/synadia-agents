@@ -34,19 +34,6 @@ echo agent listening on agents.prompt.echo.<you>.main
 press Ctrl+C to stop
 ```
 
-### `02-ollama.ts` — prompt a local LLM
-
-Needs a running [Ollama](https://ollama.com) with the model pulled:
-
-```sh
-ollama pull llama3.2
-bun examples/02-ollama.ts            # uses llama3.2 by default
-OLLAMA_MODEL=qwen2.5 bun examples/02-ollama.ts   # or pick another model
-```
-
-The agent registers as `ollama` and streams the model's answer back token by
-token — drive it with the same caller demos or `nats` CLI as above.
-
 Drive it from another terminal with the caller-side
 [`client-sdk/typescript/examples/`](../../../client-sdk/typescript/examples/)
 demos, or directly with the `nats` CLI:
@@ -61,5 +48,34 @@ Output:
 ```
 {"type":"status","data":"ack"}
 {"type":"response","data":"echo: hello!"}
+(empty terminator)
+```
+
+### `02-ollama.ts` — prompt a local LLM
+
+Needs a running [Ollama](https://ollama.com) with the model pulled:
+
+```sh
+ollama pull llama3.2
+bun examples/02-ollama.ts            # uses llama3.2 by default
+OLLAMA_MODEL=qwen2.5 bun examples/02-ollama.ts   # or pick another model
+```
+
+The agent registers as `ollama` and streams the model's answer back token by
+token. Drive it the same way, but point `nats req` at the `ollama` subject:
+
+```sh
+nats req agents.prompt.ollama.<you>.main "Say hello in five words." \
+  --replies=0 --reply-timeout=30s --timeout=60s
+```
+
+Output (one `response` chunk per token, then the terminator):
+
+```
+{"type":"status","data":"ack"}
+{"type":"response","data":"Hello"}
+{"type":"response","data":" there"}
+{"type":"response","data":","}
+...
 (empty terminator)
 ```
