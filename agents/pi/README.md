@@ -60,8 +60,9 @@ Config file lives at `~/.pi/agent/nats-channel.json`:
 |-------|----------|---------|-------------|
 | `context` | no | — | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). When unset, falls back to `$NATS_URL` or, if that's also unset, the built-in `demo.nats.io`. |
 | `sessionName` | no | sanitized basename of CWD | The 5th subject token. Override to give your session a stable, addressable name. |
+| `owner` | no | `$USER` | The 4th subject token. Override to scope the session to a service account, deployment, or tenant instead of the OS user — sanitized to a legal subject token. |
 
-The `owner` token (4th) is always derived from `$USER` — there's no override for it. For multi-tenant isolation, see [Multi-tenancy](#multi-tenancy) below.
+The `owner` token (4th) defaults to `$USER` but is overridable via the `owner` config field or the `NATS_PI_OWNER` env var (see below) — useful for service-account or deployment-scoped sessions. For multi-tenant isolation, see [Multi-tenancy](#multi-tenancy) below.
 
 ### Environment variables
 
@@ -72,6 +73,7 @@ Env vars override the config file:
 | `NATS_CONTEXT` | `context` | Highest precedence — see below. |
 | `NATS_URL` | raw URL (no auth context) | Used only when `NATS_CONTEXT` and `config.context` are both unset. |
 | `NATS_SESSION_NAME` | `sessionName` | |
+| `NATS_PI_OWNER` | `owner` | Overrides `$USER`; loses to the `owner` config field. |
 
 ### Resolution order
 
@@ -81,6 +83,8 @@ Env vars override the config file:
 4. **`$NATS_CONTEXT`** — wins over everything
 
 For `sessionName`: `$NATS_SESSION_NAME` overrides `config.sessionName`, which overrides the CWD-basename default.
+
+For `owner`: `config.owner` overrides `$NATS_PI_OWNER`, which overrides `$USER`, which falls back to `unknown`.
 
 ### In-PI commands
 
@@ -203,7 +207,7 @@ Multiple PI sessions on the same host register as distinct service instances; `n
 
 ## Multi-tenancy
 
-The agent subject layout has no per-tenant slot. For real isolation between tenants or environments, use **NATS accounts** and subject permissions — that's a server-side configuration, not an extension one. Within a single account, sessions with distinct `owner` values (i.e. different `$USER`s) coexist cleanly.
+The agent subject layout has no per-tenant slot. For real isolation between tenants or environments, use **NATS accounts** and subject permissions — that's a server-side configuration, not an extension one. Within a single account, sessions with distinct `owner` values (different `$USER`s, or owners set via the `owner` config field / `NATS_PI_OWNER`) coexist cleanly.
 
 ## Limitations
 

@@ -66,6 +66,8 @@ import {
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { resolveOwner, sanitizeSubjectToken } from "./subject.ts";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PI-specific protocol constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +116,7 @@ const DEFAULT_CONTEXT: NatsContext = {
 type PiNatsConfig = {
 	context?: string;
 	sessionName?: string;
+	owner?: string;
 };
 
 // Matches NATS CLI context files at ~/.config/nats/context/<name>.json.
@@ -154,17 +157,6 @@ type PendingRequest = {
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Sanitize a subject token per spec §2.2 SHOULD rules: [a-z0-9_-], lowercase,
- * no leading/trailing dashes. Replaces disallowed characters with `-`.
- */
-function sanitizeSubjectToken(s: string): string {
-	return s
-		.replace(/[^a-zA-Z0-9_-]/g, "-")
-		.toLowerCase()
-		.replace(/^-+|-+$/g, "");
-}
 
 function loadNatsContext(name: string): NatsContext {
 	// Reject names that would escape the context directory. `$NATS_CONTEXT`
@@ -834,8 +826,13 @@ export default function (pi: ExtensionAPI) {
 		contextLabel = ctxName ?? (envUrl ? "$NATS_URL" : "default");
 		serverUrl = natsCtx.url ?? "demo.nats.io";
 
-		// 2. Resolve owner + session base name
-		owner = sanitizeSubjectToken(process.env.USER ?? "unknown") || "unknown";
+		// 2. Resolve owner + session base name. Owner precedence (highest
+		//    first): config-file `owner` → `$NATS_PI_OWNER` → `$USER` →
+		//    "unknown". This makes a service-account / deployment / SOE-scoped
+		//    owner expressible instead of forcing `$USER`, matching how the
+		//    core SDK, Python SDK and open-agent all treat `owner` as
+		//    caller-supplied. See `subject.ts#resolveOwner`.
+		owner = resolveOwner(config.owner, process.env.NATS_PI_OWNER, process.env.USER);
 		const rawSession =
 			(process.env.NATS_SESSION_NAME ??
 				config.sessionName ??
