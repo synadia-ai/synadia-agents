@@ -89,10 +89,13 @@ const TOOLS = [
 async function runTool(
   nc: NatsConnection,
   name: string,
-  args: Record<string, unknown>,
+  args: Record<string, unknown> | string,
 ): Promise<string> {
   if (name !== "read_sensor") return `error: unknown tool '${name}'`;
-  const location = typeof args["location"] === "string" ? args["location"] : "";
+  // Most models hand back parsed arguments; some return a JSON string instead.
+  const parsed: Record<string, unknown> =
+    typeof args === "string" ? (JSON.parse(args) as Record<string, unknown>) : args;
+  const location = typeof parsed["location"] === "string" ? parsed["location"] : "";
   const reply = await nc.request(SENSOR_SUBJECT, location, { timeout: 5000 });
   const value = reply.string();
   return value === "unknown" ? `no sensor at '${location}'` : `${location} is ${value}°C`;
@@ -104,7 +107,7 @@ async function runTool(
 interface ChatMessage {
   role: string;
   content: string;
-  tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[];
+  tool_calls?: { function: { name: string; arguments: Record<string, unknown> | string } }[];
 }
 
 // One non-streamed turn — used for the tool-decision round, where we want a
@@ -139,8 +142,15 @@ async function* chatStream(messages: ChatMessage[]): AsyncGenerator<string> {
     buffer = lines.pop() ?? "";
     for (const line of lines) {
       if (line.trim() === "") continue;
-      const token = (JSON.parse(line) as { message?: { content?: string } }).message?.content ?? "";
-      if (token) yield token;
+      // One JSON object per line; tolerate a rare non-JSON line (e.g. an error
+      // emitted mid-stream) instead of crashing the whole reply.
+      try {
+        const token =
+          (JSON.parse(line) as { message?: { content?: string } }).message?.content ?? "";
+        if (token) yield token;
+      } catch {
+        /* skip malformed line */
+      }
     }
   }
 }
