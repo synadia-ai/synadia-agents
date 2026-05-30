@@ -5,9 +5,10 @@ speaking the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/syn
 Counterpart to the caller-side numbered demos in
 [`client-sdk/typescript/examples/`](../../../client-sdk/typescript/examples/).
 
-| Example                    | What it shows                                                           |
-| -------------------------- | ----------------------------------------------------------------------- |
-| [`01-echo.ts`](01-echo.ts) | Minimal echo agent on top of `AgentService` — replies `echo: <prompt>`. |
+| Example                        | What it shows                                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| [`01-echo.ts`](01-echo.ts)     | Minimal echo agent on top of `AgentService` — replies `echo: <prompt>`.                    |
+| [`02-ollama.ts`](02-ollama.ts) | Same shape as `01-echo`, but forwards each prompt to a local Ollama and streams the reply. |
 
 ## Run
 
@@ -47,5 +48,34 @@ Output:
 ```
 {"type":"status","data":"ack"}
 {"type":"response","data":"echo: hello!"}
+(empty terminator)
+```
+
+### `02-ollama.ts` — prompt a local LLM
+
+Needs a running [Ollama](https://ollama.com) with the model pulled:
+
+```sh
+ollama pull llama3.2
+bun examples/02-ollama.ts            # uses llama3.2 by default
+OLLAMA_MODEL=qwen2.5 bun examples/02-ollama.ts   # or pick another model
+```
+
+The agent registers as `ollama` and streams the model's answer back token by
+token. Drive it the same way, but point `nats req` at the `ollama` subject:
+
+```sh
+nats req agents.prompt.ollama.<you>.main "Say hello in five words." \
+  --replies=0 --reply-timeout=30s --timeout=60s
+```
+
+Output (one `response` chunk per token, then the terminator):
+
+```
+{"type":"status","data":"ack"}
+{"type":"response","data":"Hello"}
+{"type":"response","data":" there"}
+{"type":"response","data":","}
+...
 (empty terminator)
 ```
