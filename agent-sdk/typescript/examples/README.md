@@ -5,10 +5,11 @@ speaking the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/syn
 Counterpart to the caller-side numbered demos in
 [`client-sdk/typescript/examples/`](../../../client-sdk/typescript/examples/).
 
-| Example                        | What it shows                                                                              |
-| ------------------------------ | ------------------------------------------------------------------------------------------ |
-| [`01-echo.ts`](01-echo.ts)     | Minimal echo agent on top of `AgentService` — replies `echo: <prompt>`.                    |
-| [`02-ollama.ts`](02-ollama.ts) | Same shape as `01-echo`, but forwards each prompt to a local Ollama and streams the reply. |
+| Example                        | What it shows                                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| [`01-echo.ts`](01-echo.ts)     | Minimal echo agent on top of `AgentService` — replies `echo: <prompt>`.                         |
+| [`02-ollama.ts`](02-ollama.ts) | Same shape as `01-echo`, but forwards each prompt to a local Ollama and streams the reply.      |
+| [`03-tools.ts`](03-tools.ts)   | Gives the LLM a `read_sensor` tool wired to a NATS microservice, then reasons over the reading. |
 
 ## Run
 
@@ -79,3 +80,42 @@ Output (one `response` chunk per token, then the terminator):
 ...
 (empty terminator)
 ```
+
+### `03-tools.ts` — give the agent a tool backed by a microservice
+
+The agent gains a `read_sensor` tool, and that tool is wired to a NATS
+microservice. The agent holds only an LLM and a NATS connection — when the
+model needs live data it calls the tool, the tool makes a NATS request, and a
+microservice answers. For a self-contained demo the service (a faked
+temperature sensor) is started in the same file; in production it runs anywhere
+on your network.
+
+Needs a tool-capable model:
+
+```sh
+ollama pull llama3.1:8b
+bun examples/03-tools.ts
+```
+
+Ask it something that needs the sensor:
+
+```sh
+nats req agents.prompt.tools.<you>.main \
+  "Is cold-storage room 3 within the safe range (below 4°C)?" \
+  --replies=0 --reply-timeout=45s --timeout=90s
+```
+
+The model calls `read_sensor("cold-storage-3")`, the microservice replies with
+the temperature, and the agent streams its verdict:
+
+```
+{"type":"status","data":"ack"}
+{"type":"response","data":"No"}
+{"type":"response","data":", the"}
+... cold-storage room 3 is not within the safe range ...
+(empty terminator)
+```
+
+Run `nats micro ls` while it's up to see both services on the bus — the
+`agents` service (the agent) and the `sensors` service (the microservice it
+calls).
