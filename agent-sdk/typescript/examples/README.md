@@ -83,21 +83,34 @@ Output (one `response` chunk per token, then the terminator):
 
 ### `03-tools.ts` — give the agent a tool backed by a microservice
 
-The agent gains a `read_sensor` tool, and that tool is wired to a NATS
-microservice. The agent holds only an LLM and a NATS connection — when the
-model needs live data it calls the tool, the tool makes a NATS request, and a
-microservice answers. For a self-contained demo the service (a faked
-temperature sensor) is started in the same file; in production it runs anywhere
-on your network.
+The agent gains a `read_sensor` **tool**, and that tool is wired to a NATS
+microservice. This is the whole point in one file:
 
-Needs a tool-capable model:
+> any microservice already on your NATS network can become an agent
+> capability — the agent need not embed the database, device, or credential
+> that sits behind it.
+
+The agent here holds only an LLM and a NATS connection; it can't read a sensor
+itself. When the model needs live data it calls the tool, the tool makes a
+single `nc.request(...)`, and a microservice answers. That service could run
+anywhere — another host, a leaf node, a Raspberry Pi wired to a real
+thermometer. For a self-contained demo it's faked in the same file; in
+production it runs elsewhere and the agent never knows where.
+
+It uses Ollama's `/api/chat` tool-calling in two round-trips: first the model
+asks to call `read_sensor(location)`, then — once we feed the reading back — it
+streams its final answer.
+
+Needs a tool-capable model. `llama3.1:8b` is the default; `gemma`-family models
+don't do native tool-calls, and `qwen3` works but clutters the output with
+`<think>` blocks:
 
 ```sh
 ollama pull llama3.1:8b
 bun examples/03-tools.ts
 ```
 
-Ask it something that needs the sensor:
+Then ask it something that needs the sensor:
 
 ```sh
 nats req agents.prompt.tools.<you>.main \
@@ -116,6 +129,16 @@ the temperature, and the agent streams its verdict:
 (empty terminator)
 ```
 
-Run `nats micro ls` while it's up to see both services on the bus — the
-`agents` service (the agent) and the `sensors` service (the microservice it
-calls).
+The faked service answers from a small lookup table. Room 3 is deliberately too
+warm, so the agent has something to flag — swap in room 1 or 2 to see it answer
+"yes":
+
+| Location         | Temperature | Within range (below 4°C)? |
+| ---------------- | ----------- | ------------------------- |
+| `cold-storage-1` | 3.4°C       | yes                       |
+| `cold-storage-2` | 2.8°C       | yes                       |
+| `cold-storage-3` | 6.2°C       | no — too warm             |
+
+While the agent runs, `nats micro ls` shows both services registered on the bus
+side by side — the `agents` service (the agent itself) and the `sensors`
+service (the microservice its tool calls).
