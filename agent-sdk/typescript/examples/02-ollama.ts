@@ -33,6 +33,7 @@ const OLLAMA_URL = process.env["OLLAMA_URL"] ?? "http://localhost:11434";
 async function* ollamaTokens(prompt: string): AsyncGenerator<string> {
   const res = await fetch(`${OLLAMA_URL}/api/generate`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: MODEL, prompt, stream: true }),
   });
   if (!res.ok || res.body === null) {
@@ -48,7 +49,10 @@ async function* ollamaTokens(prompt: string): AsyncGenerator<string> {
     buffer = lines.pop() ?? "";
     for (const line of lines) {
       if (line.trim() === "") continue;
-      yield (JSON.parse(line) as { response?: string }).response ?? "";
+      // The final `{"done":true,"response":""}` packet carries no text — skip
+      // empties so we never stream a vacuous chunk to the caller.
+      const token = (JSON.parse(line) as { response?: string }).response ?? "";
+      if (token) yield token;
     }
   }
 }
