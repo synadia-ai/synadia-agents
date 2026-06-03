@@ -52,5 +52,6 @@ export function stringifyFlueResult(result: unknown): string {
   if (result === undefined || result === null) return "";
   if (typeof result === "string") return result;
   if (typeof result === "number" || typeof result === "boolean" || typeof result === "bigint") return String(result);
+  if (typeof result === "object" && "text" in result && typeof result.text === "string") return result.text;
   try { return JSON.stringify(result); } catch { return String(result); }
 }

@@ -40,6 +40,13 @@ describe("bridgePromptToFlue", () => {
     expect(response.chunks.at(-1)).toEqual({ type: "response", text: '{"answer":"ok","count":2}' });
   });
 
+  test("uses text from Flue sync result objects", async () => {
+    const response = new RecordingResponse();
+    const client: FlueBridgeClient = { prompt: async () => ({ text: "echo:hello", usage: { totalTokens: 1 } }) };
+    await bridgePromptToFlue({ envelope: { prompt: "hello" }, response, mapping: mapping(), flueClient: client });
+    expect(response.chunks.at(-1)).toEqual({ type: "response", text: "echo:hello" });
+  });
+
   test("rejects attachments explicitly", async () => {
     const response = new RecordingResponse();
     const client: FlueBridgeClient = { prompt: async () => "should not be called" };

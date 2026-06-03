@@ -12,5 +12,5 @@
     "exactOptionalPropertyTypes": true,
     "types": ["node", "bun-types"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
 }

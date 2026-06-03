@@ -19,7 +19,8 @@
     "doctor": "bun src/cli.ts doctor",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "smoke:protocol": "bun scripts/protocol-smoke.ts"
+    "smoke:protocol": "bun scripts/protocol-smoke.ts",
+    "smoke:real-flue": "bun scripts/real-flue-smoke.ts"
   },
   "dependencies": {
     "@flue/sdk": "latest",
