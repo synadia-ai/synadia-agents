@@ -7,7 +7,7 @@ describe("service construction", () => {
     const cfg: FlueChannelConfig = {
       nats: { url: "nats://127.0.0.1:4222" },
       agent: { owner: "rene", name: "support", subjectToken: "flue", heartbeatIntervalS: 30, keepaliveIntervalS: 30 },
-      flue: { baseUrl: "http://127.0.0.1:3583", agent: "assistant", instance: "customer-123", session: "ticket-123", transport: "websocket" },
+      flue: { baseUrl: "http://127.0.0.1:3583", agent: "assistant", instance: "customer-123", session: "ticket-123", transport: "http-stream" },
     };
     const opts = buildAgentServiceOptions({ nc: {} as never, config: cfg, version: "0.1.0" });
     expect(opts.agent).toBe("flue");
@@ -20,7 +20,7 @@ describe("service construction", () => {
       flue_agent: "assistant",
       flue_instance: "customer-123",
       flue_session: "ticket-123",
-      flue_transport: "websocket",
+      flue_transport: "http-stream",
     });
   });
 });

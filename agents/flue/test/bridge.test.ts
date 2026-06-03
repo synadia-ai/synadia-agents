@@ -12,7 +12,7 @@ function mapping(): FlueMapping {
       agent: "assistant",
       instance: "customer-123",
       session: "ticket-123",
-      transport: "websocket",
+      transport: "http-stream",
     },
   };
 }
@@ -28,8 +28,27 @@ describe("bridgePromptToFlue", () => {
     const client: FlueBridgeClient = { prompt: async () => "hello from flue" };
     await bridgePromptToFlue({ envelope: { prompt: "hello" }, response, mapping: mapping(), flueClient: client });
     expect(response.chunks).toEqual([
-      { type: "status", status: "connected to Flue assistant/customer-123 via websocket" },
+      { type: "status", status: "connected to Flue assistant/customer-123 via http-stream" },
       { type: "response", text: "hello from flue" },
+    ]);
+  });
+
+  test("forwards streaming text deltas as response chunks without duplicating the final result", async () => {
+    const response = new RecordingResponse();
+    const client: FlueBridgeClient = {
+      prompt: async (_input, events) => {
+        await events?.onTextDelta?.("hello ");
+        await events?.onTextDelta?.("stream");
+        return "";
+      },
+    };
+
+    await bridgePromptToFlue({ envelope: { prompt: "hello" }, response, mapping: mapping(), flueClient: client });
+
+    expect(response.chunks).toEqual([
+      { type: "status", status: "connected to Flue assistant/customer-123 via http-stream" },
+      { type: "response", text: "hello " },
+      { type: "response", text: "stream" },
     ]);
   });
 

@@ -55,7 +55,7 @@ The sidecar registers a Synadia `AgentService` with:
 - `attachmentsOk: false`
 - metadata describing the configured Flue target
 
-The v1 transport opens a Flue SDK attached-agent connection per prompt, emits lifecycle status chunks, sends one final response chunk, and lets `AgentService` handle ack, keepalive, error mapping, heartbeat/status endpoints, and stream termination. No hand-rolled protocol service plumbing lives here.
+The default transport is `http-stream`. It invokes Flue's real HTTP streaming path, maps Flue `text_delta` events into Synadia `response` chunks as they arrive, and lets `AgentService` handle ack, keepalive, error mapping, heartbeat/status endpoints, and stream termination. `websocket` remains an explicit diagnostic option only; Flue 0.9.1's Node/local WebSocket upgrade path returned server-side 500s on both the Mac mini and M3 Max during verification. No hand-rolled protocol service plumbing lives here.
 
 ## Doctor
 

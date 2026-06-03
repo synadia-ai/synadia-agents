@@ -8,7 +8,7 @@ const flueBaseUrl = process.env["FLUE_BASE_URL"] ?? "http://127.0.0.1:3583";
 const flueAgent = process.env["FLUE_AGENT"] ?? "echo";
 const flueInstance = process.env["FLUE_INSTANCE"] ?? "real-flue-smoke";
 const flueSession = process.env["FLUE_SESSION"] ?? `real-flue-smoke-${Date.now()}`;
-const flueTransport = (process.env["FLUE_TRANSPORT"] ?? "http-sync") as FlueTransport;
+const flueTransport = (process.env["FLUE_TRANSPORT"] ?? "http-stream") as FlueTransport;
 const prompt = process.env["SMOKE_PROMPT"] ?? "hello-real-flow";
 const expected = process.env["SMOKE_EXPECTS"] ?? `echo:${prompt}`;
 const name = `real-flue-${Math.random().toString(36).slice(2, 8)}`;
@@ -50,8 +50,9 @@ try {
   if (!messages.some((m) => m.type === "status" && (m as { status: string }).status.includes("connected to Flue"))) {
     throw new Error("missing Flue connected status");
   }
-  if (!messages.some((m) => m.type === "response" && m.text.includes(expected))) {
-    throw new Error(`missing expected real Flue response ${JSON.stringify(expected)}`);
+  const responseText = messages.filter((m) => m.type === "response").map((m) => m.text).join("");
+  if (!responseText.includes(expected)) {
+    throw new Error(`missing expected real Flue response ${JSON.stringify(expected)} in ${JSON.stringify(responseText)}`);
   }
   const last = messages.at(-1);
   if (last?.type !== "status" || last.status !== "done") throw new Error("missing done terminator status");

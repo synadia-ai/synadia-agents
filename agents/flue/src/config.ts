@@ -156,7 +156,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): FlueChan
   const owner = resolveOwner(args.owner ?? agentSection.owner, env.SYNADIA_FLUE_OWNER, env.USER);
   const name = requireSubjectToken(get(args.name, env.SYNADIA_FLUE_NAME, agentSection.name, "main")!, "agent.name");
   const subjectToken = requireSubjectToken(get(args.subjectToken, agentSection.subject_token, "flue")!, "agent.subject_token");
-  const transport = get(args.flueTransport, env.FLUE_TRANSPORT, flueSection.transport, "http-sync")!;
+  const transport = get(args.flueTransport, env.FLUE_TRANSPORT, flueSection.transport, "http-stream")!;
   if (!isFlueTransport(transport)) throw new Error(`invalid flue transport ${transport}`);
 
   const nats: Record<string, string> = {};
@@ -212,7 +212,7 @@ base_url = "http://127.0.0.1:3583"
 agent = "assistant"
 instance = "customer-123"
 session = "ticket-123"
-transport = "http-sync"
+transport = "http-stream"
 `;
 }
 

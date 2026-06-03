@@ -3,7 +3,7 @@ import type { FlueBridgeClient } from "./bridge.js";
 
 /** Flue SDK-backed bridge client. Opens a direct agent connection per prompt. */
 export class SdkFlueBridgeClient implements FlueBridgeClient {
-  async prompt(input: Parameters<FlueBridgeClient["prompt"]>[0]): Promise<unknown> {
+  async prompt(input: Parameters<FlueBridgeClient["prompt"]>[0], events?: Parameters<FlueBridgeClient["prompt"]>[1]): Promise<unknown> {
     const client = createFlueClient({ baseUrl: input.baseUrl });
     const payload = { message: input.message, session: input.session };
 
@@ -13,15 +13,17 @@ export class SdkFlueBridgeClient implements FlueBridgeClient {
     }
 
     if (input.transport === "http-stream") {
-      const events: AttachedAgentEvent[] = [];
+      const eventsSeen: AttachedAgentEvent[] = [];
+      const textParts: string[] = [];
       for await (const event of client.agents.invoke(input.agent, input.instance, { mode: "stream", payload })) {
-        events.push(event);
+        eventsSeen.push(event);
+        if (event.type === "text_delta") {
+          textParts.push(event.text);
+          await events?.onTextDelta?.(event.text);
+        }
       }
-      const text = events
-        .filter((event): event is Extract<AttachedAgentEvent, { type: "text_delta" }> => event.type === "text_delta")
-        .map((event) => event.text)
-        .join("");
-      return text || events;
+      const text = textParts.join("");
+      return events?.onTextDelta ? "" : text || eventsSeen;
     }
 
     const socket = client.agents.connect(input.agent, input.instance);

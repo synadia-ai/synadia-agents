@@ -21,7 +21,7 @@ const config: FlueChannelConfig = {
     agent: "assistant",
     instance: "fake-instance",
     session: "smoke-session",
-    transport: "websocket",
+    transport: "http-stream",
   },
 };
 

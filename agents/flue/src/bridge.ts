@@ -14,6 +14,8 @@ export interface FlueBridgeClient {
     readonly instance: string;
     readonly session: string;
     readonly transport: string;
+  }, events?: {
+    readonly onTextDelta?: (text: string) => Promise<void>;
   }): Promise<unknown>;
 }
 
@@ -36,6 +38,7 @@ export async function bridgePromptToFlue(options: BridgePromptOptions): Promise<
     status: `connected to Flue ${target.agent}/${target.instance} via ${target.transport}`,
   });
 
+  let streamed = false;
   const result = await flueClient.prompt({
     message: envelope.prompt,
     baseUrl: target.baseUrl,
@@ -43,9 +46,16 @@ export async function bridgePromptToFlue(options: BridgePromptOptions): Promise<
     instance: target.instance,
     session: target.session,
     transport: target.transport,
+  }, {
+    onTextDelta: async (text) => {
+      if (!text) return;
+      streamed = true;
+      await response.send({ type: "response", text });
+    },
   });
 
-  await response.send({ type: "response", text: stringifyFlueResult(result) });
+  const finalText = stringifyFlueResult(result);
+  if (!streamed || finalText) await response.send({ type: "response", text: finalText });
 }
 
 export function stringifyFlueResult(result: unknown): string {

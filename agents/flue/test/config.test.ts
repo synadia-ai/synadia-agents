@@ -34,12 +34,12 @@ describe("config", () => {
     expect(template).toContain("[nats]");
     expect(template).toContain("[agent]");
     expect(template).toContain("[flue]");
-    expect(template).toContain('transport = "http-sync"');
+    expect(template).toContain('transport = "http-stream"');
     expect(DEFAULT_CONFIG_PATH).toContain("flue-nats-channel.toml");
   });
 
-  test("defaults to HTTP sync Flue transport", () => {
+  test("defaults to HTTP stream Flue transport", () => {
     const cfg = loadConfigFromSources({ argv: ["start"], env: { USER: "rene" }, readFile: () => "" });
-    expect(cfg.flue.transport).toBe("http-sync");
+    expect(cfg.flue.transport).toBe("http-stream");
   });
 });
