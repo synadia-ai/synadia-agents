@@ -284,3 +284,9 @@ Expected. The sidecar currently maps text prompts only and rejects attachments e
 - One configured Flue target per sidecar process.
 - `websocket` support depends on the Flue deployment's WebSocket agent connection behavior.
 - Local faux-echo smoke tests prove runtime/SDK compatibility, not model quality.
+
+## See also
+
+- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), and [`open-agent`](../open-agent).
+- TypeScript host SDK: [`../../agent-sdk/typescript`](../../agent-sdk/typescript).
+- Wire protocol: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).
