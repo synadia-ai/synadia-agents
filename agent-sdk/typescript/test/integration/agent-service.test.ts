@@ -5,6 +5,7 @@ import {
   Agents,
   decodeBase64,
   decodeHeartbeatPayload,
+  ProtocolError,
   type StreamMessage,
 } from "@synadia-ai/agents";
 import { AgentService } from "../../src/service.js";
@@ -232,6 +233,36 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect(errorMsg).toBeDefined();
     const terminator = messages.find((m) => !m.headers && m.data.length === 0);
     expect(terminator).toBeDefined();
+  });
+
+  it("maps handler-raised ProtocolError to a 400 response plus terminator", async () => {
+    const service = startService();
+    service.onPrompt(() => {
+      throw new ProtocolError("attachments are not supported by this agent");
+    });
+    await service.start();
+
+    const reply = `_INBOX.agents.svc-test-${Math.random().toString(36).slice(2, 8)}`;
+    const sub = nc.subscribe(reply);
+    await nc.flush();
+    nc.publish(service.subject.prompt, new TextEncoder().encode("plain prompt"), { reply });
+
+    const messages: Msg[] = [];
+    for await (const m of sub) {
+      messages.push(m);
+      if (
+        messages.some((mm) => mm.headers?.get("Nats-Service-Error-Code") === "400") &&
+        messages.some((mm) => !mm.headers && mm.data.length === 0)
+      ) {
+        sub.unsubscribe();
+        break;
+      }
+    }
+
+    const errorMsg = messages.find((m) => m.headers?.get("Nats-Service-Error-Code") === "400");
+    expect(errorMsg).toBeDefined();
+    expect(errorMsg?.headers?.get("Nats-Service-Error")).toContain("attachments are not supported");
+    expect(messages.find((m) => !m.headers && m.data.length === 0)).toBeDefined();
   });
 
   it("answers the v0.3 status endpoint with a heartbeat-shaped payload", async () => {

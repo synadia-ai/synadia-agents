@@ -1,5 +1,8 @@
 import type { NatsConnection } from "@nats-io/nats-core";
-import { AgentService, type AgentServiceOptions } from "@synadia-ai/agent-service";
+import {
+  AgentService,
+  type AgentServiceOptions,
+} from "@synadia-ai/agent-service";
 import type { FlueBridgeClient } from "./bridge.js";
 import { bridgePromptToFlue } from "./bridge.js";
 import type { FlueChannelConfig } from "./config.js";
@@ -12,7 +15,9 @@ export interface BuildAgentServiceOptionsInput {
   readonly version: string;
 }
 
-export function buildAgentServiceOptions(input: BuildAgentServiceOptionsInput): AgentServiceOptions {
+export function buildAgentServiceOptions(
+  input: BuildAgentServiceOptionsInput,
+): AgentServiceOptions {
   const mapping = mappingFromConfig(input.config);
   return {
     nc: input.nc,
@@ -20,6 +25,7 @@ export function buildAgentServiceOptions(input: BuildAgentServiceOptionsInput): 
     subjectToken: mapping.subjectToken,
     owner: mapping.owner,
     name: mapping.name,
+    session: mapping.name,
     description: `Flue agent ${mapping.flue.agent}/${mapping.flue.instance}`,
     version: input.version,
     attachmentsOk: false,
@@ -35,7 +41,11 @@ export function buildAgentServiceOptions(input: BuildAgentServiceOptionsInput): 
   };
 }
 
-export function createFlueAgentService(input: BuildAgentServiceOptionsInput & { readonly flueClient?: FlueBridgeClient }): AgentService {
+export function createFlueAgentService(
+  input: BuildAgentServiceOptionsInput & {
+    readonly flueClient?: FlueBridgeClient;
+  },
+): AgentService {
   const service = new AgentService(buildAgentServiceOptions(input));
   const mapping = mappingFromConfig(input.config);
   const flueClient = input.flueClient ?? new SdkFlueBridgeClient();

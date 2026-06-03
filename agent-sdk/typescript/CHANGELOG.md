@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- `AgentService` now maps handler-raised `ProtocolError`s to
+  `Nats-Service-Error-Code: 400` responses while preserving the existing
+  `500` mapping for ordinary handler failures. This lets agent adapters reject
+  decoded-but-unsupported client input, such as attachments for an
+  `attachments_ok=false` endpoint, without misreporting the request as a server
+  failure.
+
 ## [0.5.2] - 2026-05-11
 
 ### Changed
