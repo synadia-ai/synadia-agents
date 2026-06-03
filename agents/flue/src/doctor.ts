@@ -17,7 +17,9 @@ export async function runDoctorChecks(config: FlueChannelConfig, deps: DoctorDep
   try {
     const url = new URL(`/agents/${encodeURIComponent(config.flue.agent)}/${encodeURIComponent(config.flue.instance)}`, config.flue.baseUrl);
     const res = await fetchImpl(url, { method: "GET" });
-    checks.push({ name: "flue-http", ok: res.ok || res.status === 426 || res.status === 404, message: `${url.toString()} returned HTTP ${res.status}` });
+    const reachable = res.ok || res.status === 426 || res.status === 404 || res.status === 405;
+    const methodNote = res.status === 405 ? " (reachable; GET probe method unsupported)" : "";
+    checks.push({ name: "flue-http", ok: reachable, message: `${url.toString()} returned HTTP ${res.status}${methodNote}` });
   } catch (err) {
     checks.push({ name: "flue-http", ok: false, message: (err as Error).message });
   }

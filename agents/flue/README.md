@@ -19,12 +19,13 @@ Print a TOML template:
 bun src/cli.ts configure --print-template
 ```
 
-Core precedence is CLI flags, then environment variables, then config file, then defaults.
+Core precedence is CLI flags, then environment variables, then config file, then defaults. NATS contexts are preferred when you already manage auth with the `nats` CLI; otherwise use `--nats-url`/`NATS_URL` plus `--nats-creds`/`NATS_CREDS` for a credentials file.
 
 Environment variables:
 
 - `NATS_URL`
 - `NATS_CONTEXT`
+- `NATS_CREDS` / `NATS_CREDENTIALS`
 - `SYNADIA_FLUE_OWNER`
 - `SYNADIA_FLUE_NAME`
 - `SYNADIA_FLUE_CONFIG`
@@ -39,6 +40,7 @@ Environment variables:
 ```bash
 bun src/cli.ts start \
   --nats-url nats://127.0.0.1:4222 \
+  --nats-creds /path/to/user.creds \
   --owner rene \
   --name support \
   --subject-token flue \

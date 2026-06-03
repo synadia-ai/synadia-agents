@@ -45,6 +45,7 @@ export interface ParsedArgs {
   readonly config?: string;
   readonly natsUrl?: string;
   readonly natsContext?: string;
+  readonly natsCreds?: string;
   readonly owner?: string;
   readonly name?: string;
   readonly subjectToken?: string;
@@ -71,6 +72,7 @@ const flagMap: Record<string, keyof Omit<ParsedArgs, "command">> = {
   "--config": "config",
   "--nats-url": "natsUrl",
   "--nats-context": "natsContext",
+  "--nats-creds": "natsCreds",
   "--owner": "owner",
   "--name": "name",
   "--subject-token": "subjectToken",
@@ -153,7 +155,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): FlueChan
   const agentSection = file.agent ?? {};
   const flueSection = file.flue ?? {};
 
-  const owner = resolveOwner(args.owner ?? agentSection.owner, env.SYNADIA_FLUE_OWNER, env.USER);
+  const owner = resolveOwner(get(args.owner, env.SYNADIA_FLUE_OWNER, agentSection.owner, env.USER), undefined, undefined);
   const name = requireSubjectToken(get(args.name, env.SYNADIA_FLUE_NAME, agentSection.name, "main")!, "agent.name");
   const subjectToken = requireSubjectToken(get(args.subjectToken, agentSection.subject_token, "flue")!, "agent.subject_token");
   const transport = get(args.flueTransport, env.FLUE_TRANSPORT, flueSection.transport, "http-stream")!;
@@ -162,7 +164,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): FlueChan
   const nats: Record<string, string> = {};
   const natsUrl = get(args.natsUrl, env.NATS_URL, natsSection.url, "nats://127.0.0.1:4222");
   const natsContext = get(args.natsContext, env.NATS_CONTEXT, natsSection.context);
-  const natsCreds = get(natsSection.creds);
+  const natsCreds = get(args.natsCreds, env.NATS_CREDS, env.NATS_CREDENTIALS, natsSection.creds);
   if (natsUrl) nats.url = natsUrl;
   if (natsContext) nats.context = natsContext;
   if (natsCreds) nats.creds = natsCreds;
@@ -199,6 +201,7 @@ export function renderConfigTemplate(): string {
   return `[nats]
 url = "nats://127.0.0.1:4222"
 context = "local"
+creds = "/path/to/user.creds"
 
 [agent]
 owner = "rene"
@@ -228,6 +231,7 @@ Options:
   --config PATH
   --nats-url URL
   --nats-context NAME
+  --nats-creds PATH
   --owner TOKEN
   --name TOKEN
   --subject-token TOKEN

@@ -42,4 +42,38 @@ describe("config", () => {
     const cfg = loadConfigFromSources({ argv: ["start"], env: { USER: "rene" }, readFile: () => "" });
     expect(cfg.flue.transport).toBe("http-stream");
   });
+
+  test("env owner overrides file owner and CLI owner overrides both", () => {
+    const file = `[agent]\nowner = "file-owner"\nname = "file-name"\n`;
+    const envWins = loadConfigFromSources({
+      argv: ["start"],
+      env: { SYNADIA_FLUE_OWNER: "env-owner", USER: "user-owner" },
+      readFile: () => file,
+    });
+    expect(envWins.agent.owner).toBe("env-owner");
+
+    const cliWins = loadConfigFromSources({
+      argv: ["start", "--owner", "cli-owner"],
+      env: { SYNADIA_FLUE_OWNER: "env-owner", USER: "user-owner" },
+      readFile: () => file,
+    });
+    expect(cliWins.agent.owner).toBe("cli-owner");
+  });
+
+  test("loads NATS creds from CLI, env, or config file precedence", () => {
+    const file = `[nats]\ncreds = "/file.creds"\n`;
+    const envWins = loadConfigFromSources({
+      argv: ["start"],
+      env: { USER: "rene", NATS_CREDS: "/env.creds" },
+      readFile: () => file,
+    });
+    expect(envWins.nats.creds).toBe("/env.creds");
+
+    const cliWins = loadConfigFromSources({
+      argv: ["start", "--nats-creds", "/cli.creds"],
+      env: { USER: "rene", NATS_CREDS: "/env.creds" },
+      readFile: () => file,
+    });
+    expect(cliWins.nats.creds).toBe("/cli.creds");
+  });
 });

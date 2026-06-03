@@ -6,6 +6,7 @@
       "name": "@synadia-ai/flue-nats-channel",
       "dependencies": {
         "@flue/sdk": "latest",
+        "@nats-io/nats-core": "^3.4.0",
         "@nats-io/transport-node": "^3.4.0",
         "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
         "@synadia-ai/agents": "file:../../client-sdk/typescript",
