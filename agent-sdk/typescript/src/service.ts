@@ -620,6 +620,8 @@ export class AgentService {
       try {
         const desc = err instanceof Error ? err.message : String(err);
         const isProtocolError =
+          // Cross-realm / duplicate-module guard: adapters may throw a
+          // ProtocolError class from another installed SDK copy.
           err instanceof ProtocolError || (err instanceof Error && err.name === "ProtocolError");
         msg.respondError(
           isProtocolError ? 400 : 500,

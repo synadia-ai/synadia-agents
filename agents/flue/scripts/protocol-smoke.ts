@@ -89,15 +89,36 @@ try {
     { reply: attachmentReply },
   );
   const attachmentFrames = [];
-  for await (const frame of attachmentSub) {
-    attachmentFrames.push(frame);
-    if (
-      attachmentFrames.some((m) => m.headers?.get("Nats-Service-Error-Code")) &&
-      attachmentFrames.some((m) => !m.headers && m.data.length === 0)
-    ) {
-      attachmentSub.unsubscribe();
-      break;
+  const attachmentIterator = attachmentSub[Symbol.asyncIterator]();
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const result = await Promise.race([
+        attachmentIterator.next(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error("timed out waiting for attachment rejection frames"),
+              ),
+            5000,
+          );
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+      if (result.done) break;
+      attachmentFrames.push(result.value);
+      if (
+        attachmentFrames.some((m) =>
+          m.headers?.get("Nats-Service-Error-Code"),
+        ) &&
+        attachmentFrames.some((m) => !m.headers && m.data.length === 0)
+      ) {
+        break;
+      }
     }
+  } finally {
+    attachmentSub.unsubscribe();
   }
   const attachmentError = attachmentFrames.find((m) =>
     m.headers?.get("Nats-Service-Error-Code"),
