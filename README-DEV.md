@@ -81,7 +81,7 @@ bun client-sdk/typescript/examples/_run-reference-agent.ts
 bun agent-sdk/typescript/examples/01-echo.ts
 ```
 
-## Installing the agent plugins locally (PI, OpenClaw, Claude Code)
+## Installing extension-style agent plugins locally (PI, OpenClaw, Claude Code)
 
 `agents/pi/`, `agents/openclaw/`, and `agents/claude-code/` are
 extension/plugin packages that get loaded by their host application
@@ -89,6 +89,10 @@ extension/plugin packages that get loaded by their host application
 the extension it follows the `file:` link in the extension's
 `package.json` back to the SDK source — so both SDKs need a current
 `dist/` when the extension is installed.
+
+Other agent packages in `agents/`, including `agents/flue/`, run as
+sidecars or wrappers rather than host-loaded extensions; follow their
+per-agent READMEs for local startup.
 
 ```sh
 # Build the SDKs, then install the extension into its host application.

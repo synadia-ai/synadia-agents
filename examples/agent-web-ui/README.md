@@ -9,7 +9,8 @@ prompt, and manage sessions from the browser.
 Primary use: manually poking at the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs)
 implementations - [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-code),
 [`openclaw`](../../agents/openclaw), [`hermes`](../../agents/hermes),
-[`pi-headless`](../pi-headless), and the SDK's own reference agent.
+[`deerflow`](../../agents/deerflow), [`flue`](../../agents/flue),
+[`open-agent`](../../agents/open-agent), [`pi-headless`](../pi-headless), and the SDK's own reference agent.
 
 ## Features
 

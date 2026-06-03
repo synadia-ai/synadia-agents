@@ -2,13 +2,13 @@
 
 **SDKs and ready-to-run agent plugins for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs).**
 
-The Synadia Agent Protocol for NATS lets any AI agent — Claude Code, OpenClaw, PI, Hermes, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official **caller** and **host** SDKs (TypeScript and Python — see [SDKs](#sdks) below), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
+The Synadia Agent Protocol for NATS lets any AI agent — Claude Code, OpenClaw, PI, Hermes, Flue, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official **caller** and **host** SDKs (TypeScript and Python — see [SDKs](#sdks) below), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
 
 ## Get started — pick your path
 
 | You want to… | Go to | Install |
 | --- | --- | --- |
-| **Put an existing AI agent on NATS** (Claude Code, OpenClaw, PI, Hermes, DSPy ReAct) | [`agents/`](agents/) — pick the agent | per-agent README |
+| **Put an existing AI agent on NATS** (Claude Code, OpenClaw, PI, Hermes, Flue, DSPy ReAct) | [`agents/`](agents/) — pick the agent | per-agent README |
 | **Build a caller** that discovers and prompts agents | [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/) | `npm i @synadia-ai/agents` · `pip install synadia-ai-agents` |
 | **Host a brand-new agent** built from scratch | [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/) | `npm i @synadia-ai/agent-service` · `pip install synadia-ai-agent-service` |
 
@@ -23,6 +23,7 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [PI Agent](agents/pi/) | `pi` | `@synadia-ai/nats-pi-channel` |
 | [Hermes](agents/hermes/) | `hermes` | upstream fork — see [`agents/hermes/`](agents/hermes/) (work in progress) |
 | [DeerFlow](agents/deerflow/) | `df` | `synadia-ai-nats-deerflow-channel` — external Python wrapper for a running DeerFlow Gateway |
+| [Flue](agents/flue/) | `flue` | `@synadia-ai/flue-nats-channel` — sidecar for a running Flue app / agent |
 | [open-agent](agents/open-agent/) | `open-agent` | `@synadia-ai/open-agent` (private) — inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
 | [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 
@@ -151,6 +152,7 @@ synadia-agents/
 │   ├── pi/
 │   ├── hermes/
 │   ├── deerflow/
+│   ├── flue/
 │   └── open-agent/              ← inbound bridge for vercel-labs/open-agents
 └── examples/              ← apps built with the SDKs (callers and agents)
     ├── agent-web-ui/             ← Vue 3 + Bun browser client

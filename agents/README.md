@@ -1,6 +1,6 @@
 # Agents
 
-Plugins that wrap existing AI harnesses — PI, OpenClaw, Claude Code, Hermes, DeerFlow, and open-agent — as NATS micro services speaking the **Synadia Agent Protocol for NATS**, so any SDK in `../client-sdk/` can drive them the same way.
+Plugins that wrap existing AI harnesses — PI, OpenClaw, Claude Code, Hermes, DeerFlow, Flue, and open-agent — as NATS micro services speaking the **Synadia Agent Protocol for NATS**, so any SDK in `../client-sdk/` can drive them the same way.
 
 The plugins are built on the SDK pair: caller-side primitives from [`../client-sdk/`](../client-sdk/) for subjects, envelope types, and the error hierarchy; server-side helpers from [`../agent-sdk/`](../agent-sdk/) (`encodeChunk`, `splitResponseText`, the heartbeat-payload encoders, and — when the harness fits — `AgentService`) for putting an agent on the wire. The OpenClaw, PI, and Claude Code harnesses currently call the encoders directly; the controller agents in [`../examples/pi-headless/`](../examples/pi-headless/) and [`../examples/claude-code-headless/`](../examples/claude-code-headless/) are obvious migration candidates for `AgentService` once their custom `spawn` / `stop` / `list` endpoints land on `extraEndpoints`.
 
@@ -16,6 +16,7 @@ For an example of *building* a fresh agent from scratch with the host SDK, see [
 | `hermes/`           | `hermes`   | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `agents.prompt.hermes.<owner>.<name>`          | server-negotiated (config can request a smaller cap) | true |
 | `open-agent/`       | `open-agent` | [vercel-labs/open-agents](https://github.com/vercel-labs/open-agents) | `agents.prompt.open-agent.<owner>.<session>` | server-negotiated | false |
 | `deerflow/`         | `df`       | [DeerFlow](https://deerflow.tech/) Gateway | `agents.prompt.df.<owner>.<session>` | server-negotiated by default; optional smaller configured cap | true |
+| `flue/`             | `flue`     | [Flue](https://flueframework.com/) app / agent | `agents.prompt.flue.<owner>.<name>` | server-negotiated | false |
 
 Most agents read `max_payload` from the NATS connection's `INFO` block at startup and advertise that server limit formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar. A `nats-server` running the default 1 MB advertises `1MB`; bump `--max_payload 8MB` and server-negotiated agents track it. Agents with their own configured cap, such as Hermes or DeerFlow when `max_payload` is explicitly set, advertise that configured cap unless the NATS server is smaller, in which case they clamp down to the server limit.
 
@@ -33,6 +34,7 @@ Every agent registers a NATS micro service called `agents` with an endpoint name
 - **`open-agent/`** - inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents). Vendors `packages/agent` verbatim and ships a `LocalSandbox` so the harness runs without a Vercel account; first agent in the repo built directly on `AgentService` from `@synadia-ai/agent-service`. The companion [`../examples/open-agent-vercel/`](../examples/open-agent-vercel/) swaps in `@vercel/sandbox` to prove the sandbox seam is interchangeable. v1 is single-process / single-session (one bridge handles one `(owner, session)` pair).
 - **`hermes/`** - full Hermes Agent (CLI + TUI + messaging gateway). Unlike the others, each gateway registers **one** identity and multiplexes conversations via the envelope's optional `session` field (§5.1); subject stays stable per instance. Images route through Hermes's `vision_analyze` tool so the model actually sees them. Currently installed from [`synadia-ai/hermes-agent`, branch `nats-gateway`](https://github.com/synadia-ai/hermes-agent/tree/nats-gateway) - upstream PR pending.
 - **`deerflow/`** - external Python wrapper around a running DeerFlow Gateway. Built on `synadia-ai-agent-service`, uploads protocol attachments to DeerFlow's thread uploads API, includes the returned upload metadata in `additional_kwargs.files` for the Gateway run, streams Gateway SSE responses as protocol chunks, and bridges DeerFlow clarification requests to protocol `query` chunks.
+- **`flue/`** - sidecar for a running Flue app / agent. Built on `@synadia-ai/agent-service`, forwards prompts through `@flue/sdk`, streams Flue HTTP events as protocol response chunks, and keeps liveness (`status` / `hb`) owned by the sidecar. Attachments are rejected until Flue-side upload semantics are mapped.
 
 Most agents that accept attachments decode them to disk and prepend the absolute paths to the prompt text like so. DeerFlow is the exception: it uploads attachments to the Gateway and sends the returned upload metadata as `additional_kwargs.files`.
 
