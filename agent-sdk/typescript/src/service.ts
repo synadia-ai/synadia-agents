@@ -24,7 +24,8 @@
 //   - Emits the spec-mandated empty-body no-headers terminator after
 //     every prompt — successful or errored (§6.5, §9.3).
 //   - Translates handler exceptions into `Nats-Service-Error-Code: 500`
-//     responses; envelope decode failures into `400` (§9.1).
+//     responses, while envelope decode failures and handler-raised
+//     `ProtocolError`s become `400` (§9.1).
 //
 // Mirrors the Python SDK's `AgentService` (`client-sdk/python/src/synadia_ai/agents/service.py`)
 // — wire-equivalent behaviour, idiomatic TS API.
@@ -618,7 +619,14 @@ export class AgentService {
       stopKeepalive();
       try {
         const desc = err instanceof Error ? err.message : String(err);
-        msg.respondError(500, sanitizeErrorDesc(`handler error: ${desc}`));
+        const isProtocolError =
+          // Cross-realm / duplicate-module guard: adapters may throw a
+          // ProtocolError class from another installed SDK copy.
+          err instanceof ProtocolError || (err instanceof Error && err.name === "ProtocolError");
+        msg.respondError(
+          isProtocolError ? 400 : 500,
+          sanitizeErrorDesc(isProtocolError ? desc : `handler error: ${desc}`),
+        );
       } catch {
         /* connection may already be gone */
       }

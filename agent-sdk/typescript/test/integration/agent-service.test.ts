@@ -5,6 +5,7 @@ import {
   Agents,
   decodeBase64,
   decodeHeartbeatPayload,
+  ProtocolError,
   type StreamMessage,
 } from "@synadia-ai/agents";
 import { AgentService } from "../../src/service.js";
@@ -164,6 +165,32 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect(receivedAttachmentCount).toBe(0);
   });
 
+  it("routes the §5.3 plain-text shorthand to the handler", async () => {
+    let receivedPrompt: string | null = null;
+    const service = startService();
+    service.onPrompt(async (envelope, response) => {
+      receivedPrompt = envelope.prompt;
+      await response.send("plain text routed");
+    });
+    await service.start();
+
+    const reply = `_INBOX.agents.svc-test-${Math.random().toString(36).slice(2, 8)}`;
+    const sub = nc.subscribe(reply);
+    await nc.flush();
+    nc.publish(service.subject.prompt, new TextEncoder().encode("plain prompt"), { reply });
+
+    const messages: Msg[] = [];
+    for await (const m of sub) {
+      messages.push(m);
+      if (messages.some((mm) => !mm.headers && mm.data.length === 0)) {
+        sub.unsubscribe();
+        break;
+      }
+    }
+
+    expect(receivedPrompt).toBe("plain prompt");
+  });
+
   it("decodes attachments via the SDK's strict base64 + filename guard", async () => {
     let receivedFilename: string | null = null;
     let receivedBytes: Uint8Array | null = null;
@@ -232,6 +259,45 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect(errorMsg).toBeDefined();
     const terminator = messages.find((m) => !m.headers && m.data.length === 0);
     expect(terminator).toBeDefined();
+  });
+
+  it("maps handler-raised ProtocolError to a 400 response plus terminator", async () => {
+    let handlerCalled = false;
+    const service = startService();
+    service.onPrompt(() => {
+      handlerCalled = true;
+      throw new ProtocolError("attachments are not supported by this agent");
+    });
+    await service.start();
+
+    const reply = `_INBOX.agents.svc-test-${Math.random().toString(36).slice(2, 8)}`;
+    const sub = nc.subscribe(reply);
+    await nc.flush();
+    nc.publish(
+      service.subject.prompt,
+      new TextEncoder().encode(JSON.stringify({ prompt: "plain prompt" })),
+      {
+        reply,
+      },
+    );
+
+    const messages: Msg[] = [];
+    for await (const m of sub) {
+      messages.push(m);
+      if (
+        messages.some((mm) => mm.headers?.get("Nats-Service-Error-Code") === "400") &&
+        messages.some((mm) => !mm.headers && mm.data.length === 0)
+      ) {
+        sub.unsubscribe();
+        break;
+      }
+    }
+
+    expect(handlerCalled).toBe(true);
+    const errorMsg = messages.find((m) => m.headers?.get("Nats-Service-Error-Code") === "400");
+    expect(errorMsg).toBeDefined();
+    expect(errorMsg?.headers?.get("Nats-Service-Error")).toContain("attachments are not supported");
+    expect(messages.find((m) => !m.headers && m.data.length === 0)).toBeDefined();
   });
 
   it("answers the v0.3 status endpoint with a heartbeat-shaped payload", async () => {
