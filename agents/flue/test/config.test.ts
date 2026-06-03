@@ -76,4 +76,25 @@ describe("config", () => {
     });
     expect(cliWins.nats.creds).toBe("/cli.creds");
   });
+
+  test("strips inline TOML comments before parsing numeric fields", () => {
+    const file = `[agent]\nheartbeat_interval_s = 30 # seconds\nkeepalive_interval_s = 45 # seconds\n`;
+    const cfg = loadConfigFromSources({
+      argv: ["start"],
+      env: { USER: "rene" },
+      readFile: () => file,
+    });
+
+    expect(cfg.agent.heartbeatIntervalS).toBe(30);
+    expect(cfg.agent.keepaliveIntervalS).toBe(45);
+  });
+
+  test("rejects invalid numeric config values", () => {
+    const file = `[agent]\nheartbeat_interval_s = not-a-number\n`;
+    expect(() => loadConfigFromSources({
+      argv: ["start"],
+      env: { USER: "rene" },
+      readFile: () => file,
+    })).toThrow("agent.heartbeat_interval_s must be a positive number");
+  });
 });

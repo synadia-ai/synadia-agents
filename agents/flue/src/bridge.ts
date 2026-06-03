@@ -55,7 +55,11 @@ export async function bridgePromptToFlue(options: BridgePromptOptions): Promise<
   });
 
   const finalText = stringifyFlueResult(result);
-  if (!streamed || finalText) await response.send({ type: "response", text: finalText });
+  if (finalText) {
+    await response.send({ type: "response", text: finalText });
+  } else if (!streamed) {
+    await response.send({ type: "response", text: "" });
+  }
 }
 
 export function stringifyFlueResult(result: unknown): string {

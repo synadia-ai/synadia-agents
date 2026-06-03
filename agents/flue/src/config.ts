@@ -125,7 +125,7 @@ function parseTinyToml(source: string): TomlTree {
     if (!line || line.startsWith("#")) continue;
     const sec = /^\[([^\]]+)\]$/.exec(line);
     if (sec) { section = sec[1] ?? ""; tree[section] ??= {}; continue; }
-    const kv = /^([A-Za-z0-9_]+)\s*=\s*(.+)$/.exec(line);
+    const kv = /^([A-Za-z0-9_]+)\s*=\s*(.+?)(?:\s+#.*)?$/.exec(line);
     if (!kv || !section) continue;
     const key = kv[1] ?? "";
     let value = (kv[2] ?? "").trim();
@@ -175,8 +175,8 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): FlueChan
       owner,
       name,
       subjectToken,
-      heartbeatIntervalS: Number(get(args.heartbeatIntervalS?.toString(), agentSection.heartbeat_interval_s, "30")),
-      keepaliveIntervalS: Number(get(args.keepaliveIntervalS?.toString(), agentSection.keepalive_interval_s, "30")),
+      heartbeatIntervalS: parsePositiveNumber(get(args.heartbeatIntervalS?.toString(), agentSection.heartbeat_interval_s, "30")!, "agent.heartbeat_interval_s"),
+      keepaliveIntervalS: parsePositiveNumber(get(args.keepaliveIntervalS?.toString(), agentSection.keepalive_interval_s, "30")!, "agent.keepalive_interval_s"),
     },
     flue: {
       baseUrl: get(args.flueBaseUrl, env.FLUE_BASE_URL, flueSection.base_url, "http://127.0.0.1:3583")!,
@@ -186,6 +186,12 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): FlueChan
       transport,
     },
   };
+}
+
+function parsePositiveNumber(value: string, field: string): number {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) throw new Error(`${field} must be a positive number`);
+  return number;
 }
 
 export function mappingFromConfig(config: FlueChannelConfig): FlueMapping {

@@ -52,6 +52,35 @@ describe("bridgePromptToFlue", () => {
     ]);
   });
 
+  test("does not emit an empty final response after streamed chunks", async () => {
+    const response = new RecordingResponse();
+    const client: FlueBridgeClient = {
+      prompt: async (_input, events) => {
+        await events?.onTextDelta?.("chunk");
+        return "";
+      },
+    };
+
+    await bridgePromptToFlue({ envelope: { prompt: "hello" }, response, mapping: mapping(), flueClient: client });
+
+    expect(response.chunks).toEqual([
+      { type: "status", status: "connected to Flue assistant/customer-123 via http-stream" },
+      { type: "response", text: "chunk" },
+    ]);
+  });
+
+  test("emits a single empty response for non-streaming empty results", async () => {
+    const response = new RecordingResponse();
+    const client: FlueBridgeClient = { prompt: async () => "" };
+
+    await bridgePromptToFlue({ envelope: { prompt: "hello" }, response, mapping: mapping(), flueClient: client });
+
+    expect(response.chunks).toEqual([
+      { type: "status", status: "connected to Flue assistant/customer-123 via http-stream" },
+      { type: "response", text: "" },
+    ]);
+  });
+
   test("stringifies object results predictably", async () => {
     const response = new RecordingResponse();
     const client: FlueBridgeClient = { prompt: async () => ({ answer: "ok", count: 2 }) };

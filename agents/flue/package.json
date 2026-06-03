@@ -2,6 +2,7 @@
   "name": "@synadia-ai/flue-nats-channel",
   "version": "0.1.0",
   "description": "Synadia Agent Protocol for NATS sidecar for Flue agents.",
+  "publishConfig": { "access": "public" },
   "license": "Apache-2.0",
   "author": "Synadia Communications",
   "repository": {
@@ -23,7 +24,7 @@
     "smoke:real-flue": "bun scripts/real-flue-smoke.ts"
   },
   "dependencies": {
-    "@flue/sdk": "latest",
+    "@flue/sdk": "^0.9.1",
     "@nats-io/nats-core": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
     "@synadia-ai/agents": "file:../../client-sdk/typescript",

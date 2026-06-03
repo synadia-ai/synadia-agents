@@ -23,7 +23,7 @@ export class SdkFlueBridgeClient implements FlueBridgeClient {
         }
       }
       const text = textParts.join("");
-      return events?.onTextDelta ? "" : text || eventsSeen;
+      return events?.onTextDelta ? "" : text;
     }
 
     const socket = client.agents.connect(input.agent, input.instance);
