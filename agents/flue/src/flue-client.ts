@@ -1,4 +1,4 @@
-import { createFlueClient, type AttachedAgentEvent } from "@flue/sdk";
+import { createFlueClient } from "@flue/sdk";
 import type { FlueBridgeClient } from "./bridge.js";
 
 /** Flue SDK-backed bridge client. Opens a direct agent connection per prompt. */
@@ -13,10 +13,8 @@ export class SdkFlueBridgeClient implements FlueBridgeClient {
     }
 
     if (input.transport === "http-stream") {
-      const eventsSeen: AttachedAgentEvent[] = [];
       const textParts: string[] = [];
       for await (const event of client.agents.invoke(input.agent, input.instance, { mode: "stream", payload })) {
-        eventsSeen.push(event);
         if (event.type === "text_delta") {
           textParts.push(event.text);
           await events?.onTextDelta?.(event.text);
