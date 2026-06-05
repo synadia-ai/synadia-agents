@@ -1,8 +1,8 @@
 import type { RequestEnvelope } from "@synadia-ai/agents";
 import type { PromptResponse } from "@synadia-ai/agent-service";
 import { rejectUnsupportedAttachments } from "./attachments.js";
+import { mapQueryReplyToPermissionDecision } from "./permissions.js";
 import type { OpenCodeMapping } from "./types.js";
-import { OpenCodeAdapterNotImplementedError } from "./types.js";
 
 export interface OpenCodeBridgeClient {
   readonly mode: "managed" | "attached";
@@ -22,6 +22,7 @@ export interface OpenCodePromptRequest {
 export type OpenCodeBridgeEvent =
   | { readonly type: "status"; readonly text: string }
   | { readonly type: "response"; readonly text: string }
+  | { readonly type: "permission"; readonly question: string; readonly timeoutMs: number; decide(reply: string | undefined): Promise<void> }
   | { readonly type: "done" };
 
 export interface BridgePromptInput {
@@ -45,20 +46,15 @@ export async function bridgePromptToOpenCode(input: BridgePromptInput): Promise<
   for await (const event of input.client.prompt(request)) {
     if (event.type === "status") await input.response.send({ type: "status", status: event.text });
     if (event.type === "response") await input.response.send(event.text);
+    if (event.type === "permission") {
+      const reply = await input.response.ask(event.question, { timeoutMs: event.timeoutMs });
+      const decision = mapQueryReplyToPermissionDecision(reply.prompt);
+      await event.decide(decision.reply);
+      await input.response.send({ type: "status", status: decision.message ?? `OpenCode permission ${decision.reply}` });
+    }
   }
 }
 
 function optional<K extends string>(key: K, value: string | undefined): Record<K, string> | Record<string, never> {
   return value ? { [key]: value } as Record<K, string> : {};
-}
-
-export function createPhase3UnimplementedClient(mode: "managed" | "attached"): OpenCodeBridgeClient {
-  return {
-    mode,
-    async *prompt(): AsyncIterable<OpenCodeBridgeEvent> {
-      throw new OpenCodeAdapterNotImplementedError(
-        "OpenCode prompt execution is not implemented in this scaffold; wire the SDK client, SSE event stream, and permission handling before this service can be used.",
-      );
-    },
-  };
 }

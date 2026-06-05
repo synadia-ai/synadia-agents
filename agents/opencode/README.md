@@ -1,8 +1,8 @@
 # OpenCode NATS channel
 
-`@synadia-ai/opencode-nats-channel` is the planned TypeScript/Bun adapter that exposes OpenCode sessions through the Synadia Agent Protocol for NATS.
+`@synadia-ai/opencode-nats-channel` is a TypeScript/Bun adapter that exposes OpenCode server sessions through the Synadia Agent Protocol for NATS.
 
-Status: scaffold. The package has config parsing, CLI/doctor shell, protocol metadata construction, and unit-test seams. It intentionally refuses to serve prompts until the real OpenCode SDK lifecycle, SSE event stream, and permission bridge are wired. No fake bridge pretends to be conformant. Tiny mercy in a repo full of sharp objects.
+Status: bridge implementation. The package starts or attaches to an OpenCode server, registers an `AgentService` host on NATS, routes prompt envelopes into OpenCode sessions, streams OpenCode SSE text events as protocol response chunks, bridges permission requests through protocol `query` chunks when configured, and rejects attachments for v1 (`attachments_ok=false`).
 
 ## Package
 
@@ -15,7 +15,7 @@ Status: scaffold. The package has config parsing, CLI/doctor shell, protocol met
 
 ## Modes
 
-Managed mode starts and owns `opencode serve`:
+Managed mode starts and owns `opencode serve` through `@opencode-ai/sdk`:
 
 ```sh
 opencode-agent start \
@@ -62,6 +62,12 @@ Run doctor:
 bun src/cli.ts doctor --base-url http://127.0.0.1:4096 --owner rene --session labrowser
 ```
 
+Permission policies:
+
+- `query` (default): OpenCode permission events become protocol `query` chunks; replies map to `once`, `always`, or `reject`.
+- `reject`: permission events are rejected immediately.
+- `local`: permission handling is delegated to the local OpenCode UI/policy surface; the adapter reports that delegation as a status chunk.
+
 ## Development
 
 ```sh
@@ -70,18 +76,36 @@ bun run typecheck
 bun test
 ```
 
-Smoke scripts exist now but intentionally fail until Phase 5 supplies the real fake-client + NATS protocol smoke, OpenCode lifecycle smoke, and deterministic runtime smoke:
+Smoke scripts exercise three layers:
 
 ```sh
+# Real disposable nats-server + injected fake OpenCode client.
 bun run smoke:protocol
+
+# Real OpenCode SDK server lifecycle, attached doctor probe, and no-second-server attached mode check.
 bun run smoke:opencode-lifecycle
+
+# Credentialed real OpenCode runtime smoke. Loads only the scoped env file below unless overridden.
 bun run smoke:opencode-runtime
 ```
 
-## Implementation work still required
+The runtime smoke expects a local env file outside the repo:
 
-- Verify exact `@opencode-ai/sdk` method names and generated types.
-- Implement managed `opencode serve` lifecycle and attached `--base-url` mode.
-- Subscribe to `/event` before prompt submission and map deltas without duplicate full-part text.
-- Bridge OpenCode permission events to protocol `query` chunks for `permission_policy=query`.
-- Keep `attachments_ok=false` and reject non-empty attachment envelopes with `ProtocolError` until file ingestion is proven end-to-end.
+```text
+$HOME/.hermes/projects/synadia-agents-opencode/secrets/opencode-openrouter.env
+```
+
+Allowed keys in that file are deliberately narrow:
+
+```text
+OPENROUTER_API_KEY=...
+OPENCODE_TEST_MODEL=openrouter/anthropic/claude-3.5-haiku
+```
+
+Do not source a broad Hermes profile `.env` for this smoke. The script refuses unexpected keys and never prints secret values.
+
+## Current limitations
+
+- Attachments are rejected until OpenCode file ingestion is mapped end-to-end.
+- Attached mode targets the OpenCode server/session surface; it should not be described as a TUI-specific API unless OpenCode exposes one.
+- Permission-query bridging depends on OpenCode emitting permission events with session and permission ids.

@@ -1,15 +1,35 @@
 #!/usr/bin/env bun
+import { connect as natsConnect } from "@nats-io/transport-node";
 import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from "./config.js";
 import { formatDoctorChecks, runDoctorChecks } from "./doctor.js";
-import { buildPromptSubject } from "./subject.js";
-import { OpenCodeAdapterNotImplementedError } from "./types.js";
+import { resolveNatsOptions } from "./nats.js";
+import { createOpenCodeClient } from "./opencode-client.js";
+import { createOpenCodeAgentService } from "./service.js";
+import pkg from "../package.json" assert { type: "json" };
 
 async function start(): Promise<void> {
   const config = loadConfigFromSources();
-  const subject = buildPromptSubject(config.agent.subjectToken, config.agent.owner, config.agent.name);
-  throw new OpenCodeAdapterNotImplementedError(
-    `opencode-agent start is scaffolded but not runnable yet for ${subject}; wire NATS connection, OpenCode SDK lifecycle, SSE event mapping, and permission handling before serving traffic.`,
-  );
+  const client = await createOpenCodeClient(config);
+  const nc = await natsConnect(await resolveNatsOptions(config.nats));
+  const service = createOpenCodeAgentService({ nc, config, version: pkg.version, client });
+  await service.start();
+  console.log(`opencode agent listening on ${service.subject.prompt}`);
+  console.log(`mode=${config.opencode.mode} owner=${config.agent.owner} session=${config.agent.name}`);
+  console.log("press Ctrl+C to stop");
+
+  let shuttingDown = false;
+  const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log("\nshutting down…");
+    await service.stop();
+    await client.close?.();
+    await nc.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
+  await new Promise<void>(() => undefined);
 }
 
 async function doctor(): Promise<void> {

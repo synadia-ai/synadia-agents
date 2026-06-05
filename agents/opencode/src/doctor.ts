@@ -37,7 +37,7 @@ export async function runDoctorChecks(config: OpenCodeChannelConfig, deps: Docto
   }
 
   if (config.opencode.permissionPolicy === "query") {
-    checks.push({ name: "permission-policy", ok: true, message: "query policy selected; Phase 4 must bridge permission events to protocol queries" });
+    checks.push({ name: "permission-policy", ok: true, message: "query policy selected; permission events bridge to protocol queries" });
   } else {
     checks.push({ name: "permission-policy", ok: true, message: `${config.opencode.permissionPolicy} policy selected` });
   }

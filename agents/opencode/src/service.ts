@@ -1,7 +1,7 @@
 import type { NatsConnection } from "@nats-io/nats-core";
 import { AgentService, type AgentServiceOptions } from "@synadia-ai/agent-service";
 import type { OpenCodeBridgeClient } from "./bridge.js";
-import { bridgePromptToOpenCode, createPhase3UnimplementedClient } from "./bridge.js";
+import { bridgePromptToOpenCode } from "./bridge.js";
 import type { OpenCodeChannelConfig } from "./config.js";
 import { mappingFromConfig } from "./config.js";
 
@@ -46,13 +46,12 @@ export function buildAgentServiceOptions(input: BuildAgentServiceOptionsInput): 
 }
 
 export function createOpenCodeAgentService(
-  input: BuildAgentServiceOptionsInput & { readonly client?: OpenCodeBridgeClient },
+  input: BuildAgentServiceOptionsInput & { readonly client: OpenCodeBridgeClient },
 ): AgentService {
   const service = new AgentService(buildAgentServiceOptions(input));
   const mapping = mappingFromConfig(input.config);
-  const client = input.client ?? createPhase3UnimplementedClient(mapping.opencode.mode);
   service.onPrompt(async (envelope, response) => {
-    await bridgePromptToOpenCode({ envelope, response, mapping, client });
+    await bridgePromptToOpenCode({ envelope, response, mapping, client: input.client });
   });
   return service;
 }

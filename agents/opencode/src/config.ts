@@ -237,7 +237,7 @@ export function helpText(): string {
   return `Usage: opencode-agent <start|doctor|configure> [options]
 
 Commands:
-  start                 Register an OpenCode-backed agent on NATS (runtime bridge pending after Phase 3)
+  start                 Register an OpenCode-backed agent on NATS
   doctor                Check resolved config and local/attached prerequisites
   configure --print-template
 

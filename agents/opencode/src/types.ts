@@ -43,10 +43,3 @@ export interface OpenCodeMapping {
   readonly subjectToken: "opencode";
   readonly opencode: OpenCodeConfig;
 }
-
-export class OpenCodeAdapterNotImplementedError extends Error {
-  constructor(message = "OpenCode runtime bridge is not implemented in the Phase 3 scaffold") {
-    super(message);
-    this.name = "OpenCodeAdapterNotImplementedError";
-  }
-}
