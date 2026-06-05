@@ -29,13 +29,14 @@ export function formatPermissionQuestion(input: { readonly tool?: string; readon
 export function permissionQuestionFromEvent(event: unknown): string {
   const permission = readPermission(event);
   if (!permission) return formatPermissionQuestion({ description: "OpenCode emitted a permission request without details." });
-  const metadata = permission.metadata && Object.keys(permission.metadata).length > 0
-    ? JSON.stringify(permission.metadata)
-    : undefined;
+  const details: string[] = [];
+  if (permission.id) details.push(`OpenCode permission id: ${permission.id}`);
+  if (permission.sessionID) details.push(`OpenCode session id: ${permission.sessionID}`);
+  if (permission.metadata && Object.keys(permission.metadata).length > 0) details.push(`Details: ${JSON.stringify(permission.metadata)}`);
   return formatPermissionQuestion({
     ...(permission.type ? { tool: permission.type } : {}),
     ...(permission.title ? { action: permission.title } : {}),
-    ...(metadata ? { description: metadata } : {}),
+    ...(details.length > 0 ? { description: details.join("\n") } : {}),
   });
 }
 
@@ -51,8 +52,8 @@ function readPermission(event: unknown): { id?: string; sessionID?: string; type
   const metadata = isRecord(payload.metadata) ? payload.metadata : undefined;
   const id = readString(payload, "id") ?? readString(payload, "permissionID") ?? readString(payload, "permissionId");
   const sessionID = readString(payload, "sessionID") ?? readString(payload, "sessionId") ?? readString(payload, "session_id");
-  const type = readString(payload, "type");
-  const title = readString(payload, "title");
+  const type = readString(payload, "type") ?? readString(payload, "permission");
+  const title = readString(payload, "title") ?? (metadata ? readString(metadata, "description") : undefined);
   return {
     ...(id ? { id } : {}),
     ...(sessionID ? { sessionID } : {}),

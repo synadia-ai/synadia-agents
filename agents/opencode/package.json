@@ -22,7 +22,8 @@
     "test": "bun test",
     "smoke:protocol": "bun scripts/protocol-smoke.ts",
     "smoke:opencode-lifecycle": "bun scripts/opencode-lifecycle-smoke.ts",
-    "smoke:opencode-runtime": "bun scripts/opencode-runtime-smoke.ts"
+    "smoke:opencode-runtime": "bun scripts/opencode-runtime-smoke.ts",
+    "smoke:opencode-permission": "bun scripts/opencode-permission-smoke.ts"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.16.0",

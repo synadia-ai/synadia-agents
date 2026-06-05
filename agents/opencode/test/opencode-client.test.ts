@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createOpenCodeClient } from "../src/opencode-client.js";
+import { createOpenCodeClient, managedServerPermissionConfig } from "../src/opencode-client.js";
 import type { OpenCodeChannelConfig } from "../src/config.js";
 import type { OpenCodeBridgeEvent } from "../src/bridge.js";
 
@@ -38,6 +38,17 @@ async function collect(stream: AsyncIterable<OpenCodeBridgeEvent>): Promise<Open
 }
 
 describe("opencode client factory", () => {
+  test("managed permission policies configure OpenCode to ask so adapter policy can answer", () => {
+    expect(managedServerPermissionConfig("query")?.permission).toEqual({
+      bash: "ask",
+      edit: "ask",
+      external_directory: "ask",
+      webfetch: "ask",
+    });
+    expect(managedServerPermissionConfig("reject")?.permission?.bash).toBe("ask");
+    expect(managedServerPermissionConfig("local")).toBeUndefined();
+  });
+
   test("attached mode never starts a managed server", async () => {
     let started = false;
     let attached = false;

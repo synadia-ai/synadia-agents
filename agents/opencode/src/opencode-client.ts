@@ -1,5 +1,6 @@
 import { createOpencodeClient as createSdkOpenCodeClient, createOpencodeServer } from "@opencode-ai/sdk";
-import type { OpenCodeChannelConfig } from "./config.js";
+import type { Config as SdkOpenCodeConfig } from "@opencode-ai/sdk";
+import type { OpenCodeChannelConfig, PermissionPolicy } from "./config.js";
 import type { OpenCodeBridgeClient, OpenCodeBridgeEvent, OpenCodePromptRequest } from "./bridge.js";
 import { createEventMapperState, eventSessionId, mapOpenCodeEvent } from "./event-mapper.js";
 import { permissionIdsFromEvent, permissionQuestionFromEvent, policyDecision } from "./permissions.js";
@@ -55,10 +56,30 @@ export async function createOpenCodeClient(config: OpenCodeChannelConfig, deps: 
 }
 
 async function defaultCreateManagedServer(config: OpenCodeChannelConfig): Promise<ManagedOpenCodeServer> {
+  const permissionConfig = managedServerPermissionConfig(config.opencode.permissionPolicy);
+  if (permissionConfig) {
+    return await createOpencodeServer({
+      hostname: config.opencode.hostname,
+      port: config.opencode.port,
+      config: permissionConfig,
+    });
+  }
   return await createOpencodeServer({
     hostname: config.opencode.hostname,
     port: config.opencode.port,
   });
+}
+
+export function managedServerPermissionConfig(policy: PermissionPolicy): SdkOpenCodeConfig | undefined {
+  if (policy === "local") return undefined;
+  return {
+    permission: {
+      bash: "ask",
+      edit: "ask",
+      external_directory: "ask",
+      webfetch: "ask",
+    },
+  };
 }
 
 class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {

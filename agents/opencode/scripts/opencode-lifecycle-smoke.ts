@@ -73,6 +73,8 @@ try {
 }
 
 console.log(JSON.stringify(lifecycle, null, 2));
+await Bun.sleep(50);
+process.exit(0);
 
 async function freePort(): Promise<number> {
   return await new Promise((resolve, reject) => {

@@ -53,6 +53,8 @@ console.log(JSON.stringify({
   statusChunks: events.filter((event) => event.type === "status").length,
   expectedSeen: true,
 }, null, 2));
+await Bun.sleep(50);
+process.exit(0);
 
 function loadScopedEnv(path: string): string[] {
   if (!existsSync(path)) throw new Error(`scoped OpenCode test env file does not exist: ${path}`);
