@@ -107,5 +107,6 @@ Do not source a broad Hermes profile `.env` for this smoke. The script refuses u
 ## Current limitations
 
 - Attachments are rejected until OpenCode file ingestion is mapped end-to-end.
+- Managed mode uses `@opencode-ai/sdk`'s server launcher, which resolves the `opencode` binary from `PATH`; this adapter does not expose a custom binary-path setting because the SDK launcher does not accept one.
 - Attached mode targets the OpenCode server/session surface; it should not be described as a TUI-specific API unless OpenCode exposes one.
 - Permission-query bridging depends on OpenCode emitting permission events with session and permission ids.

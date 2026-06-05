@@ -20,7 +20,6 @@ export interface ParsedArgs {
   readonly port?: number;
   readonly directory?: string;
   readonly workspace?: string;
-  readonly opencodePath?: string;
   readonly serverPassword?: string;
   readonly sessionId?: string;
   readonly model?: string;
@@ -56,7 +55,6 @@ const flagMap: Record<string, keyof Omit<ParsedArgs, "command">> = {
   "--port": "port",
   "--directory": "directory",
   "--workspace": "workspace",
-  "--opencode-path": "opencodePath",
   "--server-password": "serverPassword",
   "--opencode-session-id": "sessionId",
   "--model": "model",
@@ -168,7 +166,6 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): OpenCode
       port: parsePositiveNumber(get(args.port?.toString(), env.OPENCODE_PORT, opencodeSection.port, "4096")!, "opencode.port"),
       ...optional("directory", directory),
       ...optional("workspace", get(args.workspace, env.OPENCODE_WORKSPACE, opencodeSection.workspace)),
-      ...optional("opencodePath", get(args.opencodePath, env.OPENCODE_BIN, opencodeSection.path, opencodeSection.opencode_path, "opencode")),
       ...optional("serverPassword", get(args.serverPassword, env.OPENCODE_SERVER_PASSWORD, opencodeSection.server_password)),
       ...optional("sessionId", get(args.sessionId, env.OPENCODE_SESSION_ID, opencodeSection.opencode_session_id, opencodeSection.session_id)),
       ...optional("model", get(args.model, env.OPENCODE_MODEL, opencodeSection.model)),
@@ -224,7 +221,6 @@ hostname = "127.0.0.1"
 port = 4096
 directory = "/path/to/repo"
 workspace = ""
-opencode_path = "opencode"
 opencode_session_id = ""
 model = ""
 opencode_agent = ""
@@ -255,7 +251,6 @@ Options:
   --port PORT            Managed mode port
   --directory PATH
   --workspace NAME
-  --opencode-path PATH
   --server-password VALUE
   --opencode-session-id ID
   --model MODEL

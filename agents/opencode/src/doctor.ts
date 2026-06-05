@@ -31,7 +31,7 @@ export async function runDoctorChecks(config: OpenCodeChannelConfig, deps: Docto
     checks.push(await probeAttachedServer(config, deps.fetch ?? fetch));
   } else {
     const commandExists = deps.commandExists ?? defaultCommandExists;
-    const binary = config.opencode.opencodePath ?? "opencode";
+    const binary = "opencode";
     const ok = await commandExists(binary);
     checks.push({ name: "opencode-binary", ok, message: ok ? `${binary} found` : `${binary} not found on PATH` });
   }

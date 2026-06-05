@@ -11,7 +11,6 @@ function cfg(baseUrl?: string): OpenCodeChannelConfig {
       ...(baseUrl ? { baseUrl } : {}),
       hostname: "127.0.0.1",
       port: 4096,
-      opencodePath: "opencode",
       permissionPolicy: "query",
       permissionTimeoutMs: 300000,
     },
@@ -33,10 +32,12 @@ describe("doctor", () => {
   });
 
   test("managed mode checks the opencode binary", async () => {
+    const commands: string[] = [];
     const checks = await runDoctorChecks(cfg(), {
       dynamicImport: async () => ({}),
-      commandExists: async (cmd) => cmd === "opencode",
+      commandExists: async (cmd) => { commands.push(cmd); return cmd === "opencode"; },
     });
+    expect(commands).toEqual(["opencode"]);
     expect(checks.find((c) => c.name === "opencode-binary")?.ok).toBe(true);
   });
 

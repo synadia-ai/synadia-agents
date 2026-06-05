@@ -22,7 +22,6 @@ export interface OpenCodeConfig {
   readonly port: number;
   readonly directory?: string;
   readonly workspace?: string;
-  readonly opencodePath?: string;
   readonly serverPassword?: string;
   readonly sessionId?: string;
   readonly model?: string;

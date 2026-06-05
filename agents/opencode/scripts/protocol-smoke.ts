@@ -7,6 +7,7 @@ import type { OpenCodeChannelConfig } from "../src/config.js";
 import { createOpenCodeAgentService } from "../src/service.js";
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 const name = `smoke-${Math.random().toString(36).slice(2, 8)}`;
 
 const nats = await ensureNats();
@@ -34,6 +35,7 @@ let permissionDecision: string | undefined;
 const fakeOpenCodeClient: OpenCodeBridgeClient = {
   mode: "attached",
   async *prompt(input) {
+    if (input.prompt.includes("explode")) throw new Error("fake upstream exploded");
     yield { type: "status", text: `connected fake OpenCode session for ${input.sessionId ?? "new"}` };
     yield {
       type: "permission",
@@ -89,7 +91,15 @@ try {
   const last = messages.at(-1);
   if (last?.type !== "status" || last.status !== "done") throw new Error("missing done terminator status");
 
-  await assertUnsupportedAttachmentReturns400(callerNc, service.subject.prompt);
+  const rawSuccess = await rawPromptRoundTrip(callerNc, service.subject.prompt, "hello raw");
+  assertRawSuccess(rawSuccess.frames);
+  const rawAttachment400 = await rawPromptRoundTrip(callerNc, service.subject.prompt, JSON.stringify({
+    prompt: "attachment should be rejected",
+    attachments: [{ filename: "note.txt", content: "QUJD" }],
+  }));
+  assertErrorCode(rawAttachment400.frames, "400", "unsupported attachment");
+  const rawHandler500 = await rawPromptRoundTrip(callerNc, service.subject.prompt, "explode upstream");
+  assertErrorCode(rawHandler500.frames, "500", "upstream handler failure");
 
   console.log(JSON.stringify({
     natsUrl: nats.url,
@@ -97,7 +107,13 @@ try {
     status: service.subject.status,
     metadata: agent.metadata,
     promptEndpoint: agent.promptEndpoint,
-    messageTypes: messages.map((m) => m.type),
+    sdkClientMessageTypes: messages.map((m) => m.type),
+    sdkClientLastMessage: last,
+    rawWire: {
+      success: summarizeFrames(rawSuccess.frames),
+      unsupportedAttachment400: summarizeFrames(rawAttachment400.frames),
+      handlerFailure500: summarizeFrames(rawHandler500.frames),
+    },
   }, null, 2));
 } finally {
   await service.stop();
@@ -106,32 +122,100 @@ try {
   await nats.close();
 }
 
-async function assertUnsupportedAttachmentReturns400(callerNc: typeof nc, subject: string): Promise<void> {
-  const reply = `_INBOX.opencode-attachment-${Math.random().toString(36).slice(2, 8)}`;
+interface RawFrame {
+  readonly kind: "chunk" | "error" | "terminator";
+  readonly bytes: number;
+  readonly errorCode?: string;
+  readonly errorDescription?: string;
+  readonly decoded?: unknown;
+}
+
+async function rawPromptRoundTrip(callerNc: typeof nc, subject: string, payload: string): Promise<{ frames: RawFrame[] }> {
+  const reply = `_INBOX.opencode-raw-${Math.random().toString(36).slice(2, 8)}`;
   const sub = callerNc.subscribe(reply);
+  const frames: RawFrame[] = [];
   await callerNc.flush();
-  callerNc.publish(
-    subject,
-    encoder.encode(JSON.stringify({
-      prompt: "attachment should be rejected",
-      attachments: [{ filename: "note.txt", content: "QUJD" }],
-    })),
-    { reply },
-  );
-  const frames = [];
+  callerNc.publish(subject, encoder.encode(payload), { reply });
   const iterator = sub[Symbol.asyncIterator]();
   try {
     while (true) {
-      const result = await withTimeout(iterator.next(), 5000, "timed out waiting for attachment rejection frames");
+      const result = await withTimeout(iterator.next(), 5000, `timed out waiting for raw protocol frames on ${reply}`);
       if (result.done) break;
-      frames.push(result.value);
-      if (frames.some((m) => m.headers?.get("Nats-Service-Error-Code")) && frames.some((m) => !m.headers && m.data.length === 0)) break;
+      const msg = result.value;
+      const frame = describeFrame(msg);
+      frames.push(frame);
+      const queryReplySubject = readQueryReplySubject(frame.decoded);
+      if (queryReplySubject) callerNc.publish(queryReplySubject, encoder.encode("always"));
+      if (frame.kind === "terminator") break;
     }
   } finally {
     sub.unsubscribe();
   }
-  const error = frames.find((m) => m.headers?.get("Nats-Service-Error-Code"));
-  assertEqual(error?.headers?.get("Nats-Service-Error-Code"), "400", "unsupported attachment error code");
+  if (!frames.some((frame) => frame.kind === "terminator")) throw new Error("raw prompt stream did not include zero-byte terminator");
+  return { frames };
+}
+
+function describeFrame(msg: { data: Uint8Array; headers?: { get(name: string): string | null } | undefined }): RawFrame {
+  const errorCode = msg.headers?.get("Nats-Service-Error-Code") ?? undefined;
+  const errorDescription = msg.headers?.get("Nats-Service-Error") ?? undefined;
+  if (!msg.headers && msg.data.length === 0) return { kind: "terminator", bytes: 0 };
+  if (errorCode) {
+    return {
+      kind: "error",
+      bytes: msg.data.length,
+      errorCode,
+      ...(errorDescription ? { errorDescription } : {}),
+      decoded: decodeBody(msg.data),
+    };
+  }
+  return { kind: "chunk", bytes: msg.data.length, decoded: decodeBody(msg.data) };
+}
+
+function decodeBody(data: Uint8Array): unknown {
+  if (data.length === 0) return null;
+  const text = decoder.decode(data);
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+function readQueryReplySubject(decoded: unknown): string | undefined {
+  if (!isRecord(decoded) || decoded.type !== "query" || !isRecord(decoded.data)) return undefined;
+  return typeof decoded.data.reply_subject === "string" ? decoded.data.reply_subject : undefined;
+}
+
+function assertRawSuccess(frames: readonly RawFrame[]): void {
+  const chunks = frames.filter((frame) => frame.kind === "chunk");
+  const first = chunks[0]?.decoded;
+  if (!isRecord(first) || first.type !== "status" || first.data !== "ack") throw new Error("raw success missing leading ack chunk");
+  if (!chunks.some((frame) => isWireChunk(frame.decoded, "status", "OpenCode attached bridge selected"))) throw new Error("raw success missing bridge status chunk");
+  if (!chunks.some((frame) => isRecord(frame.decoded) && frame.decoded.type === "query")) throw new Error("raw success missing query chunk");
+  if (!chunks.some((frame) => isWireChunk(frame.decoded, "response", "fake OpenCode response"))) throw new Error("raw success missing response chunk");
+  if (!frames.some((frame) => frame.kind === "terminator")) throw new Error("raw success missing terminator");
+}
+
+function assertErrorCode(frames: readonly RawFrame[], expectedCode: string, label: string): void {
+  const error = frames.find((frame) => frame.kind === "error");
+  assertEqual(error?.errorCode, expectedCode, `${label} error code`);
+  if (!frames.some((frame) => frame.kind === "terminator")) throw new Error(`${label} missing terminator after error`);
+}
+
+function isWireChunk(decoded: unknown, type: string, dataIncludes: string): boolean {
+  return isRecord(decoded) && decoded.type === type && typeof decoded.data === "string" && decoded.data.includes(dataIncludes);
+}
+
+function summarizeFrames(frames: readonly RawFrame[]): Array<Record<string, unknown>> {
+  return frames.map((frame) => {
+    const out: Record<string, unknown> = { kind: frame.kind, bytes: frame.bytes };
+    if (frame.errorCode) out.errorCode = frame.errorCode;
+    if (frame.errorDescription) out.errorDescription = frame.errorDescription;
+    if (isRecord(frame.decoded)) {
+      out.type = frame.decoded.type;
+      if (typeof frame.decoded.data === "string") out.data = frame.decoded.data;
+      if (isRecord(frame.decoded.data) && typeof frame.decoded.data.prompt === "string") out.prompt = frame.decoded.data.prompt;
+    } else if (typeof frame.decoded === "string") {
+      out.data = frame.decoded;
+    }
+    return out;
+  });
 }
 
 function assertEqual(actual: unknown, expected: unknown, label: string): void {
@@ -207,4 +291,8 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

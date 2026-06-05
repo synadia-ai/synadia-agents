@@ -11,6 +11,18 @@ describe("config", () => {
     expect(flags.permissionPolicy).toBe("reject");
   });
 
+  test("does not expose a fake custom OpenCode binary path knob", () => {
+    expect(() => parseArgs(["start", "--opencode-path", "/tmp/opencode"])).toThrow("unknown flag --opencode-path");
+    const cfg = loadConfigFromSources({
+      argv: ["start"],
+      env: { USER: "rene", OPENCODE_BIN: "/tmp/opencode" },
+      readFile: () => `[opencode]\nopencode_path = "/tmp/from-file"\npath = "/tmp/from-path"\n`,
+      cwd: "/tmp/labrowser",
+    });
+    expect("opencodePath" in cfg.opencode).toBe(false);
+    expect(renderConfigTemplate()).not.toContain("opencode_path");
+  });
+
   test("CLI overrides env, file, and defaults", () => {
     const file = `[nats]\nurl = "nats://file:4222"\n\n[agent]\nowner = "file-owner"\nname = "file-name"\n\n[opencode]\nbase_url = "http://file.example"\npermission_policy = "local"\n`;
     const cfg = loadConfigFromSources({
