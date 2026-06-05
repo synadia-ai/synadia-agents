@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenCode multi-session/NATS UX mitigation spike</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08111f;
+      --panel: #101b2e;
+      --panel2: #14223a;
+      --text: #eaf1ff;
+      --muted: #aebbd2;
+      --line: #2b3a55;
+      --accent: #7dd3fc;
+      --good: #86efac;
+      --warn: #fde68a;
+      --bad: #fca5a5;
+      --code: #030712;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #12335a 0, transparent 36rem), var(--bg);
+      color: var(--text);
+      line-height: 1.58;
+    }
+    a { color: var(--accent); }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 38px 22px 80px; }
+    header {
+      border: 1px solid var(--line);
+      background: linear-gradient(135deg, rgba(125,211,252,.14), rgba(16,27,46,.96));
+      border-radius: 24px;
+      padding: 34px;
+      box-shadow: 0 24px 90px rgba(0,0,0,.35);
+    }
+    h1 { margin: 0 0 12px; font-size: clamp(2rem, 5vw, 4rem); line-height: 1.02; letter-spacing: -.04em; }
+    h2 { margin-top: 42px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 1.7rem; }
+    h3 { margin-top: 28px; color: #dbeafe; }
+    .lede { font-size: 1.16rem; color: var(--muted); max-width: 900px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+    .pill { border: 1px solid var(--line); background: rgba(8,17,31,.65); padding: 7px 11px; border-radius: 999px; color: var(--muted); font-size: .92rem; }
+    .callout { border: 1px solid rgba(125,211,252,.45); background: rgba(14,116,144,.16); border-radius: 18px; padding: 20px; margin: 24px 0; }
+    .callout strong { color: #e0f2fe; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 22px 0; }
+    .card { border: 1px solid var(--line); background: rgba(16,27,46,.86); border-radius: 18px; padding: 18px; }
+    .card h3 { margin-top: 0; }
+    .score { font-weight: 800; color: var(--good); }
+    table { width: 100%; border-collapse: collapse; margin: 18px 0 26px; overflow: hidden; border-radius: 14px; }
+    th, td { border: 1px solid var(--line); padding: 12px 13px; vertical-align: top; }
+    th { background: #17253d; text-align: left; color: #bfdbfe; }
+    td { background: rgba(16,27,46,.7); }
+    code { background: rgba(148,163,184,.14); color: #dbeafe; padding: .12rem .35rem; border-radius: .35rem; }
+    pre { background: var(--code); color: #d1e7ff; padding: 16px; border-radius: 14px; overflow-x: auto; border: 1px solid #1f2937; }
+    pre code { background: transparent; color: inherit; padding: 0; border-radius: 0; }
+    .verdict { display: inline-block; padding: 4px 9px; border-radius: 999px; font-weight: 700; font-size: .85rem; }
+    .yes { background: rgba(134,239,172,.18); color: var(--good); border: 1px solid rgba(134,239,172,.45); }
+    .maybe { background: rgba(253,230,138,.14); color: var(--warn); border: 1px solid rgba(253,230,138,.45); }
+    .no { background: rgba(252,165,165,.14); color: var(--bad); border: 1px solid rgba(252,165,165,.45); }
+    .toc { margin-top: 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+    .toc a { display: block; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; text-decoration: none; background: rgba(16,27,46,.58); }
+    footer { margin-top: 52px; color: var(--muted); font-size: .92rem; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>OpenCode multi-session/NATS UX mitigation spike</h1>
+      <p class="lede">Research report for Phase 6.5B: whether OpenCode can avoid the current standalone adapter UX regression without throwing away the working Synadia Agent Protocol bridge.</p>
+      <div class="meta">
+        <span class="pill">Date: 2026-06-05 19:56 CEST</span>
+        <span class="pill">Kanban: t_82ecdc47</span>
+        <span class="pill">Branch: feat/opencode-adapter</span>
+        <span class="pill">HEAD: 058eb78</span>
+        <span class="pill">OpenCode: 1.16.2</span>
+      </div>
+      <nav class="toc">
+        <a href="#recommendation">Recommendation</a>
+        <a href="#answers">Questions answered</a>
+        <a href="#matrix">Options matrix</a>
+        <a href="#risks">Risks</a>
+        <a href="#plan">Phase plan</a>
+        <a href="#evidence">Evidence log</a>
+      </nav>
+    </header>
+
+    <section id="recommendation" class="callout">
+      <h2>Executive recommendation</h2>
+      <p><strong>Ship the current standalone OpenCode adapter as the immediate PR, but do not pretend the UX concern is solved.</strong> Open a follow-up PR/phase for a wrapper launcher plus a multi-session manager.</p>
+      <p>The adapter already has a working <code>AgentService</code> bridge with managed and attached modes. Blocking it for an in-process plugin rewrite would trade a known protocol adapter for a larger speculative integration. The evidence says OpenCode has enough hooks to make the UX much better, but the least risky mitigation is a launcher/manager that starts or attaches OpenCode sessions and registers NATS identities automatically.</p>
+      <ol>
+        <li>Merge/PR the current adapter with explicit UX limitations.</li>
+        <li>Follow immediately with <code>opencode-nats</code> launcher UX.</li>
+        <li>Add adapter-side multi-session registration.</li>
+        <li>Spike in-process OpenCode plugin registration after wrapper/manager UX is proven.</li>
+      </ol>
+    </section>
+
+    <section id="answers">
+      <h2>Questions answered</h2>
+      <div class="grid">
+        <article class="card"><h3>1. In-process plugin/channel?</h3><p><span class="verdict maybe">Partly yes</span></p><p>OpenCode plugins load automatically from project/global directories or npm config and receive <code>client</code>, <code>project</code>, <code>directory</code>, <code>worktree</code>, <code>serverUrl</code>, and Bun shell. That is enough to spike a NATS registration plugin. MCP alone is not enough because the product need is Synadia protocol discovery/prompting, not just OpenCode tools.</p></article>
+        <article class="card"><h3>2. Hooks and extension points?</h3><p><span class="verdict yes">Yes</span></p><p>Server hooks include <code>event</code>, <code>permission.ask</code>, <code>chat.message</code>, <code>command.execute.before</code>, <code>tool.execute.before/after</code>, <code>shell.env</code>, and compaction hooks. TUI plugins expose routes, dialogs, toasts, keymaps, event bus, and client access.</p></article>
+        <article class="card"><h3>3. Multi-session adapter?</h3><p><span class="verdict yes">Yes, with manager refactor</span></p><p>The current adapter is single config, one OpenCode client, one NATS connection, one <code>AgentService</code>, one active session id. Multi-session requires a registry that creates/stops one service per selected OpenCode session and hardens permission routing.</p></article>
+        <article class="card"><h3>4. Wrapper launcher?</h3><p><span class="verdict yes">Best next step</span></p><p>A wrapper can start <code>opencode serve</code>, wait for health, start <code>opencode-agent</code> in attached mode, and optionally launch <code>opencode attach</code>. It improves UX without rewriting the adapter.</p></article>
+      </div>
+    </section>
+
+    <section id="matrix">
+      <h2>Options matrix</h2>
+      <table>
+        <thead><tr><th>Option</th><th>UX result</th><th>Feasibility</th><th>Cost</th><th>Risk</th><th>Recommendation</th></tr></thead>
+        <tbody>
+          <tr><td>A. Current standalone adapter</td><td>Start adapter separately per backing session</td><td>High; implemented</td><td>Low</td><td>Medium UX regression</td><td>Ship, with limitation called out</td></tr>
+          <tr><td>B. Wrapper launcher</td><td>One command starts server/TUI + NATS registration</td><td>High</td><td>Low-medium</td><td>Low-medium</td><td><strong>Do next</strong></td></tr>
+          <tr><td>C. Multi-session manager</td><td>One process exposes many sessions as many NATS agents</td><td>High</td><td>Medium-high</td><td>Medium</td><td>Do after/as part of wrapper phase</td></tr>
+          <tr><td>D. Server plugin NATS channel</td><td>Launching OpenCode auto-registers on NATS</td><td>Medium</td><td>Medium-high</td><td>Medium-high</td><td>Spike later</td></tr>
+          <tr><td>E. TUI plugin status/controls</td><td>NATS registration visible/controllable in TUI</td><td>Medium</td><td>Medium</td><td>Medium</td><td>Companion UX, not core bridge</td></tr>
+          <tr><td>F. MCP-only</td><td>OpenCode gets NATS/MCP tools</td><td>Low for protocol hosting</td><td>Low</td><td>High product mismatch</td><td>Do not use as primary solution</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="implementation">
+      <h2>Implementation sketches</h2>
+      <h3>Wrapper launcher</h3>
+      <pre><code>opencode-nats start [--tui] [--name NAME] [--session SESSION]
+  -> choose/fix OpenCode server host+port
+  -> start `opencode serve` or use `--attach`
+  -> start `opencode-agent start --base-url http://... --name NAME ...`
+  -> optionally launch `opencode attach http://...`
+  -> on exit, stop adapter and managed server</code></pre>
+      <p>Acceptance: child cleanup on SIGINT, fixed-port health wait timeout, auth/password propagation, attached mode does not start a second OpenCode server, README quickstart smoke.</p>
+
+      <h3>Multi-session manager</h3>
+      <pre><code>class OpenCodeAgentManager {
+  async start(): Promise&lt;void&gt;;
+  async reconcile(): Promise&lt;void&gt;;
+  async stop(): Promise&lt;void&gt;;
+}</code></pre>
+      <p>The manager owns one NATS connection and one OpenCode SDK client, lists/watches OpenCode sessions, and creates one collision-safe <code>AgentService</code> per selected session. Tests must prove cross-session event and permission isolation.</p>
+
+      <h3>Server plugin spike</h3>
+      <pre><code>export const SynadiaNatsPlugin: Plugin = async ({ client, directory, project, serverUrl }) =&gt; {
+  const channel = await startNatsRegistration({ client, directory, project, serverUrl });
+  return {
+    event: async ({ event }) =&gt; channel.handleOpenCodeEvent(event),
+    "permission.ask": async (input, output) =&gt; channel.observePermission(input, output),
+    dispose: async () =&gt; channel.stop(),
+  };
+};</code></pre>
+      <p>Before production, prove plugin reload/dispose behavior, duplicate-registration handling, and NATS reconnect behavior.</p>
+    </section>
+
+    <section id="risks">
+      <h2>Risk register</h2>
+      <table>
+        <thead><tr><th>Risk</th><th>Why it matters</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr><td>Permission prompt misrouting</td><td>A NATS caller could approve/reject the wrong OpenCode permission request.</td><td>Key by OpenCode session id + request id; regression-test cross-session replies.</td></tr>
+          <tr><td>TUI bleed</td><td>Driving <code>/tui/*</code> endpoints can mutate the wrong local prompt/session.</td><td>Keep protocol prompts on session API; use TUI endpoints only for explicit UX/toasts.</td></tr>
+          <tr><td>Server/session mismatch</td><td><code>opencode serve</code> starts a new server; TUI also starts a server unless attached/fixed-port.</td><td>Wrapper owns port/base URL and launches <code>opencode attach</code>.</td></tr>
+          <tr><td>Cleanup leaks</td><td>Child processes could leave stale NATS agents discoverable.</td><td>Parent owns PIDs and stops adapter/server/NATS on SIGINT/SIGTERM.</td></tr>
+          <tr><td>Duplicate subject suffixes</td><td>Multiple sessions can share title/workspace labels.</td><td>Use sanitized id/hash suffixes and collision tests.</td></tr>
+          <tr><td>Plugin lifecycle uncertainty</td><td>Plugin reloads can double-register or leave sockets open.</td><td>Implement <code>dispose</code>; test reload/disable before productizing.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="plan">
+      <h2>Estimated phase plan</h2>
+      <ol>
+        <li><strong>Phase 7 — wrapper UX mitigation:</strong> add <code>opencode-nats</code> launcher, docs quickstart, lifecycle smoke.</li>
+        <li><strong>Phase 8 — multi-session manager:</strong> add registry/reconcile loop, per-session service identities, collision-safe naming, permission isolation tests.</li>
+        <li><strong>Phase 9 — plugin/TUI spike:</strong> prove plugin lifecycle and optional TUI status controls; decide whether to productize.</li>
+      </ol>
+    </section>
+
+    <section id="evidence">
+      <h2>Evidence log</h2>
+      <pre><code># Repo state
+git status --short --branch
+git log --oneline -5
+# Branch feat/opencode-adapter at 058eb78; no status entries printed.
+
+# OpenCode CLI surface
+which -a opencode
+opencode --version
+opencode serve --help
+opencode run --help
+opencode attach --help
+opencode plugin --help
+opencode mcp --help
+# OpenCode 1.16.2; serve/attach/run/plugin/mcp commands available.
+
+# Fixed-port local server probe
+opencode serve --hostname 127.0.0.1 --port 49166 --print-logs
+curl -fsS http://127.0.0.1:49166/global/health
+curl -fsS http://127.0.0.1:49166/doc
+curl -sS -o /tmp/opencode-tui.html -w "%{http_code} %{content_type} %{size_download}\n" http://127.0.0.1:49166/tui
+# health: {"healthy":true,"version":"1.16.2"}; /doc OpenAPI 3.1.0; /tui 200 text/html.</code></pre>
+      <p>Source files inspected: <code>agents/opencode/src/cli.ts</code>, <code>service.ts</code>, <code>opencode-client.ts</code>, <code>bridge.ts</code>, <code>config.ts</code>, <code>package.json</code>, OpenCode docs text extracts, and <code>@opencode-ai/plugin@1.16.2</code> type definitions.</p>
+    </section>
+
+    <footer>
+      Markdown source: <code>docs/research/opencode-multi-session-nats-ux-mitigations.md</code><br>
+      HTML artifact: <code>docs/html/2026-06-05--19-56--opencode-multi-session-nats-ux-mitigations.html</code>
+    </footer>
+  </main>
+</body>
+</html>
