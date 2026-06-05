@@ -45,6 +45,16 @@ opencode-agent start --help
 
 Managed mode also needs the OpenCode CLI available on `PATH` because `@opencode-ai/sdk` starts the server lifecycle for the adapter.
 
+## Process model: TUI vs server vs adapter
+
+There are three different processes/surfaces that are easy to conflate:
+
+- **OpenCode TUI** — the interactive terminal UI a developer uses locally.
+- **OpenCode HTTP/SSE server** — the `opencode serve` process that exposes sessions and event streams to the OpenCode SDK.
+- **Synadia adapter process** — `opencode-agent start`, which connects NATS to one OpenCode server/session surface and registers one Synadia Agent Protocol identity.
+
+Attached mode connects to the OpenCode HTTP/SSE server URL given by `--base-url`; it does not attach to arbitrary terminal TUI processes. If a TUI and server share the same upstream OpenCode session surface, the adapter can make that session NATS-addressable. If only a plain `opencode` TUI is running and no server URL exists, start `opencode serve` explicitly or use managed mode.
+
 ## Quick start: managed mode
 
 Managed mode starts and owns an `opencode serve` process through `@opencode-ai/sdk`. Use this when the adapter should create the OpenCode server for one repo/worktree.
@@ -80,6 +90,39 @@ opencode-agent start \
 ```
 
 Set `--opencode-session-id <id>` when you want prompts to reuse an existing upstream OpenCode session. Without it, the adapter creates or reuses its own session through the OpenCode SDK.
+
+## Multi-session recipe
+
+The v1 adapter registers one NATS identity per adapter process. To expose multiple OpenCode sessions from one server, run one shared `opencode serve` on a fixed port and start one adapter process for each NATS identity/session you want callers to discover:
+
+```sh
+opencode serve --hostname 127.0.0.1 --port 4096
+
+opencode-agent start \
+  --base-url http://127.0.0.1:4096 \
+  --owner team \
+  --session frontend \
+  --opencode-session-id ses_frontend \
+  --directory /path/to/frontend \
+  --nats-url nats://127.0.0.1:4222
+
+opencode-agent start \
+  --base-url http://127.0.0.1:4096 \
+  --owner team \
+  --session backend \
+  --opencode-session-id ses_backend \
+  --directory /path/to/backend \
+  --nats-url nats://127.0.0.1:4222
+```
+
+Those adapters register separate prompt subjects:
+
+```text
+agents.prompt.opencode.team.frontend
+agents.prompt.opencode.team.backend
+```
+
+Use separate `opencode serve` ports instead when you need full server/process isolation rather than several sessions behind one OpenCode HTTP/SSE server.
 
 ## Configuration
 

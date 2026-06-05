@@ -31,6 +31,17 @@ describe("doctor", () => {
     });
   });
 
+  test("redacts userinfo from attached liveness probe URLs", async () => {
+    const fetch405 = (async () => new Response(null, { status: 405 })) as unknown as typeof fetch;
+    const checks = await runDoctorChecks(cfg("http://user:secret@127.0.0.1:4096"), {
+      dynamicImport: async () => ({}),
+      fetch: fetch405,
+    });
+    const message = checks.find((c) => c.name === "opencode-http")?.message ?? "";
+    expect(message).toBe("http://127.0.0.1:4096/event returned HTTP 405 (reachable; GET probe method unsupported)");
+    expect(message).not.toContain("user:secret");
+  });
+
   test("managed mode checks the opencode binary", async () => {
     const commands: string[] = [];
     const checks = await runDoctorChecks(cfg(), {

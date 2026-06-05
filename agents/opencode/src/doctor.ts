@@ -49,13 +49,21 @@ async function probeAttachedServer(config: OpenCodeChannelConfig, fetchImpl: typ
   if (!baseUrl) return { name: "opencode-http", ok: false, message: "attached mode requires baseUrl" };
   try {
     const url = new URL("/event", baseUrl);
+    const safeUrl = safeUrlForDiagnostics(url);
     const res = await fetchImpl(url, { method: "GET" });
     const reachable = res.ok || res.status === 405;
     const methodNote = res.status === 405 ? " (reachable; GET probe method unsupported)" : "";
-    return { name: "opencode-http", ok: reachable, message: `${url.toString()} returned HTTP ${res.status}${methodNote}` };
+    return { name: "opencode-http", ok: reachable, message: `${safeUrl} returned HTTP ${res.status}${methodNote}` };
   } catch (err) {
     return { name: "opencode-http", ok: false, message: (err as Error).message };
   }
+}
+
+function safeUrlForDiagnostics(url: URL): string {
+  const safe = new URL(url.toString());
+  safe.username = "";
+  safe.password = "";
+  return safe.toString();
 }
 
 async function defaultCommandExists(command: string): Promise<boolean> {
