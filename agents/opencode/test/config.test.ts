@@ -3,10 +3,10 @@ import { DEFAULT_CONFIG_PATH, loadConfigFromSources, parseArgs, renderConfigTemp
 
 describe("config", () => {
   test("parses CLI flags", () => {
-    const flags = parseArgs(["start", "--owner", "rene", "--session", "labrowser", "--base-url", "http://127.0.0.1:4096", "--permission-policy", "reject"]);
+    const flags = parseArgs(["start", "--owner", "alice", "--session", "project-main", "--base-url", "http://127.0.0.1:4096", "--permission-policy", "reject"]);
     expect(flags.command).toBe("start");
-    expect(flags.owner).toBe("rene");
-    expect(flags.name).toBe("labrowser");
+    expect(flags.owner).toBe("alice");
+    expect(flags.name).toBe("project-main");
     expect(flags.baseUrl).toBe("http://127.0.0.1:4096");
     expect(flags.permissionPolicy).toBe("reject");
   });
@@ -15,9 +15,9 @@ describe("config", () => {
     expect(() => parseArgs(["start", "--opencode-path", "/tmp/opencode"])).toThrow("unknown flag --opencode-path");
     const cfg = loadConfigFromSources({
       argv: ["start"],
-      env: { USER: "rene", OPENCODE_BIN: "/tmp/opencode" },
+      env: { USER: "alice", OPENCODE_BIN: "/tmp/opencode" },
       readFile: () => `[opencode]\nopencode_path = "/tmp/from-file"\npath = "/tmp/from-path"\n`,
-      cwd: "/tmp/labrowser",
+      cwd: "/tmp/project-main",
     });
     expect("opencodePath" in cfg.opencode).toBe(false);
     expect(renderConfigTemplate()).not.toContain("opencode_path");
@@ -48,23 +48,23 @@ describe("config", () => {
     const file = `[nats]\ncreds = "/file.creds"\n`;
     const cfg = loadConfigFromSources({
       argv: ["start"],
-      env: { USER: "rene", NATS_CREDS: "/env.creds" },
+      env: { USER: "alice", NATS_CREDS: "/env.creds" },
       readFile: () => file,
-      cwd: "/tmp/labrowser",
+      cwd: "/tmp/project-main",
     });
     expect(cfg.nats.creds).toBe("/env.creds");
   });
 
   test("baseUrl selects attached mode and missing baseUrl selects managed mode", () => {
-    const attached = loadConfigFromSources({ argv: ["start", "--base-url", "http://127.0.0.1:4096"], env: { USER: "rene" }, readFile: () => "", cwd: "/tmp/labrowser" });
+    const attached = loadConfigFromSources({ argv: ["start", "--base-url", "http://127.0.0.1:4096"], env: { USER: "alice" }, readFile: () => "", cwd: "/tmp/project-main" });
     expect(attached.opencode.mode).toBe("attached");
-    const managed = loadConfigFromSources({ argv: ["start"], env: { USER: "rene" }, readFile: () => "", cwd: "/tmp/labrowser" });
+    const managed = loadConfigFromSources({ argv: ["start"], env: { USER: "alice" }, readFile: () => "", cwd: "/tmp/project-main" });
     expect(managed.opencode.mode).toBe("managed");
   });
 
   test("strips inline TOML comments before parsing numeric fields", () => {
     const file = `[agent]\nheartbeat_interval_s = 30 # seconds\nkeepalive_interval_s = 45 # seconds\n\n[opencode]\nport = 4096 # default\npermission_timeout_ms = 300000 # ms\n`;
-    const cfg = loadConfigFromSources({ argv: ["start"], env: { USER: "rene" }, readFile: () => file, cwd: "/tmp/labrowser" });
+    const cfg = loadConfigFromSources({ argv: ["start"], env: { USER: "alice" }, readFile: () => file, cwd: "/tmp/project-main" });
     expect(cfg.agent.heartbeatIntervalS).toBe(30);
     expect(cfg.agent.keepaliveIntervalS).toBe(45);
     expect(cfg.opencode.port).toBe(4096);
@@ -73,7 +73,7 @@ describe("config", () => {
 
   test("rejects invalid numeric config values", () => {
     const file = `[opencode]\nport = nope\n`;
-    expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "rene" }, readFile: () => file, cwd: "/tmp/labrowser" })).toThrow("opencode.port must be a positive number");
+    expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "alice" }, readFile: () => file, cwd: "/tmp/project-main" })).toThrow("opencode.port must be a positive number");
   });
 
   test("renders a config template", () => {

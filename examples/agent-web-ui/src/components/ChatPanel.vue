@@ -56,6 +56,7 @@ const tagLabel = computed<string>(() => {
   if (a === "pi") return "PI";
   if (a === "hermes") return "HERMES";
   if (a === "open-agent") return "OPEN AGENT";
+  if (a === "opencode") return "OPENCODE";
   return a.toUpperCase();
 });
 
@@ -78,6 +79,8 @@ const tagColor = computed<string>(() => {
       return "var(--bucket-hermes)";
     case BUCKETS.OPEN_AGENT:
       return "var(--bucket-open-agent)";
+    case BUCKETS.OPENCODE:
+      return "var(--bucket-opencode)";
     default:
       return "var(--bucket-other)";
   }

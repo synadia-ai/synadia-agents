@@ -63,6 +63,7 @@ compatibility between the two SDKs.
 | `agents/claude-code/` | `claude-channel-nats` | npm (public) | Claude Code MCP plugin |
 | `agents/hermes/` | — | not in repo | README only; ships from upstream Hermes |
 | `agents/flue/` | `@synadia-ai/flue-nats-channel` | npm (public) | Flue sidecar channel |
+| `agents/opencode/` | `@synadia-ai/opencode-nats-channel` | npm (public) | OpenCode managed/attached server channel |
 | `examples/pi-headless/` | `@synadia-ai/nats-pi-headless` | npm (public) | depends on `@synadia-ai/agents@^0.5.x` |
 | `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | github only | local-clone test client; `private: true` so it never publishes |
 | `examples/dspy/` | `@synadia-ai/nats-dspy-agent` | private | uses `file:` link to local SDK |

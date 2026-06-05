@@ -304,7 +304,7 @@ asyncio.run(main())
 
 ## See also
 
-- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), and [`flue`](../flue).
+- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`flue`](../flue), and [`opencode`](../opencode).
 - Python caller SDK: [`../../client-sdk/python`](../../client-sdk/python).
 - Python host SDK: [`../../agent-sdk/python`](../../agent-sdk/python).
 - Wire protocol: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).

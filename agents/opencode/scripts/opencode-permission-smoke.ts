@@ -10,7 +10,7 @@ import { createOpenCodeAgentService } from "../src/service.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const DEFAULT_ENV_FILE = join(resolveUserHome(), ".hermes", "projects", "synadia-agents-opencode", "secrets", "opencode-openrouter.env");
+const DEFAULT_ENV_FILE = join(resolveUserHome(), ".config", "synadia", "opencode-runtime-smoke.env");
 const envFile = process.env["OPENCODE_TEST_ENV_FILE"] ?? DEFAULT_ENV_FILE;
 const loaded = loadScopedEnv(envFile);
 const model = process.env["OPENCODE_TEST_MODEL"];

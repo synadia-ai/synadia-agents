@@ -3,7 +3,7 @@ import { buildHeartbeatSubject, buildPromptSubject, buildStatusSubject, requireS
 
 describe("subject helpers", () => {
   test("sanitizes derived defaults only", () => {
-    expect(sanitizeDerivedSubjectToken("Rene Rocks AI!")).toBe("rene-rocks-ai");
+    expect(sanitizeDerivedSubjectToken("Alice Demo AI!")).toBe("alice-demo-ai");
     expect(sanitizeDerivedSubjectToken("--Already_OK--")).toBe("already_ok");
   });
 
@@ -14,8 +14,8 @@ describe("subject helpers", () => {
   });
 
   test("builds protocol subjects", () => {
-    expect(buildPromptSubject("opencode", "rene", "labrowser")).toBe("agents.prompt.opencode.rene.labrowser");
-    expect(buildStatusSubject("opencode", "rene", "labrowser")).toBe("agents.status.opencode.rene.labrowser");
-    expect(buildHeartbeatSubject("opencode", "rene", "labrowser")).toBe("agents.hb.opencode.rene.labrowser");
+    expect(buildPromptSubject("opencode", "alice", "project-main")).toBe("agents.prompt.opencode.alice.project-main");
+    expect(buildStatusSubject("opencode", "alice", "project-main")).toBe("agents.status.opencode.alice.project-main");
+    expect(buildHeartbeatSubject("opencode", "alice", "project-main")).toBe("agents.hb.opencode.alice.project-main");
   });
 });

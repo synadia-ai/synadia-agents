@@ -6,7 +6,7 @@ import type { OpenCodeBridgeEvent } from "../src/bridge.js";
 function cfg(mode: "managed" | "attached", overrides: Partial<OpenCodeChannelConfig["opencode"]> = {}): OpenCodeChannelConfig {
   return {
     nats: {},
-    agent: { owner: "rene", name: "labrowser", subjectToken: "opencode", heartbeatIntervalS: 30, keepaliveIntervalS: 30 },
+    agent: { owner: "alice", name: "project-main", subjectToken: "opencode", heartbeatIntervalS: 30, keepaliveIntervalS: 30 },
     opencode: {
       mode,
       ...(mode === "attached" ? { baseUrl: "http://127.0.0.1:4096" } : {}),

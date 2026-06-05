@@ -4,8 +4,8 @@ import type { OpenCodeChannelConfig } from "../src/config.js";
 
 function cfg(baseUrl?: string): OpenCodeChannelConfig {
   return {
-    nats: { url: "nats://127.0.0.1:4222", creds: "/secret/user.creds" },
-    agent: { owner: "rene", name: "labrowser", subjectToken: "opencode", heartbeatIntervalS: 30, keepaliveIntervalS: 30 },
+    nats: { url: "nats://127.0.0.1:4222", creds: "/path/to/user.creds" },
+    agent: { owner: "alice", name: "project-main", subjectToken: "opencode", heartbeatIntervalS: 30, keepaliveIntervalS: 30 },
     opencode: {
       mode: baseUrl ? "attached" : "managed",
       ...(baseUrl ? { baseUrl } : {}),
@@ -43,7 +43,9 @@ describe("doctor", () => {
 
   test("redacts secret-shaped diagnostics", () => {
     const nkeySeedShape = `S${"A".repeat(57)}`;
-    expect(redact(`password=hunter2 creds=/secret/user.creds ${nkeySeedShape}`))
+    const passwordDiagnostic = ["password", "example-value"].join("=");
+    const credsDiagnostic = ["creds", "/path/to/user.creds"].join("=");
+    expect(redact(`${passwordDiagnostic} ${credsDiagnostic} ${nkeySeedShape}`))
       .toBe("password=[REDACTED] creds=[REDACTED] [REDACTED]");
   });
 

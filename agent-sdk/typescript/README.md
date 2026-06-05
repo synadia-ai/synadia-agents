@@ -103,7 +103,7 @@ The SDK exports the chunk and heartbeat encoders for harnesses that need them ou
 | `encodeHeartbeatPayload(payload)`                              | Encode that payload to wire JSON bytes.                                    |
 | `DEFAULT_MAX_PAYLOAD` / `DEFAULT_*` constants                  | Fallback values when no broker `INFO.max_payload` is reported, etc.        |
 
-The `agents/openclaw`, `agents/pi`, and `agents/claude-code` harnesses in this monorepo use these primitives directly today; `agents/flue` uses `AgentService` directly as a sidecar for a running Flue app, and the controller agents in `examples/pi-headless` and `examples/claude-code-headless` are obvious migration candidates for `AgentService`.
+The `agents/openclaw`, `agents/pi`, and `agents/claude-code` harnesses in this monorepo use these primitives directly today; `agents/opencode`, `agents/flue`, and `agents/open-agent` use `AgentService` directly, and the controller agents in `examples/pi-headless` and `examples/claude-code-headless` are obvious migration candidates for `AgentService`.
 
 ## Reference agent (`@synadia-ai/agent-service/testing`)
 

@@ -10,11 +10,12 @@ Primary use: manually poking at the [Synadia Agent Protocol for NATS](https://gi
 implementations - [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-code),
 [`openclaw`](../../agents/openclaw), [`hermes`](../../agents/hermes),
 [`deerflow`](../../agents/deerflow), [`flue`](../../agents/flue),
-[`open-agent`](../../agents/open-agent), [`pi-headless`](../pi-headless), and the SDK's own reference agent.
+[`open-agent`](../../agents/open-agent), [`opencode`](../../agents/opencode),
+[`pi-headless`](../pi-headless), and the SDK's own reference agent.
 
 ## Features
 
-- **Unified agent grid** — every discovered agent, controller, and session shows up as a card in a single grouped grid (PI Headless Sessions · PI Headless · Claude Code Headless Sessions · Claude Code Headless · PI Interactive · Claude Code · OpenClaw · Other). No mode switching.
+- **Unified agent grid** — every discovered agent, controller, and session shows up as a card in a single grouped grid (PI Headless Sessions · PI Headless · Claude Code Headless Sessions · Claude Code Headless · Claude Code · Hermes · Open Agent · OpenCode · OpenClaw · PI Interactive · Other). No mode switching.
 - **Context-aware right panel** — click a card and the right pane adapts:
   - regular agent or session → live **chat** surface (streaming responses, attachments, mid-stream queries, tool-call cards, per-turn cost)
   - `pi-headless` controller → **New Session** + **Fan-out** tabs

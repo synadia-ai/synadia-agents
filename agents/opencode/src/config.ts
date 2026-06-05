@@ -207,8 +207,8 @@ context = "local"
 creds = "/path/to/user.creds"
 
 [agent]
-owner = "rene"
-name = "labrowser"
+owner = "local"
+name = "main"
 subject_token = "opencode"
 heartbeat_interval_s = 30
 keepalive_interval_s = 30

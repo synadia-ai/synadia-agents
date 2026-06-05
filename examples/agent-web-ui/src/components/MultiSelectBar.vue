@@ -106,7 +106,7 @@ async function send(): Promise<void> {
   let busyN = 0;
 
   if (virtualMode.value) {
-    // Phase 2: spin up a virtual session locked to the current selection,
+    // Spin up a virtual session locked to the current selection,
     // route the right panel to it, and let the virtual transcript host
     // every future prompt against this same target list. The first turn
     // also fires immediately so the user sees streaming responses without
