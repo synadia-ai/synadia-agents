@@ -24,6 +24,19 @@ htmlcov/
 # Per-test evidence (client-sdk/python)
 client-sdk/python/tests/_evidence/
 
+# Local environment / credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.creds
+*.nkey
+
+# Local review/research artifacts generated during adapter work
+# Keep these on disk for operator review, but do not include them in PRs.
+docs/html/
+docs/research/
+
 # Editor / OS
 .DS_Store
 .idea/
