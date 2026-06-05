@@ -80,6 +80,38 @@ describe("opencode client factory", () => {
     expect(events).toContainEqual({ type: "response", text: "ok" });
   });
 
+  test("concurrent prompts share one lazily-created OpenCode session", async () => {
+    let createCalls = 0;
+    const promptCalls: Record<string, unknown>[] = [];
+    let releaseCreate: (() => void) | undefined;
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    const client = await createOpenCodeClient(cfg("attached"), {
+      createSdkClient: () => fakeSdkClient({
+        session: {
+          create: async () => {
+            createCalls += 1;
+            await createGate;
+            return { data: { id: "ses_shared" } };
+          },
+          prompt: async (options: Record<string, unknown>) => {
+            promptCalls.push(options);
+            return { data: { parts: [{ type: "text", text: "ok" }] } };
+          },
+        },
+      }) as never,
+    });
+
+    const first = collect(client.prompt({ prompt: "one" }));
+    const second = collect(client.prompt({ prompt: "two" }));
+    await Bun.sleep(1);
+    expect(createCalls).toBe(1);
+    releaseCreate?.();
+    await Promise.all([first, second]);
+    expect(createCalls).toBe(1);
+    expect(promptCalls).toHaveLength(2);
+    expect(promptCalls.every((call) => JSON.stringify(call).includes("ses_shared"))).toBe(true);
+  });
+
   test("prompt propagates OpenCode prompt errors instead of ending silently", async () => {
     const client = await createOpenCodeClient(cfg("attached", { sessionId: "ses_existing" }), {
       createSdkClient: () => fakeSdkClient({
@@ -164,5 +196,41 @@ describe("opencode client factory", () => {
     }
     expect(events.some((event) => event.type === "permission" && event.question.includes("bash"))).toBe(true);
     expect(replies).toEqual([{ path: { id: "ses_existing", permissionID: "perm_1" }, body: { response: "reject" } }]);
+  });
+
+  test("session-scoped prompts ignore cross-session SSE/permission events while preserving unscoped status/text events", async () => {
+    const replies: Record<string, unknown>[] = [];
+    const client = await createOpenCodeClient(cfg("attached", { sessionId: "ses_a", permissionPolicy: "query" }), {
+      createSdkClient: () => fakeSdkClient({
+        event: {
+          subscribe: async () => ({
+            stream: (async function* () {
+              yield { type: "permission.asked", data: { sessionID: "ses_b", id: "perm_b", type: "bash" } };
+              yield { type: "message.part.delta", data: { text: "unscoped leak" } };
+              yield { type: "message.part.delta", data: { sessionID: "ses_b", text: "cross leak" } };
+              yield { type: "message.part.delta", data: { sessionID: "ses_a", text: "safe" } };
+              yield { type: "session.idle", data: { sessionID: "ses_a" } };
+            })(),
+          }),
+        },
+        session: {
+          create: async () => { throw new Error("existing session should not create a new session"); },
+          prompt: async () => {
+            await Bun.sleep(1);
+            return { data: { parts: [{ type: "text", text: "fallback" }] } };
+          },
+        },
+        postSessionIdPermissionsPermissionId: async (options: Record<string, unknown>) => {
+          replies.push(options);
+          return { data: true };
+        },
+      }) as never,
+    });
+    const events = await collect(client.prompt({ prompt: "hello" }));
+    expect(events).toContainEqual({ type: "response", text: "safe" });
+    expect(events).toContainEqual({ type: "response", text: "unscoped leak" });
+    expect(events).not.toContainEqual({ type: "response", text: "cross leak" });
+    expect(events.some((event) => event.type === "permission")).toBe(false);
+    expect(replies).toEqual([]);
   });
 });

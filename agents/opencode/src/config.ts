@@ -92,6 +92,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 
 type TomlTree = Record<string, Record<string, string>>;
 
+// Tiny TOML reader for the adapter's generated config template: sections plus
+// simple string/numeric key-value pairs with inline comments. It is deliberately
+// not a general TOML parser; use the documented template shape for config files.
 function parseTinyToml(source: string): TomlTree {
   const tree: TomlTree = {};
   let section = "";
@@ -209,6 +212,7 @@ creds = "/path/to/user.creds"
 [agent]
 owner = "local"
 name = "main"
+# Protocol subject token is fixed for this adapter; changing it is rejected.
 subject_token = "opencode"
 heartbeat_interval_s = 30
 keepalive_interval_s = 30

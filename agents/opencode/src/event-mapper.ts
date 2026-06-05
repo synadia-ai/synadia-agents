@@ -31,6 +31,9 @@ export function mapOpenCodeEvent(event: unknown, state: EventMapperState = creat
     return { type: "ignore" };
   }
   if (eventType === "session.error") return { type: "error", text: extractText(event) ?? "OpenCode session error" };
+  // Permission events are handled by the bridge client before generic event
+  // mapping so it can reply with OpenCode's permission endpoint; this fallback
+  // remains useful for raw mapper tests and unexpected policy paths.
   if (eventType === "permission.updated" || eventType === "permission.asked") return { type: "status", text: "OpenCode permission requested" };
   if (eventType === "permission.replied") return { type: "status", text: "OpenCode permission resolved" };
 

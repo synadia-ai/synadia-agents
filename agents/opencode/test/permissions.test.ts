@@ -9,9 +9,11 @@ describe("permissions", () => {
 
   test("maps protocol query replies to OpenCode permission replies", () => {
     expect(mapQueryReplyToPermissionDecision("always")).toEqual({ reply: "always" });
-    expect(mapQueryReplyToPermissionDecision("no")).toEqual({ reply: "reject", message: "Rejected by protocol query reply" });
     expect(mapQueryReplyToPermissionDecision("yes")).toEqual({ reply: "once" });
-    expect(mapQueryReplyToPermissionDecision(undefined)).toEqual({ reply: "once" });
+    expect(mapQueryReplyToPermissionDecision("once")).toEqual({ reply: "once" });
+    expect(mapQueryReplyToPermissionDecision("no")).toEqual({ reply: "reject", message: "Rejected by protocol query reply" });
+    expect(mapQueryReplyToPermissionDecision(undefined)).toEqual({ reply: "reject", message: "Rejected by empty protocol query reply" });
+    expect(mapQueryReplyToPermissionDecision("maybe later")).toEqual({ reply: "reject", message: "Rejected by ambiguous protocol query reply" });
   });
 
   test("formats compact permission questions", () => {

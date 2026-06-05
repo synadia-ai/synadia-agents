@@ -85,6 +85,7 @@ export function managedServerPermissionConfig(policy: PermissionPolicy): SdkOpen
 class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {
   readonly mode: "managed" | "attached";
   #activeSessionId: string | undefined;
+  #creatingSession: Promise<string> | undefined;
 
   constructor(
     private readonly config: OpenCodeChannelConfig,
@@ -119,7 +120,8 @@ class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {
     void (async () => {
       try {
         for await (const raw of sse.stream) {
-          if (eventSessionId(raw) && eventSessionId(raw) !== sessionId) continue;
+          const rawSessionId = eventSessionId(raw);
+          if (rawSessionId && rawSessionId !== sessionId) continue;
           if (isPermissionEvent(raw)) {
             await this.handlePermissionEvent(raw, directory, queue);
             continue;
@@ -180,6 +182,11 @@ class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {
   private async ensureSession(requestedSessionId: string | undefined, directory: string | undefined): Promise<string> {
     const existing = requestedSessionId ?? this.#activeSessionId;
     if (existing) return existing;
+    this.#creatingSession ??= this.createSession(directory).finally(() => { this.#creatingSession = undefined; });
+    return await this.#creatingSession;
+  }
+
+  private async createSession(directory: string | undefined): Promise<string> {
     const result = await this.client.session.create({
       body: { title: `NATS ${this.config.agent.owner}/${this.config.agent.name}` },
       ...(directory ? { query: { directory } } : {}),

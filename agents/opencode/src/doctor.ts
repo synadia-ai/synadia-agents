@@ -67,7 +67,7 @@ function safeUrlForDiagnostics(url: URL): string {
 }
 
 async function defaultCommandExists(command: string): Promise<boolean> {
-  const proc = Bun.spawn(["/usr/bin/env", "sh", "-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`]);
+  const proc = Bun.spawn(["/usr/bin/env", "which", command], { stdout: "ignore", stderr: "ignore" });
   const code = await proc.exited;
   return code === 0;
 }

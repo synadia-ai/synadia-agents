@@ -5,6 +5,11 @@ import { describe, expect, test } from "bun:test";
 const readme = readFileSync(join(import.meta.dir, "..", "README.md"), "utf8");
 
 describe("README process-model guidance", () => {
+  test("documents published binary Bun requirement", () => {
+    expect(readme).toContain("Bun must be installed and available on `PATH`");
+    expect(readme).toContain("bunx @synadia-ai/opencode-nats-channel doctor");
+  });
+
   test("distinguishes OpenCode TUI, OpenCode server, and Synadia adapter processes", () => {
     expect(readme).toContain("OpenCode TUI");
     expect(readme).toContain("OpenCode HTTP/SSE server");

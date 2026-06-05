@@ -15,8 +15,9 @@ export function policyDecision(policy: PermissionPolicy): PermissionDecision | n
 export function mapQueryReplyToPermissionDecision(reply: string | undefined): PermissionDecision {
   const normalized = (reply ?? "").trim().toLowerCase();
   if (["always", "allow always", "yes always"].includes(normalized)) return { reply: "always" };
+  if (["yes", "y", "once", "allow", "true"].includes(normalized)) return { reply: "once" };
   if (["no", "n", "deny", "reject", "false"].includes(normalized)) return { reply: "reject", message: "Rejected by protocol query reply" };
-  return { reply: "once" };
+  return { reply: "reject", message: normalized ? "Rejected by ambiguous protocol query reply" : "Rejected by empty protocol query reply" };
 }
 
 export function formatPermissionQuestion(input: { readonly tool?: string; readonly action?: string; readonly description?: string }): string {
@@ -51,6 +52,9 @@ function readPermission(event: unknown): { id?: string; sessionID?: string; type
   const payload = isRecord(event.properties) ? event.properties : isRecord(event.data) ? event.data : event;
   const metadata = isRecord(payload.metadata) ? payload.metadata : undefined;
   const id = readString(payload, "id") ?? readString(payload, "permissionID") ?? readString(payload, "permissionId");
+  // OpenCode SDK/events have used both camelCase and session_id spellings in
+  // nearby surfaces; accept the config/event alias but keep docs on
+  // opencode_session_id for clarity.
   const sessionID = readString(payload, "sessionID") ?? readString(payload, "sessionId") ?? readString(payload, "session_id");
   const type = readString(payload, "type") ?? readString(payload, "permission");
   const title = readString(payload, "title") ?? (metadata ? readString(metadata, "description") : undefined);

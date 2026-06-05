@@ -21,6 +21,15 @@ It registers a first-class `agents` micro service, routes protocol prompts into 
 
 ## Install
 
+The published `opencode-agent` binary is a Bun TypeScript entrypoint (`#!/usr/bin/env bun`), so Bun must be installed and available on `PATH` anywhere you run the package binary.
+
+From npm:
+
+```sh
+bunx @synadia-ai/opencode-nats-channel doctor
+bunx @synadia-ai/opencode-nats-channel start --help
+```
+
 From a local clone:
 
 ```sh
@@ -89,7 +98,7 @@ opencode-agent start \
   --nats-url nats://127.0.0.1:4222
 ```
 
-Set `--opencode-session-id <id>` when you want prompts to reuse an existing upstream OpenCode session. Without it, the adapter creates or reuses its own session through the OpenCode SDK.
+Set `--opencode-session-id <id>` when you want prompts to reuse an existing upstream OpenCode session. Without it, the adapter creates or reuses its own session through the OpenCode SDK. Config files should use `opencode_session_id`; the loader also accepts `session_id` as a compatibility alias.
 
 ## Multi-session recipe
 
@@ -160,6 +169,7 @@ creds = "/path/to/user.creds"
 [agent]
 owner = "local"
 name = "main"
+# Protocol subject token is fixed for this adapter; changing it is rejected.
 subject_token = "opencode"
 heartbeat_interval_s = 30
 keepalive_interval_s = 30
@@ -231,7 +241,7 @@ Use an SDK client for query-bearing prompts. The plain `nats` CLI can display a 
 | `reject` | Permission events are rejected immediately. Useful for non-interactive smoke tests and conservative unattended runs. |
 | `local` | Permission handling is delegated to the local OpenCode UI/policy surface; the adapter reports the delegation as a status chunk. |
 
-For `query`, protocol replies of `always`, `allow always`, or `yes always` map to OpenCode `always`; `no`, `deny`, `reject`, or `false` map to `reject`; anything else maps to `once`.
+For `query`, protocol replies of `always`, `allow always`, or `yes always` map to OpenCode `always`; `yes`, `once`, `allow`, or `true` map to one-shot approval; `no`, `deny`, `reject`, or `false` map to `reject`. Empty or ambiguous replies are rejected instead of silently granting tool access.
 
 ## Validation ladder
 
