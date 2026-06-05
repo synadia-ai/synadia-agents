@@ -1,8 +1,8 @@
 # OpenCode multi-session/NATS UX mitigation spike
 
-Date: 2026-06-05 19:56 CEST  
-Kanban: `t_82ecdc47` / Phase 6.5B  
-Repo branch inspected: `feat/opencode-adapter` at `058eb78 Document OpenCode adapter public DX`  
+Date: 2026-06-05 19:56 CEST
+Kanban: `t_82ecdc47` / Phase 6.5B
+Repo branch inspected: `feat/opencode-adapter` at `058eb78 Document OpenCode adapter public DX`
 Scope: OpenCode adapter repo, OpenCode CLI/docs, OpenCode SDK/plugin type surface, and fixed-port local server probes.
 
 ## Executive recommendation
