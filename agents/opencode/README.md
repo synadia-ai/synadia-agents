@@ -193,6 +193,7 @@ Environment variables supported by the config loader include:
 For env-first local runs, copy the package template and edit only local values:
 
 ```sh
+# from agents/opencode/
 cp .env.example .env
 ```
 
