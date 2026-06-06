@@ -190,6 +190,14 @@ permission_timeout_ms = 300000
 
 Environment variables supported by the config loader include:
 
+For env-first local runs, copy the package template and edit only local values:
+
+```sh
+cp .env.example .env
+```
+
+Keep real `.env`, `.creds`, and `.nkey` files untracked. The example file uses harmless defaults and credential paths only.
+
 | Area | Variables |
 | --- | --- |
 | Config | `SYNADIA_OPENCODE_CONFIG` |

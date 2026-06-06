@@ -15,5 +15,14 @@ describe("package metadata", () => {
     expect(pkg.bin["opencode-agent"]).toBe("./src/cli.ts");
     expect(pkg.exports["."].import).toBe("./src/index.ts");
     expect(pkg.files).toContain("src");
+    expect(pkg.files).toContain(".env.example");
+  });
+
+  test("ships a trackable dotenv example instead of only ignoring local env files", () => {
+    const example = readFileSync(join(import.meta.dir, "..", ".env.example"), "utf8");
+    expect(example).toContain("SYNADIA_OPENCODE_OWNER=local");
+    expect(example).toContain("SYNADIA_OPENCODE_SESSION=main");
+    expect(example).toContain("OPENCODE_PERMISSION_POLICY=query");
+    expect(example).not.toMatch(/S[A-Z0-9]{57}/);
   });
 });

@@ -29,7 +29,8 @@
   "files": [
     "src",
     "scripts",
-    "README.md"
+    "README.md",
+    ".env.example"
   ],
   "scripts": {
     "start": "bun src/cli.ts start",
