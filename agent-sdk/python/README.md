@@ -60,6 +60,13 @@ both as the test harness for the client-side numbered demos in
 `../../client-sdk/python/examples/` and as the wire-compat counterparty
 for cross-SDK interop.
 
+Alongside it, [`examples/`](examples/) carries a numbered **agent
+ladder** — `01-echo.py` → `05-tools.py` (echo, Ollama, OpenRouter,
+combined, and a tool-calling agent backed by a NATS microservice) —
+the Python mirror of `../typescript/examples/`. See
+[`examples/README.md`](examples/README.md) for the full table and how
+to run them.
+
 ## Where things live
 
 - This package — `synadia_ai.agent_service`: `AgentService`,

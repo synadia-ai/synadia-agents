@@ -8,6 +8,21 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Added
+
+- **Agent-ladder examples** (`examples/01-echo.py` … `05-tools.py`,
+  plus the shared `examples/llm.py` base) — the Python mirror of
+  `agent-sdk/typescript/examples/`: echo, Ollama, OpenRouter, a
+  combined auto-selecting agent, and a tool-calling agent backed by a
+  NATS microservice. Identity and heartbeat are flags that default to
+  the `NATS_AGENT_OWNER` / `NATS_AGENT_NAME` /
+  `NATS_AGENT_HEARTBEAT_INTERVAL` env vars (env-first, flag-overridable);
+  connection uses the shared `_connect_cli.py` resolver. The
+  `_reference_agent.py` flags now likewise default to those env vars
+  (non-breaking — explicit flags still win).
+- **`examples` extra** — `httpx`, used by the LLM/tool example scripts
+  (`uv sync --extra examples`). Not part of the published SDK surface.
+
 ## [0.4.1] - 2026-05-12
 
 ### Changed

@@ -32,7 +32,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import signal
 import sys
 from collections import deque
@@ -45,7 +44,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from synadia_ai.agents import Envelope
 
-from examples._connect_cli import add_connection_flags, connect_from_cli
+from examples._connect_cli import (
+    add_agent_identity_flags,
+    add_connection_flags,
+    connect_from_cli,
+)
 from synadia_ai.agent_service import AgentService, PromptStream
 
 log = logging.getLogger("synadia_ai.agent_service.examples.reference")
@@ -83,26 +86,15 @@ def _parse_args() -> argparse.Namespace:
         help="§2 `agent` token (default: demo-agent)",
     )
     parser.add_argument(
-        "--owner",
-        default=os.environ.get("USER", "anon"),
-        help="§2 `owner` token (default: $USER)",
-    )
-    parser.add_argument(
-        "--session-name",
-        default="example",
-        help="§2 5th token / session this agent serves (default: example)",
-    )
-    parser.add_argument(
-        "--heartbeat-interval",
-        type=int,
-        default=5,
-        help="heartbeat interval in seconds (default: 5)",
-    )
-    parser.add_argument(
         "--description",
         default="python reference agent",
         help="§3 service description (default: 'python reference agent')",
     )
+    # --owner / --session-name / --heartbeat-interval, each defaulting to its
+    # NATS_AGENT_* env var (so the reference agent is env-driven like the
+    # numbered examples). The reference agent keeps its own fallbacks: session
+    # "example" and a snappy 5s heartbeat (vs. the ladder's "main" / 30s).
+    add_agent_identity_flags(parser, session_fallback="example", heartbeat_fallback=5)
     add_connection_flags(parser)
     return parser.parse_args()
 
