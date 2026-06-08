@@ -33,24 +33,27 @@ uv sync --extra examples   # the `examples` extra pulls in httpx (used by 02–0
 
 ## Configuration
 
-Every example resolves its **connection** the same way (via the shared
-`_connect_cli.py`), in order: `--context <name>` → `--url <url>` → `$NATS_URL` →
-the selected `nats` context (`$NATS_CONTEXT` / `nats context select`). If none
-resolve, the script exits with a pointed message.
+None of these are required — the examples are configured entirely through flags
+and environment variables. Identity and heartbeat are flags that each default to
+a `NATS_AGENT_*` env var (so the examples are env-driven like the TS ladder; an
+explicit flag overrides the env). Connection is resolved by the shared
+`_connect_cli.py`; backend config is env-only.
 
-**Identity and heartbeat** are flags that each default to a `NATS_AGENT_*`
-environment variable, so the examples are env-driven like the TS ladder — and an
-explicit flag overrides the env:
-
-| Flag | Env var | Default | Purpose |
+| Variable | Used by | Default | Purpose |
 | --- | --- | --- | --- |
-| `--owner` | `NATS_AGENT_OWNER` | `$USER`, else `anon` | 4th subject token. Set it so several people on one server don't collide. |
-| `--session-name` | `NATS_AGENT_NAME` | `main` | 5th subject token / session this agent serves. |
-| `--heartbeat-interval` | `NATS_AGENT_HEARTBEAT_INTERVAL` | `30` | Heartbeat cadence in **seconds**. Lower it (e.g. `2`) for a livelier `05-liveness` demo. (`0` is treated as unset → the 30s default.) |
+| `NATS_CONTEXT` | all | _(unset)_ | Connect via a named [`nats` CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Same as `--context`. |
+| `NATS_URL` | all | _(unset)_ | Connect via a raw URL (credentials in the userinfo are honored). Same as `--url`. |
+| `NATS_AGENT_OWNER` | all | `$USER`, else `anon` | 4th subject token. Same as `--owner`. Set it so several people on one server don't collide. |
+| `NATS_AGENT_NAME` | all | `main` | 5th subject token / session this agent serves. Same as `--session-name`. |
+| `NATS_AGENT_HEARTBEAT_INTERVAL` | all | `30` | Heartbeat cadence in **seconds**. Same as `--heartbeat-interval`. Lower it (e.g. `2`) for a livelier `05-liveness` demo. `0` is treated as unset → the default. |
+| `OLLAMA_URL` | `02`, `04`, `05` | `http://localhost:11434` | Where Ollama is listening. |
+| `OLLAMA_MODEL` | `02`, `04`, `05` | `llama3.2` (`05`: `llama3.1:8b`) | Which Ollama model to prompt. |
+| `OPENROUTER_API_KEY` | `03`, `04` | _(required for `03`)_ | Your [OpenRouter key](https://openrouter.ai/keys). |
+| `OPENROUTER_MODEL` | `03`, `04` | `openai/gpt-4o-mini` | Any [OpenRouter model](https://openrouter.ai/models). |
 
-Backend config is read from the environment (its natural home for an API key):
-`OLLAMA_URL` / `OLLAMA_MODEL` for the Ollama agents, `OPENROUTER_API_KEY` /
-`OPENROUTER_MODEL` for the OpenRouter ones.
+**Connection** resolves in order: `--context` → `--url` → `$NATS_URL` → the
+selected `nats` context (`$NATS_CONTEXT` / `nats context select`). There's no
+silent localhost fallback — pass one of these (the examples below use `--url`).
 
 ## Run
 
