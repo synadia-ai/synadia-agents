@@ -71,3 +71,61 @@ async def connect_from_cli(args: argparse.Namespace) -> NATSClient:
             file=sys.stderr,
         )
         sys.exit(2)
+
+
+def _env_owner_default() -> str:
+    return os.environ.get("NATS_AGENT_OWNER") or os.environ.get("USER") or "anon"
+
+
+def _env_session_default(fallback: str) -> str:
+    return os.environ.get("NATS_AGENT_NAME") or fallback
+
+
+def _env_heartbeat_default(fallback: int) -> int:
+    raw = os.environ.get("NATS_AGENT_HEARTBEAT_INTERVAL")
+    try:
+        value = int(raw) if raw else 0
+    except ValueError:
+        value = 0
+    # The SDK requires a positive interval; treat 0 / unset / invalid as the default.
+    return value if value > 0 else fallback
+
+
+def add_agent_identity_flags(
+    parser: argparse.ArgumentParser,
+    *,
+    session_fallback: str = "main",
+    heartbeat_fallback: int = 30,
+) -> None:
+    """Wire ``--owner`` / ``--session-name`` / ``--heartbeat-interval`` onto an agent example.
+
+    Each flag defaults to its ``NATS_AGENT_*`` environment variable, so the
+    examples are env-driven like the TS ladder (``NATS_AGENT_OWNER`` /
+    ``NATS_AGENT_NAME`` / ``NATS_AGENT_HEARTBEAT_INTERVAL``); an explicit flag
+    overrides the env. ``NATS_AGENT_HEARTBEAT_INTERVAL=0`` is treated as unset
+    and falls back to ``heartbeat_fallback`` (the SDK requires a positive
+    interval).
+    """
+    parser.add_argument(
+        "--owner",
+        default=_env_owner_default(),
+        help="4th subject token (default: $NATS_AGENT_OWNER, else $USER, else 'anon')",
+    )
+    parser.add_argument(
+        "--session-name",
+        default=_env_session_default(session_fallback),
+        help=(
+            "5th subject token / session this agent serves "
+            f"(default: $NATS_AGENT_NAME, else '{session_fallback}')"
+        ),
+    )
+    parser.add_argument(
+        "--heartbeat-interval",
+        type=int,
+        default=_env_heartbeat_default(heartbeat_fallback),
+        metavar="SECONDS",
+        help=(
+            "heartbeat cadence in seconds "
+            f"(default: $NATS_AGENT_HEARTBEAT_INTERVAL, else {heartbeat_fallback})"
+        ),
+    )

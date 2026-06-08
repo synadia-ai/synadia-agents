@@ -26,6 +26,14 @@ dependencies = [
     "synadia-ai-agents>=0.7",
 ]
 
+[project.optional-dependencies]
+# Runtime deps for the LLM / tool example scripts only — httpx streams HTTP to
+# Ollama / OpenRouter. Not part of the published SDK surface; CI installs them
+# via `uv sync --all-extras` so ruff/mypy can check the examples.
+examples = [
+    "httpx>=0.27",
+]
+
 [project.urls]
 Homepage = "https://github.com/synadia-ai/synadia-agents/tree/main/agent-sdk/python"
 Repository = "https://github.com/synadia-ai/synadia-agents"
