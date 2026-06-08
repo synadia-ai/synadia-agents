@@ -120,7 +120,10 @@ async def run_tool(nc: NATSClient, name: str, args: Any) -> str:
     if name != "read_sensor":
         return f"error: unknown tool '{name}'"
     # Most models hand back parsed arguments; some return a JSON string instead.
-    parsed: Any = json.loads(args) if isinstance(args, str) else args
+    try:
+        parsed: Any = json.loads(args) if isinstance(args, str) else args
+    except json.JSONDecodeError:
+        parsed = {}
     location = ""
     if isinstance(parsed, dict):
         loc = parsed.get("location")

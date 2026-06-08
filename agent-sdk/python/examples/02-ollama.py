@@ -45,6 +45,8 @@ async def ollama_tokens(prompt: str) -> AsyncGenerator[str, None]:
     # Ollama's /api/generate returns newline-delimited JSON — one object per line,
     # each carrying the next `response` fragment. httpx.aiter_lines() hands us
     # those lines as they arrive, so tokens flow out as the model produces them.
+    # timeout=None: LLM streams can run arbitrarily long; in production prefer a
+    # per-request read timeout over disabling timeouts wholesale.
     async with (
         httpx.AsyncClient(timeout=None) as client,
         client.stream(

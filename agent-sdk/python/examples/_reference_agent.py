@@ -36,7 +36,6 @@ import signal
 import sys
 from collections import deque
 from pathlib import Path
-from types import FrameType
 
 # Make `examples._connect_cli` importable whether the script is launched as
 # `python examples/_reference_agent.py` or `python -m examples._reference_agent`.
@@ -166,13 +165,12 @@ async def main() -> None:
     print(f"reference agent listening on {agent.subject.prompt}")
     print("press Ctrl+C to stop")
 
+    # add_signal_handler is the asyncio-safe way to wake `await stop.wait()`
+    # (matches the numbered ladder examples).
+    loop = asyncio.get_running_loop()
     stop = asyncio.Event()
-
-    def _on_signal(_sig: int, _frame: FrameType | None) -> None:
-        stop.set()
-
-    signal.signal(signal.SIGINT, _on_signal)
-    signal.signal(signal.SIGTERM, _on_signal)
+    for _sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(_sig, stop.set)
 
     try:
         await stop.wait()
