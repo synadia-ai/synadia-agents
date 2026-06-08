@@ -50,9 +50,15 @@ function ollama(): LlmClient {
         buffer = lines.pop() ?? "";
         for (const line of lines) {
           if (line.trim() === "") continue;
-          const token =
-            (JSON.parse(line) as { message?: { content?: string } }).message?.content ?? "";
-          if (token) yield token;
+          // Tolerate a rare malformed line instead of throwing out of the
+          // generator (same guard as the OpenRouter branch and 05-tools.ts).
+          try {
+            const token =
+              (JSON.parse(line) as { message?: { content?: string } }).message?.content ?? "";
+            if (token) yield token;
+          } catch {
+            /* skip malformed line */
+          }
         }
       }
     },

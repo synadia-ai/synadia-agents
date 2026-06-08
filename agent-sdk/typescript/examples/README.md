@@ -20,13 +20,13 @@ They form a ladder — each rung is the one before plus a little more:
 Every example resolves its NATS connection and identity the same way; none of
 these are required (the defaults connect to a local server as your `$USER`).
 
-| Variable                        | Default                    | Purpose                                                                                                                                            |
-| ------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NATS_CONTEXT`                  | _(unset)_                  | Connect via a named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins when set.                          |
-| `NATS_URL`                      | `nats://127.0.0.1:4222`    | Connect via a raw URL; credentials in the userinfo are honored.                                                                                    |
-| `NATS_AGENT_OWNER`              | your `$USER` (else `anon`) | The `owner` token in `agents.prompt.<agent>.<owner>.<name>`. Set it so several people running this against one server don't collide.               |
-| `NATS_AGENT_NAME`               | `main`                     | The instance `name` token in the subject. Use different names to run several instances at once.                                                    |
-| `NATS_AGENT_HEARTBEAT_INTERVAL` | `30`                       | Heartbeat cadence in **seconds**. Lower it (e.g. `2`) for a livelier [`05-liveness`](../../../client-sdk/typescript/examples/05-liveness.ts) demo. |
+| Variable                        | Default                    | Purpose                                                                                                                                                                                         |
+| ------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NATS_CONTEXT`                  | _(unset)_                  | Connect via a named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins when set.                                                                       |
+| `NATS_URL`                      | `nats://127.0.0.1:4222`    | Connect via a raw URL; credentials in the userinfo are honored.                                                                                                                                 |
+| `NATS_AGENT_OWNER`              | your `$USER` (else `anon`) | The `owner` token in `agents.prompt.<agent>.<owner>.<name>`. Set it so several people running this against one server don't collide.                                                            |
+| `NATS_AGENT_NAME`               | `main`                     | The instance `name` token in the subject. Use different names to run several instances at once.                                                                                                 |
+| `NATS_AGENT_HEARTBEAT_INTERVAL` | `30`                       | Heartbeat cadence in **seconds**. Lower it (e.g. `2`) for a livelier [`05-liveness`](../../../client-sdk/typescript/examples/05-liveness.ts) demo. (`0` is treated as unset → the 30s default.) |
 
 Per-backend variables (`OLLAMA_URL`, `OLLAMA_MODEL`, `OPENROUTER_API_KEY`,
 `OPENROUTER_MODEL`) are documented in the relevant sections below.
@@ -136,7 +136,8 @@ The agent registers as `openrouter`; drive it at the `openrouter` subject.
 Answers with **either** a local Ollama **or** OpenRouter, chosen automatically.
 Model access is factored into [`llm.ts`](llm.ts) — a small backend-agnostic chat
 client behind one `chatStream(messages)` API. That file is the reusable base a
-tool-calling agent would build on (see `05-tools.ts`).
+tool-calling agent would copy and extend; the next rung, `05-tools.ts`, shows
+the tool-calling pattern (with its own self-contained model client).
 
 | Condition                   | Backend                                                             |
 | --------------------------- | ------------------------------------------------------------------- |

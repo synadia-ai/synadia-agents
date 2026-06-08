@@ -191,6 +191,8 @@ async function main(): Promise<void> {
     // loop until the model stops requesting tools.)
     for (const call of decision.tool_calls ?? []) {
       const result = await runTool(nc, call.function.name, call.function.arguments);
+      // tool_call_id omitted — llama3.1 tolerates it; stricter models may need
+      // it added to correlate the result back to the originating tool_call.
       messages.push({ role: "tool", content: result });
     }
 

@@ -41,8 +41,9 @@ async function main(): Promise<void> {
     description: `LLM agent — answers prompts via ${llm.label}`,
   });
 
-  // Wrap the prompt as a single user message and stream the model's reply. This
-  // handler is the only thing a tool-calling agent (see 05-tools.ts) changes.
+  // Wrap the prompt as a single user message and stream the model's reply. A
+  // tool-calling agent (see 05-tools.ts) extends this same pattern — adding a
+  // non-streamed round-trip for tool dispatch before the final streamed answer.
   service.onPrompt(async (envelope, response) => {
     for await (const token of llm.chatStream([{ role: "user", content: envelope.prompt }])) {
       await response.send(token);
