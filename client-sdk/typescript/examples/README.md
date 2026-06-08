@@ -24,10 +24,12 @@ default connects to a local server). They discover and prompt agents — no agen
 identity to set, so the `NATS_AGENT_*` vars used by the
 [host-side examples](../../../agent-sdk/typescript/examples/) don't apply here.
 
-| Variable       | Default                 | Purpose                                                                                                                   |
-| -------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `NATS_CONTEXT` | _(unset)_               | Connect via a named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins when set. |
-| `NATS_URL`     | `nats://127.0.0.1:4222` | Connect via a raw URL; credentials in the userinfo are honored.                                                           |
+| Variable       | Default   | Purpose                                                                                                                   |
+| -------------- | --------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `NATS_CONTEXT` | _(unset)_ | Connect via a named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins when set. |
+| `NATS_URL`     | _(unset)_ | Connect via a raw URL; credentials in the userinfo are honored.                                                           |
+
+When neither is set, the demos fall back to `nats://127.0.0.1:4222`.
 
 ## Run
 
