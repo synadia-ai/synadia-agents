@@ -3,12 +3,20 @@
 // expected cadence.
 
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents, type HeartbeatPayload } from "@synadia-ai/agents";
+import {
+  Agents,
+  type HeartbeatPayload,
+  loadContextOptions,
+  parseNatsUrl,
+} from "@synadia-ai/agents";
 
 async function main(): Promise<void> {
-  const nc = await natsConnect({
-    servers: process.env["NATS_URL"] ?? "nats://127.0.0.1:4222",
-  });
+  const opts = process.env["NATS_CONTEXT"]
+    ? await loadContextOptions(process.env["NATS_CONTEXT"])
+    : process.env["NATS_URL"]
+      ? parseNatsUrl(process.env["NATS_URL"])
+      : { servers: "nats://127.0.0.1:4222" };
+  const nc = await natsConnect(opts);
   const agents = new Agents({ nc });
 
   // Start the heartbeat wildcard subscription BEFORE discover().
