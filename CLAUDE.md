@@ -43,7 +43,8 @@ discovery, prompting (text + attachments), mid-stream queries, and
 liveness against the reference agent — useful both as documentation
 and as a smoke surface:
 
-- TS: `client-sdk/typescript/examples/01-discover.ts` … `05-liveness.ts`.
+- TS: `client-sdk/typescript/examples/01-discover.ts` … `05-liveness.ts`,
+  plus `06-chat.ts` (interactive REPL).
 - Python: `client-sdk/python/examples/01-discover.py` … `05-liveness.py`,
   plus `06-chat.py` (interactive REPL). See
   `client-sdk/python/examples/README.md` for the full table.

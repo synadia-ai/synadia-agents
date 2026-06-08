@@ -65,11 +65,14 @@ async function main(): Promise<void> {
       : { servers: "nats://127.0.0.1:4222" };
   const nc = await natsConnect(opts);
 
+  // Identity and heartbeat cadence are env-overridable (see 01-echo.ts).
+  const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
   const service = new AgentService({
     nc,
     agent: "ollama",
-    owner: process.env["USER"] ?? "anon",
-    name: "main",
+    owner: process.env["NATS_AGENT_OWNER"] ?? process.env["USER"] ?? "anon",
+    name: process.env["NATS_AGENT_NAME"] ?? "main",
+    ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
     description: `LLM agent — answers prompts with the local Ollama '${MODEL}' model`,
   });
 

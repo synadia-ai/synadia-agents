@@ -129,7 +129,7 @@ Both SDKs ship a **spec-compliant reference agent** that implements the full §1
 
 | SDK | Reference agent | Demo scripts |
 | --- | --- | --- |
-| TypeScript | [`ReferenceAgent`](agent-sdk/typescript/src/testing/reference-agent.ts) — importable as `@synadia-ai/agent-service/testing`. Runnable: [`_run-reference-agent.ts`](client-sdk/typescript/examples/_run-reference-agent.ts). | [`client-sdk/typescript/examples/`](client-sdk/typescript/examples/) — `01-discover.ts` … `05-liveness.ts`. |
+| TypeScript | [`ReferenceAgent`](agent-sdk/typescript/src/testing/reference-agent.ts) — importable as `@synadia-ai/agent-service/testing`. Runnable: [`_run-reference-agent.ts`](client-sdk/typescript/examples/_run-reference-agent.ts). | [`client-sdk/typescript/examples/`](client-sdk/typescript/examples/) — `01-discover.ts` … `05-liveness.ts`, plus `06-chat.ts` (interactive REPL). |
 | Python | [`_reference_agent.py`](agent-sdk/python/examples/_reference_agent.py) — runnable echo agent with conversation memory. | [`client-sdk/python/examples/`](client-sdk/python/examples/) — `01-discover.py` … `05-liveness.py`, plus `06-chat.py` (interactive REPL). |
 
 <details>
