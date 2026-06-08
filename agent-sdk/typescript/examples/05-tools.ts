@@ -93,9 +93,18 @@ async function runTool(
   args: Record<string, unknown> | string,
 ): Promise<string> {
   if (name !== "read_sensor") return `error: unknown tool '${name}'`;
-  // Most models hand back parsed arguments; some return a JSON string instead.
-  const parsed: Record<string, unknown> =
-    typeof args === "string" ? (JSON.parse(args) as Record<string, unknown>) : args;
+  // Most models hand back parsed arguments; some return a JSON string instead —
+  // tolerate a malformed string rather than throwing out of the prompt handler.
+  let parsed: Record<string, unknown> = {};
+  if (typeof args === "string") {
+    try {
+      parsed = JSON.parse(args) as Record<string, unknown>;
+    } catch {
+      parsed = {};
+    }
+  } else {
+    parsed = args;
+  }
   const location = typeof parsed["location"] === "string" ? parsed["location"] : "";
   const reply = await nc.request(SENSOR_SUBJECT, location, { timeout: 5000 });
   const value = reply.string();
