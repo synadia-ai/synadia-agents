@@ -1,10 +1,16 @@
-// Minimal echo agent — replies to every prompt with `echo: <prompt text>`.
+// LLM agent (combined) — answers prompts with Ollama OR OpenRouter.
 //
-// The shortest runnable demonstration of the `AgentService` host API.
-// Use this as a smoke target while iterating on a caller, or as a
-// starting shape when writing your own agent.
+// Step 4 of the example ladder, and the reusable base later agents build on. It
+// defers all model access to ./llm.ts, which auto-selects a backend from the
+// environment:
 //
-// Connection resolution:
+//   OPENROUTER_API_KEY set  → OpenRouter (OPENROUTER_MODEL)
+//   otherwise               → local Ollama (OLLAMA_MODEL, OLLAMA_URL)
+//
+// The agent itself is unchanged from 01-echo's shape — connect, construct,
+// onPrompt, start — except the handler streams LLM tokens instead of an echo.
+//
+// Connection resolution (same as 01-echo.ts):
 //   1. $NATS_CONTEXT — name of a NATS CLI context under ~/.config/nats/context/
 //   2. $NATS_URL     — raw URL (credentials in userinfo are honored)
 //   3. nats://127.0.0.1:4222
@@ -12,8 +18,11 @@
 import { connect as natsConnect } from "@nats-io/transport-node";
 import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
+import { createLlmClient } from "./llm";
 
 async function main(): Promise<void> {
+  const llm = createLlmClient();
+
   const opts = process.env["NATS_CONTEXT"]
     ? await loadContextOptions(process.env["NATS_CONTEXT"])
     : process.env["NATS_URL"]
@@ -21,30 +30,29 @@ async function main(): Promise<void> {
       : { servers: "nats://127.0.0.1:4222" };
   const nc = await natsConnect(opts);
 
-  // Identity → subject `agents.prompt.echo.<owner>.<name>`. Owner and name are
-  // overridable (NATS_AGENT_OWNER / NATS_AGENT_NAME) so several people can run
-  // this against one server without colliding; `agent` ("echo") is what this
-  // example *is*, so it stays fixed. NATS_AGENT_HEARTBEAT_INTERVAL (seconds)
-  // tunes the heartbeat cadence — unset falls back to the SDK default (30s).
+  // Identity and heartbeat cadence are env-overridable (see 01-echo.ts).
   const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
   const service = new AgentService({
     nc,
-    agent: "echo",
+    agent: "llm",
     owner: process.env["NATS_AGENT_OWNER"] ?? process.env["USER"] ?? "anon",
     name: process.env["NATS_AGENT_NAME"] ?? "main",
-    // Spread the key in only when set: exactOptionalPropertyTypes forbids passing
-    // `heartbeatIntervalS: undefined` explicitly, and an absent key is exactly
-    // what tells the SDK to apply its 30s default.
     ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
-    description: "Echo agent — replies with the prompt prefixed by 'echo: '",
+    description: `LLM agent — answers prompts via ${llm.label}`,
   });
 
+  // Wrap the prompt as a single user message and stream the model's reply. A
+  // tool-calling agent (see 05-tools.ts) extends this same pattern — adding a
+  // non-streamed round-trip for tool dispatch before the final streamed answer.
   service.onPrompt(async (envelope, response) => {
-    await response.send(`echo: ${envelope.prompt}`);
+    for await (const token of llm.chatStream([{ role: "user", content: envelope.prompt }])) {
+      await response.send(token);
+    }
   });
 
   await service.start();
-  console.log(`echo agent listening on ${service.subject.prompt}`);
+  console.log(`llm agent listening on ${service.subject.prompt}`);
+  console.log(`backend: ${llm.label}`);
   console.log("press Ctrl+C to stop");
 
   const shutdown = async (): Promise<void> => {
@@ -58,6 +66,6 @@ async function main(): Promise<void> {
 }
 
 void main().catch((err: unknown) => {
-  console.error("echo agent failed:", err);
+  console.error("llm agent failed:", err);
   process.exit(1);
 });
