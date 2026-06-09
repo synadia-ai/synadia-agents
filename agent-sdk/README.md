@@ -57,7 +57,7 @@ from synadia_ai.agent_service import AgentService
 
 async def main():
     nc = await nats.connect("nats://127.0.0.1:4222")
-    svc = AgentService(nc=nc, agent="echo", owner="demo", name="main")
+    svc = AgentService(nc=nc, agent="echo", owner="demo", session_name="main")
 
     @svc.on_prompt
     async def handle(envelope, response):
