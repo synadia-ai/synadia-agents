@@ -8,9 +8,10 @@ The Synadia Agent Protocol for NATS lets any AI agent — Claude Code, OpenClaw,
 
 | You want to… | Go to | Install |
 | --- | --- | --- |
-| **Put an existing AI agent on NATS** (Claude Code, OpenClaw, PI, Hermes, Flue, DSPy ReAct) | [`agents/`](agents/) — pick the agent | per-agent README |
+| **Put an existing AI agent on NATS** (Claude Code, OpenClaw, PI, Hermes, DeerFlow, Flue) | [`agents/`](agents/) — pick the agent | per-agent README |
 | **Build a caller** that discovers and prompts agents | [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/) | `npm i @synadia-ai/agents` · `pip install synadia-ai-agents` |
 | **Host a brand-new agent** built from scratch | [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/) | `npm i @synadia-ai/agent-service` · `pip install synadia-ai-agent-service` |
+| **See full end-to-end demos** — browser UI, session controllers, from-scratch agents | [`examples/`](examples/) | per-example README |
 
 ## Agents
 
@@ -25,9 +26,10 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [DeerFlow](agents/deerflow/) | `df` | `synadia-ai-nats-deerflow-channel` — external Python wrapper for a running DeerFlow Gateway |
 | [Flue](agents/flue/) | `flue` | `@synadia-ai/flue-nats-channel` — sidecar for a running Flue app / agent |
 | [open-agent](agents/open-agent/) | `open-agent` | `@synadia-ai/open-agent` (private) — inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
-| [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 
 Subjects follow a verb-first pattern: `agents.{verb}.{token}.{owner}.{session}` where `verb` is `prompt`, `hb`, or `status`.
+
+Two from-scratch agents built on the host SDK — DSPy **ReAct** (`dspy`) and DSPy **deep-research** (`research`) — live under [Examples](#examples) rather than here, since they're built from scratch rather than wrapping an existing harness.
 
 ## SDKs
 
@@ -39,6 +41,19 @@ Two halves per language. The **caller** SDK (`client-sdk/`) discovers and prompt
 | **Host** | [`agent-sdk/`](agent-sdk/) | [`@synadia-ai/agent-service`](agent-sdk/typescript/) | [`synadia-ai-agent-service`](agent-sdk/python/) |
 
 Both languages stay in lockstep on the wire format, validated by a cross-SDK interop test ([`tests/test_interop_e2e.py`](client-sdk/python/tests/test_interop_e2e.py)) that runs the TS reference agent against the Python client.
+
+## Examples
+
+End-to-end apps built on the SDKs — browser clients, controllers that spawn ephemeral agents, and agents built from scratch. Full write-ups in [`examples/README.md`](examples/README.md).
+
+| Example | Kind | What it shows |
+| --- | --- | --- |
+| [`agent-web-ui/`](examples/agent-web-ui/) | caller | Vue 3 browser client — discovery, prompting with attachments, streaming, and inline mid-stream `query` allow/deny. Doubles as a **control plane**: when a headless controller is discovered it spawns sessions and fans a single prompt across N working directories in parallel. |
+| [`claude-code-headless/`](examples/claude-code-headless/) | agent | One process spawns and manages **headless Claude Code sessions** — each registers as its own first-class agent at `agents.prompt.cc-headless.<owner>.<session>`, alongside a `spawn`/`stop`/`list` controller. Per-token streaming, tool cards, §7 permission queries, per-turn cost tracking. |
+| [`pi-headless/`](examples/pi-headless/) | agent | The same **dynamic-session** pattern for the PI coding agent — many sessions, each its own agent at `agents.prompt.pi-headless.<owner>.<session>`, plus a `spawn`/`stop`/`list` controller. Pairs naturally with `agent-web-ui/`. |
+| [`dspy/`](examples/dspy/) | agent | From-scratch DSPy-style **ReAct** agent on `AgentService` with four sandboxed filesystem tools. Registers as token `dspy`. |
+| [`dspy-research-agent/`](examples/dspy-research-agent/) | agent | From-scratch DSPy-style **deep-research** agent on ax-llm's RLM — a sandboxed JS REPL with recursive `llmQuery()` sub-calls and pluggable web search (Tavily/Exa + neural `findSimilar`). Registers as token `research`. |
+| [`open-agent-vercel/`](examples/open-agent-vercel/) | agent | Runs the [`agents/open-agent/`](agents/open-agent/) bridge against `@vercel/sandbox` instead of its built-in LocalSandbox — same `runBridge`, same wire behaviour, only the sandbox factory changes. |
 
 ## Wire protocol at a glance
 
@@ -120,10 +135,6 @@ await nc.close();
 
 For full install, error handling, and longer examples see the per-package READMEs: caller — [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/); host — [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/).
 
-## Examples
-
-End-to-end apps built on the SDKs — controllers that spawn ephemeral agents, a browser test client, a from-scratch DSPy ReAct agent. See [`examples/`](examples/) and its [README](examples/README.md).
-
 ## For protocol implementers
 
 Both SDKs ship a **spec-compliant reference agent** that implements the full §12 agent checklist (service registration, prompt endpoint, status endpoint, heartbeats, terminator semantics). When reasoning about wire shape, testing a third SDK, or validating AI/LLM-generated tooling, read these first — they are the authoritative on-the-wire counterpart to the spec.
@@ -158,7 +169,8 @@ synadia-agents/
     ├── agent-web-ui/             ← Vue 3 + Bun browser client
     ├── claude-code-headless/     ← spawn/stop many Claude Code sessions
     ├── pi-headless/              ← spawn/stop many PI sessions
-    ├── dspy/                     ← standalone agent built from scratch (ax-llm ReAct)
+    ├── dspy/                     ← from-scratch agent (ax-llm ReAct, token `dspy`)
+    ├── dspy-research-agent/      ← from-scratch deep-research agent (ax-llm RLM + web search, token `research`)
     └── open-agent-vercel/        ← runs the open-agent bridge against @vercel/sandbox
 ```
 
