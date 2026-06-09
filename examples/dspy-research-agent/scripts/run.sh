@@ -23,11 +23,15 @@ if [[ -z "${TAVILY_API_KEY:-}" && -z "${EXA_API_KEY:-}" ]]; then
   echo "note: neither TAVILY_API_KEY nor EXA_API_KEY is set — web.search/web.fetch will raise until you set one" >&2
 fi
 
-if pgrep -f "bun run src/index.ts" >/dev/null; then
-  echo "stopping existing agent on this dir…"
-  pkill -f "bun run src/index.ts" || true
+# Match on the absolute entrypoint path so we only stop *this* example's agent
+# — `pgrep -f "bun run src/index.ts"` would also match the sibling dspy/ example.
+ENTRY="$HERE/src/index.ts"
+
+if pgrep -f "bun run $ENTRY" >/dev/null; then
+  echo "stopping existing agent for this example…"
+  pkill -f "bun run $ENTRY" || true
   sleep 1
 fi
 
 cd "$HERE"
-exec bun run src/index.ts "$@"
+exec bun run "$ENTRY" "$@"

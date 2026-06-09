@@ -1,6 +1,5 @@
 // Tiny driver: discover the research agent and stream a prompt to it.
-import process from "node:process";
-import { stdout } from "node:process";
+import process, { stdout } from "node:process";
 import { connect as natsConnect } from "@nats-io/transport-node";
 import { Agents } from "@synadia-ai/agents";
 
@@ -28,6 +27,12 @@ try {
         break;
       case "response":
         stdout.write(msg.text);
+        break;
+      default:
+        // The RLM agent doesn't emit `query` chunks today, but a future version
+        // might ask for clarification — this CLI can't answer, so surface it
+        // instead of silently hanging until the inactivity timeout.
+        process.stderr.write(`  [warn] ignoring unsupported "${msg.type}" chunk\n`);
         break;
     }
   }

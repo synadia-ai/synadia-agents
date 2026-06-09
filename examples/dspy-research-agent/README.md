@@ -7,8 +7,9 @@ using a web search backend based after DSPy-style "deep research agent" pattern 
 ## Subject
 
 ```
-agents.research.<owner>.rlm             # prompt endpoint
-agents.research.<owner>.rlm.heartbeat   # 10 s heartbeat
+agents.prompt.research.<owner>.rlm    # prompt endpoint  (v0.3 verb-first)
+agents.status.research.<owner>.rlm    # status endpoint
+agents.hb.research.<owner>.rlm        # 10 s heartbeat   (§8.1)
 ```
 
 ## Streamed chunks
@@ -102,4 +103,4 @@ Under the hood, ax splits this into two programs:
   - `submit("done")` to signal completion
 - **Responder** — runs once after the actor submits, and synthesizes the final `report` + `citations` from the accumulated REPL state.
 
-The `contextPolicy: { preset: "checkpointed", budget: "balanced" }` setting keeps the prompt size bounded across long research runs by checkpoint-summarizing older turns. See `src/ax/src/ax/docs/axagent-rlm.md` in this repo for the full design reference.
+The `contextPolicy: { preset: "checkpointed", budget: "balanced" }` setting keeps the prompt size bounded across long research runs by checkpoint-summarizing older turns. See the [ax-llm](https://github.com/ax-llm/ax) documentation for the full RLM design reference.
