@@ -20,7 +20,10 @@ import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
 import { createSearchProvider } from "./search.js";
 
-const MODEL = process.env["RESEARCH_MODEL"] ?? "openai/gpt-oss-20b";
+// The RLM actor must write JS, call the web tools, and submit() on its own —
+// that needs a capable model. gpt-oss-20b can't reliably drive the loop; 120b
+// is the tested default. See the README "Model" / "Troubleshooting" sections.
+const MODEL = process.env["RESEARCH_MODEL"] ?? "openai/gpt-oss-120b";
 const API_URL = process.env["NVIDIA_API_URL"] ?? "https://integrate.api.nvidia.com/v1";
 const API_KEY = process.env["NVIDIA_API_KEY"];
 const MAX_TURNS = Number(process.env["RESEARCH_MAX_TURNS"] ?? 15);
