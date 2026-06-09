@@ -12,16 +12,16 @@ NATS bus.
 
 ## Install
 
-From a checkout (no published wheel yet):
+```bash
+pip install synadia-ai-agent-service
+```
+
+This pulls `synadia-ai-agents` automatically. For local development against the sibling checkout:
 
 ```bash
 uv pip install -e ../../client-sdk/python
 uv pip install -e .
 ```
-
-When both packages are on PyPI, plain `pip install
-synadia-ai-agent-service` will pull `synadia-ai-agents>=0.6`
-automatically.
 
 ## Quickstart — host an agent
 
