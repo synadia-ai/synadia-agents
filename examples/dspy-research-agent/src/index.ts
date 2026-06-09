@@ -240,7 +240,8 @@ service.onPrompt(async (envelope, response) => {
   // `envelope.prompt` thanks to AgentService's decoder.
   const question = envelope.prompt;
 
-  await response.send({ type: "status", status: "ack" });
+  // AgentService already emits the mandatory §6.4 leading `ack` before this
+  // handler runs, so we don't send our own — just advertise the search backend.
   await response.send({ type: "status", status: `provider: ${searchProvider.name}` });
 
   const emit = (line: string): void => void response.send({ type: "status", status: line });
