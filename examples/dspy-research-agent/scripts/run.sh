@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run the research agent: source .env, kill any previous instance, start fresh.
 # Pass-through env: RESEARCH_MODEL, RESEARCH_PROVIDER, TAVILY_API_KEY,
-# RESEARCH_MAX_TURNS, RESEARCH_MAX_SUB_CALLS, RESEARCH_DEBUG, NATS_URL.
+# EXA_API_KEY, RESEARCH_MAX_TURNS, RESEARCH_MAX_SUB_CALLS, RESEARCH_DEBUG,
+# NATS_CONTEXT, NATS_URL.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -73,7 +73,8 @@ Environment variables:
 | `RESEARCH_MAX_TURNS`     | `15`                                  | max actor REPL turns per request                     |
 | `RESEARCH_MAX_SUB_CALLS` | `30`                                  | cap on recursive `llmQuery` calls                    |
 | `RESEARCH_DEBUG`         | unset                                 | set to `1` to dump req/res to `/tmp/research-*.json` |
-| `NATS_URL`               | `nats://127.0.0.1:4222`               | NATS server                                          |
+| `NATS_CONTEXT`           | unset                                 | named NATS CLI context (creds/nkey/JWT/TLS); takes precedence over `NATS_URL` |
+| `NATS_URL`               | `nats://127.0.0.1:4222`               | NATS server (used when `NATS_CONTEXT` is unset)      |
 
 ## Try it
 

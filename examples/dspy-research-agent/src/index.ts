@@ -16,10 +16,10 @@ import {
   fn,
 } from "@ax-llm/ax";
 import { connect as natsConnect } from "@nats-io/transport-node";
+import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
 import { createSearchProvider } from "./search.js";
 
-const NATS_URL = process.env["NATS_URL"] ?? "nats://127.0.0.1:4222";
 const MODEL = process.env["RESEARCH_MODEL"] ?? "openai/gpt-oss-20b";
 const API_URL = process.env["NVIDIA_API_URL"] ?? "https://integrate.api.nvidia.com/v1";
 const API_KEY = process.env["NVIDIA_API_KEY"];
@@ -106,7 +106,15 @@ const llm = ai({
   options: { fetch: scrubbedFetch as typeof fetch },
 });
 
-const nc = await natsConnect({ servers: NATS_URL });
+// Connection resolution mirrors the client-sdk 01–05 examples: a named NATS
+// CLI context (carries creds / nkey / JWT / TLS) takes precedence, then a
+// plain NATS_URL, then localhost.
+const natsOpts = process.env["NATS_CONTEXT"]
+  ? await loadContextOptions(process.env["NATS_CONTEXT"])
+  : process.env["NATS_URL"]
+    ? parseNatsUrl(process.env["NATS_URL"])
+    : { servers: "nats://127.0.0.1:4222" };
+const nc = await natsConnect(natsOpts);
 const searchProvider = createSearchProvider();
 
 function buildWebTools(emit: (line: string) => void): AxAgentFunctionGroup[] {

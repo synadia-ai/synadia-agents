@@ -1,15 +1,20 @@
 // Tiny driver: discover the research agent and stream a prompt to it.
 import process, { stdout } from "node:process";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents } from "@synadia-ai/agents";
+import { Agents, loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 
 const question =
   process.argv.slice(2).join(" ") ||
   "what are the main tradeoffs between DSPy ReAct and DSPy RLM?";
 
-const nc = await natsConnect({
-  servers: process.env["NATS_URL"] ?? "nats://127.0.0.1:4222",
-});
+// NATS_CONTEXT (a named CLI context) wins, then NATS_URL, then localhost —
+// same resolution as the agent in src/index.ts.
+const opts = process.env["NATS_CONTEXT"]
+  ? await loadContextOptions(process.env["NATS_CONTEXT"])
+  : process.env["NATS_URL"]
+    ? parseNatsUrl(process.env["NATS_URL"])
+    : { servers: "nats://127.0.0.1:4222" };
+const nc = await natsConnect(opts);
 const agents = new Agents({ nc });
 
 try {
