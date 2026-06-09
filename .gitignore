@@ -24,6 +24,14 @@ htmlcov/
 # Per-test evidence (client-sdk/python)
 client-sdk/python/tests/_evidence/
 
+# Secrets / local env — API keys (NVIDIA, Tavily, Exa, …) live here.
+# Examples source these (e.g. dspy-research-agent/scripts/run.sh reads ../../.env).
+# Keep templates trackable so the convention stays discoverable.
+.env
+.env.*
+!.env.example
+!.env.sample
+
 # Editor / OS
 .DS_Store
 .idea/
