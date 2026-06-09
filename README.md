@@ -42,6 +42,19 @@ Two halves per language. The **caller** SDK (`client-sdk/`) discovers and prompt
 
 Both languages stay in lockstep on the wire format, validated by a cross-SDK interop test ([`tests/test_interop_e2e.py`](client-sdk/python/tests/test_interop_e2e.py)) that runs the TS reference agent against the Python client.
 
+## Examples
+
+End-to-end apps built on the SDKs — browser clients, controllers that spawn ephemeral agents, and agents built from scratch. Full write-ups in [`examples/README.md`](examples/README.md).
+
+| Example | Kind | What it shows |
+| --- | --- | --- |
+| [`agent-web-ui/`](examples/agent-web-ui/) | caller | Vue 3 browser client — discovery, prompting with attachments, streaming, and inline mid-stream `query` allow/deny. Doubles as a **control plane**: when a headless controller is discovered it spawns sessions and fans a single prompt across N working directories in parallel. |
+| [`claude-code-headless/`](examples/claude-code-headless/) | agent | One process spawns and manages **headless Claude Code sessions** — each registers as its own first-class agent at `agents.prompt.cc-headless.<owner>.<session>`, alongside a `spawn`/`stop`/`list` controller. Per-token streaming, tool cards, §7 permission queries, per-turn cost tracking. |
+| [`pi-headless/`](examples/pi-headless/) | agent | The same **dynamic-session** pattern for the PI coding agent — many sessions, each its own agent at `agents.prompt.pi-headless.<owner>.<session>`, plus a `spawn`/`stop`/`list` controller. Pairs naturally with `agent-web-ui/`. |
+| [`dspy/`](examples/dspy/) | agent | From-scratch DSPy-style **ReAct** agent on `AgentService` with four sandboxed filesystem tools. Registers as token `dspy`. |
+| [`dspy-research-agent/`](examples/dspy-research-agent/) | agent | From-scratch DSPy-style **deep-research** agent on ax-llm's RLM — a sandboxed JS REPL with recursive `llmQuery()` sub-calls and pluggable web search (Tavily/Exa + neural `findSimilar`). Registers as token `research`. |
+| [`open-agent-vercel/`](examples/open-agent-vercel/) | agent | Runs the [`agents/open-agent/`](agents/open-agent/) bridge against `@vercel/sandbox` instead of its built-in LocalSandbox — same `runBridge`, same wire behaviour, only the sandbox factory changes. |
+
 ## Wire protocol at a glance
 
 ```
@@ -121,19 +134,6 @@ await nc.close();
 **Try it now:** [`agent-sdk/typescript/examples/01-echo.ts`](agent-sdk/typescript/examples/01-echo.ts) is this code packaged as a runnable script — `bun agent-sdk/typescript/examples/01-echo.ts` (with `$NATS_CONTEXT`, `$NATS_URL`, or localhost fallback). Both SDKs ship a parallel **agent ladder** (`01-echo` → `05-tools`: echo, Ollama, OpenRouter, combined, tool-calling) — TS in [`agent-sdk/typescript/examples/`](agent-sdk/typescript/examples/), Python in [`agent-sdk/python/examples/`](agent-sdk/python/examples/).
 
 For full install, error handling, and longer examples see the per-package READMEs: caller — [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/); host — [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/).
-
-## Examples
-
-End-to-end apps built on the SDKs — browser clients, controllers that spawn ephemeral agents, and agents built from scratch. Full write-ups in [`examples/README.md`](examples/README.md).
-
-| Example | Kind | What it shows |
-| --- | --- | --- |
-| [`agent-web-ui/`](examples/agent-web-ui/) | caller | Vue 3 browser client — discovery, prompting with attachments, streaming, and inline mid-stream `query` allow/deny. Doubles as a **control plane**: when a headless controller is discovered it spawns sessions and fans a single prompt across N working directories in parallel. |
-| [`claude-code-headless/`](examples/claude-code-headless/) | agent | One process spawns and manages **headless Claude Code sessions** — each registers as its own first-class agent at `agents.prompt.cc.<owner>.<session>`, alongside a `spawn`/`stop`/`list` controller. Per-token streaming, tool cards, §7 permission queries, per-turn cost tracking. |
-| [`pi-headless/`](examples/pi-headless/) | agent | The same **dynamic-session** pattern for the PI coding agent — many sessions, each its own agent at `agents.prompt.pi.<owner>.<session>`, plus a `spawn`/`stop`/`list` controller. Pairs naturally with `agent-web-ui/`. |
-| [`dspy/`](examples/dspy/) | agent | From-scratch DSPy-style **ReAct** agent on `AgentService` with four sandboxed filesystem tools. Registers as token `dspy`. |
-| [`dspy-research-agent/`](examples/dspy-research-agent/) | agent | From-scratch DSPy-style **deep-research** agent on ax-llm's RLM — a sandboxed JS REPL with recursive `llmQuery()` sub-calls and pluggable web search (Tavily/Exa + neural `findSimilar`). Registers as token `research`. |
-| [`open-agent-vercel/`](examples/open-agent-vercel/) | agent | Runs the [`agents/open-agent/`](agents/open-agent/) bridge against `@vercel/sandbox` instead of its built-in LocalSandbox — same `runBridge`, same wire behaviour, only the sandbox factory changes. |
 
 ## For protocol implementers
 
