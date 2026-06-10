@@ -15,6 +15,8 @@ describe("package metadata", () => {
     expect(pkg.bin["opencode-agent"]).toBe("./src/cli.ts");
     expect(pkg.exports["."].import).toBe("./src/index.ts");
     expect(pkg.files).toContain("src");
+    expect(pkg.files).toContain("README.md");
+    expect(pkg.files).toContain("PLUGIN_FIRST_IMPLEMENTATION_SPEC.md");
     expect(pkg.files).toContain(".env.example");
   });
 
