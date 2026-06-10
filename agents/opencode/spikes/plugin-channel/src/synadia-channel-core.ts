@@ -17,8 +17,9 @@ export interface SynadiaChannelOptions {
 
 export interface SynadiaPluginContext {
   client: {
+    postSessionIdPermissionsPermissionId?: (input: { path: { id: string; permissionID: string }; query?: { directory?: string }; body: { response: PermissionReply } }) => Promise<unknown> | unknown;
     permission?: {
-      reply?: (input: { requestID: string; reply: PermissionReply; message?: string }) => Promise<unknown> | unknown;
+      reply?: (input: { requestID: string; reply: PermissionReply; message?: string; directory?: string }) => Promise<unknown> | unknown;
     };
     app?: {
       log?: (input: { body: Record<string, unknown> }) => Promise<unknown> | unknown;
@@ -45,7 +46,19 @@ export interface SynadiaChannelState {
   eventTypes: Map<string, number>;
   activePrompts: Map<string, ActivePrompt>;
   disposeCount: number;
+  duplicateInitCount: number;
+  permissionBridgeCount: number;
 }
+
+interface ChannelInstance {
+  state: SynadiaChannelState;
+  hooks: {
+    event: (input: { event: unknown }) => Promise<void>;
+    dispose: () => Promise<void>;
+  };
+}
+
+const activeChannels = new Map<string, ChannelInstance>();
 
 export function safeToken(input: string, fallback: string): string {
   const normalized = input.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
@@ -82,18 +95,24 @@ export function summarizeEvent(event: unknown): { type: string; keys: string[]; 
   const type = typeof record.type === "string" ? record.type : "unknown";
   const props = isRecord(record.properties) ? record.properties : record;
   const sessionID = readString(props, "sessionID") ?? readString(props, "sessionId") ?? readString(props, "session_id");
-  const permissionID = readString(props, "id") ?? readString(props, "requestID") ?? readString(props, "permissionID");
+  const permissionID = readString(props, "id") ?? readString(props, "requestID") ?? readString(props, "permissionID") ?? readString(props, "permissionId");
   return { type, keys: Object.keys(props).sort(), ...(sessionID ? { sessionID } : {}), ...(permissionID ? { permissionID } : {}) };
+}
+
+function isPermissionRequestEvent(type: string): boolean {
+  return type === "permission.asked" || type === "permission.v2.asked" || type === "permission.updated";
 }
 
 export async function handlePermissionAsked(input: {
   event: unknown;
   state: SynadiaChannelState;
   client: SynadiaPluginContext["client"];
+  directory?: string;
+  serverUrl?: URL;
   log: (message: string, extra?: Record<string, unknown>) => void;
 }): Promise<boolean> {
   const summary = summarizeEvent(input.event);
-  if (summary.type !== "permission.asked") return false;
+  if (!isPermissionRequestEvent(summary.type)) return false;
   if (!summary.permissionID) {
     input.log("permission event missing request id", { keys: summary.keys });
     return false;
@@ -106,20 +125,36 @@ export async function handlePermissionAsked(input: {
   }
   const answer = await active.response.ask(formatPermissionQuestion(input.event), { timeoutMs: 30_000, attachments: [] });
   const reply = mapPermissionReply(answer.prompt);
-  await input.client.permission?.reply?.({ requestID: summary.permissionID, ...reply });
-  input.log("permission event bridged", { sessionID, requestID: summary.permissionID, reply: reply.reply });
+  await replyToOpenCodePermission(input.client, sessionID, summary.permissionID, reply.reply, input.directory, input.serverUrl);
+  input.state.permissionBridgeCount += 1;
+  input.log("permission event bridged", { sessionID, requestID: summary.permissionID, reply: reply.reply, permissionBridgeCount: input.state.permissionBridgeCount });
   return true;
 }
 
 export async function createSynadiaChannel(ctx: SynadiaPluginContext, options: SynadiaChannelOptions = {}) {
-  const state: SynadiaChannelState = { eventTypes: new Map(), activePrompts: new Map(), disposeCount: 0 };
   const log = makeLogger(options.logPath ?? process.env.SYNADIA_PLUGIN_LOG, ctx);
   const natsUrl = options.natsUrl ?? process.env.SYNADIA_NATS_URL;
   const identity = deriveIdentity(ctx, options);
+  const channelKey = `${natsUrl ?? "disabled"}:${identity.owner}:${identity.session}`;
+  const existing = activeChannels.get(channelKey);
+  if (existing) {
+    existing.state.duplicateInitCount += 1;
+    log("duplicate initialization reused existing channel", { owner: identity.owner, session: identity.session, subject: existing.state.subject, duplicateInitCount: existing.state.duplicateInitCount });
+    return {
+      state: existing.state,
+      hooks: {
+        event: async () => undefined,
+        dispose: async () => log("duplicate dispose ignored", { owner: identity.owner, session: identity.session, subject: existing.state.subject }),
+      },
+    };
+  }
+
+  const state: SynadiaChannelState = { eventTypes: new Map(), activePrompts: new Map(), disposeCount: 0, duplicateInitCount: 0, permissionBridgeCount: 0 };
   let nc: Awaited<ReturnType<typeof natsConnect>> | undefined;
   let service: AgentService | undefined;
+  let disposed = false;
 
-  log("plugin initializing", { owner: identity.owner, session: identity.session, metadata: identity.metadata });
+  log("plugin initializing", { owner: identity.owner, session: identity.session, metadata: identity.metadata, clientKeys: Object.keys(ctx.client).sort(), hasPermissionNamespace: Boolean(ctx.client.permission) });
 
   if (natsUrl) {
     nc = await natsConnect({ servers: natsUrl });
@@ -143,7 +178,14 @@ export async function createSynadiaChannel(ctx: SynadiaPluginContext, options: S
       state.activePrompts.set(sessionID, { sessionID, response: promptResponse });
       try {
         await response.send({ type: "status", status: "opencode plugin channel received prompt" });
-        await response.send(`plugin echo: ${envelope.prompt}`);
+        if (String(envelope.prompt ?? "").includes("hold_for_permission_probe")) {
+          const beforeBridgeCount = state.permissionBridgeCount;
+          log("permission probe prompt active", { sessionID, beforeBridgeCount });
+          await waitFor(() => state.permissionBridgeCount > beforeBridgeCount, 30_000, "permission bridge");
+          await response.send(`plugin permission bridge complete: ${envelope.prompt}`);
+        } else {
+          await response.send(`plugin echo: ${envelope.prompt}`);
+        }
       } finally {
         state.activePrompts.delete(sessionID);
       }
@@ -155,32 +197,42 @@ export async function createSynadiaChannel(ctx: SynadiaPluginContext, options: S
     log("nats disabled: SYNADIA_NATS_URL not set", { owner: identity.owner, session: identity.session });
   }
 
-  return {
+  const instance: ChannelInstance = {
     state,
     hooks: {
       event: async ({ event }: { event: unknown }) => {
         const summary = summarizeEvent(event);
         state.eventTypes.set(summary.type, (state.eventTypes.get(summary.type) ?? 0) + 1);
         log("event observed", { ...summary, count: state.eventTypes.get(summary.type) });
-        await handlePermissionAsked({ event, state, client: ctx.client, log });
+        await handlePermissionAsked({ event, state, client: ctx.client, directory: ctx.directory, serverUrl: ctx.serverUrl, log });
       },
       dispose: async () => {
+        if (disposed) {
+          log("dispose skipped: already disposed", { disposeCount: state.disposeCount, subject: state.subject });
+          return;
+        }
+        disposed = true;
         state.disposeCount += 1;
         log("dispose starting", { disposeCount: state.disposeCount, subject: state.subject });
+        activeChannels.delete(channelKey);
         await service?.stop();
         await nc?.drain();
         log("dispose complete", { disposeCount: state.disposeCount });
       },
     },
   };
+  activeChannels.set(channelKey, instance);
+  return instance;
 }
 
 export function formatPermissionQuestion(event: unknown): string {
-  const summary = summarizeEvent(event);
   const props = isRecord(event) && isRecord(event.properties) ? event.properties : {};
-  const permission = readString(props, "permission") ?? "unknown";
-  const patterns = Array.isArray(props.patterns) ? props.patterns.join(", ") : "";
-  return `OpenCode requests permission ${permission}${patterns ? ` for ${patterns}` : ""}. Reply yes/once, always, or no.`;
+  const permission = readString(props, "permission") ?? readString(props, "action") ?? readString(props, "type") ?? "unknown";
+  const title = readString(props, "title");
+  const pattern = readString(props, "pattern");
+  const resources = Array.isArray(props.resources) ? props.resources.join(", ") : undefined;
+  const patterns = Array.isArray(props.patterns) ? props.patterns.join(", ") : pattern ?? resources ?? "";
+  return `OpenCode requests permission ${permission}${title ? ` (${title})` : ""}${patterns ? ` for ${patterns}` : ""}. Reply yes/once, always, or no.`;
 }
 
 export function mapPermissionReply(input: string | undefined): { reply: PermissionReply; message?: string } {
@@ -189,6 +241,47 @@ export function mapPermissionReply(input: string | undefined): { reply: Permissi
   if (["yes", "y", "once", "allow", "true"].includes(normalized)) return { reply: "once" };
   if (["no", "n", "deny", "reject", "false"].includes(normalized)) return { reply: "reject", message: "Rejected by protocol query reply" };
   return { reply: "reject", message: normalized ? "Rejected by ambiguous protocol query reply" : "Rejected by empty protocol query reply" };
+}
+
+async function replyToOpenCodePermission(client: SynadiaPluginContext["client"], sessionID: string, permissionID: string, reply: PermissionReply, directory?: string, serverUrl?: URL): Promise<void> {
+  let sdkError: unknown;
+  if (client.permission?.reply) {
+    const result = await client.permission.reply({ requestID: permissionID, reply, ...(directory ? { directory } : {}) });
+    if (!isRecord(result) || !result.error) return;
+    sdkError = result.error;
+  }
+  if (serverUrl) {
+    const direct = await postPermissionReply(serverUrl, `/permission/${encodeURIComponent(permissionID)}/reply`, { requestID: permissionID, reply, directory });
+    if (direct.ok) return;
+    const scoped = await postPermissionReply(serverUrl, `/api/session/${encodeURIComponent(sessionID)}/permission/${encodeURIComponent(permissionID)}/reply`, { requestID: permissionID, reply });
+    if (scoped.ok) return;
+    if (!client.postSessionIdPermissionsPermissionId) {
+      const prefix = sdkError ? `SDK reply failed first: ${JSON.stringify(sdkError)}; ` : "";
+      throw new Error(`${prefix}OpenCode permission direct reply failed: ${direct.status} ${direct.text}; scoped: ${scoped.status} ${scoped.text}`);
+    }
+  }
+  if (client.postSessionIdPermissionsPermissionId) {
+    const result = await client.postSessionIdPermissionsPermissionId({
+      path: { id: sessionID, permissionID },
+      ...(directory ? { query: { directory } } : {}),
+      body: { response: reply },
+    });
+    if (isRecord(result) && result.error) throw new Error(`OpenCode permission reply failed: ${JSON.stringify(result.error)}`);
+    return;
+  }
+  if (sdkError) throw new Error(`OpenCode permission reply failed: ${JSON.stringify(sdkError)}`);
+}
+
+async function postPermissionReply(serverUrl: URL, path: string, input: { requestID: string; reply: PermissionReply; directory?: string }): Promise<{ ok: boolean; status: number; text: string }> {
+  const url = new URL(path, serverUrl);
+  if (input.directory) url.searchParams.set("directory", input.directory);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ reply: input.reply, response: input.reply }),
+  });
+  const text = await res.text().catch(() => "");
+  return { ok: res.ok, status: res.status, text };
 }
 
 function makeLogger(logPath: string | undefined, ctx: SynadiaPluginContext) {
@@ -214,6 +307,15 @@ function safeOrigin(url: unknown): string {
   } catch {
     return "";
   }
+}
+
+async function waitFor(fn: () => boolean, timeoutMs: number, label: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fn()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`timed out waiting for ${label}`);
 }
 
 function readString(record: Record<string, unknown>, key: string): string | undefined {
