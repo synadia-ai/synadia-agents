@@ -35,7 +35,6 @@
     "src",
     "scripts",
     "README.md",
-    "PLUGIN_FIRST_IMPLEMENTATION_SPEC.md",
     ".env.example"
   ],
   "scripts": {

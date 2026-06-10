@@ -167,6 +167,27 @@ describe("plugin prompt bridge", () => {
     expect(st.permissionBridgeCount).toBe(1);
     await iterator.return?.();
   });
+
+  test("does not route sessionless permission events to the only active prompt", async () => {
+    const ctx: OpenCodePluginContext = {
+      client: {
+        session: {
+          prompt: async () => {
+            await delay(50);
+            return { data: { parts: [{ type: "text", text: "done" }] } };
+          },
+        },
+      },
+    };
+    const bridge = new PluginOpenCodeBridgeClient(ctx, state("query"));
+    const events: OpenCodeBridgeEvent[] = [];
+    const done = collectEvents(bridge.prompt({ prompt: "needs permission", sessionId: "ses_1" }), events);
+    await waitFor(() => events.some((event) => event.type === "status"));
+    await bridge.handleEvent({ type: "permission.asked", properties: { id: "per_missing_session", permission: "bash" } });
+    await done;
+    expect(events.some((event) => event.type === "permission")).toBe(false);
+    expect(events).toContainEqual({ type: "response", text: "done" });
+  });
 });
 
 async function collectEvents(

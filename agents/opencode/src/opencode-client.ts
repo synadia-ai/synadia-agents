@@ -4,6 +4,7 @@ import type { OpenCodeChannelConfig, PermissionPolicy } from "./config.js";
 import type { OpenCodeBridgeClient, OpenCodeBridgeEvent, OpenCodePromptRequest } from "./bridge.js";
 import { createEventMapperState, eventSessionId, mapOpenCodeEvent } from "./event-mapper.js";
 import { permissionIdsFromEvent, permissionQuestionFromEvent, policyDecision } from "./permissions.js";
+import { AsyncQueue } from "./async-queue.js";
 
 interface SdkRequestResult<T = unknown> {
   readonly data?: T;
@@ -86,6 +87,7 @@ class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {
   readonly mode: "managed" | "attached";
   #activeSessionId: string | undefined;
   #creatingSession: Promise<string> | undefined;
+  readonly #sessionPromptLocks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly config: OpenCodeChannelConfig,
@@ -99,8 +101,9 @@ class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {
   async *prompt(request: OpenCodePromptRequest): AsyncIterable<OpenCodeBridgeEvent> {
     const directory = request.directory ?? this.config.opencode.directory;
     const sessionId = await this.ensureSession(request.sessionId, directory);
+    const releaseSessionPrompt = await this.acquireSessionPromptLock(sessionId);
     const streamAbort = new AbortController();
-    const queue = new AsyncEventQueue();
+    const queue = new AsyncQueue<OpenCodeBridgeEvent>();
     let responseChunks = 0;
     let done = false;
     const finish = (): void => {
@@ -111,68 +114,88 @@ class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {
       queue.close();
     };
 
-    const sse = await this.client.event.subscribe({
-      ...(directory ? { query: { directory } } : {}),
-      signal: streamAbort.signal,
-      sseMaxRetryAttempts: 0,
-    });
-    const mapperState = createEventMapperState();
-    void (async () => {
-      try {
-        for await (const raw of sse.stream) {
-          const rawSessionId = eventSessionId(raw);
-          if (rawSessionId && rawSessionId !== sessionId) continue;
-          if (isPermissionEvent(raw)) {
-            await this.handlePermissionEvent(raw, directory, queue);
-            continue;
+    try {
+      const sse = await this.client.event.subscribe({
+        ...(directory ? { query: { directory } } : {}),
+        signal: streamAbort.signal,
+        sseMaxRetryAttempts: 0,
+      });
+      const mapperState = createEventMapperState();
+      void (async () => {
+        try {
+          for await (const raw of sse.stream) {
+            const rawSessionId = eventSessionId(raw);
+            if (rawSessionId && rawSessionId !== sessionId) continue;
+            if (isPermissionEvent(raw)) {
+              await this.handlePermissionEvent(raw, directory, queue);
+              continue;
+            }
+            const mapped = mapOpenCodeEvent(raw, mapperState);
+            if (mapped.type === "response" && mapped.text) {
+              responseChunks += 1;
+              queue.push({ type: "response", text: mapped.text });
+            } else if (mapped.type === "status" && mapped.text) {
+              queue.push({ type: "status", text: mapped.text });
+            } else if (mapped.type === "error") {
+              queue.fail(new Error(mapped.text ?? "OpenCode session error"));
+              finish();
+              return;
+            } else if (mapped.type === "done") {
+              finish();
+              return;
+            }
           }
-          const mapped = mapOpenCodeEvent(raw, mapperState);
-          if (mapped.type === "response" && mapped.text) {
-            responseChunks += 1;
-            queue.push({ type: "response", text: mapped.text });
-          } else if (mapped.type === "status" && mapped.text) {
-            queue.push({ type: "status", text: mapped.text });
-          } else if (mapped.type === "error") {
-            queue.fail(new Error(mapped.text ?? "OpenCode session error"));
-            finish();
-            return;
-          } else if (mapped.type === "done") {
-            finish();
-            return;
-          }
+        } catch (err) {
+          if (!streamAbort.signal.aborted) queue.fail(err);
         }
-      } catch (err) {
-        if (!streamAbort.signal.aborted) queue.fail(err);
-      }
-    })();
+      })();
 
-    queue.push({ type: "status", text: `connected to OpenCode ${this.mode} server; session=${sessionId}` });
-    void (async () => {
-      try {
-        const model = request.model ?? this.config.opencode.model;
-        const agent = request.agent ?? this.config.opencode.agent;
-        const result = await this.client.session.prompt({
-          path: { id: sessionId },
-          ...(directory ? { query: { directory } } : {}),
-          body: {
-            ...(model ? { model: parseModel(model) } : {}),
-            ...(agent ? { agent } : {}),
-            parts: [{ type: "text", text: request.prompt }],
-          },
-        });
-        if (result.error) throw new Error(`OpenCode prompt failed: ${formatError(result.error)}`);
-        const fallbackText = responseChunks === 0 ? textFromPromptResult(result.data) : "";
-        if (fallbackText) queue.push({ type: "response", text: fallbackText });
-        finish();
-      } catch (err) {
-        queue.fail(err);
-        finish();
-      }
-    })();
+      queue.push({ type: "status", text: `connected to OpenCode ${this.mode} server; session=${sessionId}` });
+      void (async () => {
+        try {
+          const model = request.model ?? this.config.opencode.model;
+          const agent = request.agent ?? this.config.opencode.agent;
+          const result = await this.client.session.prompt({
+            path: { id: sessionId },
+            ...(directory ? { query: { directory } } : {}),
+            body: {
+              ...(model ? { model: parseModel(model) } : {}),
+              ...(agent ? { agent } : {}),
+              parts: [{ type: "text", text: request.prompt }],
+            },
+          });
+          if (result.error) throw new Error(`OpenCode prompt failed: ${formatError(result.error)}`);
+          const fallbackText = responseChunks === 0 ? textFromPromptResult(result.data) : "";
+          if (fallbackText) queue.push({ type: "response", text: fallbackText });
+          finish();
+        } catch (err) {
+          queue.fail(err);
+          finish();
+        }
+      })();
 
-    for await (const event of queue) {
-      if (event.type !== "done") yield event;
+      for await (const event of queue) {
+        if (event.type !== "done") yield event;
+      }
+    } finally {
+      releaseSessionPrompt();
     }
+  }
+
+  private async acquireSessionPromptLock(sessionId: string): Promise<() => void> {
+    const previous = this.#sessionPromptLocks.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const chained = previous.catch(() => undefined).then(() => current);
+    this.#sessionPromptLocks.set(sessionId, chained);
+    await previous.catch(() => undefined);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      release();
+      if (this.#sessionPromptLocks.get(sessionId) === chained) this.#sessionPromptLocks.delete(sessionId);
+    };
   }
 
   async close(): Promise<void> {
@@ -181,7 +204,7 @@ class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {
 
   private async ensureSession(requestedSessionId: string | undefined, directory: string | undefined): Promise<string> {
     const existing = requestedSessionId ?? this.#activeSessionId;
-    if (existing) return existing;
+    if (existing) return validateOpenCodeSessionId(existing, "OpenCode session id");
     this.#creatingSession ??= this.createSession(directory).finally(() => { this.#creatingSession = undefined; });
     return await this.#creatingSession;
   }
@@ -194,11 +217,12 @@ class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {
     if (result.error) throw new Error(`OpenCode session create failed: ${formatError(result.error)}`);
     const id = readString(result.data, "id");
     if (!id) throw new Error("OpenCode session create response did not include an id");
-    this.#activeSessionId = id;
-    return id;
+    const sessionId = validateOpenCodeSessionId(id, "OpenCode session create response id");
+    this.#activeSessionId = sessionId;
+    return sessionId;
   }
 
-  private async handlePermissionEvent(event: unknown, directory: string | undefined, queue: AsyncEventQueue): Promise<void> {
+  private async handlePermissionEvent(event: unknown, directory: string | undefined, queue: AsyncQueue<OpenCodeBridgeEvent>): Promise<void> {
     const ids = permissionIdsFromEvent(event);
     if (!ids) {
       queue.push({ type: "status", text: "OpenCode permission requested without ids; ignoring" });
@@ -268,43 +292,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-class AsyncEventQueue implements AsyncIterable<OpenCodeBridgeEvent> {
-  #events: OpenCodeBridgeEvent[] = [];
-  #waiters: Array<{
-    resolve(result: IteratorResult<OpenCodeBridgeEvent>): void;
-    reject(error: unknown): void;
-  }> = [];
-  #closed = false;
-  #error: unknown;
-
-  push(event: OpenCodeBridgeEvent): void {
-    if (this.#closed) return;
-    const waiter = this.#waiters.shift();
-    if (waiter) waiter.resolve({ value: event, done: false });
-    else this.#events.push(event);
-  }
-
-  fail(error: unknown): void {
-    this.#error = error;
-    this.#closed = true;
-    while (this.#waiters.length > 0) this.#waiters.shift()?.reject(error);
-  }
-
-  close(): void {
-    if (this.#closed) return;
-    this.#closed = true;
-    while (this.#waiters.length > 0) this.#waiters.shift()?.resolve({ value: undefined, done: true });
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<OpenCodeBridgeEvent> {
-    return {
-      next: async () => {
-        if (this.#error) throw this.#error;
-        const event = this.#events.shift();
-        if (event) return { value: event, done: false };
-        if (this.#closed) return { value: undefined, done: true };
-        return await new Promise<IteratorResult<OpenCodeBridgeEvent>>((resolve, reject) => this.#waiters.push({ resolve, reject }));
-      },
-    };
-  }
+function validateOpenCodeSessionId(sessionId: string, label: string): string {
+  if (/^ses_[A-Za-z0-9_-]+$/.test(sessionId)) return sessionId;
+  throw new Error(`${label} must match ses_...; got ${sessionId}`);
 }

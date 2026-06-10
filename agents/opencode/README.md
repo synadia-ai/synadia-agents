@@ -367,7 +367,7 @@ The scripts refuse unexpected keys, chmod the env file to `0600`, and do not pri
 
 ## See also
 
-- Plugin-first implementation plan: [`PLUGIN_FIRST_IMPLEMENTATION_SPEC.md`](PLUGIN_FIRST_IMPLEMENTATION_SPEC.md).
+
 - Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), [`flue`](../flue), and [`open-agent`](../open-agent).
 - TypeScript host SDK: [`../../agent-sdk/typescript`](../../agent-sdk/typescript).
 - NATS CLI cookbook: [`../../docs/using-nats-cli.md`](../../docs/using-nats-cli.md).

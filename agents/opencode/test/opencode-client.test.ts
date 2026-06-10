@@ -112,6 +112,34 @@ describe("opencode client factory", () => {
     expect(promptCalls.every((call) => JSON.stringify(call).includes("ses_shared"))).toBe(true);
   });
 
+  test("serializes concurrent prompts for the same managed/attached OpenCode session", async () => {
+    const promptCalls: Record<string, unknown>[] = [];
+    let releaseFirstPrompt!: () => void;
+    const firstPromptGate = new Promise<void>((resolve) => { releaseFirstPrompt = resolve; });
+    const client = await createOpenCodeClient(cfg("attached", { sessionId: "ses_existing" }), {
+      createSdkClient: () => fakeSdkClient({
+        session: {
+          create: async () => { throw new Error("existing session should not create a new session"); },
+          prompt: async (options: Record<string, unknown>) => {
+            promptCalls.push(options);
+            if (promptCalls.length === 1) await firstPromptGate;
+            return { data: { parts: [{ type: "text", text: `ok-${promptCalls.length}` }] } };
+          },
+        },
+      }) as never,
+    });
+
+    const first = collect(client.prompt({ prompt: "one" }));
+    const second = collect(client.prompt({ prompt: "two" }));
+    await waitFor(() => promptCalls.length === 1);
+    await Bun.sleep(20);
+    expect(promptCalls).toHaveLength(1);
+    releaseFirstPrompt();
+    await Promise.all([first, second]);
+    expect(promptCalls).toHaveLength(2);
+    expect(promptCalls.map((call) => (call as { path?: { id?: string } }).path?.id)).toEqual(["ses_existing", "ses_existing"]);
+  });
+
   test("prompt propagates OpenCode prompt errors instead of ending silently", async () => {
     const client = await createOpenCodeClient(cfg("attached", { sessionId: "ses_existing" }), {
       createSdkClient: () => fakeSdkClient({
@@ -234,3 +262,11 @@ describe("opencode client factory", () => {
     expect(replies).toEqual([]);
   });
 });
+
+async function waitFor(condition: () => boolean, timeoutMs = 500): Promise<void> {
+  const start = Date.now();
+  while (!condition()) {
+    if (Date.now() - start > timeoutMs) throw new Error("timed out waiting for condition");
+    await Bun.sleep(5);
+  }
+}

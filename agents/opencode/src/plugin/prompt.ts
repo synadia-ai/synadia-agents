@@ -89,7 +89,7 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
   private activePromptForEvent(event: unknown): { sessionId: string; queue: PluginEventQueue } | undefined {
     const sessionId = eventSessionId(event);
     if (sessionId && this.state.activePrompts.has(sessionId)) return this.state.activePrompts.get(sessionId);
-    if (this.state.activePrompts.size === 1) return [...this.state.activePrompts.values()][0];
+    if (!sessionId && this.state.activePrompts.size === 1 && isSessionAgnosticPluginEvent(event)) return [...this.state.activePrompts.values()][0];
     return undefined;
   }
 
@@ -135,7 +135,7 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
   private async handlePermissionEvent(event: unknown, queue: PluginEventQueue): Promise<void> {
     const immediate = policyDecision(this.state.config.opencode.permissionPolicy);
     if (immediate) {
-      await replyToPluginPermission({ ctx: this.ctx, event, reply: immediate.reply });
+      await replyToPluginPermission({ ctx: this.ctx, event, reply: immediate.reply, log: this.logPermissionFallback });
       queue.push({ type: "status", text: immediate.message ?? `OpenCode permission ${immediate.reply}` });
       return;
     }
@@ -148,11 +148,15 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
       question: pluginPermissionQuestion(event),
       timeoutMs: this.state.config.opencode.permissionTimeoutMs,
       decide: async (reply) => {
-        await replyToPluginPermission({ ctx: this.ctx, event, reply });
+        await replyToPluginPermission({ ctx: this.ctx, event, reply, log: this.logPermissionFallback });
         this.state.permissionBridgeCount += 1;
       },
     });
   }
+
+  private logPermissionFallback = (message: string, extra?: Record<string, unknown>): void => {
+    void this.ctx.client?.app?.log?.({ body: { level: "warn", message, ...(extra ?? {}) } });
+  };
 }
 
 export function summarizePluginEvent(event: unknown): { type: string; keys: string[] } {
@@ -180,8 +184,14 @@ function readSessionId(data: unknown): string | undefined {
 }
 
 function validateOpenCodeSessionId(sessionId: string): string {
-  if (sessionId.startsWith("ses")) return sessionId;
-  throw new Error(`OpenCode plugin session id must start with ses; got ${sessionId}`);
+  if (/^ses_[A-Za-z0-9_-]+$/.test(sessionId)) return sessionId;
+  throw new Error(`OpenCode plugin session id must match ses_...; got ${sessionId}`);
+}
+
+function isSessionAgnosticPluginEvent(event: unknown): boolean {
+  if (!isRecord(event)) return false;
+  const type = readString(event, "type") ?? readString(event, "event") ?? readString(event, "name");
+  return type === "server.connected" || type === "server.heartbeat";
 }
 
 function formatError(error: unknown): string {

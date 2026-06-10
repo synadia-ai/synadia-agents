@@ -14,8 +14,8 @@ export function policyDecision(policy: PermissionPolicy): PermissionDecision | n
 
 export function mapQueryReplyToPermissionDecision(reply: string | undefined): PermissionDecision {
   const normalized = (reply ?? "").trim().toLowerCase();
-  if (["always", "allow always", "yes always"].includes(normalized)) return { reply: "always" };
-  if (["yes", "y", "once", "allow", "true"].includes(normalized)) return { reply: "once" };
+  if (["always", "allow", "allow always", "yes always"].includes(normalized)) return { reply: "always" };
+  if (["yes", "y", "once", "true"].includes(normalized)) return { reply: "once" };
   if (["no", "n", "deny", "reject", "false"].includes(normalized)) return { reply: "reject", message: "Rejected by protocol query reply" };
   return { reply: "reject", message: normalized ? "Rejected by ambiguous protocol query reply" : "Rejected by empty protocol query reply" };
 }

@@ -16,6 +16,7 @@ export async function replyToPluginPermission(input: {
   readonly ctx: OpenCodePluginContext;
   readonly event: unknown;
   readonly reply: OpenCodePermissionReply;
+  readonly log?: (message: string, extra?: Record<string, unknown>) => void;
 }): Promise<void> {
   const ids = permissionIdsFromEvent(input.event);
   if (!ids) throw new Error("OpenCode permission event is missing session id or permission id");
@@ -25,9 +26,11 @@ export async function replyToPluginPermission(input: {
   if (pluginReply) {
     const result = await pluginReply({ requestID: ids.permissionId, reply, ...(directory ? { directory } : {}) });
     if (!isRecord(result) || !result.error) return;
+    input.log?.("OpenCode plugin permission.reply returned an error; trying direct HTTP permission reply", { error: formatError(result.error) });
   }
   const direct = await postDirectPermissionReply(input.ctx.serverUrl, ids.sessionId, ids.permissionId, reply, directory);
   if (direct === "ok") return;
+  input.log?.("OpenCode direct HTTP permission reply unavailable; trying SDK permission reply", { sessionId: ids.sessionId, permissionId: ids.permissionId });
   const sdkReply = input.ctx.client?.postSessionIdPermissionsPermissionId;
   if (sdkReply) {
     const result = await sdkReply({
@@ -39,6 +42,12 @@ export async function replyToPluginPermission(input: {
     return;
   }
   throw new Error("OpenCode permission reply API is unavailable in plugin context");
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try { return JSON.stringify(error); } catch { return String(error); }
 }
 
 async function postDirectPermissionReply(

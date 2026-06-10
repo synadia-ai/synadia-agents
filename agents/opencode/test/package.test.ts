@@ -19,7 +19,8 @@ describe("package metadata", () => {
     expect(pkg.scripts["smoke:opencode-plugin-permission"]).toContain("opencode-plugin-permission-smoke.ts");
     expect(pkg.files).toContain("src");
     expect(pkg.files).toContain("README.md");
-    expect(pkg.files).toContain("PLUGIN_FIRST_IMPLEMENTATION_SPEC.md");
+    expect(pkg.files.filter((entry: string) => entry.endsWith(".md"))).toEqual(["README.md"]);
+    expect(pkg.files).not.toContain("spikes");
     expect(pkg.files).toContain(".env.example");
   });
 
@@ -29,7 +30,7 @@ describe("package metadata", () => {
     const productionSmoke = readFileSync(join(import.meta.dir, "..", "scripts", "production-plugin-smoke.ts"), "utf8");
     expect(lifecycle).toContain("./production-plugin-smoke.js");
     expect(permission).toContain("./production-plugin-smoke.js");
-    expect(`${lifecycle}\n${permission}`).not.toContain("spikes/plugin-channel");
+    expect(`${lifecycle}\n${permission}`).not.toMatch(/spikes[\\/]/);
     expect(productionSmoke).toContain("@synadia-ai/opencode-nats-channel/opencode-plugin");
   });
 

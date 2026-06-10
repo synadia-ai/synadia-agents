@@ -9,6 +9,7 @@ describe("permissions", () => {
 
   test("maps protocol query replies to OpenCode permission replies", () => {
     expect(mapQueryReplyToPermissionDecision("always")).toEqual({ reply: "always" });
+    expect(mapQueryReplyToPermissionDecision("allow")).toEqual({ reply: "always" });
     expect(mapQueryReplyToPermissionDecision("yes")).toEqual({ reply: "once" });
     expect(mapQueryReplyToPermissionDecision("once")).toEqual({ reply: "once" });
     expect(mapQueryReplyToPermissionDecision("no")).toEqual({ reply: "reject", message: "Rejected by protocol query reply" });
