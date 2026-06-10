@@ -6,7 +6,11 @@ const readme = readFileSync(join(import.meta.dir, "..", "README.md"), "utf8");
 
 describe("README plugin-first guidance", () => {
   test("documents the npm install path and Bun requirement", () => {
+    expect(readme).toContain("## Prerequisites");
     expect(readme).toContain("Bun must be installed and available on `PATH`");
+    expect(readme).toContain("[Bun](https://bun.sh/) installed and available on `PATH`");
+    expect(readme).toContain("[OpenCode](https://opencode.ai/) installed and available on `PATH`");
+    expect(readme).toContain("A reachable NATS server, or a NATS CLI context");
     expect(readme).toContain("bunx @synadia-ai/opencode-nats-channel plugin install");
     expect(readme).toContain("bunx @synadia-ai/opencode-nats-channel plugin doctor");
     expect(readme).toContain("After a global install, the binary is `opencode-agent`");

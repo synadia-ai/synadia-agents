@@ -11,6 +11,13 @@ The intended user path is plugin-first:
 
 The wrapper imports the package plugin export; it does not copy the protocol implementation into the project.
 
+## Prerequisites
+
+- [Bun](https://bun.sh/) installed and available on `PATH`. The package CLI is a Bun TypeScript entrypoint.
+- [OpenCode](https://opencode.ai/) installed and available on `PATH`. The plugin loads inside the OpenCode process.
+- A reachable NATS server, or a NATS CLI context.
+- The [NATS CLI](https://github.com/nats-io/natscli) for the discovery and prompt examples below.
+
 ## Package surface
 
 | Field | Value |
