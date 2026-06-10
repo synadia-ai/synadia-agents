@@ -46,6 +46,7 @@
   --bucket-openclaw: #ef4444;               /* red */
   --bucket-hermes: #f59e0b;                 /* amber / orange */
   --bucket-open-agent: #34d399;             /* emerald — open-agent bridge */
+  --bucket-opencode: #38bdf8;               /* sky — OpenCode bridge */
   --bucket-other: var(--text-muted);        /* muted gray */
   --bucket-virtual: #e879f9;                /* fuchsia — UI-only virtual sessions
                                                 that fan out to N real agents */

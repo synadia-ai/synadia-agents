@@ -287,6 +287,6 @@ Expected. The sidecar currently maps text prompts only and rejects attachments e
 
 ## See also
 
-- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), and [`open-agent`](../open-agent).
+- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), [`open-agent`](../open-agent), and [`opencode`](../opencode).
 - TypeScript host SDK: [`../../agent-sdk/typescript`](../../agent-sdk/typescript).
 - Wire protocol: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).

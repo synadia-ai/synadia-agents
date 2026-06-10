@@ -230,7 +230,7 @@ Deliberate deferrals:
 
 ## See also
 
-- Sibling channel plugins: [`openclaw`](../openclaw) (OpenClaw), [`claude-code`](../claude-code) (Claude Code), [`deerflow`](../deerflow) (DeerFlow), and [`flue`](../flue) (Flue).
+- Sibling channel plugins: [`openclaw`](../openclaw) (OpenClaw), [`claude-code`](../claude-code) (Claude Code), [`deerflow`](../deerflow) (DeerFlow), [`flue`](../flue) (Flue), and [`opencode`](../opencode) (OpenCode).
 - The wire-level protocol behind it all: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).
 
 ## License

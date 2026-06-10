@@ -82,6 +82,7 @@ export function virtualTargetLabel(agent: DiscoveredAgentDTO): string {
   else if (a === "pi") display = "PI";
   else if (a === "hermes") display = "HERMES";
   else if (a === "open-agent") display = "OPEN AGENT";
+  else if (a === "opencode") display = "OPENCODE";
   else if (a === "pi-headless") display = "PI HEADLESS";
   else if (a === "cc-headless") display = "CC HEADLESS";
   const session = agent.session && agent.session !== agent.name ? ` ${agent.session}` : "";
@@ -135,7 +136,7 @@ export function findVirtualMessage(
 ): VirtualMessage | undefined {
   const vs = virtualSessionsState.sessions.get(virtualId);
   if (!vs) return undefined;
-  return vs.messages.find((m) => m.id === messageId);
+  return vs.messages.find((m: VirtualMessage) => m.id === messageId);
 }
 
 export function findVirtualMessageByToolId(
@@ -144,7 +145,7 @@ export function findVirtualMessageByToolId(
 ): VirtualMessage | undefined {
   const vs = virtualSessionsState.sessions.get(virtualId);
   if (!vs) return undefined;
-  return vs.messages.find((m) => m.role === "tool" && m.tool?.id === toolUseId);
+  return vs.messages.find((m: VirtualMessage) => m.role === "tool" && m.tool?.id === toolUseId);
 }
 
 /** Whether ANY turn in the virtual session is still in flight. */

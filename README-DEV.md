@@ -90,7 +90,8 @@ the extension it follows the `file:` link in the extension's
 `package.json` back to the SDK source — so both SDKs need a current
 `dist/` when the extension is installed.
 
-Other agent packages in `agents/`, including `agents/flue/`, run as
+Other agent packages in `agents/`, including `agents/flue/` and
+`agents/opencode/`, run as
 sidecars or wrappers rather than host-loaded extensions; follow their
 per-agent READMEs for local startup.
 

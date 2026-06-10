@@ -110,6 +110,7 @@ export const BUCKETS = {
   OPENCLAW: "openclaw",
   HERMES: "hermes",
   OPEN_AGENT: "open-agent",
+  OPENCODE: "opencode",
   OTHER: "other",
 } as const;
 
@@ -134,6 +135,7 @@ export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
   if (agent.agent === "openclaw" || agent.agent === "oc") return BUCKETS.OPENCLAW;
   if (agent.agent === "hermes") return BUCKETS.HERMES;
   if (agent.agent === "open-agent") return BUCKETS.OPEN_AGENT;
+  if (agent.agent === "opencode") return BUCKETS.OPENCODE;
   return BUCKETS.OTHER;
 }
 
@@ -143,7 +145,7 @@ export function bucketOf(agent: DiscoveredAgentDTO): Bucket {
  * headless sessions so a PI agent and its live PI sessions sit adjacent.
  *
  *   Claude Code → CC Headless Sessions → Hermes → Open Agent →
- *   OpenClaw → PI → PI Headless Sessions → Other
+ *   OpenCode → OpenClaw → PI → PI Headless Sessions → Other
  *
  * Controller buckets are deliberately absent — they're sorted by the separate
  * `sortControllers` path. `Partial<>` lets us read with a sentinel fallback
@@ -154,9 +156,10 @@ const PROMPTABLE_RANK: Partial<Record<Bucket, number>> = {
   [BUCKETS.CC_EXEC_SESSION]: 2,
   [BUCKETS.HERMES]: 3,
   [BUCKETS.OPEN_AGENT]: 4,
-  [BUCKETS.OPENCLAW]: 5,
-  [BUCKETS.PI_AGENT]: 6,
-  [BUCKETS.PI_EXEC_SESSION]: 7,
+  [BUCKETS.OPENCODE]: 5,
+  [BUCKETS.OPENCLAW]: 6,
+  [BUCKETS.PI_AGENT]: 7,
+  [BUCKETS.PI_EXEC_SESSION]: 8,
   [BUCKETS.OTHER]: 99,
 };
 

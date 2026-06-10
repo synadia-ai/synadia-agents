@@ -1,0 +1,64 @@
+{
+  "name": "@synadia-ai/opencode-nats-channel",
+  "version": "0.1.0",
+  "description": "Synadia Agent Protocol for NATS adapter for OpenCode sessions.",
+  "publishConfig": { "access": "public" },
+  "license": "Apache-2.0",
+  "author": "Synadia Communications",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "agents/opencode"
+  },
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agents/opencode",
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./opencode-plugin": {
+      "types": "./src/plugin/index.ts",
+      "import": "./src/plugin/index.ts",
+      "default": "./src/plugin/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "opencode-agent": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    ".env.example"
+  ],
+  "scripts": {
+    "start": "bun src/cli.ts start",
+    "doctor": "bun src/cli.ts doctor",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "smoke:protocol": "bun scripts/protocol-smoke.ts",
+    "smoke:opencode-lifecycle": "bun scripts/opencode-lifecycle-smoke.ts",
+    "smoke:opencode-runtime": "bun scripts/opencode-runtime-smoke.ts",
+    "smoke:opencode-permission": "bun scripts/opencode-permission-smoke.ts",
+    "smoke:opencode-plugin-lifecycle": "bun scripts/opencode-plugin-lifecycle-smoke.ts",
+    "smoke:opencode-plugin-permission": "bun scripts/opencode-plugin-permission-smoke.ts"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.16.0",
+    "@nats-io/nats-core": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
+    "@synadia-ai/agents": "^0.5.2",
+    "@synadia-ai/agent-service": "^0.5.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.16.0",
+    "typescript": "~5.6.0"
+  }
+}

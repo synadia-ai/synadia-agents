@@ -234,8 +234,8 @@ function fanoutOneTarget(
         attachments: queryAttachments,
       });
       // Virtual: queries from inside an aggregate are read-only — replying
-      // back to a single source from the virtual chat is out of scope for
-      // Phase 2. Render the prompt as a non-interactive query bubble.
+      // back to a single source from the virtual chat is out of scope here.
+      // Render the prompt as a non-interactive query bubble.
       appendVirtualMessage(virtualId, {
         id: randomUUID(),
         role: "query",
