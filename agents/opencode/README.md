@@ -98,6 +98,8 @@ If `SYNADIA_OPENCODE_SESSION` is unset, the plugin derives a `session-<hash>` to
 
 ## Plugin commands
 
+After a global install, the binary is `opencode-agent`; before that, substitute `bunx @synadia-ai/opencode-nats-channel` for `opencode-agent` in the examples below.
+
 ```sh
 opencode-agent plugin install --directory /path/to/repo --owner local --session main
 opencode-agent plugin doctor --directory /path/to/repo

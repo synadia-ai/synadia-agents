@@ -213,7 +213,7 @@ npm whoami                                       # the @synadia-ai publish ident
 #    bundleDependencies can copy the SDKs into the tarball.
 (cd agents/openclaw && bun install && npm publish --dry-run && npm publish)
 (cd agents/pi       && bun install && npm publish --dry-run && npm publish)
-#    Plain adapter packages with Bun TypeScript entrypoints.
+#    Plain plugin packages with Bun TypeScript entrypoints.
 (cd agents/opencode && bun install && npm publish --dry-run && npm publish)
 #    Plain (examples/pi-headless, examples/claude-code-headless) — the
 #    `prepack` hook builds dist/ on its own.

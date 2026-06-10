@@ -9,6 +9,8 @@ describe("README plugin-first guidance", () => {
     expect(readme).toContain("Bun must be installed and available on `PATH`");
     expect(readme).toContain("bunx @synadia-ai/opencode-nats-channel plugin install");
     expect(readme).toContain("bunx @synadia-ai/opencode-nats-channel plugin doctor");
+    expect(readme).toContain("After a global install, the binary is `opencode-agent`");
+    expect(readme).toContain("substitute `bunx @synadia-ai/opencode-nats-channel` for `opencode-agent`");
   });
 
   test("keeps the public README focused on the OpenCode plugin", () => {
