@@ -10,6 +10,7 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
   readonly #mapperState = createEventMapperState();
   #activeSessionId: string | undefined;
   #creatingSession: Promise<string> | undefined;
+  readonly #sessionPromptLocks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly ctx: OpenCodePluginContext,
@@ -23,7 +24,9 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
     const sessionId = await this.ensureSession(request.sessionId, directory);
     const queue = new AsyncPluginEventQueue();
     this.state.promptCount += 1;
-    this.state.activePrompts.set(sessionId, { sessionId, queue, createdAt: Date.now() });
+    const releaseSessionPrompt = await this.acquireSessionPromptLock(sessionId);
+    const active = { sessionId, queue, createdAt: Date.now() };
+    this.state.activePrompts.set(sessionId, active);
     try {
       queue.push({ type: "status", text: `OpenCode plugin bridge selected; session=${sessionId}` });
       void this.invokeOpenCodePrompt(request, sessionId, directory, queue);
@@ -36,8 +39,9 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
         if (item.type === "done") break;
       }
     } finally {
-      this.state.activePrompts.delete(sessionId);
+      if (this.state.activePrompts.get(sessionId) === active) this.state.activePrompts.delete(sessionId);
       queue.close();
+      releaseSessionPrompt();
     }
   }
 
@@ -94,6 +98,22 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
     if (existing) return validateOpenCodeSessionId(existing);
     this.#creatingSession ??= this.createSession(directory).finally(() => { this.#creatingSession = undefined; });
     return await this.#creatingSession;
+  }
+
+  private async acquireSessionPromptLock(sessionId: string): Promise<() => void> {
+    const previous = this.#sessionPromptLocks.get(sessionId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const chained = previous.catch(() => undefined).then(() => current);
+    this.#sessionPromptLocks.set(sessionId, chained);
+    await previous.catch(() => undefined);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      release();
+      if (this.#sessionPromptLocks.get(sessionId) === chained) this.#sessionPromptLocks.delete(sessionId);
+    };
   }
 
   private async createSession(directory: string | undefined): Promise<string> {

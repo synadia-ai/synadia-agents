@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { PluginOpenCodeBridgeClient } from "../src/plugin/index.js";
+import type { OpenCodeBridgeEvent } from "../src/bridge.js";
 import type { PluginChannelState, OpenCodePluginContext } from "../src/plugin/types.js";
 import type { OpenCodeChannelConfig } from "../src/types.js";
 
@@ -88,6 +89,62 @@ describe("plugin prompt bridge", () => {
     expect(secondEvents).toContainEqual({ type: "response", text: "hello from created session" });
   });
 
+  test("keeps concurrent no-env prompts on a lazily-created same session permission-safe", async () => {
+    const createCalls: unknown[] = [];
+    const promptCalls: unknown[] = [];
+    let releaseSecondPrompt!: () => void;
+    const secondPromptDone = new Promise<void>((resolve) => { releaseSecondPrompt = resolve; });
+    const ctx: OpenCodePluginContext = {
+      client: {
+        session: {
+          create: async (input) => {
+            createCalls.push(input);
+            return { data: { id: "ses_created" } };
+          },
+          prompt: async (input) => {
+            promptCalls.push(input);
+            if (promptCalls.length === 1) {
+              await delay(10);
+              return { data: { parts: [{ type: "text", text: "done-1" }] } };
+            }
+            await secondPromptDone;
+            return { data: { parts: [{ type: "text", text: "done-2" }] } };
+          },
+        },
+        permission: { reply: async () => ({}) },
+      },
+    };
+    const bridge = new PluginOpenCodeBridgeClient(ctx, state("query"));
+    const firstEvents: unknown[] = [];
+    const secondEvents: unknown[] = [];
+    let sawSecondPermission = false;
+    const firstDone = collectEvents(bridge.prompt({ prompt: "first", directory: "/tmp/project" }), firstEvents);
+    const secondDone = collectEvents(bridge.prompt({ prompt: "second", directory: "/tmp/project" }), secondEvents, async (event) => {
+      if (event.type !== "permission") return;
+      sawSecondPermission = true;
+      await event.decide?.("once");
+      releaseSecondPrompt();
+    });
+
+    await firstDone;
+    await waitFor(() => promptCalls.length === 2);
+    await bridge.handleEvent({ type: "permission.asked", properties: { id: "per_2", sessionID: "ses_created", permission: "bash" } });
+    const deliveredPermission = await Promise.race([
+      waitFor(() => sawSecondPermission, 100).then(() => true, () => false),
+      delay(150).then(() => false),
+    ]);
+    if (!deliveredPermission) releaseSecondPrompt();
+    await secondDone;
+
+    expect(deliveredPermission).toBe(true);
+    expect(createCalls).toHaveLength(1);
+    expect(promptCalls).toHaveLength(2);
+    expect(promptCalls.map((call) => (call as { path?: { id?: string } }).path?.id)).toEqual(["ses_created", "ses_created"]);
+    expect(promptCalls.map((call) => (call as { path?: { id?: string } }).path?.id)).not.toContain("default");
+    expect(firstEvents).toContainEqual({ type: "response", text: "done-1" });
+    expect(secondEvents).toContainEqual({ type: "response", text: "done-2" });
+  });
+
   test("bridges permission events into protocol permission prompts and replies through plugin API", async () => {
     const replies: unknown[] = [];
     const ctx: OpenCodePluginContext = {
@@ -111,3 +168,26 @@ describe("plugin prompt bridge", () => {
     await iterator.return?.();
   });
 });
+
+async function collectEvents(
+  iterable: AsyncIterable<OpenCodeBridgeEvent>,
+  events: unknown[],
+  onEvent?: (event: OpenCodeBridgeEvent) => Promise<void> | void,
+): Promise<void> {
+  for await (const event of iterable) {
+    events.push(event);
+    await onEvent?.(event);
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 500): Promise<void> {
+  const start = Date.now();
+  while (!condition()) {
+    if (Date.now() - start > timeoutMs) throw new Error("timed out waiting for condition");
+    await delay(5);
+  }
+}
