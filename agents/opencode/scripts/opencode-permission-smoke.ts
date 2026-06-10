@@ -83,8 +83,8 @@ try {
 } finally {
   await service.stop();
   await client.close?.();
-  await nc.close();
-  await callerNc.close();
+  await nc.drain();
+  await callerNc.drain();
   await nats.close();
   if (process.env["OPENCODE_PERMISSION_SMOKE_KEEP"] !== "1") rmSync(harnessDir, { recursive: true, force: true });
 }

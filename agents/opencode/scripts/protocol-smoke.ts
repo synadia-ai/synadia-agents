@@ -117,8 +117,8 @@ try {
   }, null, 2));
 } finally {
   await service.stop();
-  await nc.close();
-  await callerNc.close();
+  await nc.drain();
+  await callerNc.drain();
   await nats.close();
 }
 

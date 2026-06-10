@@ -25,7 +25,7 @@ async function start(): Promise<void> {
     console.log("\nshutting down…");
     await service.stop();
     await client.close?.();
-    await nc.close();
+    await nc.drain();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());
