@@ -20,7 +20,13 @@ describe("README plugin guidance", () => {
   test("keeps the public README focused on the OpenCode plugin", () => {
     expect(readme).toContain("makes an OpenCode project discoverable and promptable over NATS");
     expect(readme).toContain("Install it in each OpenCode project you want to expose");
-    expect(readme).toContain("When OpenCode starts, that plugin loads the Synadia channel from `node_modules`");
+    expect(readme).toContain("When OpenCode starts from that project, it loads the plugin automatically");
+    expect(readme).toContain("No command needs to be typed inside OpenCode");
+    expect(readme).toContain("restart OpenCode after installing the plugin if it was already running");
+    expect(readme).toContain("Check the install");
+    expect(readme).toContain("cd /path/to/repo");
+    expect(readme).toContain("There is no separate “activate plugin” command inside OpenCode");
+    expect(readme).toContain("Leave OpenCode running. From another terminal, discover the agent");
     expect(readme).toContain("@synadia-ai/opencode-nats-channel/opencode-plugin");
     expect(readme).toContain(".opencode/plugins/synadia-channel.ts");
     expect(readme).not.toContain("The intended user path");

@@ -2,7 +2,7 @@
 
 `@synadia-ai/opencode-nats-channel` makes an OpenCode project discoverable and promptable over NATS.
 
-Install it in each OpenCode project you want to expose. The installer adds a small `.opencode/plugins/synadia-channel.ts` plugin entry file and a package dependency under `.opencode/package.json`. When OpenCode starts, that plugin loads the Synadia channel from `node_modules`, connects to NATS, and registers the project as a Synadia Agent Protocol agent.
+Install it in each OpenCode project you want to expose. The installer adds a small `.opencode/plugins/synadia-channel.ts` plugin entry file and a package dependency under `.opencode/package.json`. When OpenCode starts from that project, it loads the plugin automatically, connects to NATS, and registers the project as a Synadia Agent Protocol agent. No command needs to be typed inside OpenCode; restart OpenCode after installing the plugin if it was already running.
 
 ## Prerequisites
 
@@ -60,6 +60,12 @@ bunx @synadia-ai/opencode-nats-channel plugin install \
   --session main
 ```
 
+Check the install:
+
+```sh
+bunx @synadia-ai/opencode-nats-channel plugin doctor --directory /path/to/repo
+```
+
 The installer creates or updates two project-local OpenCode files:
 
 ```text
@@ -78,6 +84,7 @@ export default SynadiaChannelPlugin;
 Start OpenCode with the plugin environment configured:
 
 ```sh
+cd /path/to/repo
 export NATS_URL=nats://127.0.0.1:4222
 export SYNADIA_OPENCODE_OWNER=local
 export SYNADIA_OPENCODE_SESSION=main
@@ -85,6 +92,8 @@ export OPENCODE_PERMISSION_POLICY=query
 
 opencode serve --hostname 127.0.0.1 --port 4096
 ```
+
+OpenCode loads `.opencode/plugins/synadia-channel.ts` during startup. There is no separate “activate plugin” command inside OpenCode.
 
 When the plugin loads, it registers:
 
@@ -134,7 +143,7 @@ Keep real `.env`, `.creds`, and `.nkey` files untracked. The package includes `.
 
 ## Discover and prompt
 
-After OpenCode starts with the plugin loaded, discover the agent:
+Leave OpenCode running. From another terminal, discover the agent:
 
 ```sh
 nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s
