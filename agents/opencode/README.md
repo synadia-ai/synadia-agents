@@ -73,7 +73,7 @@ The installer creates or updates two project-local OpenCode files:
 .opencode/package.json
 ```
 
-The plugin entry file is intentionally tiny; the implementation stays in the npm package:
+`.opencode/plugins/synadia-channel.ts` is the file OpenCode sees at startup. It is intentionally tiny; it imports the real Synadia channel from the npm package dependency recorded in `.opencode/package.json`:
 
 ```ts
 import { SynadiaChannelPlugin } from "@synadia-ai/opencode-nats-channel/opencode-plugin";
@@ -81,7 +81,7 @@ import { SynadiaChannelPlugin } from "@synadia-ai/opencode-nats-channel/opencode
 export default SynadiaChannelPlugin;
 ```
 
-Start OpenCode with the plugin environment configured:
+Start OpenCode from the same project directory with the plugin environment configured:
 
 ```sh
 cd /path/to/repo
