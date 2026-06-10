@@ -2,7 +2,7 @@
 
 `@synadia-ai/opencode-nats-channel` exposes an OpenCode project as a Synadia Agent Protocol for NATS agent by loading a small OpenCode plugin.
 
-The intended user path is plugin-first:
+The intended user path is the OpenCode plugin:
 
 1. install the package from npm,
 2. install the generated `.opencode/plugins/synadia-channel.ts` wrapper in a project,
@@ -194,7 +194,7 @@ The scripts refuse unexpected keys, chmod the env file to `0600`, and do not pri
 ## Current limitations
 
 - Attachments are rejected until OpenCode file ingestion is mapped end-to-end.
-- Plugin mode registers one NATS identity per loaded plugin channel. Use distinct owner/session tokens when you want multiple independently discoverable OpenCode projects.
+- The plugin registers one NATS identity per loaded channel. Use distinct owner/session tokens when you want multiple independently discoverable OpenCode projects.
 - Permission-query bridging depends on OpenCode emitting permission events with session and permission ids. The plugin first tries `client.permission.reply`, then falls back to observed HTTP/SDK reply surfaces.
 
 ## Troubleshooting

@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 
 const readme = readFileSync(join(import.meta.dir, "..", "README.md"), "utf8");
 
-describe("README plugin-first guidance", () => {
+describe("README plugin guidance", () => {
   test("documents the npm install path and Bun requirement", () => {
     expect(readme).toContain("## Prerequisites");
     expect(readme).toContain("Bun must be installed and available on `PATH`");
@@ -18,9 +18,11 @@ describe("README plugin-first guidance", () => {
   });
 
   test("keeps the public README focused on the OpenCode plugin", () => {
-    expect(readme).toContain("The intended user path is plugin-first");
+    expect(readme).toContain("The intended user path is the OpenCode plugin");
     expect(readme).toContain("@synadia-ai/opencode-nats-channel/opencode-plugin");
     expect(readme).toContain(".opencode/plugins/synadia-channel.ts");
+    expect(readme).not.toContain("plugin-first");
+    expect(readme).not.toContain("Plugin mode registers");
     expect(readme).not.toContain("## Quick start: managed mode");
     expect(readme).not.toContain("## Quick start: attached mode");
     expect(readme).not.toContain("## Multi-session recipe");
