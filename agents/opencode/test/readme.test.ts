@@ -30,6 +30,11 @@ describe("README plugin guidance", () => {
     expect(readme).toContain("is the file OpenCode sees at startup");
     expect(readme).toContain("imports the real Synadia channel from the npm package dependency recorded in `.opencode/package.json`");
     expect(readme).toContain("Start OpenCode from the same project directory");
+    expect(readme).toContain("For normal terminal use, start the OpenCode TUI");
+    expect(readme).toContain("opencode\n```");
+    expect(readme).toContain("For a headless/server deployment, start OpenCode's server instead");
+    expect(readme).toContain("opencode serve --hostname 127.0.0.1 --port 4096");
+    expect(readme).toContain("during startup in either form");
     expect(readme).toContain("@synadia-ai/opencode-nats-channel/opencode-plugin");
     expect(readme).toContain(".opencode/plugins/synadia-channel.ts");
     expect(readme).not.toContain("The intended user path");

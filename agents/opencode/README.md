@@ -89,11 +89,21 @@ export NATS_URL=nats://127.0.0.1:4222
 export SYNADIA_OPENCODE_OWNER=local
 export SYNADIA_OPENCODE_SESSION=main
 export OPENCODE_PERMISSION_POLICY=query
+```
 
+For normal terminal use, start the OpenCode TUI:
+
+```sh
+opencode
+```
+
+For a headless/server deployment, start OpenCode's server instead:
+
+```sh
 opencode serve --hostname 127.0.0.1 --port 4096
 ```
 
-OpenCode loads `.opencode/plugins/synadia-channel.ts` during startup. There is no separate “activate plugin” command inside OpenCode.
+OpenCode loads `.opencode/plugins/synadia-channel.ts` during startup in either form. There is no separate “activate plugin” command inside OpenCode.
 
 When the plugin loads, it registers:
 
