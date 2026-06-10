@@ -24,16 +24,14 @@ interop is fine for day-to-day work.
 
 ## Installation
 
-From this checkout (no published wheel yet):
+```bash
+pip install synadia-ai-agents
+```
+
+Or from this checkout for local development:
 
 ```bash
 uv pip install -e .
-```
-
-Once released on PyPI:
-
-```bash
-pip install synadia-ai-agents
 ```
 
 You also need a reachable `nats-server`. Pick whichever fits:

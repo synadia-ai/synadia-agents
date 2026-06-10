@@ -108,7 +108,7 @@ The host-side `ReferenceAgent` previously available at `@synadia-ai/agents/testi
 
 - [Getting started](./docs/getting-started.md) - end-to-end walkthrough with error handling, cancellation, and liveness.
 - [Protocol mapping](./docs/protocol-mapping.md) - every SDK call cross-referenced to the spec.
-- [`examples/`](./examples) - five runnable scripts (discover, prompt-text, prompt-attachment, query-reply, liveness).
+- [`examples/`](./examples) - six runnable scripts (discover, prompt-text, prompt-attachment, query-reply, liveness, chat).
 
 Browser support is planned but not shipped yet - the core validation and parsing layers are already runtime-agnostic.
 

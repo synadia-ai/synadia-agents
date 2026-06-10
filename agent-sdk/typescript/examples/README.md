@@ -5,11 +5,31 @@ speaking the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/syn
 Counterpart to the caller-side numbered demos in
 [`client-sdk/typescript/examples/`](../../../client-sdk/typescript/examples/).
 
-| Example                        | What it shows                                                                                   |
-| ------------------------------ | ----------------------------------------------------------------------------------------------- |
-| [`01-echo.ts`](01-echo.ts)     | Minimal echo agent on top of `AgentService` — replies `echo: <prompt>`.                         |
-| [`02-ollama.ts`](02-ollama.ts) | Same shape as `01-echo`, but forwards each prompt to a local Ollama and streams the reply.      |
-| [`03-tools.ts`](03-tools.ts)   | Gives the LLM a `read_sensor` tool wired to a NATS microservice, then reasons over the reading. |
+They form a ladder — each rung is the one before plus a little more:
+
+| Example                                | What it shows                                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [`01-echo.ts`](01-echo.ts)             | Minimal echo agent on top of `AgentService` — replies `echo: <prompt>`.                          |
+| [`02-ollama.ts`](02-ollama.ts)         | Same shape as `01-echo`, but forwards each prompt to a local Ollama and streams the reply.       |
+| [`03-openrouter.ts`](03-openrouter.ts) | Same shape again, but the backend is the hosted, OpenAI-compatible OpenRouter API (needs a key). |
+| [`04-combined.ts`](04-combined.ts)     | Ollama **or** OpenRouter, auto-selected from the env; model access factored into `llm.ts`.       |
+| [`05-tools.ts`](05-tools.ts)           | Gives the LLM a `read_sensor` tool wired to a NATS microservice, then reasons over the reading.  |
+
+## Environment variables
+
+Every example resolves its NATS connection and identity the same way; none of
+these are required (the defaults connect to a local server as your `$USER`).
+
+| Variable                        | Default                    | Purpose                                                                                                                                                                                         |
+| ------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NATS_CONTEXT`                  | _(unset)_                  | Connect via a named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins when set.                                                                       |
+| `NATS_URL`                      | _(unset)_                  | Connect via a raw URL; credentials in the userinfo are honored. When neither this nor `NATS_CONTEXT` is set, the examples fall back to `nats://127.0.0.1:4222`.                                 |
+| `NATS_AGENT_OWNER`              | your `$USER` (else `anon`) | The `owner` token in `agents.prompt.<agent>.<owner>.<name>`. Set it so several people running this against one server don't collide.                                                            |
+| `NATS_AGENT_NAME`               | `main`                     | The instance `name` token in the subject. Use different names to run several instances at once.                                                                                                 |
+| `NATS_AGENT_HEARTBEAT_INTERVAL` | `30`                       | Heartbeat cadence in **seconds**. Lower it (e.g. `2`) for a livelier [`05-liveness`](../../../client-sdk/typescript/examples/05-liveness.ts) demo. (`0` is treated as unset → the 30s default.) |
+
+Per-backend variables (`OLLAMA_URL`, `OLLAMA_MODEL`, `OPENROUTER_API_KEY`,
+`OPENROUTER_MODEL`) are documented in the relevant sections below.
 
 ## Run
 
@@ -26,6 +46,9 @@ NATS_CONTEXT=my-context bun examples/01-echo.ts
 NATS_URL=tls://connect.ngs.global bun examples/01-echo.ts
 # or:
 bun examples/01-echo.ts   # localhost fallback
+
+# run as a uniquely-named instance with fast heartbeats:
+NATS_AGENT_OWNER=alice NATS_AGENT_NAME=demo NATS_AGENT_HEARTBEAT_INTERVAL=2 bun examples/01-echo.ts
 ```
 
 You should see:
@@ -52,6 +75,8 @@ Output:
 (empty terminator)
 ```
 
+(The owner defaults to your `$USER` unless you set `NATS_AGENT_OWNER`.)
+
 ### `02-ollama.ts` — prompt a local LLM
 
 Needs a running [Ollama](https://ollama.com) with the model pulled:
@@ -61,6 +86,11 @@ ollama pull llama3.2
 bun examples/02-ollama.ts            # uses llama3.2 by default
 OLLAMA_MODEL=qwen2.5 bun examples/02-ollama.ts   # or pick another model
 ```
+
+| Variable       | Default                  | Purpose                    |
+| -------------- | ------------------------ | -------------------------- |
+| `OLLAMA_URL`   | `http://localhost:11434` | Where Ollama is listening. |
+| `OLLAMA_MODEL` | `llama3.2`               | Which model to prompt.     |
 
 The agent registers as `ollama` and streams the model's answer back token by
 token. Drive it the same way, but point `nats req` at the `ollama` subject:
@@ -81,7 +111,49 @@ Output (one `response` chunk per token, then the terminator):
 (empty terminator)
 ```
 
-### `03-tools.ts` — give the agent a tool backed by a microservice
+### `03-openrouter.ts` — prompt a hosted LLM
+
+The same LLM agent as `02`, but powered by the hosted, OpenAI-compatible
+[OpenRouter](https://openrouter.ai) API instead of a local model. Needs an API
+key; no GPU required. The only thing that changes from `02-ollama` is how the
+backend streams (OpenAI **SSE**: `data: {json}` … `data: [DONE]`).
+
+```sh
+export OPENROUTER_API_KEY=sk-or-...
+bun examples/03-openrouter.ts
+OPENROUTER_MODEL=anthropic/claude-3.5-haiku bun examples/03-openrouter.ts
+```
+
+| Variable             | Default              | Purpose                                               |
+| -------------------- | -------------------- | ----------------------------------------------------- |
+| `OPENROUTER_API_KEY` | _(required)_         | Your [OpenRouter key](https://openrouter.ai/keys).    |
+| `OPENROUTER_MODEL`   | `openai/gpt-4o-mini` | Any [OpenRouter model](https://openrouter.ai/models). |
+
+The agent registers as `openrouter`; drive it at the `openrouter` subject.
+
+### `04-combined.ts` — Ollama **or** OpenRouter (the reusable base)
+
+Answers with **either** a local Ollama **or** OpenRouter, chosen automatically.
+Model access is factored into [`llm.ts`](llm.ts) — a small backend-agnostic chat
+client behind one `chatStream(messages)` API. That file is the reusable base a
+tool-calling agent would copy and extend; the next rung, `05-tools.ts`, shows
+the tool-calling pattern (with its own self-contained model client).
+
+| Condition                   | Backend                                                             |
+| --------------------------- | ------------------------------------------------------------------- |
+| `OPENROUTER_API_KEY` is set | **OpenRouter** (`OPENROUTER_MODEL`, default `openai/gpt-4o-mini`)   |
+| otherwise                   | **local Ollama** (`OLLAMA_MODEL`, default `llama3.2`; `OLLAMA_URL`) |
+
+The chosen backend is printed on startup, e.g. `backend: ollama/llama3.2`.
+
+```sh
+bun examples/04-combined.ts                                # local Ollama
+OPENROUTER_API_KEY=sk-or-... bun examples/04-combined.ts   # OpenRouter
+```
+
+The agent registers as `llm`; drive it at the `llm` subject.
+
+### `05-tools.ts` — give the agent a tool backed by a microservice
 
 The agent gains a `read_sensor` **tool**, and that tool is wired to a NATS
 microservice. This is the whole point in one file:
@@ -107,7 +179,7 @@ don't do native tool-calls, and `qwen3` works but clutters the output with
 
 ```sh
 ollama pull llama3.1:8b
-bun examples/03-tools.ts
+bun examples/05-tools.ts
 ```
 
 Then ask it something that needs the sensor:

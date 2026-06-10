@@ -21,7 +21,7 @@ For an example of *building* a fresh agent from scratch with the host SDK, see [
 
 Most agents read `max_payload` from the NATS connection's `INFO` block at startup and advertise that server limit formatted into the §2.1 `\d+(B|KB|MB|GB)` grammar. A `nats-server` running the default 1 MB advertises `1MB`; bump `--max_payload 8MB` and server-negotiated agents track it. Agents with their own configured cap, such as Hermes or DeerFlow when `max_payload` is explicitly set, advertise that configured cap unless the NATS server is smaller, in which case they clamp down to the server limit.
 
-Every agent also publishes heartbeats on `agents.hb.<type-token>.<owner>.<session>` every 30 s and answers `agents.status.<type-token>.<owner>.<session>` requests with the same payload (§8.7 (v0.3)).
+Every agent also publishes heartbeats on `agents.hb.<type-token>.<owner>.<session>` on a periodic interval (the SDK default is 30 s; some agents tune it — Claude Code beats every 5 s) and answers `agents.status.<type-token>.<owner>.<session>` requests with the same payload (§8.7 (v0.3)).
 
 ## How it works
 
@@ -30,7 +30,7 @@ Every agent registers a NATS micro service called `agents` with an endpoint name
 ## Per-agent notes
 
 - **`pi/`** - each running PI CLI session becomes one agent instance. Attachments stage at `~/.pi/agent/attachments/<session>/<uuid>/` and are cleaned on session shutdown.
-- **`openclaw/`** - one OpenClaw agent per configured account. Attachments stage at `~/.openclaw/attachments/<agentName>/<uuid>/`, cleaned on gateway stop. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific).
+- **`openclaw/`** - one OpenClaw agent per configured account. Attachments stage at `<stateDir>/media/nats-channel/<agentName>/<uuid>/` (under OpenClaw's media allowlist), cleaned on gateway stop. Also publishes agent-initiated outbound messages on `<subject>.outbound` (OpenClaw-specific).
 - **`claude-code/`** - ships as a Claude Code plugin (`/plugin install`). Two permission modes: `terminal` (prompt locally) or `query` (relay as a `query` chunk over NATS). Attachments stage at `~/.claude/channels/nats/attachments/<request_id>/`, cleaned on reply completion.
 - **`open-agent/`** - inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents). Vendors `packages/agent` verbatim and ships a `LocalSandbox` so the harness runs without a Vercel account; first agent in the repo built directly on `AgentService` from `@synadia-ai/agent-service`. The companion [`../examples/open-agent-vercel/`](../examples/open-agent-vercel/) swaps in `@vercel/sandbox` to prove the sandbox seam is interchangeable. v1 is single-process / single-session (one bridge handles one `(owner, session)` pair).
 - **`opencode/`** - TypeScript/Bun OpenCode channel. The primary UX is an in-process OpenCode plugin installed under `.opencode/plugins/` that registers the current project/session through `AgentService`; the external `opencode-agent start` path remains available for managed `opencode serve` and attached `--base-url` fallback workflows. Permission events bridge to protocol `query` chunks when `permission_policy=query`. v1 advertises `attachments_ok=false` and rejects attachment envelopes until OpenCode file ingestion is mapped end-to-end.

@@ -1,7 +1,8 @@
-// 03-tools.ts — an LLM agent whose tool calls a NATS microservice.
+// 05-tools.ts — an LLM agent whose tool calls a NATS microservice.
 //
-// Step 3 of the ladder. Example 2 gave the agent a model; this gives it a
-// *tool*, and wires that tool to a NATS microservice. The point of the demo:
+// Examples 2–4 gave the agent a model (Ollama,
+// OpenRouter, or either); this gives it a *tool*, and wires that tool to a
+// NATS microservice. The point of the demo:
 //
 //   any microservice already on your NATS network can become an agent
 //   capability — the agent need not embed the database, device, or
@@ -23,7 +24,7 @@
 // Prereqs: a local Ollama with a tool-capable model:
 //   ollama pull llama3.1:8b
 //
-// Connection resolution (same as 01/02):
+// Connection resolution (same as the other agents):
 //   $NATS_CONTEXT > $NATS_URL > nats://127.0.0.1:4222
 
 import { connect as natsConnect, type NatsConnection } from "@nats-io/transport-node";
@@ -92,9 +93,18 @@ async function runTool(
   args: Record<string, unknown> | string,
 ): Promise<string> {
   if (name !== "read_sensor") return `error: unknown tool '${name}'`;
-  // Most models hand back parsed arguments; some return a JSON string instead.
-  const parsed: Record<string, unknown> =
-    typeof args === "string" ? (JSON.parse(args) as Record<string, unknown>) : args;
+  // Most models hand back parsed arguments; some return a JSON string instead —
+  // tolerate a malformed string rather than throwing out of the prompt handler.
+  let parsed: Record<string, unknown> = {};
+  if (typeof args === "string") {
+    try {
+      parsed = JSON.parse(args) as Record<string, unknown>;
+    } catch {
+      parsed = {};
+    }
+  } else {
+    parsed = args;
+  }
   const location = typeof parsed["location"] === "string" ? parsed["location"] : "";
   const reply = await nc.request(SENSOR_SUBJECT, location, { timeout: 5000 });
   const value = reply.string();
@@ -167,11 +177,14 @@ async function main(): Promise<void> {
   // separate process somewhere on the network — here it just shares `nc`.
   await startSensorService(nc);
 
+  // Identity and heartbeat cadence are env-overridable (see 01-echo.ts).
+  const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
   const service = new AgentService({
     nc,
     agent: "tools",
-    owner: process.env["USER"] ?? "anon",
-    name: "main",
+    owner: process.env["NATS_AGENT_OWNER"] ?? process.env["USER"] ?? "anon",
+    name: process.env["NATS_AGENT_NAME"] ?? "main",
+    ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
     description: "LLM agent with a read_sensor tool backed by a NATS microservice",
   });
 
@@ -187,6 +200,11 @@ async function main(): Promise<void> {
     // loop until the model stops requesting tools.)
     for (const call of decision.tool_calls ?? []) {
       const result = await runTool(nc, call.function.name, call.function.arguments);
+      // No tool_call_id: Ollama's /api/chat doesn't return tool-call ids and
+      // correlates each result to its call by order. (OpenAI-style APIs return
+      // an `id` per call that the result must echo back as `tool_call_id` — and
+      // there you'd also need the assistant message, pushed above as `decision`,
+      // to carry the matching `tool_calls`.)
       messages.push({ role: "tool", content: result });
     }
 

@@ -12,16 +12,16 @@ NATS bus.
 
 ## Install
 
-From a checkout (no published wheel yet):
+```bash
+pip install synadia-ai-agent-service
+```
+
+This pulls `synadia-ai-agents` automatically. For local development against the sibling checkout:
 
 ```bash
 uv pip install -e ../../client-sdk/python
 uv pip install -e .
 ```
-
-When both packages are on PyPI, plain `pip install
-synadia-ai-agent-service` will pull `synadia-ai-agents>=0.6`
-automatically.
 
 ## Quickstart — host an agent
 
@@ -59,6 +59,13 @@ A spec-compliant runnable echo agent ships at
 both as the test harness for the client-side numbered demos in
 `../../client-sdk/python/examples/` and as the wire-compat counterparty
 for cross-SDK interop.
+
+Alongside it, [`examples/`](examples/) carries a numbered **agent
+ladder** — `01-echo.py` → `05-tools.py` (echo, Ollama, OpenRouter,
+combined, and a tool-calling agent backed by a NATS microservice) —
+the Python mirror of `../typescript/examples/`. See
+[`examples/README.md`](examples/README.md) for the full table and how
+to run them.
 
 ## Where things live
 
