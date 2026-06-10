@@ -26,7 +26,7 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [DeerFlow](agents/deerflow/) | `df` | `synadia-ai-nats-deerflow-channel` — external Python wrapper for a running DeerFlow Gateway |
 | [Flue](agents/flue/) | `flue` | `@synadia-ai/flue-nats-channel` — sidecar for a running Flue app / agent |
 | [open-agent](agents/open-agent/) | `open-agent` | `@synadia-ai/open-agent` (private) — inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
-| [OpenCode](agents/opencode/) | `opencode` | `@synadia-ai/opencode-nats-channel` — managed or attached bridge for OpenCode server sessions |
+| [OpenCode](agents/opencode/) | `opencode` | `@synadia-ai/opencode-nats-channel` — OpenCode plugin that registers projects as NATS agents |
 | [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 
 Subjects follow a verb-first pattern: `agents.{verb}.{token}.{owner}.{session}` where `verb` is `prompt`, `hb`, or `status`.
