@@ -18,9 +18,13 @@ describe("README plugin guidance", () => {
   });
 
   test("keeps the public README focused on the OpenCode plugin", () => {
-    expect(readme).toContain("The intended user path is the OpenCode plugin");
+    expect(readme).toContain("makes an OpenCode project discoverable and promptable over NATS");
+    expect(readme).toContain("Install it in each OpenCode project you want to expose");
+    expect(readme).toContain("When OpenCode starts, that plugin loads the Synadia channel from `node_modules`");
     expect(readme).toContain("@synadia-ai/opencode-nats-channel/opencode-plugin");
     expect(readme).toContain(".opencode/plugins/synadia-channel.ts");
+    expect(readme).not.toContain("The intended user path");
+    expect(readme).not.toContain("wrapper");
     expect(readme).not.toContain("plugin-first");
     expect(readme).not.toContain("Plugin mode registers");
     expect(readme).not.toContain("## Quick start: managed mode");

@@ -1,15 +1,8 @@
 # OpenCode NATS channel
 
-`@synadia-ai/opencode-nats-channel` exposes an OpenCode project as a Synadia Agent Protocol for NATS agent by loading a small OpenCode plugin.
+`@synadia-ai/opencode-nats-channel` makes an OpenCode project discoverable and promptable over NATS.
 
-The intended user path is the OpenCode plugin:
-
-1. install the package from npm,
-2. install the generated `.opencode/plugins/synadia-channel.ts` wrapper in a project,
-3. start OpenCode normally,
-4. discover and prompt the project over NATS.
-
-The wrapper imports the package plugin export; it does not copy the protocol implementation into the project.
+Install it in each OpenCode project you want to expose. The installer adds a small `.opencode/plugins/synadia-channel.ts` plugin entry file and a package dependency under `.opencode/package.json`. When OpenCode starts, that plugin loads the Synadia channel from `node_modules`, connects to NATS, and registers the project as a Synadia Agent Protocol agent.
 
 ## Prerequisites
 
@@ -58,7 +51,7 @@ Maintainers: this package must be published to npm before the `bunx` install pat
 
 ## Quick start
 
-Install the project-local plugin wrapper:
+Install the Synadia plugin into an OpenCode project:
 
 ```sh
 bunx @synadia-ai/opencode-nats-channel plugin install \
@@ -67,14 +60,14 @@ bunx @synadia-ai/opencode-nats-channel plugin install \
   --session main
 ```
 
-The installer creates or updates:
+The installer creates or updates two project-local OpenCode files:
 
 ```text
 .opencode/plugins/synadia-channel.ts
 .opencode/package.json
 ```
 
-The generated wrapper is intentionally tiny:
+The plugin entry file is intentionally tiny; the implementation stays in the npm package:
 
 ```ts
 import { SynadiaChannelPlugin } from "@synadia-ai/opencode-nats-channel/opencode-plugin";
@@ -114,7 +107,7 @@ opencode-agent plugin uninstall --directory /path/to/repo
 opencode-agent plugin print-env-template
 ```
 
-`plugin install` updates only the generated wrapper and the project's `.opencode/package.json` dependency entry.
+`plugin install` updates only the generated plugin entry file and the project's `.opencode/package.json` dependency entry.
 
 ## Configuration
 
@@ -201,7 +194,7 @@ The scripts refuse unexpected keys, chmod the env file to `0600`, and do not pri
 
 | Symptom | Check |
 | --- | --- |
-| `plugin doctor` says the wrapper is missing | Run `opencode-agent plugin install --directory /path/to/repo`. |
+| `plugin doctor` says the plugin entry file is missing | Run `opencode-agent plugin install --directory /path/to/repo`. |
 | No agent appears in discovery | Verify NATS context/URL, then run `nats micro list` and `nats req '$SRV.INFO.agents' '' --replies=0 --timeout=2s`. |
 | Prompt returns only the leading ack | Use `--wait-for-empty --reply-timeout=30s --timeout=<large enough>` with `nats req`, or use an SDK client. |
 | Attachment request gets `400` | Expected for v1. The prompt endpoint advertises `attachments_ok=false`. |
