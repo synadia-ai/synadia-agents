@@ -56,6 +56,38 @@ describe("plugin prompt bridge", () => {
     expect(events).toContainEqual({ type: "response", text: "hello from opencode" });
   });
 
+  test("creates and reuses a real OpenCode session when OPENCODE_SESSION_ID is not configured", async () => {
+    const createCalls: unknown[] = [];
+    const promptCalls: unknown[] = [];
+    const ctx: OpenCodePluginContext = {
+      client: {
+        session: {
+          create: async (input) => {
+            createCalls.push(input);
+            return { data: { id: "ses_created" } };
+          },
+          prompt: async (input) => {
+            promptCalls.push(input);
+            return { data: { parts: [{ type: "text", text: "hello from created session" }] } };
+          },
+        },
+      },
+    };
+    const bridge = new PluginOpenCodeBridgeClient(ctx, state());
+
+    const firstEvents = [];
+    for await (const event of bridge.prompt({ prompt: "first", directory: "/tmp/project" })) firstEvents.push(event);
+    const secondEvents = [];
+    for await (const event of bridge.prompt({ prompt: "second", directory: "/tmp/project" })) secondEvents.push(event);
+
+    expect(createCalls).toHaveLength(1);
+    expect(promptCalls).toHaveLength(2);
+    expect(promptCalls.map((call) => (call as { path?: { id?: string } }).path?.id)).toEqual(["ses_created", "ses_created"]);
+    expect(promptCalls.map((call) => (call as { path?: { id?: string } }).path?.id)).not.toContain("default");
+    expect(firstEvents).toContainEqual({ type: "response", text: "hello from created session" });
+    expect(secondEvents).toContainEqual({ type: "response", text: "hello from created session" });
+  });
+
   test("bridges permission events into protocol permission prompts and replies through plugin API", async () => {
     const replies: unknown[] = [];
     const ctx: OpenCodePluginContext = {

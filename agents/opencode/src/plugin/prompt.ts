@@ -8,20 +8,25 @@ import { AsyncPluginEventQueue } from "./queue.js";
 export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
   readonly mode = "plugin" as const;
   readonly #mapperState = createEventMapperState();
+  #activeSessionId: string | undefined;
+  #creatingSession: Promise<string> | undefined;
 
   constructor(
     private readonly ctx: OpenCodePluginContext,
     private readonly state: PluginChannelState,
-  ) {}
+  ) {
+    this.#activeSessionId = state.config.opencode.sessionId;
+  }
 
   async *prompt(request: OpenCodePromptRequest): AsyncIterable<OpenCodeBridgeEvent> {
-    const sessionId = request.sessionId ?? this.state.config.opencode.sessionId ?? "default";
+    const directory = request.directory ?? this.state.config.opencode.directory;
+    const sessionId = await this.ensureSession(request.sessionId, directory);
     const queue = new AsyncPluginEventQueue();
     this.state.promptCount += 1;
     this.state.activePrompts.set(sessionId, { sessionId, queue, createdAt: Date.now() });
     try {
       queue.push({ type: "status", text: `OpenCode plugin bridge selected; session=${sessionId}` });
-      void this.invokeOpenCodePrompt(request, sessionId, queue);
+      void this.invokeOpenCodePrompt(request, sessionId, directory, queue);
       for await (const item of queue) {
         if (item.type === "status" && item.text) yield { type: "status", text: item.text };
         if (item.type === "response" && item.text) yield { type: "response", text: item.text };
@@ -52,7 +57,7 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
     if (mapped.type === "error") active.queue.fail(new Error(mapped.text ?? "OpenCode session error"));
   }
 
-  private async invokeOpenCodePrompt(request: OpenCodePromptRequest, sessionId: string, queue: PluginEventQueue): Promise<void> {
+  private async invokeOpenCodePrompt(request: OpenCodePromptRequest, sessionId: string, directory: string | undefined, queue: PluginEventQueue): Promise<void> {
     try {
       const session = this.ctx.client?.session;
       if (!session?.prompt) {
@@ -61,7 +66,7 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
       }
       const result = await session.prompt({
         path: { id: sessionId },
-        ...(request.directory ? { query: { directory: request.directory } } : {}),
+        ...(directory ? { query: { directory } } : {}),
         body: {
           ...(request.model ? { model: parseModel(request.model) } : {}),
           ...(request.agent ? { agent: request.agent } : {}),
@@ -81,7 +86,30 @@ export class PluginOpenCodeBridgeClient implements OpenCodeBridgeClient {
     const sessionId = eventSessionId(event);
     if (sessionId && this.state.activePrompts.has(sessionId)) return this.state.activePrompts.get(sessionId);
     if (this.state.activePrompts.size === 1) return [...this.state.activePrompts.values()][0];
-    return this.state.activePrompts.get("default");
+    return undefined;
+  }
+
+  private async ensureSession(requestedSessionId: string | undefined, directory: string | undefined): Promise<string> {
+    const existing = requestedSessionId ?? this.#activeSessionId;
+    if (existing) return validateOpenCodeSessionId(existing);
+    this.#creatingSession ??= this.createSession(directory).finally(() => { this.#creatingSession = undefined; });
+    return await this.#creatingSession;
+  }
+
+  private async createSession(directory: string | undefined): Promise<string> {
+    const session = this.ctx.client?.session;
+    if (!session?.create) {
+      throw new Error("OpenCode plugin session.create API unavailable; set OPENCODE_SESSION_ID to an existing ses... session id");
+    }
+    const result = await session.create({
+      body: { title: `NATS ${this.state.config.agent.owner}/${this.state.config.agent.name}` },
+      ...(directory ? { query: { directory } } : {}),
+    });
+    if (result.error) throw new Error(`OpenCode plugin session create failed: ${formatError(result.error)}`);
+    const sessionId = readSessionId(result.data);
+    if (!sessionId) throw new Error("OpenCode plugin session create response did not include a ses... id");
+    this.#activeSessionId = sessionId;
+    return sessionId;
   }
 
   private async handlePermissionEvent(event: unknown, queue: PluginEventQueue): Promise<void> {
@@ -123,6 +151,17 @@ function parseModel(model: string): { providerID: string; modelID: string } {
 function textFromPromptResult(data: unknown): string {
   if (!isRecord(data) || !Array.isArray(data.parts)) return "";
   return data.parts.map((part) => isRecord(part) && readString(part, "type") === "text" ? readString(part, "text") ?? "" : "").filter(Boolean).join("");
+}
+
+function readSessionId(data: unknown): string | undefined {
+  if (!isRecord(data)) return undefined;
+  const id = readString(data, "id");
+  return id ? validateOpenCodeSessionId(id) : undefined;
+}
+
+function validateOpenCodeSessionId(sessionId: string): string {
+  if (sessionId.startsWith("ses")) return sessionId;
+  throw new Error(`OpenCode plugin session id must start with ses; got ${sessionId}`);
 }
 
 function formatError(error: unknown): string {

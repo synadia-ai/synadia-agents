@@ -23,6 +23,16 @@ describe("package metadata", () => {
     expect(pkg.files).toContain(".env.example");
   });
 
+  test("plugin smoke scripts exercise the production package export, not the spike core", () => {
+    const lifecycle = readFileSync(join(import.meta.dir, "..", "scripts", "opencode-plugin-lifecycle-smoke.ts"), "utf8");
+    const permission = readFileSync(join(import.meta.dir, "..", "scripts", "opencode-plugin-permission-smoke.ts"), "utf8");
+    const productionSmoke = readFileSync(join(import.meta.dir, "..", "scripts", "production-plugin-smoke.ts"), "utf8");
+    expect(lifecycle).toContain("./production-plugin-smoke.js");
+    expect(permission).toContain("./production-plugin-smoke.js");
+    expect(`${lifecycle}\n${permission}`).not.toContain("spikes/plugin-channel");
+    expect(productionSmoke).toContain("@synadia-ai/opencode-nats-channel/opencode-plugin");
+  });
+
   test("ships a trackable dotenv example instead of only ignoring local env files", () => {
     const example = readFileSync(join(import.meta.dir, "..", ".env.example"), "utf8");
     expect(example).toContain("SYNADIA_OPENCODE_OWNER=local");

@@ -1,4 +1,4 @@
 #!/usr/bin/env bun
-// Maintained entrypoint for the plugin lifecycle smoke. This wraps the proven
-// spike harness until the real OpenCode server smoke is run in CI/PR review.
-await import("../spikes/plugin-channel/scripts/run-plugin-lifecycle-permission-gate.js");
+// Maintained production plugin lifecycle smoke. This exercises the package
+// export used by the generated OpenCode wrapper, not the old spike core.
+await import("./production-plugin-smoke.js");
