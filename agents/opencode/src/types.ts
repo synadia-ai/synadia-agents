@@ -1,4 +1,4 @@
-export type OpenCodeMode = "managed" | "attached";
+export type OpenCodeMode = "managed" | "attached" | "plugin";
 export type PermissionPolicy = "query" | "local" | "reject";
 
 export interface NatsConfig {

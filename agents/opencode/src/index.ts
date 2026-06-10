@@ -7,6 +7,7 @@ export * from "./event-stream.js";
 export * from "./nats.js";
 export * from "./opencode-client.js";
 export * from "./permissions.js";
+export * from "./plugin/index.js";
 export * from "./service.js";
 export * from "./subject.js";
 export * from "./types.js";

@@ -14,6 +14,9 @@ describe("package metadata", () => {
   test("declares an honest Bun TypeScript package surface", () => {
     expect(pkg.bin["opencode-agent"]).toBe("./src/cli.ts");
     expect(pkg.exports["."].import).toBe("./src/index.ts");
+    expect(pkg.exports["./opencode-plugin"].import).toBe("./src/plugin/index.ts");
+    expect(pkg.scripts["smoke:opencode-plugin-lifecycle"]).toContain("opencode-plugin-lifecycle-smoke.ts");
+    expect(pkg.scripts["smoke:opencode-plugin-permission"]).toContain("opencode-plugin-permission-smoke.ts");
     expect(pkg.files).toContain("src");
     expect(pkg.files).toContain("README.md");
     expect(pkg.files).toContain("PLUGIN_FIRST_IMPLEMENTATION_SPEC.md");

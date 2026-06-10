@@ -5,7 +5,7 @@ import { mapQueryReplyToPermissionDecision } from "./permissions.js";
 import type { OpenCodeMapping } from "./types.js";
 
 export interface OpenCodeBridgeClient {
-  readonly mode: "managed" | "attached";
+  readonly mode: "managed" | "attached" | "plugin";
   prompt(prompt: OpenCodePromptRequest): AsyncIterable<OpenCodeBridgeEvent>;
   close?(): Promise<void>;
 }

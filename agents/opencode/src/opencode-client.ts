@@ -92,7 +92,7 @@ class SdkOpenCodeBridgeClient implements OpenCodeBridgeClient {
     private readonly client: SdkOpenCodeClient,
     private readonly managedServer: ManagedOpenCodeServer | undefined,
   ) {
-    this.mode = config.opencode.mode;
+    this.mode = config.opencode.mode === "attached" ? "attached" : "managed";
     this.#activeSessionId = config.opencode.sessionId;
   }
 

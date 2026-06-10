@@ -21,6 +21,11 @@
       "import": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./opencode-plugin": {
+      "types": "./src/plugin/index.ts",
+      "import": "./src/plugin/index.ts",
+      "default": "./src/plugin/index.ts"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -41,7 +46,9 @@
     "smoke:protocol": "bun scripts/protocol-smoke.ts",
     "smoke:opencode-lifecycle": "bun scripts/opencode-lifecycle-smoke.ts",
     "smoke:opencode-runtime": "bun scripts/opencode-runtime-smoke.ts",
-    "smoke:opencode-permission": "bun scripts/opencode-permission-smoke.ts"
+    "smoke:opencode-permission": "bun scripts/opencode-permission-smoke.ts",
+    "smoke:opencode-plugin-lifecycle": "bun scripts/opencode-plugin-lifecycle-smoke.ts",
+    "smoke:opencode-plugin-permission": "bun scripts/opencode-plugin-permission-smoke.ts"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.16.0",

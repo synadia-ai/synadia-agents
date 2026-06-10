@@ -1,6 +1,6 @@
 # OpenCode NATS channel
 
-`@synadia-ai/opencode-nats-channel` exposes an [OpenCode](https://opencode.ai/) server/session as a Synadia Agent Protocol for NATS agent. It is a TypeScript/Bun adapter built on `@synadia-ai/agent-service` and `@opencode-ai/sdk`.
+`@synadia-ai/opencode-nats-channel` exposes an [OpenCode](https://opencode.ai/) project/session as a Synadia Agent Protocol for NATS agent. The primary path is an in-process OpenCode plugin; the external `opencode-agent start` adapter remains available for managed or attached server workflows. Both paths are TypeScript/Bun and use `@synadia-ai/agent-service` rather than hand-written protocol subjects.
 
 It registers a first-class `agents` micro service, routes protocol prompts into OpenCode sessions, streams OpenCode SSE text events as protocol `response` chunks, maps OpenCode permission events to protocol `query` chunks when configured, and advertises `attachments_ok=false` until OpenCode file ingestion is wired end-to-end.
 
@@ -10,6 +10,7 @@ It registers a first-class `agents` micro service, routes protocol prompts into 
 | --- | --- |
 | Package | `@synadia-ai/opencode-nats-channel` |
 | Binary | `opencode-agent` |
+| OpenCode plugin export | `@synadia-ai/opencode-nats-channel/opencode-plugin` |
 | Type token | `opencode` |
 | Prompt subject | `agents.prompt.opencode.<owner>.<session>` |
 | Status subject | `agents.status.opencode.<owner>.<session>` |
@@ -26,8 +27,9 @@ The published `opencode-agent` binary is a Bun TypeScript entrypoint (`#!/usr/bi
 From npm:
 
 ```sh
+bunx @synadia-ai/opencode-nats-channel plugin print-env-template
+bunx @synadia-ai/opencode-nats-channel plugin install --directory /path/to/repo --owner local --session main
 bunx @synadia-ai/opencode-nats-channel doctor
-bunx @synadia-ai/opencode-nats-channel start --help
 ```
 
 From a local clone:
@@ -56,17 +58,64 @@ Managed mode also needs the OpenCode CLI available on `PATH` because `@opencode-
 
 ## Process model: TUI vs server vs adapter
 
-There are three different processes/surfaces that are easy to conflate:
+There are four different processes/surfaces that are easy to conflate:
 
 - **OpenCode TUI** — the interactive terminal UI a developer uses locally.
+- **OpenCode plugin** — code loaded by OpenCode from `.opencode/plugins/`, running inside the OpenCode process and registering the current project/session on NATS.
 - **OpenCode HTTP/SSE server** — the `opencode serve` process that exposes sessions and event streams to the OpenCode SDK.
-- **Synadia adapter process** — `opencode-agent start`, which connects NATS to one OpenCode server/session surface and registers one Synadia Agent Protocol identity.
+- **Synadia adapter process** — `opencode-agent start`, the fallback external process that connects NATS to one OpenCode server/session surface and registers one Synadia Agent Protocol identity.
 
-Attached mode connects to the OpenCode HTTP/SSE server URL given by `--base-url`; it does not attach to arbitrary terminal TUI processes. If a TUI and server share the same upstream OpenCode session surface, the adapter can make that session NATS-addressable. If only a plain `opencode` TUI is running and no server URL exists, start `opencode serve` explicitly or use managed mode.
+The plugin path is the default heavy-user flow: install the wrapper in a repo, start OpenCode normally, and the running OpenCode process registers that project/session on NATS. Attached mode connects to the OpenCode HTTP/SSE server URL given by `--base-url`; it does not attach to arbitrary terminal TUI processes. If a TUI and server share the same upstream OpenCode session surface, the adapter can make that session NATS-addressable. If only a plain `opencode` TUI is running and no server URL exists, use the plugin path or start `opencode serve` explicitly.
+
+## Quick start: OpenCode plugin mode
+
+Install a thin project-local wrapper. It imports the package plugin export and does not duplicate the protocol implementation.
+
+```sh
+opencode-agent plugin install \
+  --directory /path/to/repo \
+  --owner local \
+  --session main
+```
+
+The installer creates or updates:
+
+```text
+.opencode/plugins/synadia-channel.ts
+.opencode/package.json
+```
+
+Start OpenCode with plugin-safe environment variables:
+
+```sh
+export NATS_URL=nats://127.0.0.1:4222
+export SYNADIA_OPENCODE_OWNER=local
+export SYNADIA_OPENCODE_SESSION=main
+export OPENCODE_PERMISSION_POLICY=query
+opencode serve --hostname 127.0.0.1 --port 4096
+```
+
+When the plugin loads, it registers:
+
+```text
+agents.prompt.opencode.local.main
+agents.status.opencode.local.main
+agents.hb.opencode.local.main
+```
+
+If `SYNADIA_OPENCODE_SESSION` is not set, the plugin derives a `session-<hash>` token from the OpenCode directory instead of publishing local path names. Discovery metadata uses hashes and safe origins only; it does not expose raw directories, project ids, credentials, or server passwords.
+
+Plugin commands:
+
+```sh
+opencode-agent plugin doctor --directory /path/to/repo
+opencode-agent plugin uninstall --directory /path/to/repo
+opencode-agent plugin print-env-template
+```
 
 ## Quick start: managed mode
 
-Managed mode starts and owns an `opencode serve` process through `@opencode-ai/sdk`. Use this when the adapter should create the OpenCode server for one repo/worktree.
+Managed mode starts and owns an `opencode serve` process through `@opencode-ai/sdk`. Use this fallback when a separate adapter process is preferred or plugin installation is not available.
 
 ```sh
 opencode-agent start \
@@ -85,7 +134,7 @@ Useful flags:
 
 ## Quick start: attached mode
 
-Attached mode connects to an already-running OpenCode HTTP/SSE server and must not spawn a second server. Use this for power-user workflows where a local OpenCode process already owns the session surface.
+Attached mode connects to an already-running OpenCode HTTP/SSE server and must not spawn a second server. Use this fallback for control-plane workflows where a local OpenCode server already owns the session surface and a plugin is not the right deployment shape.
 
 ```sh
 opencode serve --hostname 127.0.0.1 --port 4096
@@ -205,6 +254,7 @@ Keep real `.env`, `.creds`, and `.nkey` files untracked. The example file uses h
 | NATS | `NATS_CONTEXT`, `NATS_URL`, `NATS_CREDS`, `NATS_CREDENTIALS` |
 | Adapter identity | `SYNADIA_OPENCODE_OWNER`, `SYNADIA_OPENCODE_SESSION` |
 | OpenCode server | `OPENCODE_SERVER_URL`, `OPENCODE_HOSTNAME`, `OPENCODE_PORT`, `OPENCODE_DIRECTORY`, `OPENCODE_WORKSPACE`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_SESSION_ID`, `OPENCODE_MODEL`, `OPENCODE_AGENT`, `OPENCODE_PERMISSION_POLICY` |
+| Plugin runtime | `SYNADIA_OPENCODE_HEARTBEAT_INTERVAL_S`, `SYNADIA_OPENCODE_KEEPALIVE_INTERVAL_S`, `OPENCODE_PERMISSION_TIMEOUT_MS` |
 
 If both a NATS context and creds path are set, the adapter uses the context. Keep credential material in NATS config files or creds files; do not inline secrets in shell history, docs, or committed config.
 
@@ -275,6 +325,10 @@ bun run smoke:opencode-runtime
 
 # Real NATS + real OpenCode permission-query denial path. Requires the same scoped env file.
 bun run smoke:opencode-permission
+
+# OpenCode plugin lifecycle and permission bridge smoke entrypoints.
+bun run smoke:opencode-plugin-lifecycle
+bun run smoke:opencode-plugin-permission
 ```
 
 Credentialed smokes load only a narrow env file. Default path:
@@ -297,8 +351,8 @@ The scripts refuse unexpected keys, chmod the env file to `0600`, and do not pri
 - Attachments are rejected until OpenCode file ingestion is mapped end-to-end.
 - Managed mode uses the OpenCode SDK server launcher, which resolves the `opencode` binary from `PATH`; this adapter does not expose a custom binary-path setting because the SDK launcher does not accept one.
 - Attached mode targets the OpenCode server/session surface. It should not be described as a TUI-specific API unless OpenCode exposes a typed TUI/session attach API.
-- Permission-query bridging depends on OpenCode emitting permission events with session and permission ids.
-- The adapter registers one NATS identity per process. Run more processes when you want multiple independently discoverable OpenCode instances.
+- Permission-query bridging depends on OpenCode emitting permission events with session and permission ids. The plugin first tries `client.permission.reply`, then falls back to the observed HTTP/SDK reply surfaces.
+- Plugin mode registers one NATS identity per loaded plugin channel. External fallback mode registers one NATS identity per adapter process. Use distinct owner/session tokens when you want multiple independently discoverable OpenCode instances.
 
 ## Troubleshooting
 
@@ -309,7 +363,7 @@ The scripts refuse unexpected keys, chmod the env file to `0600`, and do not pri
 | Prompt returns only the leading ack | Use `--wait-for-empty --reply-timeout=30s --timeout=<large enough>` with `nats req`, or use an SDK client. |
 | Attached mode connects to the wrong server | Check `--base-url` and `OPENCODE_SERVER_PASSWORD`; doctor reports only the safe origin, not full secret-bearing details. |
 | Attachment request gets `400` | Expected for v1. The prompt endpoint advertises `attachments_ok=false`. |
-| Tool call pauses forever | Use `permission_policy=query` with an SDK/query-capable caller, or choose `reject`/`local` depending on your risk posture. |
+| Tool call pauses forever | Use `permission_policy=query` with an SDK/query-capable caller, or choose `reject`/`local` depending on your risk posture. In plugin mode, verify OpenCode emits `permission.asked` or `permission.v2.asked` events with ids. |
 
 ## See also
 

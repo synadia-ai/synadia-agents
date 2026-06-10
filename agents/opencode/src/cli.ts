@@ -4,6 +4,7 @@ import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from
 import { formatDoctorChecks, runDoctorChecks } from "./doctor.js";
 import { resolveNatsOptions } from "./nats.js";
 import { createOpenCodeClient } from "./opencode-client.js";
+import { checkOpenCodePluginInstallation, installOpenCodePlugin, renderPluginEnvTemplate, uninstallOpenCodePlugin } from "./plugin/install.js";
 import { createOpenCodeAgentService } from "./service.js";
 import pkg from "../package.json" assert { type: "json" };
 
@@ -39,8 +40,55 @@ async function doctor(): Promise<void> {
   if (checks.some((c) => !c.ok)) process.exitCode = 1;
 }
 
+async function plugin(argv: readonly string[]): Promise<void> {
+  const subcommand = argv[0] ?? "help";
+  if (subcommand === "print-env-template") { console.log(renderPluginEnvTemplate()); return; }
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") { console.log(pluginHelpText()); return; }
+  const args = parseArgs(["plugin", ...argv.slice(1)]);
+  const directory = args.directory ?? process.cwd();
+  if (subcommand === "install") {
+    const result = installOpenCodePlugin({ directory, ...optional("owner", args.owner), ...optional("session", args.name) });
+    console.log(`installed OpenCode Synadia plugin wrapper: ${result.pluginPath}`);
+    console.log(`updated OpenCode plugin package file: ${result.packageJsonPath}`);
+    console.log("set runtime environment before starting opencode serve:");
+    console.log(renderPluginEnvTemplate(result.env).trimEnd());
+    return;
+  }
+  if (subcommand === "uninstall") {
+    const result = uninstallOpenCodePlugin(directory);
+    console.log(`${result.removed ? "removed" : "not installed"}: ${result.pluginPath}`);
+    return;
+  }
+  if (subcommand === "doctor") {
+    const result = checkOpenCodePluginInstallation(directory);
+    console.log(`plugin wrapper ${result.pluginInstalled ? "present" : "missing"}: ${result.pluginPath}`);
+    console.log(`plugin dependency ${result.dependencyInstalled ? "present" : "missing"}: ${result.packageJsonPath}`);
+    if (!result.pluginInstalled || !result.dependencyInstalled) process.exitCode = 1;
+    return;
+  }
+  throw new Error(`unknown plugin command ${subcommand}`);
+}
+
+function pluginHelpText(): string {
+  return `Usage: opencode-agent plugin <install|doctor|uninstall|print-env-template> [options]
+
+Commands:
+  plugin install              Install .opencode/plugins/synadia-channel.ts
+  plugin doctor               Verify the local plugin wrapper and dependency
+  plugin uninstall            Remove the generated plugin wrapper
+  plugin print-env-template   Print safe runtime environment variables
+
+Options:
+  --directory PATH
+  --owner TOKEN
+  --session TOKEN
+`;
+}
+
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const raw = process.argv.slice(2);
+  if (raw[0] === "plugin") { await plugin(raw.slice(1)); return; }
+  const args = parseArgs(raw);
   if (args.help || args.command === "help") { console.log(helpText()); return; }
   if (args.command === "configure") {
     if (args.printTemplate) { console.log(renderConfigTemplate()); return; }
@@ -49,6 +97,10 @@ async function main(): Promise<void> {
   if (args.command === "doctor") { await doctor(); return; }
   if (args.command === "start") { await start(); return; }
   throw new Error(`unknown command ${args.command}`);
+}
+
+function optional<K extends string>(key: K, value: string | undefined): Record<K, string> | Record<string, never> {
+  return value ? { [key]: value } as Record<K, string> : {};
 }
 
 void main().catch((err: unknown) => {

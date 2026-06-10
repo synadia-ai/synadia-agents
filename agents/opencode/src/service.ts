@@ -9,6 +9,7 @@ export interface BuildAgentServiceOptionsInput {
   readonly nc: NatsConnection;
   readonly config: OpenCodeChannelConfig;
   readonly version: string;
+  readonly extraMetadata?: Record<string, string>;
 }
 
 function safeOrigin(baseUrl: string | undefined): string {
@@ -41,6 +42,7 @@ export function buildAgentServiceOptions(input: BuildAgentServiceOptionsInput): 
       opencode_workspace: mapping.opencode.workspace ?? "",
       opencode_base_url_origin: safeOrigin(mapping.opencode.baseUrl),
       permission_policy: mapping.opencode.permissionPolicy,
+      ...input.extraMetadata,
     },
   };
 }
