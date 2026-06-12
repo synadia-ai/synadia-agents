@@ -136,8 +136,12 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): OpenCode
   const opencodeSection = file.opencode ?? {};
 
   const defaultName = sanitizeDerivedSubjectToken(basename(resolve(cwd))) || "default";
-  const owner = requireSubjectToken(get(args.owner, env.SYNADIA_OPENCODE_OWNER, agentSection.owner, sanitizeDerivedSubjectToken(env.USER ?? "unknown") || "unknown")!, "agent.owner");
-  const name = requireSubjectToken(get(args.name, env.SYNADIA_OPENCODE_SESSION, agentSection.name, defaultName)!, "agent.name");
+  // Identity chain per the SYNADIA_* convention shared across agents/*:
+  // CLI flag > per-agent var (SYNADIA_OPENCODE_NAME canonical,
+  // SYNADIA_OPENCODE_SESSION shipped alias) > fleet-wide var > config file
+  // > derived fallback.
+  const owner = requireSubjectToken(get(args.owner, env.SYNADIA_OPENCODE_OWNER, env.SYNADIA_OWNER, agentSection.owner, sanitizeDerivedSubjectToken(env.USER ?? "unknown") || "unknown")!, "agent.owner");
+  const name = requireSubjectToken(get(args.name, env.SYNADIA_OPENCODE_NAME, env.SYNADIA_OPENCODE_SESSION, env.SYNADIA_NAME, agentSection.name, defaultName)!, "agent.name");
   const subjectToken = requireSubjectToken(get(args.subjectToken, agentSection.subject_token, "opencode")!, "agent.subject_token");
   if (subjectToken !== "opencode") throw new Error("agent.subject_token must be opencode for this adapter");
 
