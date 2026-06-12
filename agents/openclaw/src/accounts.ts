@@ -19,7 +19,9 @@ function getAccounts(cfg: OpenClawConfig): Record<string, NatsAccountConfig> {
 
 // Dedup env-override log lines so the many `currentValue` callbacks in the
 // setup wizard don't flood the console — one line per (accountId, envVar) pair
-// per process is enough to make the override visible.
+// per process is enough to make the override visible. The dedup affects
+// LOGGING ONLY: `applyEnvOverride` always assigns `resolved[field]` before
+// the dedup check, so a missing log line never means a missing override.
 const loggedEnvOverrides = new Set<string>();
 
 function applyEnvOverride(
@@ -45,12 +47,27 @@ function applyEnvOverride(
   console.warn(`[nats] env override ${envName} (account=${accountId}): ${suffix}`);
 }
 
+// First defined entry from an ordered list of env var names. Identity vars
+// follow the SYNADIA_* convention shared across agents/*: per-agent var >
+// fleet-wide var > legacy alias. Returns the winning name alongside the
+// value so the override log can attribute it to the var that supplied it.
+function firstDefinedEnv(
+  ...names: string[]
+): { name: string; value: string } | undefined {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value !== undefined) return { name, value };
+  }
+  return undefined;
+}
+
 export function listNatsAccountIds(cfg: OpenClawConfig): string[] {
   const ids = Object.keys(getAccounts(cfg));
   const result = ids.length > 0 ? ids : [DEFAULT_ACCOUNT_ID];
+  const nameEnv = firstDefinedEnv("SYNADIA_OPENCLAW_NAME", "SYNADIA_NAME", "NATS_AGENT_NAME");
   console.log(
-    `[nats] listAccountIds: ${JSON.stringify(result)} (config keys: ${ids.length}, NATS_AGENT_NAME: ${
-      process.env.NATS_AGENT_NAME ?? "unset"
+    `[nats] listAccountIds: ${JSON.stringify(result)} (config keys: ${ids.length}, name env: ${
+      nameEnv ? `${nameEnv.name}=${nameEnv.value}` : "unset"
     })`,
   );
   return result;
@@ -112,10 +129,16 @@ export function resolveNatsAccount(
   // Resolution order (matches pi-headless + agents/pi):
   //   1. $NATS_CONTEXT       — env-var NATS CLI context file (highest)
   //   2. $NATS_URL           — raw URL
-  //   3. $NATS_CREDENTIALS   — overrides config creds field
+  //   3. $NATS_CREDENTIALS   — overrides config creds field ($NATS_CREDS is
+  //                            accepted as an alias when it is unset)
   //   4. config.context      — wizard-selected NATS CLI context file
   //   5. account config (`url`, `credentials`)
   //   6. built-in default    — `demo.nats.io` (set in connection.ts)
+  //
+  // Identity tokens (owner / agentName) follow the SYNADIA_* convention
+  // shared across agents/*: per-agent var (SYNADIA_OPENCLAW_*) > fleet-wide
+  // var (SYNADIA_*) > legacy alias (NATS_OWNER / NATS_ORG / NATS_AGENT_NAME)
+  // > account config. The legacy vars keep working indefinitely.
   const env = process.env;
 
   // ── Per-field env overrides (lower precedence than $NATS_CONTEXT) ──────
@@ -125,14 +148,23 @@ export function resolveNatsAccount(
   // `raw.credentials` would read `<unset>` even when the prior value was
   // sourced from a context file, which misleads debugging.
   applyEnvOverride(resolved, "url", resolved.url, env.NATS_URL, id, "NATS_URL");
-  applyEnvOverride(resolved, "agentName", raw.agentName, env.NATS_AGENT_NAME, id, "NATS_AGENT_NAME");
-  applyEnvOverride(resolved, "description", raw.description, env.NATS_DESCRIPTION, id, "NATS_DESCRIPTION");
-  if (env.NATS_OWNER !== undefined) {
-    applyEnvOverride(resolved, "owner", raw.owner ?? raw.org, env.NATS_OWNER, id, "NATS_OWNER");
-  } else if (env.NATS_ORG !== undefined) {
-    applyEnvOverride(resolved, "owner", raw.owner ?? raw.org, env.NATS_ORG, id, "NATS_ORG");
+  const nameEnv = firstDefinedEnv("SYNADIA_OPENCLAW_NAME", "SYNADIA_NAME", "NATS_AGENT_NAME");
+  if (nameEnv) {
+    applyEnvOverride(resolved, "agentName", raw.agentName, nameEnv.value, id, nameEnv.name);
   }
-  applyEnvOverride(resolved, "credentials", resolved.credentials, env.NATS_CREDENTIALS, id, "NATS_CREDENTIALS", true);
+  applyEnvOverride(resolved, "description", raw.description, env.NATS_DESCRIPTION, id, "NATS_DESCRIPTION");
+  const ownerEnv = firstDefinedEnv("SYNADIA_OPENCLAW_OWNER", "SYNADIA_OWNER", "NATS_OWNER", "NATS_ORG");
+  if (ownerEnv) {
+    applyEnvOverride(resolved, "owner", raw.owner ?? raw.org, ownerEnv.value, id, ownerEnv.name);
+  }
+  // NATS_CREDENTIALS deliberately wins over the NATS_CREDS alias here —
+  // it's openclaw's incumbent var, so existing deployments see zero change
+  // when both are set. (flue/opencode check NATS_CREDS first; only the
+  // accepted spelling is shared, not the tie-break order.)
+  const credsEnv = firstDefinedEnv("NATS_CREDENTIALS", "NATS_CREDS");
+  if (credsEnv) {
+    applyEnvOverride(resolved, "credentials", resolved.credentials, credsEnv.value, id, credsEnv.name, true);
+  }
 
   // ── $NATS_CONTEXT (highest precedence) ───────────────────────────────
   // Applied LAST so it wins over $NATS_URL and $NATS_CREDENTIALS — a

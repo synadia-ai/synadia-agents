@@ -19,7 +19,46 @@ try {
   skip = true;
 }
 
+// Identity env vars that influence resolveNatsAccount. Cleared per-test so
+// values leaking in from the invoking shell can't skew expectations, and
+// restored afterwards.
+const IDENTITY_ENV_VARS = [
+  "SYNADIA_OPENCLAW_OWNER",
+  "SYNADIA_OWNER",
+  "NATS_OWNER",
+  "NATS_ORG",
+  "SYNADIA_OPENCLAW_NAME",
+  "SYNADIA_NAME",
+  "NATS_AGENT_NAME",
+  "NATS_CREDENTIALS",
+  "NATS_CREDS",
+] as const;
+
+function snapshotIdentityEnv(): Record<string, string | undefined> {
+  const saved: Record<string, string | undefined> = {};
+  for (const v of IDENTITY_ENV_VARS) {
+    saved[v] = process.env[v];
+    delete process.env[v];
+  }
+  return saved;
+}
+
+function restoreIdentityEnv(saved: Record<string, string | undefined>): void {
+  for (const v of IDENTITY_ENV_VARS) {
+    if (saved[v] === undefined) delete process.env[v];
+    else process.env[v] = saved[v];
+  }
+}
+
 describe.skipIf(skip)("account resolution", () => {
+  let savedIdentity: Record<string, string | undefined>;
+  beforeEach(() => {
+    savedIdentity = snapshotIdentityEnv();
+  });
+  afterEach(() => {
+    restoreIdentityEnv(savedIdentity);
+  });
+
   it("returns sensible defaults for empty config (owner falls back to \"default\")", () => {
     const account = resolveNatsAccount({});
     expect(account.url).toBe("");
@@ -71,23 +110,90 @@ describe.skipIf(skip)("account resolution", () => {
   });
 });
 
+describe.skipIf(skip)("identity env overrides (SYNADIA_* convention)", () => {
+  let savedIdentity: Record<string, string | undefined>;
+  beforeEach(() => {
+    savedIdentity = snapshotIdentityEnv();
+  });
+  afterEach(() => {
+    restoreIdentityEnv(savedIdentity);
+  });
+
+  const cfg = {
+    channels: {
+      nats: {
+        accounts: {
+          default: {
+            agentName: "cfg-name",
+            owner: "cfg-owner",
+            credentials: "/cfg.creds",
+          },
+        },
+      },
+    },
+  };
+
+  it("SYNADIA_OPENCLAW_OWNER (per-agent) wins over fleet-wide, legacy, and config", () => {
+    process.env.SYNADIA_OPENCLAW_OWNER = "per-agent";
+    process.env.SYNADIA_OWNER = "fleet";
+    process.env.NATS_OWNER = "legacy";
+    expect(resolveNatsAccount(cfg, "default").owner).toBe("per-agent");
+  });
+
+  it("SYNADIA_OWNER (fleet-wide) wins over the legacy vars and config", () => {
+    process.env.SYNADIA_OWNER = "fleet";
+    process.env.NATS_OWNER = "legacy";
+    process.env.NATS_ORG = "older";
+    expect(resolveNatsAccount(cfg, "default").owner).toBe("fleet");
+  });
+
+  it("legacy NATS_OWNER and NATS_ORG keep working below the SYNADIA_* vars", () => {
+    process.env.NATS_OWNER = "legacy";
+    expect(resolveNatsAccount(cfg, "default").owner).toBe("legacy");
+    delete process.env.NATS_OWNER;
+    process.env.NATS_ORG = "older";
+    expect(resolveNatsAccount(cfg, "default").owner).toBe("older");
+  });
+
+  it("agentName: SYNADIA_OPENCLAW_NAME > SYNADIA_NAME > NATS_AGENT_NAME > config", () => {
+    expect(resolveNatsAccount(cfg, "default").agentName).toBe("cfg-name");
+    process.env.NATS_AGENT_NAME = "legacy-name";
+    expect(resolveNatsAccount(cfg, "default").agentName).toBe("legacy-name");
+    process.env.SYNADIA_NAME = "fleet-name";
+    expect(resolveNatsAccount(cfg, "default").agentName).toBe("fleet-name");
+    process.env.SYNADIA_OPENCLAW_NAME = "per-agent-name";
+    expect(resolveNatsAccount(cfg, "default").agentName).toBe("per-agent-name");
+  });
+
+  it("NATS_CREDS is accepted as an alias when NATS_CREDENTIALS is unset", () => {
+    process.env.NATS_CREDS = "/alias.creds";
+    expect(resolveNatsAccount(cfg, "default").credentials).toBe("/alias.creds");
+  });
+
+  it("NATS_CREDENTIALS (incumbent) wins when both creds vars are set", () => {
+    process.env.NATS_CREDENTIALS = "/incumbent.creds";
+    process.env.NATS_CREDS = "/alias.creds";
+    expect(resolveNatsAccount(cfg, "default").credentials).toBe("/incumbent.creds");
+  });
+});
+
 describe.skipIf(skip)("config.context resolution", () => {
   let baseHome: string;
   let savedHome: string | undefined;
   let savedEnvUrl: string | undefined;
-  let savedEnvCreds: string | undefined;
   let savedEnvCtx: string | undefined;
+  let savedIdentity: Record<string, string | undefined>;
 
   beforeEach(() => {
     baseHome = mkdtempSync(join(tmpdir(), "openclaw-cfgctx-"));
     mkdirSync(join(baseHome, ".config", "nats", "context"), { recursive: true });
     savedHome = process.env.HOME;
     savedEnvUrl = process.env.NATS_URL;
-    savedEnvCreds = process.env.NATS_CREDENTIALS;
     savedEnvCtx = process.env.NATS_CONTEXT;
+    // Also clears NATS_CREDENTIALS / NATS_CREDS, which these tests assert on.
+    savedIdentity = snapshotIdentityEnv();
     process.env.HOME = baseHome;
     delete process.env.NATS_URL;
-    delete process.env.NATS_CREDENTIALS;
     delete process.env.NATS_CONTEXT;
   });
 
@@ -96,10 +202,9 @@ describe.skipIf(skip)("config.context resolution", () => {
     else process.env.HOME = savedHome;
     if (savedEnvUrl === undefined) delete process.env.NATS_URL;
     else process.env.NATS_URL = savedEnvUrl;
-    if (savedEnvCreds === undefined) delete process.env.NATS_CREDENTIALS;
-    else process.env.NATS_CREDENTIALS = savedEnvCreds;
     if (savedEnvCtx === undefined) delete process.env.NATS_CONTEXT;
     else process.env.NATS_CONTEXT = savedEnvCtx;
+    restoreIdentityEnv(savedIdentity);
   });
 
   function writeContext(name: string, body: Record<string, unknown>): void {

@@ -21,8 +21,8 @@ export NATS_CONTEXT=ngs                       # a NATS CLI context (recommended 
 export NATS_URL=nats://demo.nats.io            # raw URL
 export NATS_CREDENTIALS=/path/to/your.creds   # optional, for NKEY/JWT auth
 
-export NATS_AGENT_NAME=my-agent               # required: agent identity (5th subject token)
-export NATS_OWNER=my-org                      # optional: 4th subject token (defaults to "default")
+export NATS_AGENT_NAME=my-agent               # required: agent identity (5th subject token; or SYNADIA_OPENCLAW_NAME)
+export NATS_OWNER=my-org                      # optional: 4th subject token (defaults to "default"; or SYNADIA_OPENCLAW_OWNER)
 
 openclaw gateway
 ```
@@ -113,15 +113,24 @@ Restart with `openclaw gateway restart`.
 
 Each field has a matching env var. Useful for containers and any setup where you don't want secrets baked into a config file.
 
+Identity vars (`owner`, `agentName`) follow the `SYNADIA_*` convention shared
+across the agent plugins: per-agent var > fleet-wide var > legacy alias >
+account config. The legacy vars keep working indefinitely.
+
 | Variable | Sets | Notes |
 |----------|------|-------|
 | `NATS_CONTEXT` | `context` | Highest precedence — see below. |
 | `NATS_URL` | `url` | |
-| `NATS_AGENT_NAME` | `agentName` | |
 | `NATS_DESCRIPTION` | `description` | |
-| `NATS_OWNER` | `owner` | |
-| `NATS_ORG` | `owner` | Legacy alias. |
+| `SYNADIA_OPENCLAW_NAME` | `agentName` | Per-agent override — highest name precedence. |
+| `SYNADIA_NAME` | `agentName` | Fleet-wide override — below the per-agent var. |
+| `NATS_AGENT_NAME` | `agentName` | Legacy alias, still honored below the `SYNADIA_*` vars. |
+| `SYNADIA_OPENCLAW_OWNER` | `owner` | Per-agent override — highest owner precedence. |
+| `SYNADIA_OWNER` | `owner` | Fleet-wide override — below the per-agent var. |
+| `NATS_OWNER` | `owner` | Legacy alias, still honored below the `SYNADIA_*` vars. |
+| `NATS_ORG` | `owner` | Legacy alias (pre-0.3). |
 | `NATS_CREDENTIALS` | `credentials` | |
+| `NATS_CREDS` | `credentials` | Alias — used only when `NATS_CREDENTIALS` is unset. |
 
 ### Resolution order
 
