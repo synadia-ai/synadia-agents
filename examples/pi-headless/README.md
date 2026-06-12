@@ -93,8 +93,8 @@ Env overrides:
 
 | Variable | Overrides | Default |
 | --- | --- | --- |
-| `PI_HEADLESS_OWNER` | Owner subject token (3rd segment) | `$USER` |
-| `PI_HEADLESS_NAME` | Controller instance name (4th token) | `control` |
+| `SYNADIA_PI_HEADLESS_OWNER`, `SYNADIA_OWNER` | Owner subject token; per-agent var wins, then fleet-wide, then the legacy `PI_HEADLESS_OWNER` | `$USER` |
+| `SYNADIA_PI_HEADLESS_NAME`, `SYNADIA_NAME` | Controller instance name; same chain (legacy: `PI_HEADLESS_NAME`) | `control` |
 | `PI_HEADLESS_DEFAULT_MODEL` | Default model spec for spawns | (none — caller must set, or PI picks) |
 | `PI_HEADLESS_DEFAULT_THINKING_LEVEL` | Default thinking level for spawns | (none) |
 | `PI_HEADLESS_DEFAULT_MAX_LIFETIME` | Default session lifetime, in seconds | `1800` |

@@ -148,14 +148,24 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
   const file = readConfigFile();
   const env = process.env;
 
+  // Identity chain per the SYNADIA_* convention shared across agents/*:
+  // CLI flag > per-agent var (hyphens → underscores) > fleet-wide var >
+  // legacy alias > config file > derived fallback.
   const owner =
     cli.owner ??
+    env["SYNADIA_CLAUDE_CODE_HEADLESS_OWNER"] ??
+    env["SYNADIA_OWNER"] ??
     env["CLAUDE_CODE_HEADLESS_OWNER"] ??
     env["USER"] ??
     userInfo().username ??
     "anon";
   const name =
-    cli.name ?? env["CLAUDE_CODE_HEADLESS_NAME"] ?? file.name ?? BUILT_IN_DEFAULTS.name;
+    cli.name ??
+    env["SYNADIA_CLAUDE_CODE_HEADLESS_NAME"] ??
+    env["SYNADIA_NAME"] ??
+    env["CLAUDE_CODE_HEADLESS_NAME"] ??
+    file.name ??
+    BUILT_IN_DEFAULTS.name;
   const context = cli.context ?? env["NATS_CONTEXT"] ?? file.context;
   const natsUrl = cli.natsUrl ?? env["NATS_URL"];
   const defaultModel =
@@ -194,7 +204,7 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
   // returns "" so the equality check alone wouldn't trip on it.
   if (owner.length === 0 || sanitizeToken(owner) !== owner) {
     throw new Error(
-      `claude-code-headless: invalid owner "${owner}" — must match [a-z0-9_-]{1,63}. Override with --owner or CLAUDE_CODE_HEADLESS_OWNER.`,
+      `claude-code-headless: invalid owner "${owner}" — must match [a-z0-9_-]{1,63}. Override with --owner, SYNADIA_CLAUDE_CODE_HEADLESS_OWNER, or SYNADIA_OWNER.`,
     );
   }
   if (name.length === 0 || sanitizeToken(name) !== name) {

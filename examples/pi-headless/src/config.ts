@@ -107,9 +107,24 @@ export function loadConfig(cli: CliOverrides = {}): PiHeadlessConfig {
   const file = readConfigFile();
   const env = process.env;
 
+  // Identity chain per the SYNADIA_* convention shared across agents/*:
+  // CLI flag > per-agent var (hyphens → underscores) > fleet-wide var >
+  // legacy alias > config file > derived fallback.
   const owner =
-    cli.owner ?? env["PI_HEADLESS_OWNER"] ?? env["USER"] ?? userInfo().username ?? "anon";
-  const name = cli.name ?? env["PI_HEADLESS_NAME"] ?? file.name ?? BUILT_IN_DEFAULTS.name;
+    cli.owner ??
+    env["SYNADIA_PI_HEADLESS_OWNER"] ??
+    env["SYNADIA_OWNER"] ??
+    env["PI_HEADLESS_OWNER"] ??
+    env["USER"] ??
+    userInfo().username ??
+    "anon";
+  const name =
+    cli.name ??
+    env["SYNADIA_PI_HEADLESS_NAME"] ??
+    env["SYNADIA_NAME"] ??
+    env["PI_HEADLESS_NAME"] ??
+    file.name ??
+    BUILT_IN_DEFAULTS.name;
   const context = cli.context ?? env["NATS_CONTEXT"] ?? file.context;
   const natsUrl = cli.natsUrl ?? env["NATS_URL"];
   const defaultModel = env["PI_HEADLESS_DEFAULT_MODEL"] ?? file.defaultModel;
