@@ -87,7 +87,7 @@ Start OpenCode from the same project directory with the plugin environment confi
 cd /path/to/repo
 export NATS_URL=nats://127.0.0.1:4222
 export SYNADIA_OPENCODE_OWNER=local
-export SYNADIA_OPENCODE_SESSION=main
+export SYNADIA_OPENCODE_NAME=main
 export OPENCODE_PERMISSION_POLICY=query
 ```
 
@@ -113,7 +113,7 @@ agents.status.opencode.local.main
 agents.hb.opencode.local.main
 ```
 
-If `SYNADIA_OPENCODE_SESSION` is unset, the plugin derives a `session-<hash>` token from the OpenCode directory instead of publishing local path names. Discovery metadata uses hashes and safe origins only; it does not expose raw directories, project ids, credentials, or server passwords.
+If `SYNADIA_OPENCODE_NAME` (or its alias `SYNADIA_OPENCODE_SESSION`) is unset, the plugin derives a `session-<hash>` token from the OpenCode directory instead of publishing local path names. Discovery metadata uses hashes and safe origins only; it does not expose raw directories, project ids, credentials, or server passwords.
 
 ## Plugin commands
 
