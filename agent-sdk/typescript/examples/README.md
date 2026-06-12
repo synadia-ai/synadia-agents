@@ -20,13 +20,17 @@ They form a ladder — each rung is the one before plus a little more:
 Every example resolves its NATS connection and identity the same way; none of
 these are required (the defaults connect to a local server as your `$USER`).
 
-| Variable                        | Default                    | Purpose                                                                                                                                                                                         |
-| ------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NATS_CONTEXT`                  | _(unset)_                  | Connect via a named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins when set.                                                                       |
-| `NATS_URL`                      | _(unset)_                  | Connect via a raw URL; credentials in the userinfo are honored. When neither this nor `NATS_CONTEXT` is set, the examples fall back to `nats://127.0.0.1:4222`.                                 |
-| `NATS_AGENT_OWNER`              | your `$USER` (else `anon`) | The `owner` token in `agents.prompt.<agent>.<owner>.<name>`. Set it so several people running this against one server don't collide.                                                            |
-| `NATS_AGENT_NAME`               | `main`                     | The instance `name` token in the subject. Use different names to run several instances at once.                                                                                                 |
-| `NATS_AGENT_HEARTBEAT_INTERVAL` | `30`                       | Heartbeat cadence in **seconds**. Lower it (e.g. `2`) for a livelier [`05-liveness`](../../../client-sdk/typescript/examples/05-liveness.ts) demo. (`0` is treated as unset → the 30s default.) |
+| Variable                                 | Default                    | Purpose                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NATS_CONTEXT`                           | _(unset)_                  | Connect via a named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins when set.                                                                                                                                                                                   |
+| `NATS_URL`                               | _(unset)_                  | Connect via a raw URL; credentials in the userinfo are honored. When neither this nor `NATS_CONTEXT` is set, the examples fall back to `nats://127.0.0.1:4222`.                                                                                                                                             |
+| `SYNADIA_<AGENT>_OWNER`, `SYNADIA_OWNER` | your `$USER` (else `anon`) | The `owner` token in `agents.prompt.<agent>.<owner>.<name>`. The per-example var (`SYNADIA_ECHO_OWNER`, `SYNADIA_OLLAMA_OWNER`, …) wins over the fleet-wide `SYNADIA_OWNER`; the legacy `NATS_AGENT_OWNER` is still honored below both. Set one so several people running against one server don't collide. |
+| `SYNADIA_<AGENT>_NAME`, `SYNADIA_NAME`   | `main`                     | The instance `name` token in the subject — same lookup chain (legacy: `NATS_AGENT_NAME`). Use different names to run several instances at once.                                                                                                                                                             |
+| `NATS_AGENT_HEARTBEAT_INTERVAL`          | `30`                       | Heartbeat cadence in **seconds**. Lower it (e.g. `2`) for a livelier [`05-liveness`](../../../client-sdk/typescript/examples/05-liveness.ts) demo. (`0` is treated as unset → the 30s default.)                                                                                                             |
+
+The identity lookup chain — per-agent var over fleet-wide var over legacy
+alias — is the env naming convention being adopted across the agent plugins
+(`agents/*`); copy it when writing your own agent.
 
 Per-backend variables (`OLLAMA_URL`, `OLLAMA_MODEL`, `OPENROUTER_API_KEY`,
 `OPENROUTER_MODEL`) are documented in the relevant sections below.
@@ -48,7 +52,7 @@ NATS_URL=tls://connect.ngs.global bun examples/01-echo.ts
 bun examples/01-echo.ts   # localhost fallback
 
 # run as a uniquely-named instance with fast heartbeats:
-NATS_AGENT_OWNER=alice NATS_AGENT_NAME=demo NATS_AGENT_HEARTBEAT_INTERVAL=2 bun examples/01-echo.ts
+SYNADIA_OWNER=alice SYNADIA_NAME=demo NATS_AGENT_HEARTBEAT_INTERVAL=2 bun examples/01-echo.ts
 ```
 
 You should see:
@@ -75,7 +79,8 @@ Output:
 (empty terminator)
 ```
 
-(The owner defaults to your `$USER` unless you set `NATS_AGENT_OWNER`.)
+(The owner defaults to your `$USER` unless you set `SYNADIA_OWNER` — or the
+per-example `SYNADIA_ECHO_OWNER`, or the legacy `NATS_AGENT_OWNER`.)
 
 ### `02-ollama.ts` — prompt a local LLM
 

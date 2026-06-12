@@ -70,8 +70,17 @@ async function main(): Promise<void> {
   const service = new AgentService({
     nc,
     agent: "ollama",
-    owner: process.env["NATS_AGENT_OWNER"] ?? process.env["USER"] ?? "anon",
-    name: process.env["NATS_AGENT_NAME"] ?? "main",
+    owner:
+      process.env["SYNADIA_OLLAMA_OWNER"] ??
+      process.env["SYNADIA_OWNER"] ??
+      process.env["NATS_AGENT_OWNER"] ??
+      process.env["USER"] ??
+      "anon",
+    name:
+      process.env["SYNADIA_OLLAMA_NAME"] ??
+      process.env["SYNADIA_NAME"] ??
+      process.env["NATS_AGENT_NAME"] ??
+      "main",
     ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
     description: `LLM agent — answers prompts with the local Ollama '${MODEL}' model`,
   });
