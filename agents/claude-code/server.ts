@@ -105,6 +105,7 @@ type PermissionMode = 'terminal' | 'query'
 
 type NatsChannelConfig = {
   context?: string
+  owner?: string
   sessionName?: string
   permissions?: {
     // 'nats' is accepted as a backward-compatible alias for 'query'.
@@ -366,8 +367,19 @@ process.stderr.write(`nats channel: connected (max_payload=${MAX_PAYLOAD_STR})\n
 
 // ── Resolve session name and register micro service ────────────────────
 
-const owner = sanitizeSessionName(process.env.USER ?? 'unknown') || 'unknown'
-const rawSessionName = (process.env.NATS_SESSION_NAME
+// Owner and name follow the SYNADIA_* identity convention shared across
+// agents/*: per-agent var > fleet-wide var > legacy alias / config file >
+// derived fallback. Explicit values flow through unsanitized — the SDK's
+// `AgentSubject.new` rejects invalid tokens with a clear error — while
+// derived ones ($USER, CWD basename) are sanitized into subject-safe form.
+const owner = (process.env.SYNADIA_CLAUDE_CODE_OWNER
+  ?? process.env.SYNADIA_OWNER
+  ?? config.owner
+  ?? sanitizeSessionName(process.env.USER ?? 'unknown'))
+  || 'unknown'
+const rawSessionName = (process.env.SYNADIA_CLAUDE_CODE_NAME
+  ?? process.env.SYNADIA_NAME
+  ?? process.env.NATS_SESSION_NAME
   ?? config.sessionName
   ?? sanitizeSessionName(basename(process.env.CLAUDE_CWD ?? '')))
   || 'default'

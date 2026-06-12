@@ -1,6 +1,6 @@
 ---
 name: configure
-description: Configure NATS channel - select context, set session name, configure permissions. Use when user asks to set up NATS, connect to NATS, change context, or configure permissions.
+description: Configure NATS channel - select context, set owner and session name, configure permissions. Use when user asks to set up NATS, connect to NATS, change context, or configure permissions.
 user-invocable: true
 allowed-tools:
   - Read
@@ -30,6 +30,7 @@ Read state and give the user a complete picture, then ask:
 
 1. **Current config** - read `~/.claude/channels/nats/config.json`. Show:
    - Selected context name (or "none - using demo.nats.io")
+   - Owner override (if set)
    - Session name override (if set)
    - Connection URL and description from the context file
    - Permission mode (`terminal` or `query`) and whether permission prompts
@@ -81,6 +82,22 @@ Two separate steps - do NOT combine into one Bash call:
 
 Remove the `sessionName` field from `config.json` so the default
 (CWD basename) is used.
+
+### `owner <name>` - set owner override
+
+1. The owner is the 4th token in the v0.3 verb-first subject
+   `agents.prompt.cc.<owner>.<name>`. It defaults to the sanitized
+   `$USER`. This command overrides it — useful for service accounts or
+   deployment-scoped owners.
+2. Read existing `config.json` (or start fresh). Set the `owner` field.
+   Write back.
+3. Confirm the override. Note: the `SYNADIA_CLAUDE_CODE_OWNER` and
+   `SYNADIA_OWNER` env vars take precedence over this config field.
+
+### `owner clear` - remove owner override
+
+Remove the `owner` field from `config.json` so the default (sanitized
+`$USER`) is used.
 
 ### `permissions terminal` - use terminal for permission prompts
 
