@@ -19,7 +19,9 @@ function getAccounts(cfg: OpenClawConfig): Record<string, NatsAccountConfig> {
 
 // Dedup env-override log lines so the many `currentValue` callbacks in the
 // setup wizard don't flood the console — one line per (accountId, envVar) pair
-// per process is enough to make the override visible.
+// per process is enough to make the override visible. The dedup affects
+// LOGGING ONLY: `applyEnvOverride` always assigns `resolved[field]` before
+// the dedup check, so a missing log line never means a missing override.
 const loggedEnvOverrides = new Set<string>();
 
 function applyEnvOverride(
@@ -155,6 +157,10 @@ export function resolveNatsAccount(
   if (ownerEnv) {
     applyEnvOverride(resolved, "owner", raw.owner ?? raw.org, ownerEnv.value, id, ownerEnv.name);
   }
+  // NATS_CREDENTIALS deliberately wins over the NATS_CREDS alias here —
+  // it's openclaw's incumbent var, so existing deployments see zero change
+  // when both are set. (flue/opencode check NATS_CREDS first; only the
+  // accepted spelling is shared, not the tie-break order.)
   const credsEnv = firstDefinedEnv("NATS_CREDENTIALS", "NATS_CREDS");
   if (credsEnv) {
     applyEnvOverride(resolved, "credentials", resolved.credentials, credsEnv.value, id, credsEnv.name, true);

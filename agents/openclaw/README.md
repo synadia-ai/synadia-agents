@@ -21,8 +21,8 @@ export NATS_CONTEXT=ngs                       # a NATS CLI context (recommended 
 export NATS_URL=nats://demo.nats.io            # raw URL
 export NATS_CREDENTIALS=/path/to/your.creds   # optional, for NKEY/JWT auth
 
-export NATS_AGENT_NAME=my-agent               # required: agent identity (5th subject token)
-export NATS_OWNER=my-org                      # optional: 4th subject token (defaults to "default")
+export NATS_AGENT_NAME=my-agent               # required: agent identity (5th subject token; or SYNADIA_OPENCLAW_NAME)
+export NATS_OWNER=my-org                      # optional: 4th subject token (defaults to "default"; or SYNADIA_OPENCLAW_OWNER)
 
 openclaw gateway
 ```
@@ -121,10 +121,10 @@ account config. The legacy vars keep working indefinitely.
 |----------|------|-------|
 | `NATS_CONTEXT` | `context` | Highest precedence — see below. |
 | `NATS_URL` | `url` | |
+| `NATS_DESCRIPTION` | `description` | |
 | `SYNADIA_OPENCLAW_NAME` | `agentName` | Per-agent override — highest name precedence. |
 | `SYNADIA_NAME` | `agentName` | Fleet-wide override — below the per-agent var. |
 | `NATS_AGENT_NAME` | `agentName` | Legacy alias, still honored below the `SYNADIA_*` vars. |
-| `NATS_DESCRIPTION` | `description` | |
 | `SYNADIA_OPENCLAW_OWNER` | `owner` | Per-agent override — highest owner precedence. |
 | `SYNADIA_OWNER` | `owner` | Fleet-wide override — below the per-agent var. |
 | `NATS_OWNER` | `owner` | Legacy alias, still honored below the `SYNADIA_*` vars. |
