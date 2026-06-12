@@ -294,7 +294,7 @@ derived fallback.
 | --- | --- | --- |
 | `SYNADIA_CLAUDE_CODE_OWNER`, `SYNADIA_OWNER` | Owner (4th token in `agents.prompt.cc.<owner>.<name>`); per-agent var wins, then fleet-wide, then config `owner` | sanitized `$USER` |
 | `SYNADIA_CLAUDE_CODE_NAME`, `SYNADIA_NAME` | Session name (5th token); per-agent var wins, then fleet-wide, then the legacy `NATS_SESSION_NAME`, then config `sessionName` | sanitized basename of `$CLAUDE_CWD` |
-| `NATS_SESSION_NAME` | Session name — legacy alias, still honored below the `SYNADIA_*` vars | — |
+| `NATS_SESSION_NAME` | Session name — legacy alias, still honored below the `SYNADIA_*` vars | *(unset — falls through to config `sessionName`, then the `$CLAUDE_CWD` basename)* |
 | `NATS_CONTEXT` | NATS CLI context to connect with (wins over config `context`) | — |
 | `NATS_URL` | Raw NATS URL; used when no context is set via env or config | `demo.nats.io` |
 | `NATS_STATE_DIR` | State directory location | `~/.claude/channels/nats` |
