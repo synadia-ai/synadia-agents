@@ -58,6 +58,8 @@ and permissions. All state lives in `~/.claude/channels/nats/config.json`.
 | `/nats-channel:configure <context-name>` | Select a NATS CLI context to connect to |
 | `/nats-channel:configure session <name>` | Override the session name (5th token in `agents.prompt.cc.<owner>.<name>`) |
 | `/nats-channel:configure session clear` | Remove session name override, revert to CWD basename |
+| `/nats-channel:configure owner <name>` | Override the owner (4th token in `agents.prompt.cc.<owner>.<name>`) |
+| `/nats-channel:configure owner clear` | Remove owner override, revert to sanitized `$USER` |
 | `/nats-channel:configure permissions terminal` | Prompt for permissions in the terminal (default) |
 | `/nats-channel:configure permissions query` | Relay permission prompts as protocol query chunks |
 | `/nats-channel:configure permissions clear` | Reset permissions to default |
@@ -143,7 +145,12 @@ canonical counterpart.
 The micro service prompt subject is `agents.prompt.cc.<owner>.<name>` (v0.3 verb-first §2). Heartbeats go to `agents.hb.cc.<owner>.<name>` and the status endpoint replies on `agents.status.cc.<owner>.<name>`.
 
 - **Default:** sanitized basename of the working directory (e.g., `my-project`)
-- **Override:** set `NATS_SESSION_NAME` env var, or use `/nats-channel:configure session <name>`
+- **Override:** set `SYNADIA_CLAUDE_CODE_NAME` (or the fleet-wide
+  `SYNADIA_NAME`, or the legacy `NATS_SESSION_NAME`) env var, or use
+  `/nats-channel:configure session <name>`
+- **Owner:** the 4th token defaults to the sanitized `$USER`; override
+  with `SYNADIA_CLAUDE_CODE_OWNER` (or the fleet-wide `SYNADIA_OWNER`),
+  or `/nats-channel:configure owner <name>`
 - **Multiple sessions:** if the default name is already taken by another
   claude-code instance owned by the same user, the plugin auto-appends
   `-2`, `-3`, etc.
@@ -262,6 +269,7 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 ```json
 {
   "context": "my-context",
+  "owner": "my-team",
   "sessionName": "my-session",
   "permissions": {
     "mode": "query"
@@ -272,12 +280,22 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 | Field | Default | Description |
 | --- | --- | --- |
 | `context` | *(none - uses demo.nats.io)* | NATS CLI context name |
+| `owner` | sanitized `$USER` | Override the owner (4th subject token) |
 | `sessionName` | CWD basename | Override the session name |
 | `permissions.mode` | `terminal` | `terminal` or `query` (`nats` accepted as legacy alias for `query`) |
 
 ### Environment variables
 
+Identity vars follow the `SYNADIA_*` convention shared across the agent
+plugins: per-agent var > fleet-wide var > legacy alias / config file >
+derived fallback.
+
 | Variable | Overrides | Default |
 | --- | --- | --- |
-| `NATS_SESSION_NAME` | Session name (5th token in `agents.prompt.cc.<owner>.<name>`) | sanitized basename of `$CLAUDE_CWD` |
+| `SYNADIA_CLAUDE_CODE_OWNER`, `SYNADIA_OWNER` | Owner (4th token in `agents.prompt.cc.<owner>.<name>`); per-agent var wins, then fleet-wide, then config `owner` | sanitized `$USER` |
+| `SYNADIA_CLAUDE_CODE_NAME`, `SYNADIA_NAME` | Session name (5th token); per-agent var wins, then fleet-wide, then the legacy `NATS_SESSION_NAME`, then config `sessionName` | sanitized basename of `$CLAUDE_CWD` |
+| `NATS_SESSION_NAME` | Session name — legacy alias, still honored below the `SYNADIA_*` vars | *(unset — falls through to config `sessionName`, then the `$CLAUDE_CWD` basename)* |
+| `NATS_CONTEXT` | NATS CLI context to connect with (wins over config `context`) | — |
+| `NATS_URL` | Raw NATS URL; used when no context is set via env or config | `demo.nats.io` |
 | `NATS_STATE_DIR` | State directory location | `~/.claude/channels/nats` |
+| `CLAUDE_CWD` | Working directory whose basename seeds the default session name | — |
