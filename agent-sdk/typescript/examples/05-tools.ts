@@ -182,8 +182,17 @@ async function main(): Promise<void> {
   const service = new AgentService({
     nc,
     agent: "tools",
-    owner: process.env["NATS_AGENT_OWNER"] ?? process.env["USER"] ?? "anon",
-    name: process.env["NATS_AGENT_NAME"] ?? "main",
+    owner:
+      process.env["SYNADIA_TOOLS_OWNER"] ??
+      process.env["SYNADIA_OWNER"] ??
+      process.env["NATS_AGENT_OWNER"] ??
+      process.env["USER"] ??
+      "anon",
+    name:
+      process.env["SYNADIA_TOOLS_NAME"] ??
+      process.env["SYNADIA_NAME"] ??
+      process.env["NATS_AGENT_NAME"] ??
+      "main",
     ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
     description: "LLM agent with a read_sensor tool backed by a NATS microservice",
   });

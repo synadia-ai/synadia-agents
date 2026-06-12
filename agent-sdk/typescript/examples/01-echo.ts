@@ -22,16 +22,27 @@ async function main(): Promise<void> {
   const nc = await natsConnect(opts);
 
   // Identity → subject `agents.prompt.echo.<owner>.<name>`. Owner and name are
-  // overridable (NATS_AGENT_OWNER / NATS_AGENT_NAME) so several people can run
-  // this against one server without colliding; `agent` ("echo") is what this
-  // example *is*, so it stays fixed. NATS_AGENT_HEARTBEAT_INTERVAL (seconds)
-  // tunes the heartbeat cadence — unset falls back to the SDK default (30s).
+  // env-overridable so several people can run this against one server without
+  // colliding; `agent` ("echo") is what this example *is*, so it stays fixed.
+  // The lookup chain below is the convention agents should follow: per-agent
+  // var > fleet-wide var > legacy `NATS_AGENT_*` alias > derived fallback.
+  // NATS_AGENT_HEARTBEAT_INTERVAL (seconds) tunes the heartbeat cadence —
+  // unset falls back to the SDK default (30s).
   const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
   const service = new AgentService({
     nc,
     agent: "echo",
-    owner: process.env["NATS_AGENT_OWNER"] ?? process.env["USER"] ?? "anon",
-    name: process.env["NATS_AGENT_NAME"] ?? "main",
+    owner:
+      process.env["SYNADIA_ECHO_OWNER"] ??
+      process.env["SYNADIA_OWNER"] ??
+      process.env["NATS_AGENT_OWNER"] ??
+      process.env["USER"] ??
+      "anon",
+    name:
+      process.env["SYNADIA_ECHO_NAME"] ??
+      process.env["SYNADIA_NAME"] ??
+      process.env["NATS_AGENT_NAME"] ??
+      "main",
     // Spread the key in only when set: exactOptionalPropertyTypes forbids passing
     // `heartbeatIntervalS: undefined` explicitly, and an absent key is exactly
     // what tells the SDK to apply its 30s default.

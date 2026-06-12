@@ -21,7 +21,8 @@ the TypeScript mirror of
 
 The demos resolve their NATS connection the same way; neither is required (the
 default connects to a local server). They discover and prompt agents — no agent
-identity to set, so the `NATS_AGENT_*` vars used by the
+identity to set, so the identity vars (`SYNADIA_OWNER` / `SYNADIA_NAME`, legacy
+`NATS_AGENT_*`) used by the
 [host-side examples](../../../agent-sdk/typescript/examples/) don't apply here.
 
 | Variable       | Default   | Purpose                                                                                                                   |

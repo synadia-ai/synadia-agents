@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **Examples: identity env vars moved to the `SYNADIA_*` scheme.** The
+  numbered examples now resolve `owner`/`name` through the per-agent >
+  fleet-wide > legacy chain (`SYNADIA_<AGENT>_OWNER` > `SYNADIA_OWNER` >
+  `NATS_AGENT_OWNER`, same for `_NAME`), matching the env naming
+  convention being adopted across `agents/*`. The legacy
+  `NATS_AGENT_OWNER` / `NATS_AGENT_NAME` vars keep working as
+  lowest-priority aliases; no package API change.
 - `AgentService` now maps handler-raised `ProtocolError`s to
   `Nats-Service-Error-Code: 400` responses while preserving the existing
   `500` mapping for ordinary handler failures. This lets agent adapters reject
