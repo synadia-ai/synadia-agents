@@ -115,21 +115,26 @@ Programmatic users can pass any `(modelId: string) => LanguageModel` to
 
 ## CLI flags / env
 
+Identity vars follow the `SYNADIA_*` convention shared across the agent
+plugins: CLI flag > per-agent var (`SYNADIA_OPEN_AGENT_*` — hyphens in the
+agent name become underscores) > fleet-wide var (`SYNADIA_*`) > legacy alias
+(`OPEN_AGENT_*`) > derived fallback. Legacy vars keep working.
+
 | Flag | Env | Default |
 | --- | --- | --- |
-| `--owner` | `OPEN_AGENT_OWNER` | `$USER` |
-| `--session` | `OPEN_AGENT_SESSION` | `default` |
+| `--owner` | `SYNADIA_OPEN_AGENT_OWNER`, `SYNADIA_OWNER`, `OPEN_AGENT_OWNER` (legacy) | `$USER` |
+| `--session` | `SYNADIA_OPEN_AGENT_NAME`, `SYNADIA_NAME`, `OPEN_AGENT_SESSION` (legacy) | `default` |
 | `--workdir` | `OPEN_AGENT_WORKDIR` | `${TMPDIR}/open-agent/<session>/` |
-| `--nats-context` | — | (unset) |
+| `--nats-context` | `NATS_CONTEXT` | (unset) |
 | `--provider` | `OPEN_AGENT_PROVIDER` | `gateway` (or `openrouter` if only `OPENROUTER_API_KEY` is set) |
 | — | `NATS_URL` | `nats://127.0.0.1:4222` |
 | — | `OPEN_AGENT_MODEL` | `anthropic/claude-opus-4.6` on Gateway; **required** on OpenRouter |
 | — | `AI_GATEWAY_API_KEY` | required when provider=gateway |
 | — | `OPENROUTER_API_KEY` | required when provider=openrouter |
 
-`--nats-context <name>` resolves a saved `nats` CLI context via
-`@synadia-ai/agents`'s `loadContextOptions`. `NATS_URL` overrides the
-context.
+`--nats-context <name>` (or `$NATS_CONTEXT`) resolves a saved `nats` CLI
+context via `@synadia-ai/agents`'s `loadContextOptions`. A selected context
+wins over `NATS_URL` — same precedence as the other agent plugins.
 
 ## Wire format for tool calls
 
