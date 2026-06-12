@@ -60,20 +60,26 @@ Config file lives at `~/.pi/agent/nats-channel.json`:
 |-------|----------|---------|-------------|
 | `context` | no | — | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). When unset, falls back to `$NATS_URL` or, if that's also unset, the built-in `demo.nats.io`. |
 | `sessionName` | no | sanitized basename of CWD | The 5th subject token. Override to give your session a stable, addressable name. |
-| `owner` | no | `$USER` | The 4th subject token. Override to scope the session to a service account, deployment, or tenant instead of the OS user — sanitized to a legal subject token. |
+| `owner` | no | `$USER` | The 4th subject token. Override to scope the session to a service account, deployment, or tenant instead of the OS user — sanitized to a legal subject token. The owner env vars (below) take precedence over this field. |
 
-The `owner` token (4th) defaults to `$USER` but is overridable via the `owner` config field or the `NATS_PI_OWNER` env var (see below) — useful for service-account or deployment-scoped sessions. For multi-tenant isolation, see [Multi-tenancy](#multi-tenancy) below.
+The `owner` token (4th) defaults to `$USER` but is overridable via the `SYNADIA_PI_OWNER` / `SYNADIA_OWNER` env vars (or the legacy `NATS_PI_OWNER`), or the `owner` config field — env wins over config. Useful for service-account or deployment-scoped sessions. For multi-tenant isolation, see [Multi-tenancy](#multi-tenancy) below.
 
 ### Environment variables
 
-Env vars override the config file:
+Env vars override the config file. Identity vars follow the `SYNADIA_*`
+convention shared across the agent plugins: per-agent var > fleet-wide
+var > legacy alias > config file > derived fallback.
 
 | Variable | Sets | Notes |
 |----------|------|-------|
 | `NATS_CONTEXT` | `context` | Highest precedence — see below. |
 | `NATS_URL` | raw URL (no auth context) | Used only when `NATS_CONTEXT` and `config.context` are both unset. |
-| `NATS_SESSION_NAME` | `sessionName` | |
-| `NATS_PI_OWNER` | `owner` | Overrides `$USER`; loses to the `owner` config field. |
+| `SYNADIA_PI_OWNER` | `owner` | Per-agent override — highest owner precedence. |
+| `SYNADIA_OWNER` | `owner` | Fleet-wide override — below the per-agent var. |
+| `NATS_PI_OWNER` | `owner` | Legacy alias, still honored below the `SYNADIA_*` vars. **Now wins over the `owner` config field** — this precedence flipped with the `SYNADIA_*` adoption (see CHANGELOG). |
+| `SYNADIA_PI_NAME` | `sessionName` | Per-agent override — highest session-name precedence. |
+| `SYNADIA_NAME` | `sessionName` | Fleet-wide override — below the per-agent var. |
+| `NATS_SESSION_NAME` | `sessionName` | Legacy alias, still honored below the `SYNADIA_*` vars. |
 
 ### Resolution order
 
@@ -82,9 +88,9 @@ Env vars override the config file:
 3. `$NATS_URL` — raw URL fallback (only consulted when no context is set)
 4. **`$NATS_CONTEXT`** — wins over everything
 
-For `sessionName`: `$NATS_SESSION_NAME` overrides `config.sessionName`, which overrides the CWD-basename default.
+For `sessionName`: `$SYNADIA_PI_NAME` > `$SYNADIA_NAME` > `$NATS_SESSION_NAME` (legacy) > `config.sessionName` > CWD-basename default.
 
-For `owner`: `config.owner` overrides `$NATS_PI_OWNER`, which overrides `$USER`, which falls back to `unknown`.
+For `owner`: `$SYNADIA_PI_OWNER` > `$SYNADIA_OWNER` > `$NATS_PI_OWNER` (legacy) > `config.owner` > `$USER` > `unknown`.
 
 ### In-PI commands
 
@@ -97,6 +103,8 @@ Available inside a running PI session:
 | `/nats-configure <context>` | Switch NATS context |
 | `/nats-configure session <name>` | Override session name |
 | `/nats-configure session clear` | Revert to CWD basename |
+| `/nats-configure owner <name>` | Override the owner (4th subject token) |
+| `/nats-configure owner clear` | Revert to `$USER` |
 
 `/nats-configure` writes the config file; restart PI to apply. (Live reconnect on context switch is a deferral — see [Limitations](#limitations).)
 

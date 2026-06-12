@@ -109,6 +109,14 @@ process.on("exit", () => {
 process.env.NATS_CONTEXT = SMOKE_CONTEXT_NAME;
 process.env.NATS_SESSION_NAME = `smoke-${process.pid}`;
 process.env.USER = process.env.USER || "smoke";
+// Keep identity resolution hermetic: SYNADIA_* / legacy owner overrides
+// leaking in from the invoking shell would skew the expected subject
+// (computed from $USER below). NATS_SESSION_NAME is ours — set above.
+delete process.env.SYNADIA_PI_OWNER;
+delete process.env.SYNADIA_OWNER;
+delete process.env.NATS_PI_OWNER;
+delete process.env.SYNADIA_PI_NAME;
+delete process.env.SYNADIA_NAME;
 
 const { default: channelFactory } = await import("../extensions/nats-channel.ts");
 const { formatHumanBytes } = await import("@synadia-ai/agents");
