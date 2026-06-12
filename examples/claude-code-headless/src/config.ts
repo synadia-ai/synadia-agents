@@ -209,7 +209,7 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
   }
   if (name.length === 0 || sanitizeToken(name) !== name) {
     throw new Error(
-      `claude-code-headless: invalid name "${name}" — must match [a-z0-9_-]{1,63}. Override with --name or CLAUDE_CODE_HEADLESS_NAME.`,
+      `claude-code-headless: invalid name "${name}" — must match [a-z0-9_-]{1,63}. Override with --name, SYNADIA_CLAUDE_CODE_HEADLESS_NAME, or SYNADIA_NAME.`,
     );
   }
 
