@@ -102,8 +102,8 @@ Env overrides:
 
 | Variable | Overrides | Default |
 | --- | --- | --- |
-| `CLAUDE_CODE_HEADLESS_OWNER` | Owner subject token (3rd segment) | `$USER` |
-| `CLAUDE_CODE_HEADLESS_NAME` | Controller instance name (4th token) | `control` |
+| `SYNADIA_CLAUDE_CODE_HEADLESS_OWNER`, `SYNADIA_OWNER` | Owner subject token; per-agent var wins, then fleet-wide, then the legacy `CLAUDE_CODE_HEADLESS_OWNER` | `$USER` |
+| `SYNADIA_CLAUDE_CODE_HEADLESS_NAME`, `SYNADIA_NAME` | Controller instance name; same chain (legacy: `CLAUDE_CODE_HEADLESS_NAME`) | `control` |
 | `CLAUDE_CODE_HEADLESS_DEFAULT_MODEL` | Default Claude model id for spawns | `claude-sonnet-4-6` |
 | `CLAUDE_CODE_HEADLESS_DEFAULT_PERMISSION_MODE` | Default permission mode for spawns | `dontAsk` |
 | `CLAUDE_CODE_HEADLESS_DEFAULT_ALLOWED_TOOLS` | Default tool allowlist (comma-separated) | `Read,Glob,Grep` |
