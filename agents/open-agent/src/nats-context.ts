@@ -9,7 +9,11 @@ import type { NatsConnection } from "@nats-io/nats-core";
 export interface ResolveNatsOptions {
   /** Saved `nats` CLI context name; `"current"` resolves the selected one. */
   readonly natsContext?: string;
-  /** Direct URL — overrides the context if set. */
+  /**
+   * Direct URL. Within this resolver it wins over `natsContext`, but the
+   * CLI forwards it only when no context is selected — so user-facing
+   * precedence is context over URL (matching the other agent plugins).
+   */
   readonly natsUrl?: string;
 }
 

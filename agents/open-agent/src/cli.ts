@@ -63,15 +63,33 @@ function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
     }
   }
 
+  // Identity tokens follow the SYNADIA_* convention shared across agents/*:
+  // CLI flag > per-agent env var (SYNADIA_OPEN_AGENT_*; hyphens in the agent
+  // name become underscores) > fleet-wide env var (SYNADIA_*) > legacy alias
+  // (OPEN_AGENT_*) > derived fallback. Legacy vars keep working indefinitely.
   const owner =
-    out["owner"] ?? process.env["OPEN_AGENT_OWNER"] ?? process.env["USER"] ?? "anon";
-  const session = out["session"] ?? process.env["OPEN_AGENT_SESSION"] ?? "default";
+    out["owner"] ??
+    process.env["SYNADIA_OPEN_AGENT_OWNER"] ??
+    process.env["SYNADIA_OWNER"] ??
+    process.env["OPEN_AGENT_OWNER"] ??
+    process.env["USER"] ??
+    "anon";
+  const session =
+    out["session"] ??
+    process.env["SYNADIA_OPEN_AGENT_NAME"] ??
+    process.env["SYNADIA_NAME"] ??
+    process.env["OPEN_AGENT_SESSION"] ??
+    "default";
   const workdir =
     out["workdir"] ??
     process.env["OPEN_AGENT_WORKDIR"] ??
     join(tmpdir(), "open-agent", session);
-  const natsContext = out["nats-context"];
-  const natsUrl = process.env["NATS_URL"];
+  // Connection precedence: --nats-context flag > $NATS_CONTEXT > $NATS_URL >
+  // localhost default. Context-over-URL matches the rest of agents/*;
+  // resolveConnectionOptions itself prefers natsUrl, so only forward the
+  // URL when no context is selected anywhere.
+  const natsContext = out["nats-context"] ?? process.env["NATS_CONTEXT"];
+  const natsUrl = natsContext === undefined ? process.env["NATS_URL"] : undefined;
 
   const providerEnv = (out["provider"] ?? process.env["OPEN_AGENT_PROVIDER"])?.toLowerCase();
   const provider: ProviderName =
