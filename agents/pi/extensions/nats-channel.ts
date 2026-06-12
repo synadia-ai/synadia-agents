@@ -841,12 +841,20 @@ export default function (pi: ExtensionAPI) {
 			config.owner,
 			process.env.USER,
 		);
+		// First-present-wins-then-sanitize, mirroring resolveOwner: the
+		// winning source is coerced into a legal subject token (pi's
+		// coerce-via-sanitize convention) rather than passed through raw —
+		// previously env values reached AgentSubject.new unsanitized. A
+		// winner that sanitizes to empty falls back to "pi"; it does NOT
+		// cascade to the next source.
 		const rawSession =
-			(process.env.SYNADIA_PI_NAME ??
-				process.env.SYNADIA_NAME ??
-				process.env.NATS_SESSION_NAME ??
-				config.sessionName ??
-				sanitizeSubjectToken(basename(ctx.cwd))) || "pi";
+			sanitizeSubjectToken(
+				process.env.SYNADIA_PI_NAME ??
+					process.env.SYNADIA_NAME ??
+					process.env.NATS_SESSION_NAME ??
+					config.sessionName ??
+					basename(ctx.cwd),
+			) || "pi";
 
 		// 3. Kick off connect + register in the background — see
 		//    `connectAndRegister` for the rationale. Awaiting it here would
