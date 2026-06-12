@@ -155,8 +155,11 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): FlueChan
   const agentSection = file.agent ?? {};
   const flueSection = file.flue ?? {};
 
-  const owner = resolveOwner(get(args.owner, env.SYNADIA_FLUE_OWNER, agentSection.owner, env.USER), undefined, undefined);
-  const name = requireSubjectToken(get(args.name, env.SYNADIA_FLUE_NAME, agentSection.name, "main")!, "agent.name");
+  // Identity chain per the SYNADIA_* convention shared across agents/*:
+  // CLI flag > per-agent var > fleet-wide var (SYNADIA_OWNER / SYNADIA_NAME)
+  // > config file > derived fallback.
+  const owner = resolveOwner(get(args.owner, env.SYNADIA_FLUE_OWNER, env.SYNADIA_OWNER, agentSection.owner, env.USER), undefined, undefined);
+  const name = requireSubjectToken(get(args.name, env.SYNADIA_FLUE_NAME, env.SYNADIA_NAME, agentSection.name, "main")!, "agent.name");
   const subjectToken = requireSubjectToken(get(args.subjectToken, agentSection.subject_token, "flue")!, "agent.subject_token");
   const transport = get(args.flueTransport, env.FLUE_TRANSPORT, flueSection.transport, "http-stream")!;
   if (!isFlueTransport(transport)) throw new Error(`invalid flue transport ${transport}`);

@@ -60,6 +60,31 @@ describe("config", () => {
     expect(cliWins.agent.owner).toBe("cli-owner");
   });
 
+  test("per-agent SYNADIA_FLUE_* beats fleet-wide SYNADIA_*; fleet-wide beats the file", () => {
+    const file = `[agent]\nowner = "file-owner"\nname = "file-name"\n`;
+    const perAgentWins = loadConfigFromSources({
+      argv: ["start"],
+      env: {
+        SYNADIA_FLUE_OWNER: "per-agent",
+        SYNADIA_OWNER: "fleet",
+        SYNADIA_FLUE_NAME: "per-agent-name",
+        SYNADIA_NAME: "fleet-name",
+        USER: "user-owner",
+      },
+      readFile: () => file,
+    });
+    expect(perAgentWins.agent.owner).toBe("per-agent");
+    expect(perAgentWins.agent.name).toBe("per-agent-name");
+
+    const fleetWins = loadConfigFromSources({
+      argv: ["start"],
+      env: { SYNADIA_OWNER: "fleet", SYNADIA_NAME: "fleet-name", USER: "user-owner" },
+      readFile: () => file,
+    });
+    expect(fleetWins.agent.owner).toBe("fleet");
+    expect(fleetWins.agent.name).toBe("fleet-name");
+  });
+
   test("loads NATS creds from CLI, env, or config file precedence", () => {
     const file = `[nats]\ncreds = "/file.creds"\n`;
     const envWins = loadConfigFromSources({

@@ -21,7 +21,13 @@ export function derivePluginIdentity(
     safePluginToken(env.SYNADIA_OPENCODE_OWNER ?? env.SYNADIA_OWNER ?? env.USER, "opencode"),
     "plugin.owner",
   );
-  const explicitSession = env.SYNADIA_OPENCODE_SESSION ?? env.SYNADIA_SESSION;
+  // SYNADIA_OPENCODE_NAME / SYNADIA_NAME are the canonical spellings per the
+  // fleet convention; the *_SESSION forms shipped first and stay as aliases.
+  const explicitSession =
+    env.SYNADIA_OPENCODE_NAME ??
+    env.SYNADIA_OPENCODE_SESSION ??
+    env.SYNADIA_NAME ??
+    env.SYNADIA_SESSION;
   const fallbackSession = `session-${directoryHash}`;
   const session = requireSubjectToken(safePluginToken(explicitSession, fallbackSession), "plugin.session");
   const source = explicitSession ? "explicit" : "hashed-directory";

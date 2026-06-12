@@ -44,6 +44,34 @@ describe("config", () => {
     expect(cfg.opencode.permissionPolicy).toBe("reject");
   });
 
+  test("identity chain: per-agent beats fleet-wide beats file; SYNADIA_OPENCODE_NAME beats _SESSION", () => {
+    const file = `[agent]\nowner = "file-owner"\nname = "file-name"\n`;
+    const perAgent = loadConfigFromSources({
+      argv: ["start"],
+      env: {
+        USER: "env-user",
+        SYNADIA_OPENCODE_OWNER: "per-agent",
+        SYNADIA_OWNER: "fleet",
+        SYNADIA_OPENCODE_NAME: "canonical-name",
+        SYNADIA_OPENCODE_SESSION: "alias-name",
+        SYNADIA_NAME: "fleet-name",
+      },
+      readFile: () => file,
+      cwd: "/tmp/project-x",
+    });
+    expect(perAgent.agent.owner).toBe("per-agent");
+    expect(perAgent.agent.name).toBe("canonical-name");
+
+    const fleet = loadConfigFromSources({
+      argv: ["start"],
+      env: { USER: "env-user", SYNADIA_OWNER: "fleet", SYNADIA_NAME: "fleet-name" },
+      readFile: () => file,
+      cwd: "/tmp/project-x",
+    });
+    expect(fleet.agent.owner).toBe("fleet");
+    expect(fleet.agent.name).toBe("fleet-name");
+  });
+
   test("env overrides file for NATS creds and carries them without printing content", () => {
     const file = `[nats]\ncreds = "/file.creds"\n`;
     const cfg = loadConfigFromSources({
