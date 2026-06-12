@@ -826,15 +826,25 @@ export default function (pi: ExtensionAPI) {
 		contextLabel = ctxName ?? (envUrl ? "$NATS_URL" : "default");
 		serverUrl = natsCtx.url ?? "demo.nats.io";
 
-		// 2. Resolve owner + session base name. Owner precedence (highest
-		//    first): config-file `owner` → `$NATS_PI_OWNER` → `$USER` →
-		//    "unknown". This makes a service-account / deployment / SOE-scoped
-		//    owner expressible instead of forcing `$USER`, matching how the
-		//    core SDK, Python SDK and open-agent all treat `owner` as
-		//    caller-supplied. See `subject.ts#resolveOwner`.
-		owner = resolveOwner(config.owner, process.env.NATS_PI_OWNER, process.env.USER);
+		// 2. Resolve owner + session base name via the SYNADIA_* identity
+		//    convention shared across agents/*: per-agent env var >
+		//    fleet-wide env var > legacy env alias > config file > derived
+		//    fallback. Env beats the config file — uniform with flue,
+		//    opencode, openclaw and pi's own session-name handling. (This
+		//    flips the pre-SYNADIA owner precedence where `config.owner`
+		//    won over `$NATS_PI_OWNER` — see CHANGELOG.) See
+		//    `subject.ts#resolveOwner`.
+		owner = resolveOwner(
+			process.env.SYNADIA_PI_OWNER,
+			process.env.SYNADIA_OWNER,
+			process.env.NATS_PI_OWNER,
+			config.owner,
+			process.env.USER,
+		);
 		const rawSession =
-			(process.env.NATS_SESSION_NAME ??
+			(process.env.SYNADIA_PI_NAME ??
+				process.env.SYNADIA_NAME ??
+				process.env.NATS_SESSION_NAME ??
 				config.sessionName ??
 				sanitizeSubjectToken(basename(ctx.cwd))) || "pi";
 
@@ -913,7 +923,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("nats-configure", {
 		description:
-			"Show or update NATS channel configuration (usage: /nats-configure [ <context> | session <name|clear> ])",
+			"Show or update NATS channel configuration (usage: /nats-configure [ <context> | session <name|clear> | owner <name|clear> ])",
 		handler: async (args, ctx) => {
 			const current = loadConfig();
 			const tokens = args.trim().split(/\s+/).filter(Boolean);
@@ -921,6 +931,7 @@ export default function (pi: ExtensionAPI) {
 			if (tokens.length === 0) {
 				const lines = [
 					`Context: ${current.context ?? "(default: demo.nats.io)"}`,
+					`Owner: ${current.owner ?? "(default: $USER)"}`,
 					`Session: ${current.sessionName ?? "(auto from cwd)"}`,
 				];
 				ctx.ui.notify(`NATS config — ${lines.join(" • ")}`, "info");
@@ -939,6 +950,19 @@ export default function (pi: ExtensionAPI) {
 					changed = true;
 				} else {
 					ctx.ui.notify("Usage: /nats-configure session <name|clear>", "warning");
+					return;
+				}
+			} else if (tokens[0] === "owner") {
+				if (tokens[1] === "clear") {
+					delete next.owner;
+					changed = true;
+				} else if (tokens[1]) {
+					// Note: the SYNADIA_PI_OWNER / SYNADIA_OWNER / NATS_PI_OWNER
+					// env vars take precedence over this config field.
+					next.owner = sanitizeSubjectToken(tokens[1]);
+					changed = true;
+				} else {
+					ctx.ui.notify("Usage: /nats-configure owner <name|clear>", "warning");
 					return;
 				}
 			} else {

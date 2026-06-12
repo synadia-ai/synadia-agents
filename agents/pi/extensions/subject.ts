@@ -19,32 +19,35 @@ export function sanitizeSubjectToken(s: string): string {
  * `agents.prompt.pi.<owner>.<name>`) from its precedence chain, then sanitize
  * the winner into a legal subject token.
  *
- * Precedence — highest first — mirrors Synadia's own open-agent reference
- * (`agents/open-agent/src/cli.ts`), so a service-account / deployment /
- * SOE-scoped owner is expressible instead of being forced to `$USER`:
+ * Sources are passed highest-precedence first; the function itself is
+ * source-agnostic. The conventional chain — the `SYNADIA_*` identity
+ * convention shared across `agents/*`, so a service-account / deployment /
+ * SOE-scoped owner is expressible instead of being forced to `$USER` — is:
  *
- *   1. `config.owner`     — explicit field in `~/.pi/agent/nats-channel.json`
- *   2. `NATS_PI_OWNER`    — dedicated env override (cf. open-agent's
- *                           `OPEN_AGENT_OWNER`); do not overload `$USER`
- *   3. `$USER`            — existing default; unchanged for everyone else
- *   4. `"unknown"`        — last-resort fallback
+ *   1. `SYNADIA_PI_OWNER`  — per-agent env override
+ *   2. `SYNADIA_OWNER`     — fleet-wide env override
+ *   3. `NATS_PI_OWNER`     — legacy env alias (pre-`SYNADIA_*` scheme)
+ *   4. `config.owner`      — explicit field in `~/.pi/agent/nats-channel.json`
+ *   5. `$USER`             — existing default; unchanged for everyone else
+ *   6. `"unknown"`         — last-resort fallback
+ *
+ * Env beats the config file — uniform with flue, opencode, openclaw,
+ * open-agent, and pi's own session-name handling. (Previously
+ * `config.owner` won over `$NATS_PI_OWNER`; see CHANGELOG.)
  *
  * A winner that sanitizes to the empty string (e.g. all-punctuation) falls
  * back to `"unknown"` so the subject token is always non-empty. Note this is
- * `??`-then-sanitize, not a per-source cascade: the first *present* source
- * wins even if it sanitizes to empty — it does NOT fall through to the next
- * source. This deliberately matches open-agent's `??` precedence
- * (`agents/open-agent/src/cli.ts`) and pi's own coerce-via-sanitize
- * convention, and keeps a misconfigured explicit owner visible as `unknown`
- * rather than silently re-resolving the session under a different identity.
+ * first-present-wins-then-sanitize, not a per-source cascade: the first
+ * *present* source wins even if it sanitizes to empty — it does NOT fall
+ * through to the next source. This keeps a misconfigured explicit owner
+ * visible as `unknown` rather than silently re-resolving the session under
+ * a different identity.
  */
 export function resolveOwner(
-	configOwner: string | undefined,
-	envOwner: string | undefined,
-	envUser: string | undefined,
+	...sources: Array<string | undefined>
 ): string {
 	return (
-		sanitizeSubjectToken(configOwner ?? envOwner ?? envUser ?? "unknown") ||
+		sanitizeSubjectToken(sources.find((s) => s != null) ?? "unknown") ||
 		"unknown"
 	);
 }
