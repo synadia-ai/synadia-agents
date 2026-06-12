@@ -388,9 +388,21 @@ const sessionName = await resolveSessionName(nc, rawSessionName, owner)
 // `metadata.agent` carries the canonical "claude-code"; the wire subject's
 // 3rd token is the conventional abbreviation `cc` (Appendix C).
 // `AgentSubject.new(...)`'s `subjectToken` option owns this split.
-const agentSubject = AgentSubject.new(AGENT_ID, owner, sessionName, {
-  subjectToken: AGENT_SUBJECT_TOKEN,
-})
+const agentSubject = (() => {
+  try {
+    return AgentSubject.new(AGENT_ID, owner, sessionName, {
+      subjectToken: AGENT_SUBJECT_TOKEN,
+    })
+  } catch (err) {
+    process.stderr.write(
+      `nats channel: invalid identity token (owner=${JSON.stringify(owner)}, name=${JSON.stringify(sessionName)}) — ` +
+      `check SYNADIA_CLAUDE_CODE_OWNER / SYNADIA_OWNER / config "owner" and ` +
+      `SYNADIA_CLAUDE_CODE_NAME / SYNADIA_NAME / NATS_SESSION_NAME / config "sessionName": ` +
+      `${(err as Error).message}\n`,
+    )
+    process.exit(1)
+  }
+})()
 const subject = agentSubject.prompt
 const heartbeatSubject = agentSubject.heartbeat
 const statusSubject = agentSubject.status
