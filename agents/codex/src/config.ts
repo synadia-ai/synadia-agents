@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { requireSubjectToken, sanitizeDerivedSubjectToken } from "./subject.js";
 import { requireAttachedEndpointAuth } from "./endpoint.js";
+import { defaultPluginConfig } from "./plugin-registrar.js";
 import type {
   AgentConfig,
   CodexChannelConfig,
@@ -10,6 +11,7 @@ import type {
   CodexMapping,
   CodexMode,
   CodexPermissionPolicy,
+  CodexPluginConfig,
   NatsConfig,
 } from "./types.js";
 
@@ -21,6 +23,7 @@ export type {
   CodexMapping,
   CodexMode,
   CodexPermissionPolicy,
+  CodexPluginConfig,
   NatsConfig,
 } from "./types.js";
 
@@ -50,6 +53,12 @@ export interface ParsedArgs {
   readonly watchIntervalMs?: number;
   readonly staleGraceIntervals?: number;
   readonly exposeEphemeralLoadedSessions?: boolean;
+  readonly pluginEnabled?: boolean;
+  readonly pluginRegistrarHost?: string;
+  readonly pluginRegistrarPort?: number;
+  readonly pluginRegistrarToken?: string;
+  readonly pluginHookPath?: string;
+  readonly pluginStatePath?: string;
   readonly printTemplate?: boolean;
   readonly help?: boolean;
 }
@@ -89,6 +98,12 @@ const flagMap: Record<string, keyof Omit<ParsedArgs, "command">> = {
   "--watch-interval-ms": "watchIntervalMs",
   "--stale-grace-intervals": "staleGraceIntervals",
   "--expose-ephemeral-loaded-sessions": "exposeEphemeralLoadedSessions",
+  "--plugin-enabled": "pluginEnabled",
+  "--plugin-registrar-host": "pluginRegistrarHost",
+  "--plugin-registrar-port": "pluginRegistrarPort",
+  "--plugin-registrar-token": "pluginRegistrarToken",
+  "--plugin-hook-path": "pluginHookPath",
+  "--plugin-state-path": "pluginStatePath",
 };
 
 const numericFlags = new Set<keyof ParsedArgs>([
@@ -96,12 +111,14 @@ const numericFlags = new Set<keyof ParsedArgs>([
   "keepaliveIntervalS",
   "watchIntervalMs",
   "staleGraceIntervals",
+  "pluginRegistrarPort",
 ]);
 const booleanFlags = new Set<keyof ParsedArgs>([
   "managerEnabled",
   "autoExposeCurrentSessions",
   "autoExposeFutureSessions",
   "exposeEphemeralLoadedSessions",
+  "pluginEnabled",
 ]);
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
@@ -188,6 +205,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): CodexCha
   const agentSection = file.agent ?? {};
   const codexSection = file.codex ?? {};
   const managerSection = file.manager ?? {};
+  const pluginSection = file.plugin ?? {};
 
   const defaultSession = sanitizeDerivedSubjectToken(basename(resolve(cwd))) || "main";
   const owner = requireSubjectToken(get(args.owner, env.SYNADIA_CODEX_OWNER, agentSection.owner, sanitizeDerivedSubjectToken(env.USER ?? "unknown") || "unknown")!, "agent.owner");
@@ -239,7 +257,17 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): CodexCha
     exposeEphemeralLoadedSessions: parseBoolean(get(args.exposeEphemeralLoadedSessions?.toString(), env.SYNADIA_CODEX_EXPOSE_EPHEMERAL_LOADED_SESSIONS, managerSection.expose_ephemeral_loaded_sessions, "false")!, "manager.expose_ephemeral_loaded_sessions"),
   };
 
-  return { nats, agent, codex, manager };
+  const pluginDefaults = defaultPluginConfig();
+  const plugin: CodexPluginConfig = {
+    enabled: parseBoolean(get(args.pluginEnabled?.toString(), env.SYNADIA_CODEX_PLUGIN_ENABLED, pluginSection.enabled, String(pluginDefaults.enabled))!, "plugin.enabled"),
+    registrarHost: get(args.pluginRegistrarHost, env.SYNADIA_CODEX_PLUGIN_REGISTRAR_HOST, pluginSection.registrar_host, pluginDefaults.registrarHost)!,
+    registrarPort: parsePositiveNumber(get(args.pluginRegistrarPort?.toString(), env.SYNADIA_CODEX_PLUGIN_REGISTRAR_PORT, pluginSection.registrar_port, String(pluginDefaults.registrarPort))!, "plugin.registrar_port"),
+    ...optional("registrarToken", get(args.pluginRegistrarToken, env.SYNADIA_CODEX_PLUGIN_REGISTRAR_TOKEN, pluginSection.registrar_token)),
+    ...optional("hookPath", get(args.pluginHookPath, env.SYNADIA_CODEX_PLUGIN_HOOK_PATH, pluginSection.hook_path)),
+    ...optional("statePath", get(args.pluginStatePath, env.SYNADIA_CODEX_PLUGIN_STATE_PATH, pluginSection.state_path)),
+  };
+
+  return { nats, agent, codex, manager, plugin };
 }
 
 function optional<K extends string>(key: K, value: string | undefined): Record<K, string> | Record<string, never> {
@@ -292,6 +320,7 @@ export function mappingFromConfig(config: CodexChannelConfig): CodexMapping {
     subjectToken: config.agent.subjectToken,
     codex: config.codex,
     manager: config.manager,
+    ...(config.plugin ? { plugin: config.plugin } : {}),
   };
 }
 
@@ -329,6 +358,15 @@ watch_mode = "event-plus-poll"
 watch_interval_ms = 7500
 stale_grace_intervals = 3
 expose_ephemeral_loaded_sessions = false
+
+[plugin]
+# Optional acceleration lane: plugin notifications wake the manager, but never bypass app-server proof.
+enabled = false
+registrar_host = "127.0.0.1"
+registrar_port = 8717
+registrar_token = ""
+hook_path = ""
+state_path = ""
 `;
 }
 
@@ -366,6 +404,12 @@ Options:
   --manager-endpoints URL_OR_SOCKET[,URL_OR_SOCKET...]
   --watch-interval-ms MILLISECONDS
   --stale-grace-intervals COUNT
+  --plugin-enabled true|false
+  --plugin-registrar-host HOST
+  --plugin-registrar-port PORT
+  --plugin-registrar-token TOKEN
+  --plugin-hook-path PATH
+  --plugin-state-path PATH
 
 Manager start accepts a stdin command 'rescan' to run an immediate inventory reconciliation.
 `;

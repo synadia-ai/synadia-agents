@@ -68,6 +68,8 @@ describe("config", () => {
     expect(template).toContain("[codex]");
     expect(template).toContain('subject_token = "codex"');
     expect(template).toContain("auto_expose_future_sessions = false");
+    expect(template).toContain("[plugin]");
+    expect(template).toContain("registrar_port = 8717");
     expect(template).not.toContain("--auto-expose-future-sessions");
     expect(DEFAULT_CONFIG_PATH).toContain("codex-nats-channel.toml");
   });
@@ -90,6 +92,29 @@ describe("config", () => {
     expect(cfg.manager.enabled).toBe(true);
     expect(cfg.manager.autoExposeFutureSessions).toBe(true);
     expect(cfg.manager.watchIntervalMs).toBe(50);
+  });
+
+  test("plugin-assisted registration is disabled by default and configurable", () => {
+    const defaults = loadConfigFromSources({ argv: ["start"], env: { USER: "alice" }, readFile: () => "", cwd: "/tmp/project-main" });
+    expect(defaults.plugin?.enabled).toBe(false);
+    expect(defaults.plugin?.registrarHost).toBe("127.0.0.1");
+    expect(defaults.plugin?.registrarPort).toBe(8717);
+    const cfg = loadConfigFromSources({
+      argv: ["start", "--plugin-enabled", "true", "--plugin-registrar-port", "9999"],
+      env: {
+        USER: "alice",
+        SYNADIA_CODEX_PLUGIN_REGISTRAR_HOST: "localhost",
+        SYNADIA_CODEX_PLUGIN_REGISTRAR_TOKEN: "not-secret-shaped",
+        SYNADIA_CODEX_PLUGIN_STATE_PATH: "/tmp/codex-plugin-state.json",
+      },
+      readFile: () => `[plugin]\nregistrar_port = 8888\n`,
+      cwd: "/tmp/project-main",
+    });
+    expect(cfg.plugin?.enabled).toBe(true);
+    expect(cfg.plugin?.registrarHost).toBe("localhost");
+    expect(cfg.plugin?.registrarPort).toBe(9999);
+    expect(cfg.plugin?.registrarToken).toBe("not-secret-shaped");
+    expect(cfg.plugin?.statePath).toBe("/tmp/codex-plugin-state.json");
   });
 
   test("attach subcommands require endpoint, private thread id, and safe public alias", () => {

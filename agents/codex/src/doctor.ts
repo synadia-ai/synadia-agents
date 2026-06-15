@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import type { CodexChannelConfig } from "./types.js";
 import { buildPromptSubject } from "./subject.js";
+import { defaultPluginConfig, pluginStatus } from "./plugin-registrar.js";
 
 export interface DoctorCheck {
   readonly name: string;
@@ -15,17 +16,25 @@ export interface DoctorReport {
   readonly agent: Record<string, unknown>;
   readonly codex: Record<string, unknown>;
   readonly manager?: Record<string, unknown>;
+  readonly plugin?: Record<string, unknown>;
 }
 
 export async function runDoctor(config: CodexChannelConfig): Promise<DoctorReport> {
   const version = spawnSync(config.codex.codexBin, ["--version"], { encoding: "utf8" });
   const subject = buildPromptSubject(config.agent.subjectToken, config.agent.owner, config.agent.session);
+  const plugin = config.plugin ?? defaultPluginConfig();
+  const pluginReport = pluginStatus(plugin);
   const checks: DoctorCheck[] = [
     { name: "codex --version", ok: version.status === 0, detail: redact((version.stdout || version.stderr || "not available").trim()) },
     { name: "nats source", ok: Boolean(config.nats.context || config.nats.url), detail: config.nats.context ? "context" : safeOrigin(config.nats.url ?? "") },
     { name: "computed subject", ok: true, detail: subject },
     { name: "max payload", ok: true, detail: "discovered from NATS connection at runtime" },
     { name: "permission callback", ok: config.codex.permissionPolicy === "query", detail: config.codex.permissionPolicy === "query" ? "adapter-owned query mode requested" : `policy=${config.codex.permissionPolicy}` },
+    { name: "plugin installed", ok: pluginReport.installed, detail: plugin.enabled ? (plugin.hookPath ? (pluginReport.installed ? "configured hook path exists" : "configured hook path missing") : "package hook available via scripts/codex-plugin-hook.ts") : "disabled" },
+    { name: "plugin hook trusted", ok: pluginReport.hookTrusted, detail: plugin.enabled ? (plugin.registrarToken ? "shared registrar token configured" : "missing registrar token") : "disabled" },
+    { name: "plugin registrar reachable", ok: pluginReport.registrarConfigured, detail: plugin.enabled ? (pluginReport.registrarUrl ?? "not configured") : "disabled" },
+    { name: "plugin last event", ok: !plugin.enabled || Boolean(pluginReport.lastEvent), detail: pluginReport.lastEvent ? `${pluginReport.lastEvent.event}:${pluginReport.lastEvent.registrationState}` : "none recorded" },
+    { name: "plugin promptability gate", ok: true, detail: pluginReport.lastEvent?.registrationState === "promptable" ? "promptable after app-server thread/read and thread/resume proof" : "metadata-only until app-server thread/read and thread/resume prove control" },
     { name: "redaction", ok: redactionScan(config, subject), detail: "doctor report hides CODEX_HOME, endpoint, thread id, creds" },
   ];
   return {
@@ -54,6 +63,14 @@ export async function runDoctor(config: CodexChannelConfig): Promise<DoctorRepor
       autoExposeFutureSessions: config.manager.autoExposeFutureSessions,
       endpointCount: (config.manager.endpoints?.length ?? 0) + (config.codex.endpoint ? 1 : 0),
       watchMode: config.manager.watchMode,
+    },
+    plugin: {
+      enabled: plugin.enabled,
+      installed: pluginReport.installed,
+      hookTrusted: pluginReport.hookTrusted,
+      registrarConfigured: pluginReport.registrarConfigured,
+      registrarUrl: pluginReport.registrarUrl,
+      lastEvent: pluginReport.lastEvent,
     },
   };
 }

@@ -6,6 +6,7 @@ import { derivePublicSessionAlias } from "./identity.js";
 import { discoverEndpointSessions, type EligibleSessionRow } from "./session-inventory.js";
 import { BoundedPollScheduler } from "./session-watch.js";
 import { createCodexAgentService } from "./service.js";
+import { CodexPluginRegistrar, defaultPluginConfig, pluginEventSnapshot, writePluginState, type CodexPluginEventRecord } from "./plugin-registrar.js";
 import type { CodexBridgeClient, CodexBridgeEvent, CodexPromptRequest } from "./bridge.js";
 import type { CodexChannelConfig } from "./types.js";
 
@@ -59,6 +60,8 @@ export class CodexSessionManager {
   readonly #endpointWatches: EndpointWatch[] = [];
   #registry: EndpointRegistry | undefined;
   #poller: BoundedPollScheduler | undefined;
+  #pluginRegistrar: CodexPluginRegistrar | undefined;
+  #lastPluginEvent: CodexPluginEventRecord | undefined;
   #started = false;
 
   constructor(opts: CodexSessionManagerOptions) { this.#opts = opts; }
@@ -87,11 +90,19 @@ export class CodexSessionManager {
     if (this.#opts.config.manager.autoExposeCurrentSessions) await this.reconcile();
     else await this.reconcile({ seedOnly: true });
     if (this.#opts.config.manager.autoExposeFutureSessions) await this.#startFutureWatch();
+    await this.#startPluginRegistrar();
     return this.snapshots;
   }
 
   async rescan(): Promise<ManagedSessionSnapshot[]> {
     return await this.reconcile();
+  }
+
+  get pluginLastEvent(): CodexPluginEventRecord | undefined { return this.#lastPluginEvent; }
+
+  async notifyPluginEvent(event: CodexPluginEventRecord): Promise<ManagedSessionSnapshot[]> {
+    await this.#recordPluginEvent(event);
+    return this.snapshots;
   }
 
   async reconcile(opts: ReconcileOptions = {}): Promise<ManagedSessionSnapshot[]> {
@@ -134,6 +145,8 @@ export class CodexSessionManager {
     this.#started = false;
     this.#poller?.stop();
     this.#poller = undefined;
+    await this.#pluginRegistrar?.stop().catch(() => undefined);
+    this.#pluginRegistrar = undefined;
     for (const watch of this.#endpointWatches.splice(0).reverse()) {
       watch.unsubscribe();
       await watch.client.close().catch(() => undefined);
@@ -226,6 +239,31 @@ export class CodexSessionManager {
         // Polling remains the recovery path. Avoid logging private endpoint data.
       }
     }
+  }
+
+  async #startPluginRegistrar(): Promise<void> {
+    const plugin = this.#opts.config.plugin ?? defaultPluginConfig();
+    if (!plugin.enabled) return;
+    if (!plugin.registrarToken) throw new Error("plugin registrar requires plugin.registrar_token or SYNADIA_CODEX_PLUGIN_REGISTRAR_TOKEN");
+    const registrar = new CodexPluginRegistrar({
+      host: plugin.registrarHost,
+      port: plugin.registrarPort,
+      token: plugin.registrarToken,
+      ...(plugin.statePath ? { statePath: plugin.statePath } : {}),
+      onEvent: async (event) => { await this.#recordPluginEvent(event); },
+    });
+    registrar.start();
+    this.#pluginRegistrar = registrar;
+  }
+
+  async #recordPluginEvent(event: CodexPluginEventRecord): Promise<void> {
+    this.#lastPluginEvent = event;
+    const plugin = this.#opts.config.plugin ?? defaultPluginConfig();
+    const beforePromptable = event.privateKey ? this.#running.has(event.privateKey) : false;
+    writePluginState(plugin.statePath, pluginEventSnapshot(event, beforePromptable));
+    await this.reconcile();
+    const afterPromptable = event.privateKey ? this.#running.has(event.privateKey) : false;
+    writePluginState(plugin.statePath, pluginEventSnapshot(event, afterPromptable));
   }
 
   async #createClient(entry: EndpointRegistryEntry): Promise<CodexAppServerClient> {

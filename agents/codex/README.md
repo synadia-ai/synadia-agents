@@ -116,6 +116,33 @@ For each endpoint, the manager reconciles `thread/loaded/list` and `thread/list`
 
 Every eligible session gets its own `AgentService` with separate prompt, status, and heartbeat subjects. Prompt routing is session-scoped: one public session cannot receive another session's text, events, or status payloads. If an exposed private session disappears from inventory, the manager marks it stale, stops its service after the configured grace interval, flushes NATS, and reuses the same public alias if the same private key reappears.
 
+## Optional plugin-assisted registration
+
+Plugin-assisted registration is an optional acceleration path for managers over already configured app-server endpoints. A Codex plugin or hook can notify the local registrar when useful lifecycle events occur (`SessionStart`, `SessionStop`, and similar wakeups):
+
+```sh
+codex-agent start \
+  --mode manager \
+  --manager-enabled true \
+  --auto-expose-future-sessions true \
+  --manager-endpoints unix:///path/to/codex.sock \
+  --plugin-enabled true \
+  --plugin-registrar-token '<shared-local-token>'
+```
+
+A hook can emit a local notification with:
+
+```sh
+bun run plugin:notify -- \
+  --registrar-url http://127.0.0.1:8717 \
+  --token '<shared-local-token>' \
+  --event SessionStart \
+  --endpoint unix:///path/to/codex.sock \
+  --thread-id '<private-thread-id>'
+```
+
+The registrar only records private metadata and wakes reconciliation. Plugin-origin events remain `metadata-only` until the manager proves app-server control with the normal `thread/read` plus `thread/resume` gate. The plugin does not expose GUI/TUI sessions by itself, does not bypass configured endpoint policy, and does not make a session promptable on NATS without app-server proof. `codex-agent doctor` reports plugin installed/configured status, hook trust, registrar reachability, the last redacted event, and whether the last event is still metadata-only or became promptable after reconciliation.
+
 ## NATS CLI examples
 
 Discover registered Codex agents:

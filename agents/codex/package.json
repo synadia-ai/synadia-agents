@@ -45,6 +45,7 @@
     "smoke:attached-endpoint": "bun scripts/attached-endpoint-smoke.ts",
     "smoke:codex-session-manager": "bun scripts/codex-session-manager-smoke.ts",
     "smoke:codex-future-watch": "bun scripts/codex-future-watch-smoke.ts",
+    "plugin:notify": "bun scripts/codex-plugin-hook.ts",
     "smoke:codex-permission": "bun scripts/codex-permission-smoke.ts"
   },
   "dependencies": {

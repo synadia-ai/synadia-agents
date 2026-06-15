@@ -37,11 +37,21 @@ export interface CodexManagerConfig {
   readonly exposeEphemeralLoadedSessions: boolean;
 }
 
+export interface CodexPluginConfig {
+  readonly enabled: boolean;
+  readonly registrarHost: string;
+  readonly registrarPort: number;
+  readonly registrarToken?: string;
+  readonly hookPath?: string;
+  readonly statePath?: string;
+}
+
 export interface CodexChannelConfig {
   readonly nats: NatsConfig;
   readonly agent: AgentConfig;
   readonly codex: CodexConfig;
   readonly manager: CodexManagerConfig;
+  readonly plugin?: CodexPluginConfig;
 }
 
 export interface CodexMapping {
@@ -50,4 +60,5 @@ export interface CodexMapping {
   readonly subjectToken: "codex";
   readonly codex: CodexConfig;
   readonly manager: CodexManagerConfig;
+  readonly plugin?: CodexPluginConfig;
 }

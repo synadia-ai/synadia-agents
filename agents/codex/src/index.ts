@@ -7,6 +7,7 @@ export { DEFAULT_CONFIG_PATH, helpText, loadConfigFromSources, mappingFromConfig
 export { runDoctor, redact, type DoctorCheck, type DoctorReport } from "./doctor.js";
 export { ManagedCodexRuntime } from "./managed-runtime.js";
 export { resolveNatsOptions } from "./nats.js";
+export { CodexPluginRegistrar, defaultPluginConfig, emitCodexPluginNotification, normalizePluginNotification, pluginEventSnapshot, pluginStatus, readPluginState, writePluginState, type CodexPluginEventRecord, type CodexPluginEventSnapshot, type CodexPluginNotification } from "./plugin-registrar.js";
 export { EndpointRegistry, type EndpointRegistryEntry } from "./endpoint-registry.js";
 export { endpointFingerprint, privateSessionKey, derivePublicSessionAlias } from "./identity.js";
 export { redactPrivateText, assertNoPrivateValues } from "./redaction.js";
@@ -15,4 +16,4 @@ export { BoundedPollScheduler, isThreadStartedNotification } from "./session-wat
 export { reconcileThreadInventory, discoverEndpointSessions, type EligibleSessionRow, type InventoryThreadRow } from "./session-inventory.js";
 export { buildAgentServiceOptions, createCodexAgentService } from "./service.js";
 export { buildHeartbeatSubject, buildPromptSubject, buildStatusSubject, requireSubjectToken, sanitizeDerivedSubjectToken } from "./subject.js";
-export type { AgentConfig, CodexChannelConfig, CodexConfig, CodexManagerConfig, CodexMapping, CodexMode, CodexPermissionPolicy, NatsConfig } from "./types.js";
+export type { AgentConfig, CodexChannelConfig, CodexConfig, CodexManagerConfig, CodexMapping, CodexMode, CodexPermissionPolicy, CodexPluginConfig, NatsConfig } from "./types.js";

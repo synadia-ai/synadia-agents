@@ -19,5 +19,6 @@ describe("Codex doctor", () => {
     expect(serialized).not.toContain("/Users/someone/.codex");
     expect(serialized).not.toContain("unix:///Users/someone/socket");
     expect(serialized).toContain("[REDACTED]");
+    expect(serialized).toContain("plugin promptability gate");
   });
 });

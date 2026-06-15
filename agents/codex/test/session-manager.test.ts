@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { EndpointRegistry } from "../src/endpoint-registry.js";
-import { allocateAliases } from "../src/session-manager.js";
+import { allocateAliases, CodexSessionManager } from "../src/session-manager.js";
 import { BoundedPollScheduler, isThreadStartedNotification } from "../src/session-watch.js";
+import { normalizePluginNotification, readPluginState } from "../src/plugin-registrar.js";
 import type { EligibleSessionRow } from "../src/session-inventory.js";
 import { privateSessionKey } from "../src/identity.js";
 
@@ -47,6 +51,39 @@ describe("Codex session manager alias policy", () => {
   test("treats thread/started as a wakeup signal only", () => {
     expect(isThreadStartedNotification({ method: "thread/started", params: { threadId: "raw-private-thread" } })).toBe(true);
     expect(isThreadStartedNotification({ method: "turn/completed", params: { threadId: "raw-private-thread" } })).toBe(false);
+  });
+
+  test("records plugin-origin events and reconciles configured endpoints without marking them promptable first", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "codex-manager-plugin-"));
+    const statePath = join(dir, "last-event.json");
+    const endpoint = "unix:///tmp/plugin-known-codex.sock";
+    let reconcileAttempts = 0;
+    const manager = new CodexSessionManager({
+      nc: { flush: async () => undefined } as never,
+      version: "0.1.0-test",
+      registry: new EndpointRegistry([{ id: "plugin-known", endpoint }]),
+      clientFactory: async () => {
+        reconcileAttempts += 1;
+        throw new Error("endpoint intentionally unavailable in unit test");
+      },
+      config: {
+        nats: { url: "nats://127.0.0.1:4222" },
+        agent: { owner: "local", session: "manager", subjectToken: "codex", heartbeatIntervalS: 30, keepaliveIntervalS: 30 },
+        codex: { mode: "manager", codexBin: "codex", permissionPolicy: "external-owner" },
+        manager: { enabled: true, autoExposeCurrentSessions: false, autoExposeFutureSessions: true, endpoints: [endpoint], watchMode: "poll", watchIntervalMs: 7500, staleGraceIntervals: 3, exposeEphemeralLoadedSessions: false },
+        plugin: { enabled: true, registrarHost: "127.0.0.1", registrarPort: 8717, registrarToken: "not-secret-shaped", statePath },
+      },
+    });
+    try {
+      const event = normalizePluginNotification({ event: "SessionStart", endpoint, threadId: "thread-private-plugin" });
+      const snapshots = await manager.notifyPluginEvent(event);
+      expect(reconcileAttempts).toBe(1);
+      expect(manager.pluginLastEvent?.event).toBe("SessionStart");
+      expect(snapshots).toHaveLength(0);
+      expect(readPluginState(statePath).lastEvent?.registrationState).toBe("metadata-only");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("coalesces overlapping poll wakeups", async () => {
