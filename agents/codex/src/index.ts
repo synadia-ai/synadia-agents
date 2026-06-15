@@ -1,6 +1,10 @@
 export { rejectUnsupportedAttachments } from "./attachments.js";
 export { bridgePromptToCodex, FakeCodexBridgeClient, type CodexBridgeClient, type CodexBridgeEvent, type CodexPromptRequest } from "./bridge.js";
+export { CodexAppServerClient, type CodexInitializeResult, type CodexTurnStreamEvent } from "./codex-app-server-client.js";
+export { JsonLineRpcClient, JsonRpcError, defaultServerRequestResponse } from "./codex-jsonrpc.js";
 export { DEFAULT_CONFIG_PATH, helpText, loadConfigFromSources, mappingFromConfig, parseArgs, renderConfigTemplate } from "./config.js";
+export { runDoctor, redact, type DoctorCheck, type DoctorReport } from "./doctor.js";
+export { ManagedCodexRuntime } from "./managed-runtime.js";
 export { resolveNatsOptions } from "./nats.js";
 export { buildAgentServiceOptions, createCodexAgentService } from "./service.js";
 export { buildHeartbeatSubject, buildPromptSubject, buildStatusSubject, requireSubjectToken, sanitizeDerivedSubjectToken } from "./subject.js";

@@ -12,7 +12,7 @@ describe("README public claims", () => {
   test("does not claim arbitrary GUI/TUI control or leak private research language", () => {
     expect(readme).not.toMatch(/all Codex windows/i);
     expect(readme).not.toMatch(/all GUI sessions/i);
-    expect(readme).not.toMatch(/Kanban|research/i);
+    expect(readme).not.toMatch(/Kanban|research|Phase [0-9]/i);
     expect(readme).not.toMatch(/thread_[A-Za-z0-9_-]+/);
     expect(readme).not.toMatch(/unix:\/\//);
   });

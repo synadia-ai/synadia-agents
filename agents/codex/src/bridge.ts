@@ -13,6 +13,7 @@ export interface CodexPromptRequest {
   readonly prompt: string;
   readonly publicSession: string;
   readonly permissionPolicy: string;
+  readonly askPermission?: (prompt: string) => Promise<"approve" | "deny" | "cancel">;
 }
 
 export type CodexBridgeEvent =
@@ -34,10 +35,25 @@ export async function bridgePromptToCodex(input: BridgePromptInput): Promise<voi
     prompt: input.envelope.prompt,
     publicSession: input.mapping.session,
     permissionPolicy: input.mapping.codex.permissionPolicy,
+    ...(input.mapping.codex.permissionPolicy === "query"
+      ? { askPermission: (prompt: string) => askPermissionViaProtocol(input.response, prompt) }
+      : {}),
   };
   for await (const event of input.client.prompt(request)) {
     if (event.type === "status") await input.response.send({ type: "status", status: event.text });
     if (event.type === "response") await input.response.send(event.text);
+  }
+}
+
+async function askPermissionViaProtocol(response: PromptResponse, prompt: string): Promise<"approve" | "deny" | "cancel"> {
+  try {
+    const reply = await response.ask(prompt, { timeoutMs: 30_000 });
+    const normalized = reply.prompt.trim().toLowerCase();
+    if (normalized === "approve" || normalized === "approved" || normalized === "yes" || normalized === "y") return "approve";
+    if (normalized === "deny" || normalized === "decline" || normalized === "no" || normalized === "n") return "deny";
+    return "cancel";
+  } catch {
+    return "cancel";
   }
 }
 

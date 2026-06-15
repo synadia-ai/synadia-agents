@@ -273,8 +273,8 @@ heartbeat_interval_s = 30
 keepalive_interval_s = 30
 
 [codex]
-# Initial scaffold uses fake mode. Later work adds managed, attached, and manager runtimes.
-mode = "fake"
+# Managed starts an adapter-owned isolated Codex app-server; fake is for protocol smoke tests.
+mode = "managed"
 codex_bin = "codex"
 code_home = ""
 endpoint = ""
@@ -298,7 +298,7 @@ export function helpText(): string {
 
 Commands:
   start                 Register a Codex-shaped agent on NATS using the configured bridge mode
-  doctor                Print redacted resolved config and Phase 1 readiness
+  doctor                Print redacted resolved config and managed app-server readiness
   configure --print-template
 
 Options:

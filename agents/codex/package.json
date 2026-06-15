@@ -2,7 +2,9 @@
   "name": "@synadia-ai/codex-nats-channel",
   "version": "0.1.0",
   "description": "Synadia Agent Protocol for NATS adapter for Codex app-server-backed sessions.",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "Apache-2.0",
   "author": "Synadia Communications",
   "repository": {
@@ -37,7 +39,10 @@
     "doctor": "bun src/cli.ts doctor",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "smoke:protocol": "bun scripts/protocol-smoke.ts"
+    "smoke:protocol": "bun scripts/protocol-smoke.ts",
+    "smoke:codex-appserver-lifecycle": "bun scripts/codex-appserver-lifecycle-smoke.ts",
+    "smoke:codex-runtime": "bun scripts/codex-runtime-smoke.ts",
+    "smoke:codex-permission": "bun scripts/codex-permission-smoke.ts"
   },
   "dependencies": {
     "@nats-io/nats-core": "^3.4.0",
