@@ -8,6 +8,7 @@ import { ManagedCodexRuntime } from "./managed-runtime.js";
 import { AttachedCodexRuntime } from "./attached-runtime.js";
 import { resolveNatsOptions } from "./nats.js";
 import { createCodexAgentService } from "./service.js";
+import { CodexSessionManager } from "./session-manager.js";
 
 async function main(): Promise<void> {
   const config = loadConfigFromSources();
@@ -37,8 +38,18 @@ async function main(): Promise<void> {
   if (command !== "start" && command !== "attach:start") throw new Error(`unknown command ${command}`);
 
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-  const client = await createBridgeClient(config);
   const nc = await natsConnect(await resolveNatsOptions(config.nats));
+  if (config.codex.mode === "manager") {
+    const manager = new CodexSessionManager({ nc, config, version: pkg.version ?? "0.0.0" });
+    const snapshots = await manager.start();
+    console.log(`codex-agent manager listening for ${snapshots.length} sessions`);
+    for (const snapshot of snapshots) console.log(snapshot.promptSubject);
+    await waitForShutdown();
+    await manager.stop();
+    await nc.drain();
+    return;
+  }
+  const client = await createBridgeClient(config);
   const service = createCodexAgentService({
     nc,
     config,
@@ -65,7 +76,7 @@ async function createBridgeClient(config: ReturnType<typeof loadConfigFromSource
     await runtime.start();
     return runtime;
   }
-  throw new Error(`Codex ${config.codex.mode} runtime is not implemented yet; use --mode managed, --mode attached, or --mode fake`);
+  throw new Error(`Codex ${config.codex.mode} runtime is handled by the session manager path; use --mode managed, --mode attached, or --mode fake for single-session mode`);
 }
 
 async function waitForShutdown(): Promise<void> {

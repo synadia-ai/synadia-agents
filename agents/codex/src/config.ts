@@ -46,6 +46,7 @@ export interface ParsedArgs {
   readonly managerEnabled?: boolean;
   readonly autoExposeCurrentSessions?: boolean;
   readonly autoExposeFutureSessions?: boolean;
+  readonly managerEndpoints?: readonly string[];
   readonly watchIntervalMs?: number;
   readonly staleGraceIntervals?: number;
   readonly exposeEphemeralLoadedSessions?: boolean;
@@ -84,6 +85,7 @@ const flagMap: Record<string, keyof Omit<ParsedArgs, "command">> = {
   "--manager-enabled": "managerEnabled",
   "--auto-expose-current-sessions": "autoExposeCurrentSessions",
   "--auto-expose-future-sessions": "autoExposeFutureSessions",
+  "--manager-endpoints": "managerEndpoints",
   "--watch-interval-ms": "watchIntervalMs",
   "--stale-grace-intervals": "staleGraceIntervals",
   "--expose-ephemeral-loaded-sessions": "exposeEphemeralLoadedSessions",
@@ -128,6 +130,8 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       out[key] = parsePositiveNumber(value, arg);
     } else if (booleanFlags.has(key)) {
       out[key] = parseBoolean(value, arg);
+    } else if (key === "managerEndpoints") {
+      out[key] = splitList(value);
     } else if (key === "mode") {
       out[key] = parseCodexMode(value, arg);
     } else if (key === "permissionPolicy") {
@@ -228,6 +232,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): CodexCha
     enabled: parseBoolean(get(args.managerEnabled?.toString(), managerSection.enabled, "false")!, "manager.enabled"),
     autoExposeCurrentSessions: parseBoolean(get(args.autoExposeCurrentSessions?.toString(), managerSection.auto_expose_current_sessions, "false")!, "manager.auto_expose_current_sessions"),
     autoExposeFutureSessions: parseBoolean(get(args.autoExposeFutureSessions?.toString(), managerSection.auto_expose_future_sessions, "false")!, "manager.auto_expose_future_sessions"),
+    endpoints: args.managerEndpoints ?? splitList(get(env.SYNADIA_CODEX_MANAGER_ENDPOINTS, managerSection.endpoints, "")!),
     watchMode: parseWatchMode(get(managerSection.watch_mode, "event-plus-poll")!, "manager.watch_mode"),
     watchIntervalMs: parsePositiveNumber(get(args.watchIntervalMs?.toString(), managerSection.watch_interval_ms, "7500")!, "manager.watch_interval_ms"),
     staleGraceIntervals: parsePositiveNumber(get(args.staleGraceIntervals?.toString(), managerSection.stale_grace_intervals, "3")!, "manager.stale_grace_intervals"),
@@ -259,6 +264,10 @@ function parseBoolean(value: string, field: string): boolean {
   if (value === "true") return true;
   if (value === "false") return false;
   throw new Error(`${field} must be true or false`);
+}
+
+function splitList(value: string | undefined): readonly string[] {
+  return (value ?? "").split(",").map((part) => part.trim()).filter(Boolean);
 }
 
 function parseCodexMode(value: string, field: string): CodexMode {
@@ -313,9 +322,11 @@ permission_policy = "reject"
 
 [manager]
 enabled = false
-auto_expose_current_sessions = false
-auto_expose_future_sessions = false
-watch_mode = "event-plus-poll"
+--auto-expose-current-sessions true|false
+--auto-expose-future-sessions true|false
+--manager-endpoints URL_OR_SOCKET[,URL_OR_SOCKET...]
+--watch-interval-ms MILLISECONDS
+
 watch_interval_ms = 7500
 stale_grace_intervals = 3
 expose_ephemeral_loaded_sessions = false

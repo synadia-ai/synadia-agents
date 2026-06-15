@@ -9,11 +9,12 @@ export interface DoctorCheck {
 }
 
 export interface DoctorReport {
-  readonly phase: "managed-app-server" | "attached-endpoint";
+  readonly phase: "managed-app-server" | "attached-endpoint" | "session-manager";
   readonly checks: readonly DoctorCheck[];
   readonly nats: Record<string, unknown>;
   readonly agent: Record<string, unknown>;
   readonly codex: Record<string, unknown>;
+  readonly manager?: Record<string, unknown>;
 }
 
 export async function runDoctor(config: CodexChannelConfig): Promise<DoctorReport> {
@@ -28,7 +29,7 @@ export async function runDoctor(config: CodexChannelConfig): Promise<DoctorRepor
     { name: "redaction", ok: redactionScan(config, subject), detail: "doctor report hides CODEX_HOME, endpoint, thread id, creds" },
   ];
   return {
-    phase: config.codex.mode === "attached" ? "attached-endpoint" : "managed-app-server",
+    phase: config.codex.mode === "manager" ? "session-manager" : config.codex.mode === "attached" ? "attached-endpoint" : "managed-app-server",
     checks,
     nats: {
       source: config.nats.context ? "context" : "url",
@@ -46,6 +47,13 @@ export async function runDoctor(config: CodexChannelConfig): Promise<DoctorRepor
       threadId: config.codex.threadId ? "[REDACTED]" : undefined,
       publicAlias: config.codex.publicAlias,
       permissionPolicy: config.codex.permissionPolicy,
+    },
+    manager: {
+      enabled: config.manager.enabled,
+      autoExposeCurrentSessions: config.manager.autoExposeCurrentSessions,
+      autoExposeFutureSessions: config.manager.autoExposeFutureSessions,
+      endpointCount: (config.manager.endpoints?.length ?? 0) + (config.codex.endpoint ? 1 : 0),
+      watchMode: config.manager.watchMode,
     },
   };
 }

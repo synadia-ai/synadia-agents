@@ -43,6 +43,7 @@
     "smoke:codex-appserver-lifecycle": "bun scripts/codex-appserver-lifecycle-smoke.ts",
     "smoke:codex-runtime": "bun scripts/codex-runtime-smoke.ts",
     "smoke:attached-endpoint": "bun scripts/attached-endpoint-smoke.ts",
+    "smoke:codex-session-manager": "bun scripts/codex-session-manager-smoke.ts",
     "smoke:codex-permission": "bun scripts/codex-permission-smoke.ts"
   },
   "dependencies": {

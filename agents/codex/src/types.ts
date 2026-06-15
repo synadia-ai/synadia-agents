@@ -30,6 +30,7 @@ export interface CodexManagerConfig {
   readonly enabled: boolean;
   readonly autoExposeCurrentSessions: boolean;
   readonly autoExposeFutureSessions: boolean;
+  readonly endpoints?: readonly string[];
   readonly watchMode: "event-plus-poll" | "poll";
   readonly watchIntervalMs: number;
   readonly staleGraceIntervals: number;
