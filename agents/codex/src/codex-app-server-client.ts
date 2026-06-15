@@ -4,6 +4,7 @@ import { asObject, asString, ChildProcessJsonRpcTransport, JsonLineRpcClient } f
 import { createUnixSocketTransport, createWebSocketTransport, requireAttachedEndpointAuth } from "./endpoint.js";
 import type { PermissionRequestSink } from "./permissions.js";
 import { resolvePermissionRequest } from "./permissions.js";
+import { isThreadStartedNotification } from "./session-watch.js";
 
 export interface CodexAppServerProcessOptions {
   readonly command: string;
@@ -98,6 +99,12 @@ export class CodexAppServerClient {
 
   setPermissionSink(sink: PermissionRequestSink | undefined): void {
     this.#permissionSink = sink;
+  }
+
+  onThreadStarted(listener: () => void): () => void {
+    return this.#rpc.onNotification((notification) => {
+      if (isThreadStartedNotification(notification)) listener();
+    });
   }
 
   async initialize(timeoutMs = 15_000): Promise<CodexInitializeResult> {

@@ -229,14 +229,14 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): CodexCha
   };
 
   const manager: CodexManagerConfig = {
-    enabled: parseBoolean(get(args.managerEnabled?.toString(), managerSection.enabled, "false")!, "manager.enabled"),
-    autoExposeCurrentSessions: parseBoolean(get(args.autoExposeCurrentSessions?.toString(), managerSection.auto_expose_current_sessions, "false")!, "manager.auto_expose_current_sessions"),
-    autoExposeFutureSessions: parseBoolean(get(args.autoExposeFutureSessions?.toString(), managerSection.auto_expose_future_sessions, "false")!, "manager.auto_expose_future_sessions"),
+    enabled: parseBoolean(get(args.managerEnabled?.toString(), env.SYNADIA_CODEX_MANAGER_ENABLED, managerSection.enabled, "false")!, "manager.enabled"),
+    autoExposeCurrentSessions: parseBoolean(get(args.autoExposeCurrentSessions?.toString(), env.SYNADIA_CODEX_AUTO_EXPOSE_CURRENT_SESSIONS, managerSection.auto_expose_current_sessions, "false")!, "manager.auto_expose_current_sessions"),
+    autoExposeFutureSessions: parseBoolean(get(args.autoExposeFutureSessions?.toString(), env.SYNADIA_CODEX_AUTO_EXPOSE_FUTURE_SESSIONS, managerSection.auto_expose_future_sessions, "false")!, "manager.auto_expose_future_sessions"),
     endpoints: args.managerEndpoints ?? splitList(get(env.SYNADIA_CODEX_MANAGER_ENDPOINTS, managerSection.endpoints, "")!),
-    watchMode: parseWatchMode(get(managerSection.watch_mode, "event-plus-poll")!, "manager.watch_mode"),
-    watchIntervalMs: parsePositiveNumber(get(args.watchIntervalMs?.toString(), managerSection.watch_interval_ms, "7500")!, "manager.watch_interval_ms"),
-    staleGraceIntervals: parsePositiveNumber(get(args.staleGraceIntervals?.toString(), managerSection.stale_grace_intervals, "3")!, "manager.stale_grace_intervals"),
-    exposeEphemeralLoadedSessions: parseBoolean(get(args.exposeEphemeralLoadedSessions?.toString(), managerSection.expose_ephemeral_loaded_sessions, "false")!, "manager.expose_ephemeral_loaded_sessions"),
+    watchMode: parseWatchMode(get(env.SYNADIA_CODEX_WATCH_MODE, managerSection.watch_mode, "event-plus-poll")!, "manager.watch_mode"),
+    watchIntervalMs: parsePositiveNumber(get(args.watchIntervalMs?.toString(), env.SYNADIA_CODEX_WATCH_INTERVAL_MS, managerSection.watch_interval_ms, "7500")!, "manager.watch_interval_ms"),
+    staleGraceIntervals: parsePositiveNumber(get(args.staleGraceIntervals?.toString(), env.SYNADIA_CODEX_STALE_GRACE_INTERVALS, managerSection.stale_grace_intervals, "3")!, "manager.stale_grace_intervals"),
+    exposeEphemeralLoadedSessions: parseBoolean(get(args.exposeEphemeralLoadedSessions?.toString(), env.SYNADIA_CODEX_EXPOSE_EPHEMERAL_LOADED_SESSIONS, managerSection.expose_ephemeral_loaded_sessions, "false")!, "manager.expose_ephemeral_loaded_sessions"),
   };
 
   return { nats, agent, codex, manager };
@@ -322,11 +322,10 @@ permission_policy = "reject"
 
 [manager]
 enabled = false
---auto-expose-current-sessions true|false
---auto-expose-future-sessions true|false
---manager-endpoints URL_OR_SOCKET[,URL_OR_SOCKET...]
---watch-interval-ms MILLISECONDS
-
+auto_expose_current_sessions = false
+auto_expose_future_sessions = false
+endpoints = ""
+watch_mode = "event-plus-poll"
 watch_interval_ms = 7500
 stale_grace_intervals = 3
 expose_ephemeral_loaded_sessions = false
@@ -361,5 +360,13 @@ Options:
   --permission-policy query|external-owner|reject|detect
   --heartbeat-interval-s SECONDS
   --keepalive-interval-s SECONDS
+  --manager-enabled true|false
+  --auto-expose-current-sessions true|false
+  --auto-expose-future-sessions true|false
+  --manager-endpoints URL_OR_SOCKET[,URL_OR_SOCKET...]
+  --watch-interval-ms MILLISECONDS
+  --stale-grace-intervals COUNT
+
+Manager start accepts a stdin command 'rescan' to run an immediate inventory reconciliation.
 `;
 }

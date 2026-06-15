@@ -4,11 +4,13 @@ import { CodexAppServerClient } from "./codex-app-server-client.js";
 import { EndpointRegistry, type EndpointRegistryEntry } from "./endpoint-registry.js";
 import { derivePublicSessionAlias } from "./identity.js";
 import { discoverEndpointSessions, type EligibleSessionRow } from "./session-inventory.js";
+import { BoundedPollScheduler } from "./session-watch.js";
 import { createCodexAgentService } from "./service.js";
 import type { CodexBridgeClient, CodexBridgeEvent, CodexPromptRequest } from "./bridge.js";
 import type { CodexChannelConfig } from "./types.js";
 
 export type CodexEndpointClientFactory = (entry: EndpointRegistryEntry) => Promise<CodexAppServerClient>;
+export type ManagedSessionState = "active" | "stale";
 
 export interface CodexSessionManagerOptions {
   readonly nc: NatsConnection;
@@ -26,6 +28,8 @@ export interface ManagedSessionSnapshot {
   readonly promptSubject: string;
   readonly statusSubject: string;
   readonly heartbeatSubject: string;
+  readonly state: ManagedSessionState;
+  readonly staleMisses: number;
 }
 
 interface RunningSession {
@@ -33,12 +37,29 @@ interface RunningSession {
   readonly alias: string;
   readonly service: AgentService;
   readonly client: SessionScopedCodexClient;
+  readonly state: ManagedSessionState;
+  readonly staleMisses: number;
+}
+
+interface ReconcileOptions {
+  readonly seedOnly?: boolean;
+}
+
+interface EndpointWatch {
+  readonly client: CodexAppServerClient;
+  readonly unsubscribe: () => void;
 }
 
 export class CodexSessionManager {
   readonly #opts: CodexSessionManagerOptions;
   readonly #running = new Map<string, RunningSession>();
+  readonly #baselineEligiblePrivateKeys = new Set<string>();
+  readonly #exposedPrivateKeys = new Set<string>();
+  readonly #rememberedAliases = new Map<string, string>();
+  readonly #endpointWatches: EndpointWatch[] = [];
   #registry: EndpointRegistry | undefined;
+  #poller: BoundedPollScheduler | undefined;
+  #started = false;
 
   constructor(opts: CodexSessionManagerOptions) { this.#opts = opts; }
 
@@ -50,6 +71,8 @@ export class CodexSessionManager {
       promptSubject: session.service.subject.prompt,
       statusSubject: session.service.subject.status,
       heartbeatSubject: session.service.subject.heartbeat,
+      state: session.state,
+      staleMisses: session.staleMisses,
     })).sort((a, b) => a.publicAlias.localeCompare(b.publicAlias));
   }
 
@@ -57,43 +80,100 @@ export class CodexSessionManager {
     if (!this.#opts.config.manager.enabled && this.#opts.config.codex.mode !== "manager") {
       throw new Error("session manager requires codex.mode=manager or manager.enabled=true");
     }
-    if (!this.#opts.config.manager.autoExposeCurrentSessions) {
-      throw new Error("session manager requires auto_expose_current_sessions=true for current-session registration");
+    if (!this.#opts.config.manager.autoExposeCurrentSessions && !this.#opts.config.manager.autoExposeFutureSessions) {
+      throw new Error("session manager requires auto_expose_current_sessions=true or auto_expose_future_sessions=true");
     }
-    await this.reconcile();
+    this.#started = true;
+    if (this.#opts.config.manager.autoExposeCurrentSessions) await this.reconcile();
+    else await this.reconcile({ seedOnly: true });
+    if (this.#opts.config.manager.autoExposeFutureSessions) await this.#startFutureWatch();
     return this.snapshots;
   }
 
-  async reconcile(): Promise<ManagedSessionSnapshot[]> {
+  async rescan(): Promise<ManagedSessionSnapshot[]> {
+    return await this.reconcile();
+  }
+
+  async reconcile(opts: ReconcileOptions = {}): Promise<ManagedSessionSnapshot[]> {
     const registry = this.#registry ?? this.#opts.registry ?? EndpointRegistry.fromConfig(this.#opts.config);
     this.#registry = registry;
-    const eligibleRows: EligibleSessionRow[] = [];
-    for (const entry of registry.list()) {
-      const inventoryClient = await this.#createClient(entry);
-      try {
-        const rows = await discoverEndpointSessions({ client: inventoryClient, endpoint: entry.endpoint, manager: this.#opts.config.manager });
-        eligibleRows.push(...rows.filter((row) => row.eligible));
-      } finally {
-        await inventoryClient.close();
+    const entries = registry.list();
+    const eligibleRows = await this.#discoverEligibleRows(entries);
+    const aliasByPrivateKey = allocateAliases(eligibleRows, entries);
+    const wantedKeys = new Set(eligibleRows.map((row) => row.privateKey));
+
+    for (const row of eligibleRows) {
+      const running = this.#running.get(row.privateKey);
+      if (running) {
+        this.#rememberedAliases.set(row.privateKey, running.alias);
+        this.#running.set(row.privateKey, { ...running, row, state: "active", staleMisses: 0 });
+        continue;
       }
+
+      const alias = this.#rememberedAliases.get(row.privateKey) ?? aliasByPrivateKey.get(row.privateKey);
+      if (!alias) throw new Error("internal manager error: missing alias allocation");
+      this.#rememberedAliases.set(row.privateKey, alias);
+      const shouldExpose = !opts.seedOnly && this.#shouldExposeRow(row);
+      if (shouldExpose) await this.#startSession(row, alias, entries);
+      else this.#baselineEligiblePrivateKeys.add(row.privateKey);
     }
 
-    const aliasByPrivateKey = allocateAliases(eligibleRows, registry.list());
-    const wantedKeys = new Set(eligibleRows.map((row) => row.privateKey));
     for (const [privateKey, running] of [...this.#running]) {
-      if (!wantedKeys.has(privateKey)) {
-        await running.service.stop();
-        await running.client.close();
-        this.#running.delete(privateKey);
+      if (wantedKeys.has(privateKey)) continue;
+      const staleMisses = running.staleMisses + 1;
+      if (staleMisses >= this.#opts.config.manager.staleGraceIntervals) {
+        await this.#stopRunning(privateKey, running);
+      } else {
+        this.#running.set(privateKey, { ...running, state: "stale", staleMisses });
       }
     }
-    for (const row of eligibleRows) {
-      if (this.#running.has(row.privateKey)) continue;
-      const entry = registry.list().find((candidate) => candidate.endpoint === row.endpoint);
-      if (!entry) throw new Error("internal manager error: endpoint disappeared during reconcile");
-      const alias = aliasByPrivateKey.get(row.privateKey);
-      if (!alias) throw new Error("internal manager error: missing alias allocation");
-      const appClient = await this.#createClient(entry);
+    return this.snapshots;
+  }
+
+  async stop(): Promise<void> {
+    this.#started = false;
+    this.#poller?.stop();
+    this.#poller = undefined;
+    for (const watch of this.#endpointWatches.splice(0).reverse()) {
+      watch.unsubscribe();
+      await watch.client.close().catch(() => undefined);
+    }
+    for (const [privateKey, running] of [...this.#running].reverse()) {
+      await this.#stopRunning(privateKey, running);
+    }
+    this.#running.clear();
+  }
+
+  async #discoverEligibleRows(entries: readonly EndpointRegistryEntry[]): Promise<EligibleSessionRow[]> {
+    const eligibleRows: EligibleSessionRow[] = [];
+    for (const entry of entries) {
+      let inventoryClient: CodexAppServerClient | undefined;
+      try {
+        inventoryClient = await this.#createClient(entry);
+        const rows = await discoverEndpointSessions({ client: inventoryClient, endpoint: entry.endpoint, manager: this.#opts.config.manager });
+        eligibleRows.push(...rows.filter((row) => row.eligible));
+      } catch {
+        // Endpoint loss is handled by the stale state machine below. Do not log
+        // endpoint URLs/socket paths here; those are private local identifiers.
+      } finally {
+        await inventoryClient?.close().catch(() => undefined);
+      }
+    }
+    return eligibleRows;
+  }
+
+  #shouldExposeRow(row: EligibleSessionRow): boolean {
+    if (this.#opts.config.manager.autoExposeCurrentSessions) return true;
+    if (!this.#opts.config.manager.autoExposeFutureSessions) return false;
+    if (this.#exposedPrivateKeys.has(row.privateKey)) return true;
+    return !this.#baselineEligiblePrivateKeys.has(row.privateKey);
+  }
+
+  async #startSession(row: EligibleSessionRow, alias: string, entries: readonly EndpointRegistryEntry[]): Promise<void> {
+    const entry = entries.find((candidate) => candidate.endpoint === row.endpoint);
+    if (!entry) throw new Error("internal manager error: endpoint disappeared during reconcile");
+    const appClient = await this.#createClient(entry);
+    try {
       await appClient.initialize();
       await appClient.resumeThread(row.rawThreadId);
       const scopedClient = new SessionScopedCodexClient(appClient, row.rawThreadId, alias, this.#opts.turnTimeoutMs ?? 120_000);
@@ -110,17 +190,42 @@ export class CodexSessionManager {
         },
       });
       await service.start();
-      this.#running.set(row.privateKey, { row, alias, service, client: scopedClient });
+      this.#exposedPrivateKeys.add(row.privateKey);
+      this.#rememberedAliases.set(row.privateKey, alias);
+      this.#running.set(row.privateKey, { row, alias, service, client: scopedClient, state: "active", staleMisses: 0 });
+    } catch (err) {
+      await appClient.close().catch(() => undefined);
+      throw err;
     }
-    return this.snapshots;
   }
 
-  async stop(): Promise<void> {
-    for (const running of [...this.#running.values()].reverse()) {
-      await running.service.stop();
-      await running.client.close();
+  async #stopRunning(privateKey: string, running: RunningSession): Promise<void> {
+    this.#rememberedAliases.set(privateKey, running.alias);
+    await running.service.stop();
+    await this.#opts.nc.flush();
+    await running.client.close();
+    this.#running.delete(privateKey);
+  }
+
+  async #startFutureWatch(): Promise<void> {
+    const registry = this.#registry ?? this.#opts.registry ?? EndpointRegistry.fromConfig(this.#opts.config);
+    this.#registry = registry;
+    this.#poller = new BoundedPollScheduler(this.#opts.config.manager.watchIntervalMs, async () => {
+      if (this.#started) await this.reconcile();
+    });
+    this.#poller.start();
+
+    if (this.#opts.config.manager.watchMode !== "event-plus-poll") return;
+    for (const entry of registry.list()) {
+      try {
+        const client = await this.#createClient(entry);
+        await client.initialize();
+        const unsubscribe = client.onThreadStarted(() => { void this.#poller?.trigger(); });
+        this.#endpointWatches.push({ client, unsubscribe });
+      } catch {
+        // Polling remains the recovery path. Avoid logging private endpoint data.
+      }
     }
-    this.#running.clear();
   }
 
   async #createClient(entry: EndpointRegistryEntry): Promise<CodexAppServerClient> {

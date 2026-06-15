@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { EndpointRegistry } from "../src/endpoint-registry.js";
 import { allocateAliases } from "../src/session-manager.js";
+import { BoundedPollScheduler, isThreadStartedNotification } from "../src/session-watch.js";
 import type { EligibleSessionRow } from "../src/session-inventory.js";
 import { privateSessionKey } from "../src/identity.js";
 
@@ -42,4 +43,37 @@ describe("Codex session manager alias policy", () => {
     const registry = new EndpointRegistry([{ id: "known", endpoint, explicitAliases: { "raw-a": "same", "raw-b": "same" } }]);
     expect(() => allocateAliases(rows, registry.list())).toThrow("explicit manager alias collision");
   });
+
+  test("treats thread/started as a wakeup signal only", () => {
+    expect(isThreadStartedNotification({ method: "thread/started", params: { threadId: "raw-private-thread" } })).toBe(true);
+    expect(isThreadStartedNotification({ method: "turn/completed", params: { threadId: "raw-private-thread" } })).toBe(false);
+  });
+
+  test("coalesces overlapping poll wakeups", async () => {
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const scheduler = new BoundedPollScheduler(10_000, async () => {
+      calls += 1;
+      await new Promise<void>((resolve) => { release = resolve; });
+    });
+    const first = scheduler.trigger();
+    const second = scheduler.trigger();
+    const third = scheduler.trigger();
+    expect(calls).toBe(1);
+    release?.();
+    await waitUntil(() => calls === 2);
+    release?.();
+    await Promise.all([first, second, third]);
+    expect(calls).toBe(2);
+    scheduler.stop();
+  });
 });
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await Bun.sleep(5);
+  }
+  throw new Error("condition was not met before timeout");
+}

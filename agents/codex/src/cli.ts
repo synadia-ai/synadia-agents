@@ -44,7 +44,9 @@ async function main(): Promise<void> {
     const snapshots = await manager.start();
     console.log(`codex-agent manager listening for ${snapshots.length} sessions`);
     for (const snapshot of snapshots) console.log(snapshot.promptSubject);
+    const stopCommands = installManagerCommands(manager);
     await waitForShutdown();
+    stopCommands();
     await manager.stop();
     await nc.drain();
     return;
@@ -77,6 +79,27 @@ async function createBridgeClient(config: ReturnType<typeof loadConfigFromSource
     return runtime;
   }
   throw new Error(`Codex ${config.codex.mode} runtime is handled by the session manager path; use --mode managed, --mode attached, or --mode fake for single-session mode`);
+}
+
+function installManagerCommands(manager: CodexSessionManager): () => void {
+  const onData = (chunk: Buffer | string): void => {
+    for (const line of String(chunk).split(/\r?\n/)) {
+      const command = line.trim();
+      if (!command) continue;
+      if (command !== "rescan") {
+        console.error(`unknown manager command ${command}; supported: rescan`);
+        continue;
+      }
+      void manager.rescan()
+        .then((snapshots) => {
+          console.log(`codex-agent manager rescan complete: ${snapshots.length} sessions`);
+          for (const snapshot of snapshots) console.log(snapshot.promptSubject);
+        })
+        .catch((err: unknown) => { console.error(err instanceof Error ? err.message : String(err)); });
+    }
+  };
+  process.stdin.on("data", onData);
+  return () => { process.stdin.off("data", onData); };
 }
 
 async function waitForShutdown(): Promise<void> {

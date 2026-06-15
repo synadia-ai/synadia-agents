@@ -67,7 +67,29 @@ describe("config", () => {
     expect(template).toContain("[agent]");
     expect(template).toContain("[codex]");
     expect(template).toContain('subject_token = "codex"');
+    expect(template).toContain("auto_expose_future_sessions = false");
+    expect(template).not.toContain("--auto-expose-future-sessions");
     expect(DEFAULT_CONFIG_PATH).toContain("codex-nats-channel.toml");
+  });
+
+  test("manager future exposure defaults off and env can opt in", () => {
+    const defaults = loadConfigFromSources({ argv: ["start"], env: { USER: "alice" }, readFile: () => "", cwd: "/tmp/project-main" });
+    expect(defaults.manager.autoExposeCurrentSessions).toBe(false);
+    expect(defaults.manager.autoExposeFutureSessions).toBe(false);
+    const cfg = loadConfigFromSources({
+      argv: ["start"],
+      env: {
+        USER: "alice",
+        SYNADIA_CODEX_MANAGER_ENABLED: "true",
+        SYNADIA_CODEX_AUTO_EXPOSE_FUTURE_SESSIONS: "true",
+        SYNADIA_CODEX_WATCH_INTERVAL_MS: "50",
+      },
+      readFile: () => "",
+      cwd: "/tmp/project-main",
+    });
+    expect(cfg.manager.enabled).toBe(true);
+    expect(cfg.manager.autoExposeFutureSessions).toBe(true);
+    expect(cfg.manager.watchIntervalMs).toBe(50);
   });
 
   test("attach subcommands require endpoint, private thread id, and safe public alias", () => {
