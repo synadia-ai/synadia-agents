@@ -1,6 +1,7 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { JsonObject, JsonValue, JsonRpcNotification, ServerRequestHandlerInput } from "./codex-jsonrpc.js";
-import { asObject, asString, JsonLineRpcClient } from "./codex-jsonrpc.js";
+import { asObject, asString, ChildProcessJsonRpcTransport, JsonLineRpcClient } from "./codex-jsonrpc.js";
+import { createUnixSocketTransport, createWebSocketTransport, requireAttachedEndpointAuth } from "./endpoint.js";
 import type { PermissionRequestSink } from "./permissions.js";
 import { resolvePermissionRequest } from "./permissions.js";
 
@@ -9,6 +10,13 @@ export interface CodexAppServerProcessOptions {
   readonly args?: readonly string[];
   readonly env?: Record<string, string | undefined>;
   readonly cwd?: string;
+  readonly permissionSink?: PermissionRequestSink;
+  readonly permissionTimeoutMs?: number;
+}
+
+export interface CodexAttachedEndpointOptions {
+  readonly endpoint: string;
+  readonly authToken?: string;
   readonly permissionSink?: PermissionRequestSink;
   readonly permissionTimeoutMs?: number;
 }
@@ -26,7 +34,6 @@ export interface CodexTurnStreamEvent {
 }
 
 export class CodexAppServerClient {
-  readonly #child: ChildProcessWithoutNullStreams;
   readonly #rpc: JsonLineRpcClient;
   #threadId: string | undefined;
   #initializeResult: CodexInitializeResult | undefined;
@@ -34,18 +41,10 @@ export class CodexAppServerClient {
   #permissionSink: PermissionRequestSink | undefined;
   #permissionTimeoutMs: number | undefined;
 
-  private constructor(child: ChildProcessWithoutNullStreams, opts: { readonly permissionSink?: PermissionRequestSink; readonly permissionTimeoutMs?: number }) {
-    this.#child = child;
+  private constructor(rpc: JsonLineRpcClient, opts: { readonly permissionSink?: PermissionRequestSink; readonly permissionTimeoutMs?: number }) {
     this.#permissionSink = opts.permissionSink;
     this.#permissionTimeoutMs = opts.permissionTimeoutMs;
-    this.#rpc = new JsonLineRpcClient(child, {
-      serverRequestHandler: (input: ServerRequestHandlerInput) => {
-        const permissionOpts: { sink?: PermissionRequestSink; timeoutMs?: number } = {};
-        if (this.#permissionSink !== undefined) permissionOpts.sink = this.#permissionSink;
-        if (this.#permissionTimeoutMs !== undefined) permissionOpts.timeoutMs = this.#permissionTimeoutMs;
-        return resolvePermissionRequest(input, permissionOpts);
-      },
-    });
+    this.#rpc = rpc;
     this.#rpc.onStderr((chunk) => { this.#stderr = (this.#stderr + chunk).slice(-12_000); });
   }
 
@@ -56,10 +55,41 @@ export class CodexAppServerClient {
       env: { ...process.env, ...opts.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
+    const clientRef: { current?: CodexAppServerClient } = {};
+    const rpc = new JsonLineRpcClient(new ChildProcessJsonRpcTransport(child), {
+      serverRequestHandler: (input: ServerRequestHandlerInput) => {
+        return clientRef.current
+          ? resolvePermissionRequest(input, clientRef.current.#permissionOptions())
+          : resolvePermissionRequest(input);
+      },
+    });
     const clientOpts: { permissionSink?: PermissionRequestSink; permissionTimeoutMs?: number } = {};
     if (opts.permissionSink !== undefined) clientOpts.permissionSink = opts.permissionSink;
     if (opts.permissionTimeoutMs !== undefined) clientOpts.permissionTimeoutMs = opts.permissionTimeoutMs;
-    return new CodexAppServerClient(child, clientOpts);
+    const client = new CodexAppServerClient(rpc, clientOpts);
+    clientRef.current = client;
+    return client;
+  }
+
+  static async connectEndpoint(opts: CodexAttachedEndpointOptions): Promise<CodexAppServerClient> {
+    const parsed = requireAttachedEndpointAuth(opts.endpoint, opts.authToken);
+    const transport = parsed.kind === "unix"
+      ? await createUnixSocketTransport(parsed.socketPath!)
+      : await createWebSocketTransport(parsed.websocketUrl!, opts.authToken);
+    const clientRef: { current?: CodexAppServerClient } = {};
+    const rpc = new JsonLineRpcClient(transport, {
+      serverRequestHandler: (input: ServerRequestHandlerInput) => {
+        return clientRef.current
+          ? resolvePermissionRequest(input, clientRef.current.#permissionOptions())
+          : resolvePermissionRequest(input);
+      },
+    });
+    const clientOpts: { permissionSink?: PermissionRequestSink; permissionTimeoutMs?: number } = {};
+    if (opts.permissionSink !== undefined) clientOpts.permissionSink = opts.permissionSink;
+    if (opts.permissionTimeoutMs !== undefined) clientOpts.permissionTimeoutMs = opts.permissionTimeoutMs;
+    const client = new CodexAppServerClient(rpc, clientOpts);
+    clientRef.current = client;
+    return client;
   }
 
   get stderrTail(): string { return this.#stderr; }
@@ -96,6 +126,24 @@ export class CodexAppServerClient {
     const thread = asObject(result.thread, "thread/start.thread");
     this.#threadId = asString(thread.id, "thread.id");
     return this.#threadId;
+  }
+
+  async listLoadedThreads(timeoutMs = 15_000): Promise<JsonObject[]> {
+    return asThreadList(await this.#rpc.request("thread/loaded/list", {}, { timeoutMs }), "thread/loaded/list result");
+  }
+
+  async listThreads(timeoutMs = 15_000): Promise<JsonObject[]> {
+    return asThreadList(await this.#rpc.request("thread/list", {}, { timeoutMs }), "thread/list result");
+  }
+
+  async readThread(threadId: string, timeoutMs = 15_000): Promise<JsonObject> {
+    return asObject(await this.#rpc.request("thread/read", { threadId }, { timeoutMs }), "thread/read result");
+  }
+
+  async resumeThread(threadId: string, timeoutMs = 15_000): Promise<JsonObject> {
+    const result = asObject(await this.#rpc.request("thread/resume", { threadId }, { timeoutMs }), "thread/resume result");
+    this.#threadId = threadId;
+    return result;
   }
 
   async *turn(prompt: string, opts: { readonly timeoutMs?: number; readonly cwd?: string } = {}): AsyncIterable<CodexTurnStreamEvent> {
@@ -143,8 +191,21 @@ export class CodexAppServerClient {
 
   async close(): Promise<void> {
     this.#rpc.close();
-    if (!this.#child.killed) this.#child.kill("SIGTERM");
   }
+
+  #permissionOptions(): { sink?: PermissionRequestSink; timeoutMs?: number } {
+    const permissionOpts: { sink?: PermissionRequestSink; timeoutMs?: number } = {};
+    if (this.#permissionSink !== undefined) permissionOpts.sink = this.#permissionSink;
+    if (this.#permissionTimeoutMs !== undefined) permissionOpts.timeoutMs = this.#permissionTimeoutMs;
+    return permissionOpts;
+  }
+}
+
+function asThreadList(value: JsonValue, field: string): JsonObject[] {
+  const obj = asObject(value, field);
+  const threads = obj.threads;
+  if (!Array.isArray(threads)) throw new Error(`${field}.threads must be an array`);
+  return threads.map((thread, index) => asObject(thread, `${field}.threads[${index}]`));
 }
 
 function mapNotification(notification: JsonRpcNotification, threadId: string, turnId: string): CodexTurnStreamEvent | null {

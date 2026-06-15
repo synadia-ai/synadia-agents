@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { requireSubjectToken, sanitizeDerivedSubjectToken } from "./subject.js";
+import { requireAttachedEndpointAuth } from "./endpoint.js";
 import type {
   AgentConfig,
   CodexChannelConfig,
@@ -36,6 +37,7 @@ export interface ParsedArgs {
   readonly codexBin?: string;
   readonly codeHome?: string;
   readonly endpoint?: string;
+  readonly endpointAuth?: string;
   readonly threadId?: string;
   readonly publicAlias?: string;
   readonly permissionPolicy?: CodexPermissionPolicy;
@@ -72,8 +74,10 @@ const flagMap: Record<string, keyof Omit<ParsedArgs, "command">> = {
   "--codex-bin": "codexBin",
   "--code-home": "codeHome",
   "--endpoint": "endpoint",
+  "--endpoint-auth": "endpointAuth",
   "--thread-id": "threadId",
   "--public-alias": "publicAlias",
+  "--alias": "publicAlias",
   "--permission-policy": "permissionPolicy",
   "--heartbeat-interval-s": "heartbeatIntervalS",
   "--keepalive-interval-s": "keepaliveIntervalS",
@@ -99,8 +103,18 @@ const booleanFlags = new Set<keyof ParsedArgs>([
 ]);
 
 export function parseArgs(argv: readonly string[]): ParsedArgs {
-  const [command = "help", ...rest] = argv;
-  const out: Record<string, unknown> = { command };
+  const [first = "help", ...rawRest] = argv;
+  let command = first;
+  let rest = rawRest;
+  const out: Record<string, unknown> = {};
+  if (first === "attach") {
+    const subcommand = rawRest[0];
+    if (subcommand !== "doctor" && subcommand !== "start") throw new Error("attach requires doctor or start");
+    command = `attach:${subcommand}`;
+    rest = rawRest.slice(1);
+    out.mode = "attached";
+  }
+  out.command = command;
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
     if (arg === undefined) continue;
@@ -173,7 +187,6 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): CodexCha
 
   const defaultSession = sanitizeDerivedSubjectToken(basename(resolve(cwd))) || "main";
   const owner = requireSubjectToken(get(args.owner, env.SYNADIA_CODEX_OWNER, agentSection.owner, sanitizeDerivedSubjectToken(env.USER ?? "unknown") || "unknown")!, "agent.owner");
-  const session = requireSubjectToken(get(args.session, env.SYNADIA_CODEX_SESSION, agentSection.session, defaultSession)!, "agent.session");
   const subjectToken = requireSubjectToken(get(args.subjectToken, agentSection.subject_token, "codex")!, "agent.subject_token");
   if (subjectToken !== "codex") throw new Error("agent.subject_token must be codex for this adapter");
 
@@ -191,10 +204,17 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): CodexCha
     codexBin: get(args.codexBin, env.SYNADIA_CODEX_BIN, codexSection.codex_bin, "codex")!,
     ...optional("codeHome", get(args.codeHome, env.SYNADIA_CODEX_HOME, codexSection.code_home)),
     ...optional("endpoint", get(args.endpoint, env.SYNADIA_CODEX_ENDPOINT, codexSection.endpoint)),
+    ...optional("endpointAuth", get(args.endpointAuth, env.SYNADIA_CODEX_ENDPOINT_AUTH, codexSection.endpoint_auth)),
     ...optional("threadId", get(args.threadId, env.SYNADIA_CODEX_THREAD_ID, codexSection.thread_id)),
     ...optional("publicAlias", get(args.publicAlias, env.SYNADIA_CODEX_PUBLIC_ALIAS, codexSection.public_alias)),
-    permissionPolicy: parsePermissionPolicy(get(args.permissionPolicy, env.SYNADIA_CODEX_PERMISSION_POLICY, codexSection.permission_policy, "reject")!, "codex.permission_policy"),
+    permissionPolicy: parsePermissionPolicy(get(args.permissionPolicy, env.SYNADIA_CODEX_PERMISSION_POLICY, codexSection.permission_policy, codexMode === "attached" ? "external-owner" : "reject")!, "codex.permission_policy"),
   };
+
+  const sessionSource = codexMode === "attached"
+    ? get(args.publicAlias, env.SYNADIA_CODEX_PUBLIC_ALIAS, codexSection.public_alias)
+    : get(args.session, env.SYNADIA_CODEX_SESSION, agentSection.session, defaultSession);
+  const session = requireSubjectToken(sessionSource ?? "", codexMode === "attached" ? "codex.public_alias" : "agent.session");
+  validateAttachedConfig(codex);
 
   const agent: AgentConfig = {
     owner,
@@ -219,6 +239,14 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): CodexCha
 
 function optional<K extends string>(key: K, value: string | undefined): Record<K, string> | Record<string, never> {
   return value ? { [key]: value } as Record<K, string> : {};
+}
+
+function validateAttachedConfig(codex: CodexChannelConfig["codex"]): void {
+  if (codex.mode !== "attached") return;
+  if (!codex.endpoint) throw new Error("attached mode requires --endpoint or SYNADIA_CODEX_ENDPOINT");
+  if (!codex.threadId) throw new Error("attached mode requires --thread-id or SYNADIA_CODEX_THREAD_ID");
+  if (!codex.publicAlias) throw new Error("attached mode requires --alias/--public-alias or SYNADIA_CODEX_PUBLIC_ALIAS");
+  requireAttachedEndpointAuth(codex.endpoint, codex.endpointAuth);
 }
 
 function parsePositiveNumber(value: string, field: string): number {
@@ -278,6 +306,7 @@ mode = "managed"
 codex_bin = "codex"
 code_home = ""
 endpoint = ""
+endpoint_auth = ""
 thread_id = ""
 public_alias = ""
 permission_policy = "reject"
@@ -294,12 +323,14 @@ expose_ephemeral_loaded_sessions = false
 }
 
 export function helpText(): string {
-  return `Usage: codex-agent <start|doctor|configure> [options]
+  return `Usage: codex-agent <start|doctor|configure|attach doctor|attach start> [options]
 
 Commands:
   start                 Register a Codex-shaped agent on NATS using the configured bridge mode
   doctor                Print redacted resolved config and managed app-server readiness
   configure --print-template
+  attach doctor         Preflight an explicit endpoint + private thread + safe alias
+  attach start          Register an explicit attached thread under its safe alias
 
 Options:
   --config PATH
@@ -313,8 +344,9 @@ Options:
   --codex-bin PATH_OR_NAME
   --code-home PATH
   --endpoint URL_OR_SOCKET
+  --endpoint-auth TOKEN
   --thread-id ID
-  --public-alias TOKEN
+  --public-alias TOKEN (or --alias TOKEN)
   --permission-policy query|external-owner|reject|detect
   --heartbeat-interval-s SECONDS
   --keepalive-interval-s SECONDS

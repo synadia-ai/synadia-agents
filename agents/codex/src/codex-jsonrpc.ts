@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import type { JsonRpcTransport } from "./endpoint.js";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue | undefined };
 export type JsonObject = { [key: string]: JsonValue | undefined };
@@ -50,7 +51,7 @@ export class JsonRpcError extends Error {
 }
 
 export class JsonLineRpcClient {
-  readonly #child: ChildProcessWithoutNullStreams;
+  readonly #transport: JsonRpcTransport;
   readonly #pending = new Map<number | string, { resolve: (value: JsonValue) => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   readonly #events = new EventEmitter();
   #nextId = 1;
@@ -58,15 +59,12 @@ export class JsonLineRpcClient {
   #closed = false;
   #serverRequestHandler: ServerRequestHandler | undefined;
 
-  constructor(child: ChildProcessWithoutNullStreams, opts: { readonly serverRequestHandler?: ServerRequestHandler } = {}) {
-    this.#child = child;
+  constructor(transport: JsonRpcTransport, opts: { readonly serverRequestHandler?: ServerRequestHandler } = {}) {
+    this.#transport = transport;
     this.#serverRequestHandler = opts.serverRequestHandler;
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => this.#onData(chunk));
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk: string) => this.#events.emit("stderr", chunk));
-    child.once("exit", (code, signal) => this.#close(new Error(`codex app-server exited code=${code ?? "null"} signal=${signal ?? "null"}`)));
-    child.once("error", (err) => this.#close(err));
+    transport.onData((chunk: string) => this.#onData(chunk));
+    transport.onStderr((chunk: string) => this.#events.emit("stderr", chunk));
+    transport.onClose((err) => this.#close(err));
   }
 
   onNotification(listener: (message: JsonRpcNotification) => void): () => void {
@@ -103,11 +101,11 @@ export class JsonLineRpcClient {
 
   close(): void {
     this.#close(new Error("JSON-RPC transport closed"));
-    if (!this.#child.killed) this.#child.kill("SIGTERM");
+    this.#transport.close();
   }
 
   #write(message: unknown): void {
-    this.#child.stdin.write(`${JSON.stringify(message)}\n`);
+    this.#transport.write(`${JSON.stringify(message)}\n`);
   }
 
   #onData(chunk: string): void {
@@ -178,6 +176,25 @@ export class JsonLineRpcClient {
     }
     this.#pending.clear();
     this.#events.emit("close", error);
+  }
+}
+
+export class ChildProcessJsonRpcTransport implements JsonRpcTransport {
+  readonly #child: ChildProcessWithoutNullStreams;
+
+  constructor(child: ChildProcessWithoutNullStreams) {
+    this.#child = child;
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+  }
+
+  write(line: string): void { this.#child.stdin.write(line); }
+  close(): void { if (!this.#child.killed) this.#child.kill("SIGTERM"); }
+  onData(listener: (chunk: string) => void): void { this.#child.stdout.on("data", listener); }
+  onStderr(listener: (chunk: string) => void): void { this.#child.stderr.on("data", listener); }
+  onClose(listener: (error: Error) => void): void {
+    this.#child.once("exit", (code, signal) => listener(new Error(`codex app-server exited code=${code ?? "null"} signal=${signal ?? "null"}`)));
+    this.#child.once("error", listener);
   }
 }
 

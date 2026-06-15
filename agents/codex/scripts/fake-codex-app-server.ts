@@ -3,7 +3,7 @@ const decoder = new TextDecoder();
 let buffer = "";
 let nextThread = 1;
 let nextTurn = 1;
-const encoder = new TextEncoder();
+const threads = new Map<string, any>();
 
 process.stdin.on("data", (chunk) => {
   buffer += decoder.decode(chunk);
@@ -27,8 +27,29 @@ async function handle(message: any): Promise<void> {
   if (message.method === "initialized") return;
   if (message.method === "thread/start") {
     const id = `thread-${nextThread++}`;
-    send({ id: message.id, result: { thread: { id, sessionId: id, forkedFromId: null, preview: "", ephemeral: true, modelProvider: "fake", createdAt: Date.now(), updatedAt: Date.now(), status: { type: "idle" }, path: null, cwd: message.params?.cwd ?? process.cwd(), cliVersion: "fake", source: "vscode", threadSource: null, agentNickname: null, agentRole: null, gitInfo: null, name: null, turns: [] }, model: "fake", modelProvider: "fake", serviceTier: null, cwd: message.params?.cwd ?? process.cwd(), instructionSources: [], approvalPolicy: "never", approvalsReviewer: "user", sandbox: { type: "readOnly", networkAccess: false }, reasoningEffort: null } });
+    const thread = makeThread(id, message.params?.cwd ?? process.cwd(), true);
+    threads.set(id, thread);
+    send({ id: message.id, result: { thread, model: "fake", modelProvider: "fake", serviceTier: null, cwd: message.params?.cwd ?? process.cwd(), instructionSources: [], approvalPolicy: "never", approvalsReviewer: "user", sandbox: { type: "readOnly", networkAccess: false }, reasoningEffort: null } });
     notify("thread/started", { thread: { id, status: { type: "idle" } } });
+    return;
+  }
+  if (message.method === "thread/loaded/list" || message.method === "thread/list") {
+    seedDefaultThread();
+    send({ id: message.id, result: { threads: [...threads.values()] } });
+    return;
+  }
+  if (message.method === "thread/read") {
+    seedDefaultThread();
+    const thread = threads.get(message.params?.threadId);
+    if (!thread) { send({ id: message.id, error: { code: -32004, message: "thread not found" } }); return; }
+    send({ id: message.id, result: { thread } });
+    return;
+  }
+  if (message.method === "thread/resume") {
+    seedDefaultThread();
+    const thread = threads.get(message.params?.threadId);
+    if (!thread) { send({ id: message.id, error: { code: -32004, message: "thread not found" } }); return; }
+    send({ id: message.id, result: { thread, approvalPolicy: "never", approvalsReviewer: "user" } });
     return;
   }
   if (message.method === "turn/start") {
@@ -51,6 +72,14 @@ async function handle(message: any): Promise<void> {
     return;
   }
   send({ id: message.id, error: { code: -32601, message: `unknown method ${message.method}` } });
+}
+
+function seedDefaultThread(): void {
+  if (!threads.has("thread-attached")) threads.set("thread-attached", makeThread("thread-attached", process.cwd(), false));
+}
+
+function makeThread(id: string, cwd: string, ephemeral: boolean): any {
+  return { id, sessionId: id, forkedFromId: null, preview: "", ephemeral, modelProvider: "fake", createdAt: Date.now(), updatedAt: Date.now(), status: { type: "idle" }, path: null, cwd, cliVersion: "fake", source: "vscode", threadSource: null, agentNickname: null, agentRole: null, gitInfo: null, name: null, turns: [] };
 }
 
 function send(message: unknown): void {

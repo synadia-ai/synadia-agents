@@ -69,4 +69,26 @@ describe("config", () => {
     expect(template).toContain('subject_token = "codex"');
     expect(DEFAULT_CONFIG_PATH).toContain("codex-nats-channel.toml");
   });
+
+  test("attach subcommands require endpoint, private thread id, and safe public alias", () => {
+    const cfg = loadConfigFromSources({
+      argv: ["attach", "doctor", "--endpoint", "unix:///tmp/codex.sock", "--thread-id", "raw-private-thread", "--alias", "safe-alias"],
+      env: { USER: "alice" },
+      readFile: () => "",
+      cwd: "/tmp/project-main",
+    });
+    expect(parseArgs(["attach", "start", "--endpoint", "unix:///tmp/codex.sock", "--thread-id", "raw-private-thread", "--alias", "safe-alias"]).command).toBe("attach:start");
+    expect(cfg.codex.mode).toBe("attached");
+    expect(cfg.codex.threadId).toBe("raw-private-thread");
+    expect(cfg.codex.publicAlias).toBe("safe-alias");
+    expect(cfg.agent.session).toBe("safe-alias");
+    expect(cfg.codex.permissionPolicy).toBe("external-owner");
+  });
+
+  test("attached mode rejects missing alias and non-loopback websocket without auth", () => {
+    expect(() => loadConfigFromSources({ argv: ["attach", "doctor", "--endpoint", "unix:///tmp/codex.sock", "--thread-id", "raw"], env: { USER: "alice" }, readFile: () => "", cwd: "/tmp/project-main" })).toThrow("codex.public_alias");
+    expect(() => loadConfigFromSources({ argv: ["attach", "doctor", "--endpoint", "ws://192.0.2.10:9999", "--thread-id", "raw", "--alias", "safe"], env: { USER: "alice" }, readFile: () => "", cwd: "/tmp/project-main" })).toThrow("non-loopback WebSocket attached endpoints require");
+    const cfg = loadConfigFromSources({ argv: ["attach", "doctor", "--endpoint", "ws://192.0.2.10:9999", "--endpoint-auth", "not-a-secret-shape", "--thread-id", "raw", "--alias", "safe"], env: { USER: "alice" }, readFile: () => "", cwd: "/tmp/project-main" });
+    expect(cfg.codex.endpointAuth).toBe("not-a-secret-shape");
+  });
 });

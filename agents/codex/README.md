@@ -2,7 +2,7 @@
 
 `@synadia-ai/codex-nats-channel` exposes Codex app-server-backed sessions through the Synadia Agent Protocol for NATS.
 
-The adapter uses `@synadia-ai/agent-service` for service registration, prompt/status endpoints, heartbeats, keepalives, error mapping, and stream terminators. Managed mode starts an adapter-owned, isolated Codex app-server (`CODEX_HOME` under a generated state directory unless configured), creates an adapter-owned thread, and streams Codex text deltas as Synadia response chunks. Fake mode remains available for deterministic protocol smoke tests.
+The adapter uses `@synadia-ai/agent-service` for service registration, prompt/status endpoints, heartbeats, keepalives, error mapping, and stream terminators. Managed mode starts an adapter-owned, isolated Codex app-server (`CODEX_HOME` under a generated state directory unless configured), creates an adapter-owned thread, and streams Codex text deltas as Synadia response chunks. Attached mode exposes one explicitly selected app-server-backed thread by configured endpoint, private thread id, and safe public alias. Fake mode remains available for deterministic protocol smoke tests.
 
 ## Package surface
 
@@ -13,7 +13,7 @@ The adapter uses `@synadia-ai/agent-service` for service registration, prompt/st
 - Status subject: `agents.status.codex.<owner>.<session>`
 - Heartbeat subject: `agents.hb.codex.<owner>.<session>`
 
-Public metadata only includes safe labels such as `codex_mode=managed` and `permission_policy=reject`. The prompt endpoint advertises `attachments_ok=false` until file/image ingestion is proven end-to-end. Metadata must not include raw app-server endpoints, local paths, thread identifiers, or tokens.
+Public metadata only includes safe labels such as `codex_mode=managed`, `codex_mode=attached`, `permission_policy=reject`, and `permission_mode=external-owner`. The prompt endpoint advertises `attachments_ok=false` until file/image ingestion is proven end-to-end. Metadata must not include raw app-server endpoints, local paths, thread identifiers, or tokens.
 
 ## Configuration
 
@@ -41,13 +41,68 @@ Start a managed local adapter:
 codex-agent start --mode managed --owner local --session main
 ```
 
-Run diagnostics:
+Run managed diagnostics:
 
 ```sh
 codex-agent doctor --mode managed --owner local --session main
 ```
 
-The doctor reports `codex --version`, NATS source, computed prompt subject, max-payload source, permission-callback mode, and redaction checks. Local-only values such as credentials, `CODEX_HOME`, endpoints, and raw thread ids are redacted.
+The doctor reports `codex --version`, NATS source, computed prompt subject, max-payload source, permission-callback mode, and redaction checks. Local-only values such as credentials, `CODEX_HOME`, endpoints, endpoint auth, and raw thread ids are redacted.
+
+## Attached endpoint mode
+
+Attached mode is explicit by design. It does not scan GUI windows, terminal sessions, or private desktop IPC. You must provide:
+
+- `--endpoint`: `unix:///absolute/socket` or `ws(s)://host:port/path`;
+- `--thread-id`: the private Codex app-server thread id to resume;
+- `--alias` / `--public-alias`: the safe public NATS session token to register.
+
+Non-loopback WebSocket endpoints require `--endpoint-auth` or `SYNADIA_CODEX_ENDPOINT_AUTH`. Loopback Unix sockets and loopback WebSockets are accepted without endpoint auth.
+
+Preflight an attached thread before registration:
+
+```sh
+codex-agent attach doctor \
+  --owner local \
+  --endpoint unix:///path/to/codex.sock \
+  --thread-id '<private-thread-id>' \
+  --alias demo
+```
+
+Start the attached adapter after preflight passes:
+
+```sh
+codex-agent attach start \
+  --owner local \
+  --nats-url nats://127.0.0.1:4222 \
+  --endpoint unix:///path/to/codex.sock \
+  --thread-id '<private-thread-id>' \
+  --alias demo
+```
+
+Attached preflight checks `initialize`, `thread/loaded/list`, `thread/list`, selected `thread/read`, selected `thread/resume`, a stream round trip, and permission ownership labeling. The public session is always the safe alias; the raw thread id and endpoint are never used in NATS subjects or public metadata.
+
+User-client-created attached threads default to `permission_mode=external-owner`. The adapter does not emit Synadia protocol `query` permission prompts for attached threads unless a future implementation proves the adapter owns the active Codex callback path.
+
+## NATS CLI examples
+
+Discover registered Codex agents:
+
+```sh
+nats req '$SRV.INFO.agents' '' --wait-for-empty --reply-timeout=30s --timeout=5m
+```
+
+Prompt a managed or attached session:
+
+```sh
+nats req agents.prompt.codex.local.demo 'say hello' --wait-for-empty --reply-timeout=30s --timeout=5m
+```
+
+Read status:
+
+```sh
+nats req agents.status.codex.local.demo '' --wait-for-empty --reply-timeout=30s --timeout=5m
+```
 
 ## Validate
 
@@ -58,17 +113,19 @@ bun test
 bun run smoke:protocol
 bun run smoke:codex-appserver-lifecycle
 bun run smoke:codex-runtime
+bun run smoke:attached-endpoint
 bun run smoke:codex-permission
 ```
 
 The protocol smoke starts a disposable local `nats-server`, registers a fake Codex-backed service with `AgentService`, and proves `$SRV.INFO`, status, heartbeat, prompt `ack -> response -> terminator`, attachment `400`, and handler `500` behavior.
 
-The app-server lifecycle smoke initializes a real `codex app-server --listen stdio://` inside an isolated temporary `CODEX_HOME`. Runtime and permission smokes use a deterministic fake app-server process to prove JSON-RPC framing, text-delta streaming, managed lifecycle, and default-deny permission handling without spending model tokens or requiring credentials.
+The app-server lifecycle smoke initializes a real `codex app-server --listen stdio://` inside an isolated temporary `CODEX_HOME`. Runtime and permission smokes use a deterministic fake app-server process to prove JSON-RPC framing, text-delta streaming, managed lifecycle, and default-deny permission handling without spending model tokens or requiring credentials. The attached endpoint smoke uses an explicit Unix-socket app-server fixture to prove endpoint/thread/alias preflight and NATS prompt routing.
 
 ## Limitations
 
 - Managed mode owns only the app-server process and thread it starts. It does not discover or control arbitrary Codex GUI/TUI sessions.
-- Attached endpoint/session-manager modes are not enabled yet.
-- Permission prompts default to deny/cancel unless the adapter owns the active app-server callback path.
+- Attached mode exposes only the explicitly configured app-server endpoint and selected thread. It does not claim arbitrary GUI/TUI auto-discovery.
+- Session-manager modes are not enabled yet.
+- Permission prompts default to deny/cancel for managed mode unless the adapter owns the active app-server callback path; attached mode defaults to `external-owner`.
 - Attachments are rejected until Codex file/image ingestion is mapped end-to-end.
 - Public examples intentionally use safe aliases and loopback NATS only; do not use raw Codex thread IDs, endpoints, socket paths, or credentials as subject tokens.

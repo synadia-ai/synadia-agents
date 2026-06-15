@@ -20,6 +20,7 @@ export interface CodexConfig {
   readonly codexBin: string;
   readonly codeHome?: string;
   readonly endpoint?: string;
+  readonly endpointAuth?: string;
   readonly threadId?: string;
   readonly publicAlias?: string;
   readonly permissionPolicy: CodexPermissionPolicy;

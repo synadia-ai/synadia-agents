@@ -14,6 +14,7 @@ describe("README public claims", () => {
     expect(readme).not.toMatch(/all GUI sessions/i);
     expect(readme).not.toMatch(/Kanban|research|Phase [0-9]/i);
     expect(readme).not.toMatch(/thread_[A-Za-z0-9_-]+/);
-    expect(readme).not.toMatch(/unix:\/\//);
+    expect(readme).not.toMatch(/\/Users\//);
+    expect(readme).not.toMatch(/unix:\/\/\/(?:Users|var|tmp)\//);
   });
 });

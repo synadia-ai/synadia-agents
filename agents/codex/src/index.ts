@@ -1,4 +1,5 @@
 export { rejectUnsupportedAttachments } from "./attachments.js";
+export { AttachedCodexRuntime, preflightAttachedThread, type AttachedPreflightReport } from "./attached-runtime.js";
 export { bridgePromptToCodex, FakeCodexBridgeClient, type CodexBridgeClient, type CodexBridgeEvent, type CodexPromptRequest } from "./bridge.js";
 export { CodexAppServerClient, type CodexInitializeResult, type CodexTurnStreamEvent } from "./codex-app-server-client.js";
 export { JsonLineRpcClient, JsonRpcError, defaultServerRequestResponse } from "./codex-jsonrpc.js";

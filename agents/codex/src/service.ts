@@ -29,6 +29,7 @@ export function buildAgentServiceOptions(input: BuildAgentServiceOptionsInput): 
     extraMetadata: {
       codex_mode: mapping.codex.mode,
       permission_policy: mapping.codex.permissionPolicy,
+      permission_mode: mapping.codex.mode === "attached" ? "external-owner" : mapping.codex.permissionPolicy,
       manager_enabled: String(mapping.manager.enabled),
       ...input.extraMetadata,
     },

@@ -39,6 +39,7 @@ describe("service construction", () => {
     expect(opts.extraMetadata).toEqual({
       codex_mode: "attached",
       permission_policy: "external-owner",
+      permission_mode: "external-owner",
       manager_enabled: "false",
     });
     expect(JSON.stringify(opts.extraMetadata)).not.toContain("raw-thread-id");

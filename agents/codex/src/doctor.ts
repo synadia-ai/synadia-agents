@@ -9,7 +9,7 @@ export interface DoctorCheck {
 }
 
 export interface DoctorReport {
-  readonly phase: "managed-app-server";
+  readonly phase: "managed-app-server" | "attached-endpoint";
   readonly checks: readonly DoctorCheck[];
   readonly nats: Record<string, unknown>;
   readonly agent: Record<string, unknown>;
@@ -28,7 +28,7 @@ export async function runDoctor(config: CodexChannelConfig): Promise<DoctorRepor
     { name: "redaction", ok: redactionScan(config, subject), detail: "doctor report hides CODEX_HOME, endpoint, thread id, creds" },
   ];
   return {
-    phase: "managed-app-server",
+    phase: config.codex.mode === "attached" ? "attached-endpoint" : "managed-app-server",
     checks,
     nats: {
       source: config.nats.context ? "context" : "url",
@@ -42,6 +42,7 @@ export async function runDoctor(config: CodexChannelConfig): Promise<DoctorRepor
       codexBin: config.codex.codexBin,
       codeHome: config.codex.codeHome ? "[REDACTED]" : undefined,
       endpoint: config.codex.endpoint ? "[REDACTED]" : undefined,
+      endpointAuth: config.codex.endpointAuth ? "[REDACTED]" : undefined,
       threadId: config.codex.threadId ? "[REDACTED]" : undefined,
       publicAlias: config.codex.publicAlias,
       permissionPolicy: config.codex.permissionPolicy,

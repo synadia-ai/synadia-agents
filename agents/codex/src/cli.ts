@@ -5,6 +5,7 @@ import { FakeCodexBridgeClient, type CodexBridgeClient } from "./bridge.js";
 import { helpText, loadConfigFromSources, renderConfigTemplate } from "./config.js";
 import { runDoctor } from "./doctor.js";
 import { ManagedCodexRuntime } from "./managed-runtime.js";
+import { AttachedCodexRuntime } from "./attached-runtime.js";
 import { resolveNatsOptions } from "./nats.js";
 import { createCodexAgentService } from "./service.js";
 
@@ -23,7 +24,17 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(await runDoctor(config), null, 2));
     return;
   }
-  if (command !== "start") throw new Error(`unknown command ${command}`);
+  if (command === "attach:doctor") {
+    const runtime = new AttachedCodexRuntime({ config });
+    try {
+      const report = await runtime.start();
+      console.log(JSON.stringify({ ...(await runDoctor(config)), attachPreflight: report }, null, 2));
+    } finally {
+      await runtime.close();
+    }
+    return;
+  }
+  if (command !== "start" && command !== "attach:start") throw new Error(`unknown command ${command}`);
 
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
   const client = await createBridgeClient(config);
@@ -49,7 +60,12 @@ async function createBridgeClient(config: ReturnType<typeof loadConfigFromSource
     await runtime.start();
     return runtime;
   }
-  throw new Error(`Codex ${config.codex.mode} runtime is not implemented yet; use --mode managed or --mode fake`);
+  if (config.codex.mode === "attached") {
+    const runtime = new AttachedCodexRuntime({ config });
+    await runtime.start();
+    return runtime;
+  }
+  throw new Error(`Codex ${config.codex.mode} runtime is not implemented yet; use --mode managed, --mode attached, or --mode fake`);
 }
 
 async function waitForShutdown(): Promise<void> {
