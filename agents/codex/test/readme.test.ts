@@ -9,6 +9,13 @@ describe("README public claims", () => {
     expect(readme).toContain("Attachments are rejected");
   });
 
+  test("documents prerequisites, install, and troubleshooting", () => {
+    expect(readme).toContain("## Prerequisites");
+    expect(readme).toContain("## Install");
+    expect(readme).toContain("## Troubleshooting");
+    expect(readme).toContain("npm install -g @synadia-ai/codex-nats-channel");
+  });
+
   test("does not claim arbitrary GUI/TUI control or leak private research language", () => {
     expect(readme).not.toMatch(/all Codex windows/i);
     expect(readme).not.toMatch(/all GUI sessions/i);

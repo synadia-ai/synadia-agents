@@ -12,7 +12,7 @@ import {
 } from "../src/plugin-registrar.js";
 
 const privateEndpoint = "unix:///Users/alice/private/codex.sock";
-const privateThreadId = "thread-private-alpha";
+const privateThreadId = "thread-fixture-alpha";
 
 describe("Codex plugin-assisted registration", () => {
   test("hook notifications reach the local registrar and stay metadata-only by default", async () => {

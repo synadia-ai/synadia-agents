@@ -15,6 +15,30 @@ The adapter uses `@synadia-ai/agent-service` for service registration, prompt/st
 
 Public metadata only includes safe labels such as `codex_mode=managed`, `codex_mode=attached`, `permission_policy=reject`, and `permission_mode=external-owner`. The prompt endpoint advertises `attachments_ok=false` until file/image ingestion is proven end-to-end. Metadata must not include raw app-server endpoints, local paths, thread identifiers, or tokens.
 
+## Prerequisites
+
+- Bun 1.3+ for local development and smoke tests.
+- Node/npm for `npm pack --dry-run --json` package verification.
+- `nats-server` on `PATH` for protocol and manager smoke tests.
+- Codex CLI 0.133+ on `PATH` for managed and real app-server lifecycle checks.
+- NATS credentials or context only when connecting to a secured NATS deployment; local smoke tests start disposable loopback NATS servers.
+
+## Install
+
+Install the published package when its protocol dependencies are available from npm:
+
+```sh
+npm install -g @synadia-ai/codex-nats-channel
+```
+
+For repository development, install from this package directory:
+
+```sh
+bun install
+```
+
+The package depends on published semver ranges for `@synadia-ai/agents` and `@synadia-ai/agent-service`; it does not require repo-local `file:` dependencies in its public manifest.
+
 ## Configuration
 
 Precedence is:
@@ -171,6 +195,7 @@ bun run typecheck
 bun test
 bun run smoke:protocol
 bun run smoke:codex-appserver-lifecycle
+bun run smoke:codex-fake-runtime
 bun run smoke:codex-runtime
 bun run smoke:attached-endpoint
 bun run smoke:codex-session-manager
@@ -178,9 +203,18 @@ bun run smoke:codex-future-watch
 bun run smoke:codex-permission
 ```
 
-The protocol smoke starts a disposable local `nats-server`, registers a fake Codex-backed service with `AgentService`, and proves `$SRV.INFO`, status, heartbeat, prompt `ack -> response -> terminator`, attachment `400`, and handler `500` behavior.
+The protocol smoke starts a disposable local `nats-server`, registers a fake Codex-backed service with `AgentService`, and proves `$SRV.INFO`, status, heartbeat, prompt `ack -> response -> terminator`, a successful JSON prompt envelope with no attachments, attachment `400`, and handler `500` behavior.
 
-The app-server lifecycle smoke initializes a real `codex app-server --listen stdio://` inside an isolated temporary `CODEX_HOME`. Runtime and permission smokes use a deterministic fake app-server process to prove JSON-RPC framing, text-delta streaming, managed lifecycle, and default-deny permission handling without spending model tokens or requiring credentials. The attached endpoint smoke uses an explicit Unix-socket app-server fixture to prove endpoint/thread/alias preflight and NATS prompt routing. The session-manager smoke uses an explicit Unix-socket endpoint fixture to prove two eligible current sessions become separate discoverable NATS identities, duplicate inventory rows do not double-register, ineligible ephemeral no-turn sessions stay private, prompts are isolated, and public protocol surfaces stay redacted. The future-watch smoke starts with no exposed sessions, registers one future eligible thread exactly once, keeps a future non-eligible thread private, proves manual `rescan` idempotence, and verifies endpoint loss marks stale then removes the service.
+The app-server lifecycle smoke initializes a real `codex app-server --listen stdio://` inside an isolated temporary `CODEX_HOME`; it proves the real Codex process and JSON-RPC initialize/initialized boundary without sending a model prompt. The fake-runtime smoke uses a deterministic fake app-server process to prove prompt/stream framing, text-delta streaming, managed lifecycle, and no empty response chunks without spending model tokens or requiring credentials. `smoke:codex-runtime` intentionally runs both checks so the final ladder contains real app-server process evidence plus deterministic fake-runtime prompt/stream evidence. Permission smokes use the same deterministic fake app-server process to prove default-deny permission handling. The attached endpoint smoke uses an explicit Unix-socket app-server fixture to prove endpoint/thread/alias preflight and NATS prompt routing. The session-manager smoke uses an explicit Unix-socket endpoint fixture to prove two eligible current sessions become separate discoverable NATS identities, duplicate inventory rows do not double-register, ineligible ephemeral no-turn sessions stay private, prompts are isolated, and public protocol surfaces stay redacted. The future-watch smoke starts with no exposed sessions, registers one future eligible thread exactly once, keeps a future non-eligible thread private, proves manual `rescan` idempotence, and verifies endpoint loss marks stale then removes the service.
+
+## Troubleshooting
+
+- `codex-agent attach doctor` or `codex-agent attach start` exits with `attached mode requires ...`: provide `--endpoint`, `--thread-id`, and a safe `--alias`; the alias becomes the public NATS session token.
+- Non-loopback WebSocket endpoints fail preflight without auth: add `--endpoint-auth` or `SYNADIA_CODEX_ENDPOINT_AUTH`, or use a loopback Unix socket while developing locally.
+- Protocol smoke cannot start NATS: install `nats-server`, or set `CODEX_SMOKE_USE_EXTERNAL_NATS=1` with `NATS_URL` pointing at a reachable server.
+- `codex-agent doctor` shows `Codex unavailable`: check that `codex` is on `PATH`, or pass `--codex-bin /absolute/path/to/codex`.
+- Manager mode exposes no sessions: confirm `--manager-enabled true`, at least one configured endpoint, and either `--auto-expose-current-sessions true` or `--auto-expose-future-sessions true`. Manager mode never scans GUI windows, terminal sessions, or desktop state.
+- Prompts with attachments return `400`: this is expected for the current package; discovery advertises `attachments_ok=false` until Codex file/image ingestion is implemented end-to-end.
 
 ## Limitations
 

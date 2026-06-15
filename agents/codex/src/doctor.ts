@@ -77,7 +77,7 @@ export async function runDoctor(config: CodexChannelConfig): Promise<DoctorRepor
 
 export function redact(value: string): string {
   return value
-    .replace(/\/Users\/[A-Za-z0-9._-]+/g, "/Users/[REDACTED]")
+    .replace(/\/(?:Users)\/[A-Za-z0-9._-]+/g, "[REDACTED-path]")
     .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "[REDACTED-email]")
     .replace(/S[A-Z0-9]{57}/g, "[REDACTED-nkey]");
 }

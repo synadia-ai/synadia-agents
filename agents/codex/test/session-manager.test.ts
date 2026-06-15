@@ -75,7 +75,7 @@ describe("Codex session manager alias policy", () => {
       },
     });
     try {
-      const event = normalizePluginNotification({ event: "SessionStart", endpoint, threadId: "thread-private-plugin" });
+      const event = normalizePluginNotification({ event: "SessionStart", endpoint, threadId: "thread-fixture-plugin" });
       const snapshots = await manager.notifyPluginEvent(event);
       expect(reconcileAttempts).toBe(1);
       expect(manager.pluginLastEvent?.event).toBe("SessionStart");

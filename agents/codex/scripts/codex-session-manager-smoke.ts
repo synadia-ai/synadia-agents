@@ -15,7 +15,7 @@ const decoder = new TextDecoder();
 const fakeEndpoint = await startFakeManagerEndpoint();
 const nats = await ensureNats();
 const privateEndpoint = `unix://${fakeEndpoint.socketPath}`;
-const privateValues = [privateEndpoint, fakeEndpoint.socketPath, "thread-private-alpha", "thread-private-beta"];
+const privateValues = [privateEndpoint, fakeEndpoint.socketPath, "thread-fixture-alpha", "thread-fixture-beta"];
 
 const config: CodexChannelConfig = {
   nats: { url: nats.url },
@@ -59,8 +59,8 @@ try {
     assertNoPrivateValues("$SRV.INFO/discovery", { metadata: found.metadata, endpoint: found.promptEndpoint }, privateValues);
   }
 
-  const a = snapshots.find((snapshot) => snapshot.privateKey.includes("thread-private-alpha"));
-  const b = snapshots.find((snapshot) => snapshot.privateKey.includes("thread-private-beta"));
+  const a = snapshots.find((snapshot) => snapshot.privateKey.includes("thread-fixture-alpha"));
+  const b = snapshots.find((snapshot) => snapshot.privateKey.includes("thread-fixture-beta"));
   if (!a || !b) throw new Error("missing alpha/beta session snapshots");
   const subA = callerNc.subscribe(a.heartbeatSubject);
   const subB = callerNc.subscribe(b.heartbeatSubject);
@@ -81,10 +81,10 @@ try {
   const streamB = await agentB.prompt("prompt-for-b");
   const responseA = await collectResponseText(streamA);
   const responseB = await collectResponseText(streamB);
-  if (!responseA.includes("thread-private-alpha") || responseA.includes("thread-private-beta") || !responseA.includes("prompt-for-a")) {
+  if (!responseA.includes("thread-fixture-alpha") || responseA.includes("thread-fixture-beta") || !responseA.includes("prompt-for-a")) {
     throw new Error(`session A prompt isolation failed: ${responseA}`);
   }
-  if (!responseB.includes("thread-private-beta") || responseB.includes("thread-private-alpha") || !responseB.includes("prompt-for-b")) {
+  if (!responseB.includes("thread-fixture-beta") || responseB.includes("thread-fixture-alpha") || !responseB.includes("prompt-for-b")) {
     throw new Error(`session B prompt isolation failed: ${responseB}`);
   }
 
@@ -103,8 +103,8 @@ try {
     discoverySessions: discovered.map((agent) => agent.metadata["session"]),
     statusSessions: [statusA.session, statusB.session],
     promptIsolation: {
-      a: responseA.replace(/thread-private-alpha/g, "thread-private-[redacted-for-output]"),
-      b: responseB.replace(/thread-private-beta/g, "thread-private-[redacted-for-output]"),
+      a: responseA.replace(/thread-fixture-alpha/g, "thread-[redacted-for-output]"),
+      b: responseB.replace(/thread-fixture-beta/g, "thread-[redacted-for-output]"),
     },
     promptError500: summarizeFrames(rawError.frames),
   };
@@ -198,9 +198,9 @@ async function startFakeManagerEndpoint(): Promise<{ socketPath: string; close()
   const dir = mkdtempSync(join(tmpdir(), "codex-manager-smoke-"));
   const socketPath = join(dir, "codex.sock");
   const threads = new Map<string, Record<string, unknown>>([
-    ["thread-private-alpha", thread("thread-private-alpha")],
-    ["thread-private-beta", thread("thread-private-beta")],
-    ["thread-private-empty", { ...thread("thread-private-empty"), ephemeral: true, turns: [] }],
+    ["thread-fixture-alpha", thread("thread-fixture-alpha")],
+    ["thread-fixture-beta", thread("thread-fixture-beta")],
+    ["thread-fixture-empty", { ...thread("thread-fixture-empty"), ephemeral: true, turns: [] }],
   ]);
   const server = createServer((socket) => serveJsonRpcSocket(socket, threads));
   await new Promise<void>((resolve, reject) => {
@@ -219,7 +219,7 @@ async function startFakeManagerEndpoint(): Promise<{ socketPath: string; close()
 function serveJsonRpcSocket(socket: Socket, threads: Map<string, Record<string, unknown>>): void {
   socket.setEncoding("utf8");
   let buffer = "";
-  let selectedThread = "thread-private-alpha";
+  let selectedThread = "thread-fixture-alpha";
   let nextTurn = 1;
   socket.on("data", (chunk: string) => {
     buffer += chunk;
@@ -232,8 +232,8 @@ function serveJsonRpcSocket(socket: Socket, threads: Map<string, Record<string, 
       const message = JSON.parse(line);
       if (message.method === "initialize") send(socket, { id: message.id, result: { userAgent: "fake-manager/0.1", codexHome: "/tmp/fake", platformFamily: "unix", platformOs: "macos" } });
       else if (message.method === "initialized") {}
-      else if (message.method === "thread/loaded/list") send(socket, { id: message.id, result: { threads: [threads.get("thread-private-alpha"), threads.get("thread-private-empty")].filter(Boolean) } });
-      else if (message.method === "thread/list") send(socket, { id: message.id, result: { threads: [...threads.values()].filter((value) => value.id !== "thread-private-empty") } });
+      else if (message.method === "thread/loaded/list") send(socket, { id: message.id, result: { threads: [threads.get("thread-fixture-alpha"), threads.get("thread-fixture-empty")].filter(Boolean) } });
+      else if (message.method === "thread/list") send(socket, { id: message.id, result: { threads: [...threads.values()].filter((value) => value.id !== "thread-fixture-empty") } });
       else if (message.method === "thread/read") {
         const row = threads.get(message.params.threadId);
         if (!row) send(socket, { id: message.id, error: { code: -32004, message: "thread not found" } });
@@ -244,7 +244,7 @@ function serveJsonRpcSocket(socket: Socket, threads: Map<string, Record<string, 
         else { selectedThread = message.params.threadId; send(socket, { id: message.id, result: { thread: row, approvalPolicy: "never", approvalsReviewer: "user" } }); }
       } else if (message.method === "turn/start") {
         const threadId = selectedThread;
-        const otherThread = threadId === "thread-private-alpha" ? "thread-private-beta" : "thread-private-alpha";
+        const otherThread = threadId === "thread-fixture-alpha" ? "thread-fixture-beta" : "thread-fixture-alpha";
         const turnId = `turn-${nextTurn++}`;
         const text = message.params.input?.find((item: any) => item.type === "text")?.text ?? "";
         send(socket, { id: message.id, result: { turn: { id: turnId, status: "inProgress" } } });

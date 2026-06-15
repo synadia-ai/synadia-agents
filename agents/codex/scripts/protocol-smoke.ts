@@ -97,6 +97,8 @@ try {
 
   const rawSuccess = await rawPromptRoundTrip(callerNc, service.subject.prompt, "hello raw");
   assertRawSuccess(rawSuccess.frames);
+  const rawJsonSuccess = await rawPromptRoundTrip(callerNc, service.subject.prompt, JSON.stringify({ prompt: "hello json envelope" }));
+  assertRawSuccess(rawJsonSuccess.frames);
   const rawAttachment400 = await rawPromptRoundTrip(callerNc, service.subject.prompt, JSON.stringify({
     prompt: "attachment should be rejected",
     attachments: [{ filename: "note.txt", content: "QUJD" }],
@@ -118,7 +120,8 @@ try {
     sdkClientMessageTypes: messages.map((m) => m.type),
     sdkClientLastMessage: last,
     rawWire: {
-      success: summarizeFrames(rawSuccess.frames),
+      plainTextSuccess: summarizeFrames(rawSuccess.frames),
+      jsonNoAttachmentSuccess: summarizeFrames(rawJsonSuccess.frames),
       unsupportedAttachment400: summarizeFrames(rawAttachment400.frames),
       handlerFailure500: summarizeFrames(rawHandler500.frames),
     },

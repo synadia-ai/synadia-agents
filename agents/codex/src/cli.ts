@@ -2,7 +2,7 @@
 import { connect as natsConnect } from "@nats-io/transport-node";
 import { readFileSync } from "node:fs";
 import { FakeCodexBridgeClient, type CodexBridgeClient } from "./bridge.js";
-import { helpText, loadConfigFromSources, renderConfigTemplate } from "./config.js";
+import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from "./config.js";
 import { runDoctor } from "./doctor.js";
 import { ManagedCodexRuntime } from "./managed-runtime.js";
 import { AttachedCodexRuntime } from "./attached-runtime.js";
@@ -12,7 +12,7 @@ import { CodexSessionManager } from "./session-manager.js";
 
 async function main(): Promise<void> {
   const config = loadConfigFromSources();
-  const command = process.argv[2] ?? "help";
+  const command = resolveCliCommand(process.argv.slice(2));
   if (config === undefined || command === "help" || process.argv.includes("--help") || process.argv.includes("-h")) {
     console.log(helpText());
     return;
@@ -66,6 +66,10 @@ async function main(): Promise<void> {
   await nc.drain();
 }
 
+export function resolveCliCommand(argv: readonly string[]): string {
+  return parseArgs(argv).command;
+}
+
 async function createBridgeClient(config: ReturnType<typeof loadConfigFromSources>): Promise<CodexBridgeClient> {
   if (config.codex.mode === "fake") return new FakeCodexBridgeClient();
   if (config.codex.mode === "managed") {
@@ -110,7 +114,9 @@ async function waitForShutdown(): Promise<void> {
   });
 }
 
-main().catch((err: unknown) => {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((err: unknown) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
+}

@@ -41,7 +41,8 @@
     "test": "bun test",
     "smoke:protocol": "bun scripts/protocol-smoke.ts",
     "smoke:codex-appserver-lifecycle": "bun scripts/codex-appserver-lifecycle-smoke.ts",
-    "smoke:codex-runtime": "bun scripts/codex-runtime-smoke.ts",
+    "smoke:codex-fake-runtime": "bun scripts/codex-runtime-smoke.ts",
+    "smoke:codex-runtime": "bun run smoke:codex-appserver-lifecycle && bun run smoke:codex-fake-runtime",
     "smoke:attached-endpoint": "bun scripts/attached-endpoint-smoke.ts",
     "smoke:codex-session-manager": "bun scripts/codex-session-manager-smoke.ts",
     "smoke:codex-future-watch": "bun scripts/codex-future-watch-smoke.ts",
@@ -51,8 +52,8 @@
   "dependencies": {
     "@nats-io/nats-core": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
-    "@synadia-ai/agents": "file:../../client-sdk/typescript",
-    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
+    "@synadia-ai/agents": "^0.5.2",
+    "@synadia-ai/agent-service": "^0.5.2"
   },
   "devDependencies": {
     "@types/bun": "latest",
