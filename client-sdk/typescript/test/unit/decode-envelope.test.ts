@@ -49,6 +49,15 @@ describe("decodeEnvelope", () => {
     expect(decodeEnvelope(utf8('  \n\t {"prompt":"hi"}')).prompt).toBe("hi");
     // Leading whitespace before non-`{` content stays plain text (verbatim).
     expect(decodeEnvelope(utf8("  hello")).prompt).toBe("  hello");
+    // An all-whitespace payload has no `{` byte → plain-text shorthand,
+    // preserved verbatim (it is non-empty, so not the zero-byte rejection).
+    expect(decodeEnvelope(utf8("   ")).prompt).toBe("   ");
+    // Only the four ASCII whitespace bytes are skipped. `\f` (0x0C) is JS
+    // whitespace (trimStart would skip it) but NOT §5.3 whitespace, so a
+    // `\f`-led payload is the first non-ws byte itself → plain text, never
+    // mis-classified as a JSON envelope. This is why discrimination is a
+    // hand-rolled byte check, not `text.trimStart().startsWith("{")`.
+    expect(decodeEnvelope(utf8('\f{"prompt":"hi"}')).prompt).toBe('\f{"prompt":"hi"}');
   });
 
   it("decodes a JSON envelope with valid attachments", () => {
