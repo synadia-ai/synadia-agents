@@ -63,8 +63,10 @@ export NATS_CONTEXT=prod
 # — or —
 export NATS_URL=nats://127.0.0.1:4222
 
-export NATS_OWNER=acme
-export NATS_AGENT_NAME=research
+# Identity: SYNADIA_DEERFLOW_* (per-agent) > SYNADIA_* (fleet-wide) > legacy
+# NATS_OWNER / NATS_AGENT_NAME aliases. Use whichever fits your deployment.
+export SYNADIA_OWNER=acme
+export SYNADIA_NAME=research
 export DEERFLOW_URL=http://localhost:2026
 
 # Preferred for current DeerFlow Gateway auth: the wrapper logs in once,
@@ -155,10 +157,14 @@ TOML
 | --- | --- | --- |
 | `NATS_AGENT_TOKEN` | `agent` | Preferred env name for the protocol type token. |
 | `DEERFLOW_NATS_AGENT` | `agent` | DeerFlow-specific alias. Used only when `NATS_AGENT_TOKEN` is unset. |
-| `NATS_OWNER` | `owner` | Preferred owner env var. |
-| `DEERFLOW_NATS_OWNER` | `owner` | DeerFlow-specific alias. Used only when `NATS_OWNER` is unset. |
-| `NATS_AGENT_NAME` | `session` | Preferred session env var for sibling channel consistency. |
-| `NATS_SESSION` | `session` | Alias. Used only when `NATS_AGENT_NAME` is unset. |
+| `SYNADIA_DEERFLOW_OWNER` | `owner` | Per-agent override, highest priority. The `SYNADIA_<AGENT>_OWNER` form shared across all agents (here `<AGENT>` is `DEERFLOW`). |
+| `SYNADIA_OWNER` | `owner` | Fleet-wide owner env var. Used when `SYNADIA_DEERFLOW_OWNER` is unset. |
+| `NATS_OWNER` | `owner` | **Legacy alias.** Used only when neither `SYNADIA_*` owner var is set. |
+| `DEERFLOW_NATS_OWNER` | `owner` | **Legacy alias** (DeerFlow-specific). Used only when the above are unset. |
+| `SYNADIA_DEERFLOW_NAME` | `session` | Per-agent override for the 5th (session/name) token, highest priority. The `SYNADIA_<AGENT>_NAME` form shared across all agents. |
+| `SYNADIA_NAME` | `session` | Fleet-wide session/name env var. Used when `SYNADIA_DEERFLOW_NAME` is unset. |
+| `NATS_AGENT_NAME` | `session` | **Legacy alias.** Used only when neither `SYNADIA_*` name var is set. Note: despite the "agent" in its name it sets the 5th *session* token — the `SYNADIA_*` names fix that confusion. |
+| `NATS_SESSION` | `session` | **Legacy alias.** Used only when the above are unset. |
 | `DEERFLOW_URL` | `deerflow_url` | DeerFlow Gateway base URL. |
 | `DEERFLOW_USERNAME` | `deerflow_username` | DeerFlow local-login username/email for automatic Gateway session login. |
 | `DEERFLOW_PASSWORD` | `deerflow_password` | DeerFlow local-login password for automatic Gateway session login. Prefer env over config files. Redacted from `doctor` output. |
@@ -282,7 +288,7 @@ asyncio.run(main())
 
 ## Troubleshooting
 
-- **`owner is not configured; set NATS_OWNER or pass --owner`** — set `NATS_OWNER`, `DEERFLOW_NATS_OWNER`, `owner = "..."`, or `--owner`. The owner is required because it is part of the protocol subject.
+- **`owner is not configured; set NATS_OWNER or pass --owner`** — set `SYNADIA_DEERFLOW_OWNER`, `SYNADIA_OWNER`, a legacy `NATS_OWNER`/`DEERFLOW_NATS_OWNER` alias, `owner = "..."`, or `--owner`. The owner is required because it is part of the protocol subject.
 - **`set NATS_CONTEXT or NATS_URL before starting the channel`** — configure one NATS target. Prefer `NATS_CONTEXT` for authenticated deployments.
 - **`agent token must be lowercase alphanumeric plus hyphen`** — use a subject-safe token such as `df` or `deerflow`. Do not use spaces, dots, or uppercase.
 - **`DeerFlow Gateway is not reachable at .../health`** — start DeerFlow Gateway first, confirm the port, and run `curl <DEERFLOW_URL>/health` from the same host as the wrapper.
