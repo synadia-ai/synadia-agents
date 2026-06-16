@@ -37,7 +37,7 @@ async def main() -> None:
         description="LLM agent — answers prompts via Ollama or OpenRouter (auto-selected)."
     )
     add_connection_flags(parser)
-    add_agent_identity_flags(parser)
+    add_agent_identity_flags(parser, agent="llm")
     args = parser.parse_args()
 
     llm = create_llm_client()

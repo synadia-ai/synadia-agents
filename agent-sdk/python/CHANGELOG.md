@@ -15,11 +15,21 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   `agent-sdk/typescript/examples/`: echo, Ollama, OpenRouter, a
   combined auto-selecting agent, and a tool-calling agent backed by a
   NATS microservice. Identity and heartbeat are flags that default to
-  the `NATS_AGENT_OWNER` / `NATS_AGENT_NAME` /
-  `NATS_AGENT_HEARTBEAT_INTERVAL` env vars (env-first, flag-overridable);
-  connection uses the shared `_connect_cli.py` resolver. The
-  `_reference_agent.py` flags now likewise default to those env vars
-  (non-breaking — explicit flags still win).
+  env vars (env-first, flag-overridable); connection uses the shared
+  `_connect_cli.py` resolver. Identity follows the same `SYNADIA_*`
+  ladder the TypeScript agents use, first non-empty wins:
+  `SYNADIA_<AGENT>_OWNER` (per-agent) > `SYNADIA_OWNER` (fleet-wide) >
+  `NATS_AGENT_OWNER` (legacy alias) > `$USER` > `anon`, and the `NAME`
+  analogue (`SYNADIA_<AGENT>_NAME` > `SYNADIA_NAME` > `NATS_AGENT_NAME`
+  > the `--session-name` fallback) for the 5th subject token.
+  `<AGENT>` is the example's registered subject token uppercased with
+  hyphens turned into underscores (e.g. `echo` → `SYNADIA_ECHO_OWNER`).
+  Heartbeat cadence stays config, not identity — it keeps its single
+  `NATS_AGENT_HEARTBEAT_INTERVAL` var. The `_reference_agent.py` flags
+  default through the fleet-wide + legacy + fallback rungs only (no
+  per-agent var — its `agent` token is a runtime CLI flag). Non-breaking
+  — explicit flags still win, and the legacy `NATS_AGENT_*` vars keep
+  working as lowest-priority aliases.
 - **`examples` extra** — `httpx`, used by the LLM/tool example scripts
   (`uv sync --extra examples`). Not part of the published SDK surface.
 

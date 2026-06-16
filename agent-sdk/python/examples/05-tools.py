@@ -175,7 +175,7 @@ async def main() -> None:
         description="LLM agent with a read_sensor tool backed by a NATS microservice."
     )
     add_connection_flags(parser)
-    add_agent_identity_flags(parser)
+    add_agent_identity_flags(parser, agent="tools")
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)

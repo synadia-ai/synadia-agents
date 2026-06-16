@@ -39,7 +39,7 @@ async def main() -> None:
         description="Echo agent — replies with the prompt prefixed by 'echo: '."
     )
     add_connection_flags(parser)
-    add_agent_identity_flags(parser)
+    add_agent_identity_flags(parser, agent="echo")
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)
