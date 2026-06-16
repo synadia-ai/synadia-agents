@@ -13,6 +13,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **`decodeEnvelope` now follows the §5.3 discrimination algorithm
+  exactly**, closing two wire-compatibility gaps with the spec and the
+  Python SDK:
+  - A **zero-byte request payload** is now rejected with a
+    `ProtocolError` (→ agent `400`). Previously it was silently accepted
+    as `{ prompt: "" }`. Spec §5.3: "A zero-byte request payload is
+    invalid and MUST be rejected with status `400`."
+  - A payload whose **first non-whitespace byte is `{` but which is not
+    well-formed JSON** (e.g. `{not json`) is now rejected as a malformed
+    envelope, instead of being mis-classified as a plain-text prompt
+    literally equal to the broken JSON. Discrimination now keys off the
+    leading `{` (matching the Python SDK's `looks_like_json`) rather than
+    "try `JSON.parse`, fall back to plain text on any failure".
+
+  Plain-text shorthand for payloads that don't lead with `{` (including
+  bare numbers, `[`, or quotes) is unchanged, as is rejection of
+  missing / non-string / empty `prompt` and invalid attachments. The pi
+  spec-compliance smoke (`agents/pi/test/smoke.mjs`) caught both gaps.
+
 ## [0.5.2] - 2026-05-26
 
 ### Added
