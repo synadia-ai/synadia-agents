@@ -288,7 +288,7 @@ asyncio.run(main())
 
 ## Troubleshooting
 
-- **`owner is not configured; set NATS_OWNER or pass --owner`** — set `SYNADIA_DEERFLOW_OWNER`, `SYNADIA_OWNER`, a legacy `NATS_OWNER`/`DEERFLOW_NATS_OWNER` alias, `owner = "..."`, or `--owner`. The owner is required because it is part of the protocol subject.
+- **`owner is not configured; set SYNADIA_DEERFLOW_OWNER, SYNADIA_OWNER, a legacy NATS_OWNER/DEERFLOW_NATS_OWNER alias, or pass --owner`** — also settable via `owner = "..."` in the config file. The owner is required because it is part of the protocol subject.
 - **`set NATS_CONTEXT or NATS_URL before starting the channel`** — configure one NATS target. Prefer `NATS_CONTEXT` for authenticated deployments.
 - **`agent token must be lowercase alphanumeric plus hyphen`** — use a subject-safe token such as `df` or `deerflow`. Do not use spaces, dots, or uppercase.
 - **`DeerFlow Gateway is not reachable at .../health`** — start DeerFlow Gateway first, confirm the port, and run `curl <DEERFLOW_URL>/health` from the same host as the wrapper.

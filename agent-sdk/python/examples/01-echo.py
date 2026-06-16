@@ -6,10 +6,11 @@
 # agent-sdk/typescript/examples/01-echo.ts.
 #
 # Identity → subject agents.prompt.echo.<owner>.<session_name>. Owner and the
-# session name are overridable (--owner / --session-name, or $NATS_AGENT_OWNER /
-# $NATS_AGENT_NAME) so several people can run this against one server without
-# colliding. --heartbeat-interval / $NATS_AGENT_HEARTBEAT_INTERVAL tunes the
-# heartbeat cadence (default 30s).
+# session name are overridable: --owner / --session-name, else the SYNADIA_*
+# ladder ($SYNADIA_ECHO_OWNER > $SYNADIA_OWNER > legacy $NATS_AGENT_OWNER, and
+# the _NAME analogue) — so several people can run this against one server
+# without colliding. --heartbeat-interval / $NATS_AGENT_HEARTBEAT_INTERVAL tunes
+# the heartbeat cadence (default 30s).
 #
 # Connection: --context / --url, else $NATS_CONTEXT / $NATS_URL, else the
 # selected `nats` context. Run with -h for the full flag list.

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from synadia_ai.nats_deerflow_channel.config import resolve_config
 
-# Every identity env var the resolver reads, so a developer's shell can't leak
-# into the default-state and precedence tests.
+# Every identity env var the resolver reads. Cleared before each test so a
+# developer's shell env can't leak in — the SYNADIA_* vars outrank the legacy
+# aliases, so a stray export would otherwise turn the precedence tests flaky.
 _IDENTITY_ENV_VARS = (
     "SYNADIA_DEERFLOW_OWNER",
     "SYNADIA_OWNER",
@@ -19,9 +23,14 @@ _IDENTITY_ENV_VARS = (
 )
 
 
-def test_defaults_include_df_agent(tmp_path: Path, monkeypatch: Any) -> None:
+@pytest.fixture(autouse=True)
+def _clean_identity_env(monkeypatch: Any) -> Iterator[None]:
     for name in _IDENTITY_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+    yield
+
+
+def test_defaults_include_df_agent(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.delenv("DEERFLOW_URL", raising=False)
 
     config = resolve_config(config_file=tmp_path / "missing.toml")
