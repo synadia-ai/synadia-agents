@@ -87,7 +87,7 @@ Start OpenCode from the same project directory with the plugin environment confi
 cd /path/to/repo
 export NATS_URL=nats://127.0.0.1:4222
 export SYNADIA_OPENCODE_OWNER=local
-export SYNADIA_OPENCODE_SESSION=main
+export SYNADIA_OPENCODE_NAME=main
 export OPENCODE_PERMISSION_POLICY=query
 ```
 
@@ -113,7 +113,7 @@ agents.status.opencode.local.main
 agents.hb.opencode.local.main
 ```
 
-If `SYNADIA_OPENCODE_SESSION` is unset, the plugin derives a `session-<hash>` token from the OpenCode directory instead of publishing local path names. Discovery metadata uses hashes and safe origins only; it does not expose raw directories, project ids, credentials, or server passwords.
+If `SYNADIA_OPENCODE_NAME` (or its alias `SYNADIA_OPENCODE_SESSION`) is unset, the plugin derives a `session-<hash>` token from the OpenCode directory instead of publishing local path names. Discovery metadata uses hashes and safe origins only; it does not expose raw directories, project ids, credentials, or server passwords.
 
 ## Plugin commands
 
@@ -134,8 +134,8 @@ Most plugin deployments only need environment variables:
 
 | Area | Variables |
 | --- | --- |
-| NATS | `NATS_CONTEXT`, `NATS_URL`, `NATS_CREDS`, `NATS_CREDENTIALS` |
-| Identity | `SYNADIA_OPENCODE_OWNER`, `SYNADIA_OPENCODE_SESSION` |
+| NATS | `NATS_CONTEXT`, `NATS_URL`, `NATS_CREDS`, `NATS_CREDENTIALS` (plugin mode also accepts `SYNADIA_NATS_CONTEXT`, `SYNADIA_NATS_URL`, `SYNADIA_NATS_CREDS`) |
+| Identity | `SYNADIA_OPENCODE_OWNER`, `SYNADIA_OPENCODE_NAME` (canonical; `SYNADIA_OPENCODE_SESSION` is a shipped alias) — fleet-wide fallbacks: `SYNADIA_OWNER`, `SYNADIA_NAME` (plugin mode also accepts `SYNADIA_SESSION`) |
 | Heartbeats | `SYNADIA_OPENCODE_HEARTBEAT_INTERVAL_S`, `SYNADIA_OPENCODE_KEEPALIVE_INTERVAL_S` |
 | Permissions | `OPENCODE_PERMISSION_POLICY`, `OPENCODE_PERMISSION_TIMEOUT_MS` |
 

@@ -124,8 +124,8 @@ Do not commit real credentials. Prefer contexts or environment-managed secret pa
 
 | Field | CLI | Environment | TOML | Default | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Owner | `--owner` | `SYNADIA_FLUE_OWNER` | `[agent].owner` | `$USER` or `unknown` | Fourth token in `agents.prompt.<agent>.<owner>.<session>`. |
-| Name | `--name` | `SYNADIA_FLUE_NAME` | `[agent].name` | `main` | Fifth token in `agents.prompt.<agent>.<owner>.<session>`. |
+| Owner | `--owner` | `SYNADIA_FLUE_OWNER`, then `SYNADIA_OWNER` (fleet-wide) | `[agent].owner` | `$USER` or `unknown` | Fourth token in `agents.prompt.<agent>.<owner>.<session>`. |
+| Name | `--name` | `SYNADIA_FLUE_NAME`, then `SYNADIA_NAME` (fleet-wide) | `[agent].name` | `main` | Fifth token in `agents.prompt.<agent>.<owner>.<session>`. |
 | Subject token | `--subject-token` | — | `[agent].subject_token` | `flue` | Third token in `agents.prompt.<agent>.<owner>.<session>`. |
 | Heartbeat interval | `--heartbeat-interval-s` | — | `[agent].heartbeat_interval_s` | `30` | Seconds between heartbeat publications. |
 | Keepalive interval | `--keepalive-interval-s` | — | `[agent].keepalive_interval_s` | `30` | Seconds between in-flight keepalive chunks. |
@@ -271,7 +271,7 @@ CLI > environment > config file > defaults
 For owner specifically:
 
 ```text
---owner > SYNADIA_FLUE_OWNER > [agent].owner > USER/default
+--owner > SYNADIA_FLUE_OWNER > SYNADIA_OWNER > [agent].owner > USER/default
 ```
 
 ### Attachments fail
