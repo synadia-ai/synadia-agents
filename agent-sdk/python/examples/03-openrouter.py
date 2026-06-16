@@ -79,7 +79,7 @@ async def main() -> None:
         description="LLM agent — streams replies from a hosted OpenRouter model."
     )
     add_connection_flags(parser)
-    add_agent_identity_flags(parser)
+    add_agent_identity_flags(parser, agent="openrouter")
     args = parser.parse_args()
 
     # Checked after parse_args so `--help` works without a key.

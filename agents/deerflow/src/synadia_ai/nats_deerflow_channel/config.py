@@ -154,8 +154,16 @@ def _apply_env(config: ChannelConfig) -> ChannelConfig:
     return replace(
         config,
         agent=_env("NATS_AGENT_TOKEN") or _env("DEERFLOW_NATS_AGENT") or config.agent,
-        owner=_env("NATS_OWNER") or _env("DEERFLOW_NATS_OWNER") or config.owner,
-        session=_env("NATS_AGENT_NAME") or _env("NATS_SESSION") or config.session,
+        owner=_env("SYNADIA_DEERFLOW_OWNER")
+        or _env("SYNADIA_OWNER")
+        or _env("NATS_OWNER")  # legacy alias
+        or _env("DEERFLOW_NATS_OWNER")  # legacy alias
+        or config.owner,
+        session=_env("SYNADIA_DEERFLOW_NAME")
+        or _env("SYNADIA_NAME")
+        or _env("NATS_AGENT_NAME")  # legacy alias
+        or _env("NATS_SESSION")  # legacy alias
+        or config.session,
         deerflow_url=_env("DEERFLOW_URL") or config.deerflow_url,
         nats_context=_env("NATS_CONTEXT") or config.nats_context,
         nats_url=_env("NATS_URL") or config.nats_url,

@@ -73,7 +73,7 @@ async def main() -> None:
         description="LLM agent — streams replies from a local Ollama model."
     )
     add_connection_flags(parser)
-    add_agent_identity_flags(parser)
+    add_agent_identity_flags(parser, agent="ollama")
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)
