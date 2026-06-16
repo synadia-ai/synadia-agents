@@ -1,0 +1,90 @@
+name: CI — agents (TypeScript)
+
+# Runs the test suites for the TypeScript agent harnesses, which depend on
+# the TS SDKs via `file:` links — so SDK changes trigger this too, catching
+# cross-subtree regressions (e.g. an envelope-decode change breaking the pi
+# spec-compliance smoke).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agents/pi/**"
+      - "agents/openclaw/**"
+      - "client-sdk/typescript/**"
+      - "agent-sdk/typescript/**"
+      - ".github/workflows/agents-typescript.yml"
+  pull_request:
+    paths:
+      - "agents/pi/**"
+      - "agents/openclaw/**"
+      - "client-sdk/typescript/**"
+      - "agent-sdk/typescript/**"
+      - ".github/workflows/agents-typescript.yml"
+
+concurrency:
+  group: ci-agents-ts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pi:
+    name: agents/pi (unit + spec smoke)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      # pi imports both SDKs via `file:` links, which resolve to each
+      # package's built `dist/` — so build them before installing pi.
+      - name: Build client-sdk
+        working-directory: client-sdk/typescript
+        run: bun install && bun run build
+      - name: Build agent-sdk
+        working-directory: agent-sdk/typescript
+        run: bun install && bun run build
+      - name: Install pi
+        working-directory: agents/pi
+        run: bun install
+      - name: Unit tests (owner-token precedence)
+        working-directory: agents/pi
+        run: bun test test/owner.test.ts
+      - name: Spec-compliance smoke (spawns its own nats-server)
+        working-directory: agents/pi
+        run: bun test/smoke.mjs
+
+  openclaw:
+    name: agents/openclaw (vitest)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build client-sdk
+        working-directory: client-sdk/typescript
+        run: npm install && npm run build
+      - name: Build agent-sdk
+        working-directory: agent-sdk/typescript
+        run: npm install && npm run build
+      # The `openclaw` peer is optional with an empty version range, so npm
+      # treats it as satisfied-by-absence: a plain `npm install`, `npm install
+      # --no-save openclaw`, and even `npm install openclaw` all leave it out,
+      # silently SKIPPING the account-resolution suite. Promote it to a real
+      # dependency (ephemeral on the CI checkout) so the full tree installs,
+      # then assert the subpath the tests import actually resolves — a broken
+      # peer fails the job instead of hollowing it out.
+      - name: Install openclaw deps + peer
+        working-directory: agents/openclaw
+        run: |
+          npm pkg set "dependencies.openclaw=2026.6.5"
+          npm install
+          node -e "require.resolve('openclaw/plugin-sdk/core')"
+      - name: Tests (account resolution + protocol + context loader)
+        working-directory: agents/openclaw
+        run: npm test
