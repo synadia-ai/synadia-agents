@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Identity env vars adopt the `SYNADIA_*` convention** shared with
+  `agents/*`: `CLAUDE_CODE_HEADLESS_OWNER|NAME` resolve as CLI flag >
+  `SYNADIA_CLAUDE_CODE_HEADLESS_OWNER|NAME` (per-agent) > `SYNADIA_OWNER|NAME`
+  (fleet-wide) > `CLAUDE_CODE_HEADLESS_OWNER|NAME` (legacy, keeps working) > config /
+  derived fallback.
+
 ## [0.5.4] - 2026-05-11
 
 ### Changed
