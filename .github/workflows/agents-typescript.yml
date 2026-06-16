@@ -79,10 +79,18 @@ jobs:
       # dependency (ephemeral on the CI checkout) so the full tree installs,
       # then assert the subpath the tests import actually resolves — a broken
       # peer fails the job instead of hollowing it out.
-      - name: Install openclaw deps + peer
+      #
+      # Resolve the LATEST openclaw rather than pinning: this plugin's whole
+      # job is to track openclaw, so a breaking change to `plugin-sdk/core`
+      # SHOULD surface here (the resolve-assert guards presence; a broken API
+      # surfaces as a vitest failure). A pin silently rots — openclaw shipped
+      # 2026.6.5 -> 2026.6.6 within days of this workflow landing.
+      - name: Install openclaw deps + peer (latest)
         working-directory: agents/openclaw
         run: |
-          npm pkg set "dependencies.openclaw=2026.6.5"
+          OPENCLAW_VERSION="$(npm view openclaw version)"
+          echo "openclaw peer: $OPENCLAW_VERSION"
+          npm pkg set "dependencies.openclaw=${OPENCLAW_VERSION}"
           npm install
           node -e "require.resolve('openclaw/plugin-sdk/core')"
       - name: Tests (account resolution + protocol + context loader)
