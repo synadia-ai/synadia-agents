@@ -1,6 +1,6 @@
 [project]
 name = "synadia-ai-nats-deerflow-channel"
-version = "0.1.0"
+version = "0.2.0"
 description = "DeerFlow channel wrapper for the Synadia Agent Protocol for NATS"
 readme = "README.md"
 requires-python = ">=3.11"
