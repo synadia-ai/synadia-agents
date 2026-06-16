@@ -86,33 +86,53 @@ export function encodeBase64(bytes: Uint8Array): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Decode an inbound prompt envelope from raw NATS message bytes.
+ * Decode an inbound prompt envelope from raw NATS message bytes, following
+ * the §5.3 discrimination algorithm exactly:
  *
- * Tries JSON first; an envelope-shaped object (`{prompt: string, ...}`)
- * is decoded with §5.2 base64 + filename validation on attachments. A
- * non-object JSON value or a JSON parse failure falls back to the §5.3
- * plain-text shorthand: bytes are treated as the raw `prompt` text.
+ *  1. A zero-byte payload is invalid.
+ *  2. If the first non-whitespace byte is `{`, the payload is a JSON envelope
+ *     and MUST parse as one — a parse failure (or a missing `prompt` string
+ *     field) is a hard error, NOT a fall-through to plain text.
+ *  3. Otherwise it is the plain-text shorthand: the whole payload is the
+ *     `prompt`.
  *
- * Throws {@link ProtocolError} for: missing/non-string `prompt`, invalid
+ * An envelope-shaped object is decoded with §5.2 base64 + filename validation
+ * on attachments. This mirrors the Python SDK's `looks_like_json`
+ * discrimination so the two decoders agree on the wire (interop).
+ *
+ * Throws {@link ProtocolError} for: a zero-byte payload, a `{`-led payload
+ * that is not well-formed JSON, missing/non-string/empty `prompt`, invalid
  * `attachments` shape, non-strict base64 (URL-safe, unpadded, whitespace),
  * or unsafe filenames (path separators, `..`, NUL, absolute paths). Agent
  * services translate this into a `Nats-Service-Error-Code: 400` response.
  */
 export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
+  // §5.3: a zero-byte request payload is invalid.
+  if (data.length === 0) {
+    throw new ProtocolError("zero-byte request payload (§5.3)");
+  }
+
   const text = new TextDecoder().decode(data);
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    // §5.3 plain-text shorthand: raw bytes are the prompt text.
+  // §5.3 discrimination: only a `{`-led payload is a JSON envelope. Anything
+  // else — including a leading digit, `[`, or quote — is the plain-text
+  // shorthand and the whole payload becomes the prompt verbatim.
+  if (!startsWithJsonObject(text)) {
     return { prompt: text };
   }
 
-  // A JSON value that isn't an envelope object falls back to plain text too,
-  // matching pi's prior behaviour and avoiding gotchas with quoted strings.
+  // §5.3 step 2: the payload committed to JSON by its leading `{`, so a parse
+  // failure is a malformed envelope (400), not plain text.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new ProtocolError(`malformed JSON envelope: ${(err as Error).message}`);
+  }
+
+  // A leading `{` can only parse to an object; this guard is defensive.
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return { prompt: text };
+    throw new ProtocolError("envelope must be a JSON object");
   }
 
   const obj = parsed as Record<string, unknown>;
@@ -139,6 +159,25 @@ export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
     decodeAttachment(item, idx),
   );
   return attachments.length > 0 ? { prompt, attachments } : { prompt };
+}
+
+/**
+ * §5.3 discrimination predicate: `true` iff the first non-whitespace byte is
+ * `{`, marking the payload as a JSON envelope rather than the plain-text
+ * shorthand. Only ASCII whitespace (`0x09`, `0x0A`, `0x0D`, `0x20`) is
+ * skipped, per the spec. An empty or all-whitespace payload is not JSON
+ * (zero-byte is rejected separately by the caller).
+ *
+ * Mirrors the Python SDK's `looks_like_json` (`agents/envelope.py`) so both
+ * decoders classify the same bytes the same way.
+ */
+function startsWithJsonObject(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 0x09 || c === 0x0a || c === 0x0d || c === 0x20) continue;
+    return c === 0x7b; // '{'
+  }
+  return false;
 }
 
 function decodeAttachment(item: unknown, idx: number): RequestAttachment {
