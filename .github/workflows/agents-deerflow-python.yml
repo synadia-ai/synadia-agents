@@ -1,0 +1,67 @@
+name: CI — agents/deerflow
+
+# PR/push CI for the DeerFlow channel (`synadia-ai-nats-deerflow-channel`).
+#
+# Until now deerflow had no PR-level CI: its test suite only ran inside the
+# `verify` job of `release-python-deerflow.yml`, which fires on
+# `python-deerflow-v*` tags — so a change could land on `main` (as the
+# SYNADIA_* identity work in #160 did) with deerflow's tests never executing
+# in CI until release time. This workflow closes that gap.
+#
+# The steps are intentionally identical to that release `verify` job, so a
+# green run here predicts a clean publish: if PR CI passes, the tag's
+# pre-publish gate will too.
+#
+# Scope notes:
+#   * Path filter is deerflow-only. deerflow resolves `synadia-ai-agents` /
+#     `synadia-ai-agent-service` to the local checkouts via
+#     `[tool.uv.sources]`, so a breaking SDK change *could* affect it — but
+#     those SDKs have their own CI, and deerflow's release `verify` job is the
+#     backstop. Running deerflow's full matrix on every SDK PR would be
+#     redundant, so we keep it scoped here.
+#   * No `nats-server` step (unlike `client-sdk-python-agent-service.yml`):
+#     deerflow's suite is unit/integration-level with no e2e tests that spawn
+#     a broker, so the binary isn't needed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agents/deerflow/**"
+      - ".github/workflows/agents-deerflow-python.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "agents/deerflow/**"
+      - ".github/workflows/agents-deerflow-python.yml"
+
+concurrency:
+  group: ci-agents-deerflow-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: agents/deerflow
+
+jobs:
+  test:
+    name: Test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "agents/deerflow/uv.lock"
+          python-version: ${{ matrix.python-version }}
+
+      - run: uv sync --all-extras
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy src tests
+      - run: uv run pytest -v
