@@ -73,12 +73,34 @@ async def connect_from_cli(args: argparse.Namespace) -> NATSClient:
         sys.exit(2)
 
 
-def _env_owner_default() -> str:
-    return os.environ.get("NATS_AGENT_OWNER") or os.environ.get("USER") or "anon"
+def _agent_env_token(agent: str) -> str:
+    """Map an agent's subject token to its per-agent env-var infix.
+
+    ``echo`` → ``ECHO``; ``my-agent`` → ``MY_AGENT`` — uppercased,
+    hyphens to underscores, so it composes into ``SYNADIA_<AGENT>_OWNER``.
+    """
+    return agent.upper().replace("-", "_")
 
 
-def _env_session_default(fallback: str) -> str:
-    return os.environ.get("NATS_AGENT_NAME") or fallback
+def _env_owner_default(agent: str | None) -> str:
+    per_agent = os.environ.get(f"SYNADIA_{_agent_env_token(agent)}_OWNER") if agent else None
+    return (
+        per_agent
+        or os.environ.get("SYNADIA_OWNER")
+        or os.environ.get("NATS_AGENT_OWNER")  # legacy alias
+        or os.environ.get("USER")
+        or "anon"
+    )
+
+
+def _env_session_default(agent: str | None, fallback: str) -> str:
+    per_agent = os.environ.get(f"SYNADIA_{_agent_env_token(agent)}_NAME") if agent else None
+    return (
+        per_agent
+        or os.environ.get("SYNADIA_NAME")
+        or os.environ.get("NATS_AGENT_NAME")  # legacy alias
+        or fallback
+    )
 
 
 def _env_heartbeat_default(fallback: int) -> int:
@@ -94,29 +116,48 @@ def _env_heartbeat_default(fallback: int) -> int:
 def add_agent_identity_flags(
     parser: argparse.ArgumentParser,
     *,
+    agent: str | None = None,
     session_fallback: str = "main",
     heartbeat_fallback: int = 30,
 ) -> None:
     """Wire ``--owner`` / ``--session-name`` / ``--heartbeat-interval`` onto an agent example.
 
-    Each flag defaults to its ``NATS_AGENT_*`` environment variable, so the
-    examples are env-driven like the TS ladder (``NATS_AGENT_OWNER`` /
-    ``NATS_AGENT_NAME`` / ``NATS_AGENT_HEARTBEAT_INTERVAL``); an explicit flag
-    overrides the env. ``NATS_AGENT_HEARTBEAT_INTERVAL=0`` is treated as unset
-    and falls back to ``heartbeat_fallback`` (the SDK requires a positive
-    interval).
+    Identity flags default through the ``SYNADIA_*`` ladder, so the examples
+    are env-driven like the TS agents. For ``--owner`` the order is
+    ``SYNADIA_<AGENT>_OWNER`` (per-agent, only when ``agent`` is given) >
+    ``SYNADIA_OWNER`` (fleet-wide) > ``NATS_AGENT_OWNER`` (legacy alias) >
+    ``$USER`` > ``"anon"``; ``--session-name`` mirrors it with the ``_NAME`` /
+    ``SYNADIA_NAME`` / ``NATS_AGENT_NAME`` vars and ``session_fallback``. An
+    explicit flag overrides the env. Pass ``agent`` (the example's registered
+    subject token) to enable the per-agent override; ``agent=None`` skips it
+    (the reference-agent path, whose token is a runtime CLI flag).
+
+    ``<AGENT>`` is the subject token uppercased with hyphens turned into
+    underscores (see :func:`_agent_env_token`). The heartbeat flag is config,
+    not identity, so it keeps its ``NATS_AGENT_HEARTBEAT_INTERVAL`` var;
+    ``NATS_AGENT_HEARTBEAT_INTERVAL=0`` is treated as unset and falls back to
+    ``heartbeat_fallback`` (the SDK requires a positive interval).
     """
+    if agent is not None:
+        owner_vars = f"$SYNADIA_{_agent_env_token(agent)}_OWNER, else $SYNADIA_OWNER"
+        name_vars = f"$SYNADIA_{_agent_env_token(agent)}_NAME, else $SYNADIA_NAME"
+    else:
+        owner_vars = "$SYNADIA_OWNER"
+        name_vars = "$SYNADIA_NAME"
     parser.add_argument(
         "--owner",
-        default=_env_owner_default(),
-        help="4th subject token (default: $NATS_AGENT_OWNER, else $USER, else 'anon')",
+        default=_env_owner_default(agent),
+        help=(
+            f"4th subject token (default: {owner_vars}, "
+            "else $NATS_AGENT_OWNER, else $USER, else 'anon')"
+        ),
     )
     parser.add_argument(
         "--session-name",
-        default=_env_session_default(session_fallback),
+        default=_env_session_default(agent, session_fallback),
         help=(
             "5th subject token / session this agent serves "
-            f"(default: $NATS_AGENT_NAME, else '{session_fallback}')"
+            f"(default: {name_vars}, else $NATS_AGENT_NAME, else '{session_fallback}')"
         ),
     )
     parser.add_argument(

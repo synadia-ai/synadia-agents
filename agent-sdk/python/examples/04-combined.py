@@ -7,9 +7,11 @@
 #   OPENROUTER_API_KEY set  → OpenRouter (OPENROUTER_MODEL)
 #   otherwise               → local Ollama (OLLAMA_MODEL, OLLAMA_URL)
 #
-# Identity/heartbeat via --owner/--session-name/--heartbeat-interval or the
-# matching NATS_AGENT_* env vars. Connection: --context/--url, else
-# $NATS_CONTEXT/$NATS_URL, else the selected `nats` context. Run -h for flags.
+# Identity via --owner/--session-name, else the SYNADIA_* ladder
+# ($SYNADIA_LLM_OWNER > $SYNADIA_OWNER > legacy $NATS_AGENT_OWNER, and the _NAME
+# analogue — this example registers agent="llm"). --heartbeat-interval /
+# $NATS_AGENT_HEARTBEAT_INTERVAL tunes the cadence. Connection: --context/--url,
+# else $NATS_CONTEXT/$NATS_URL, else the selected `nats` context. Run -h for flags.
 
 from __future__ import annotations
 
@@ -37,7 +39,7 @@ async def main() -> None:
         description="LLM agent — answers prompts via Ollama or OpenRouter (auto-selected)."
     )
     add_connection_flags(parser)
-    add_agent_identity_flags(parser)
+    add_agent_identity_flags(parser, agent="llm")
     args = parser.parse_args()
 
     llm = create_llm_client()

@@ -25,9 +25,39 @@ describe("decodeEnvelope", () => {
 
   it("treats a JSON value that isn't an envelope object as plain text", () => {
     // A bare string, number, or array on the wire is not an envelope per §5.1.
+    // None lead with `{`, so §5.3 classifies them as the plain-text shorthand.
     expect(decodeEnvelope(utf8('"just a string"')).prompt).toBe('"just a string"');
     expect(decodeEnvelope(utf8("[1, 2]")).prompt).toBe("[1, 2]");
     expect(decodeEnvelope(utf8("42")).prompt).toBe("42");
+  });
+
+  it("rejects a zero-byte payload (§5.3 — must be 400, not an empty prompt)", () => {
+    expect(() => decodeEnvelope(new Uint8Array(0))).toThrow(ProtocolError);
+    expect(() => decodeEnvelope(utf8(""))).toThrow(ProtocolError);
+  });
+
+  it("rejects a `{`-led payload that is not well-formed JSON (§5.3 step 2)", () => {
+    // Once the leading non-whitespace byte is `{`, the payload has committed to
+    // being a JSON envelope: a parse failure is a 400, NOT a plain-text prompt
+    // literally equal to "{not json". Matches the Python SDK's looks_like_json.
+    expect(() => decodeEnvelope(utf8("{not json"))).toThrow(ProtocolError);
+    expect(() => decodeEnvelope(utf8('{"prompt": "x"'))).toThrow(ProtocolError);
+  });
+
+  it("classifies a payload by its first non-whitespace byte (§5.3 step 1)", () => {
+    // Leading ASCII whitespace before `{` still parses as a JSON envelope.
+    expect(decodeEnvelope(utf8('  \n\t {"prompt":"hi"}')).prompt).toBe("hi");
+    // Leading whitespace before non-`{` content stays plain text (verbatim).
+    expect(decodeEnvelope(utf8("  hello")).prompt).toBe("  hello");
+    // An all-whitespace payload has no `{` byte → plain-text shorthand,
+    // preserved verbatim (it is non-empty, so not the zero-byte rejection).
+    expect(decodeEnvelope(utf8("   ")).prompt).toBe("   ");
+    // Only the four ASCII whitespace bytes are skipped. `\f` (0x0C) is JS
+    // whitespace (trimStart would skip it) but NOT §5.3 whitespace, so a
+    // `\f`-led payload is the first non-ws byte itself → plain text, never
+    // mis-classified as a JSON envelope. This is why discrimination is a
+    // hand-rolled byte check, not `text.trimStart().startsWith("{")`.
+    expect(decodeEnvelope(utf8('\f{"prompt":"hi"}')).prompt).toBe('\f{"prompt":"hi"}');
   });
 
   it("decodes a JSON envelope with valid attachments", () => {

@@ -36,6 +36,23 @@ describe("plugin config and identity", () => {
     expect(resolved.config.agent.keepaliveIntervalS).toBe(7);
   });
 
+  test("plugin session: SYNADIA_OPENCODE_NAME (canonical) beats the *_SESSION aliases", () => {
+    const identity = derivePluginIdentity(ctx, {
+      SYNADIA_OPENCODE_NAME: "canonical",
+      SYNADIA_OPENCODE_SESSION: "alias",
+      SYNADIA_NAME: "fleet-canonical",
+      SYNADIA_SESSION: "fleet-alias",
+    });
+    expect(identity.session).toBe("canonical");
+    expect(identity.metadata.opencode_identity_source).toBe("explicit");
+
+    const fleetCanonical = derivePluginIdentity(ctx, {
+      SYNADIA_NAME: "fleet-canonical",
+      SYNADIA_SESSION: "fleet-alias",
+    });
+    expect(fleetCanonical.session).toBe("fleet-canonical");
+  });
+
   test("rejects invalid plugin permission policy", () => {
     expect(() => resolvePluginConfig(ctx, { OPENCODE_PERMISSION_POLICY: "maybe" })).toThrow("OPENCODE_PERMISSION_POLICY must be query, local, or reject");
   });

@@ -35,17 +35,29 @@ uv sync --extra examples   # the `examples` extra pulls in httpx (used by 02–0
 
 None of these are required — the examples are configured entirely through flags
 and environment variables. Identity and heartbeat are flags that each default to
-a `NATS_AGENT_*` env var (so the examples are env-driven like the TS ladder; an
-explicit flag overrides the env). Connection is resolved by the shared
-`_connect_cli.py`; backend config is env-only.
+an env var (so the examples are env-driven like the TS agents; an explicit flag
+overrides the env). Connection is resolved by the shared `_connect_cli.py`;
+backend config is env-only.
+
+Identity (`owner` / `name`) resolves through a ladder, first non-empty wins:
+`SYNADIA_<AGENT>_OWNER` (per-agent override) > `SYNADIA_OWNER` (fleet-wide) >
+`NATS_AGENT_OWNER` (legacy alias) > `$USER` > `anon`; the `NAME` analogue is the
+same shape ending in the `--session-name` fallback. `<AGENT>` is the example's
+registered subject token, uppercased with hyphens turned into underscores — so
+`01-echo.py` (registers `echo`) reads `SYNADIA_ECHO_OWNER` / `SYNADIA_ECHO_NAME`,
+`04-combined.py` (registers `llm`) reads `SYNADIA_LLM_OWNER`, and so on.
 
 | Variable | Used by | Default | Purpose |
 | --- | --- | --- | --- |
 | `NATS_CONTEXT` | all | _(unset)_ | Connect via a named [`nats` CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Same as `--context`. |
 | `NATS_URL` | all | _(unset)_ | Connect via a raw URL (credentials in the userinfo are honored). Same as `--url`. |
-| `NATS_AGENT_OWNER` | all | `$USER`, else `anon` | 4th subject token. Same as `--owner`. Set it so several people on one server don't collide. |
-| `NATS_AGENT_NAME` | all | `main` | 5th subject token / session this agent serves. Same as `--session-name`. |
-| `NATS_AGENT_HEARTBEAT_INTERVAL` | all | `30` | Heartbeat cadence in **seconds**. Same as `--heartbeat-interval`. Lower it (e.g. `2`) for a livelier `05-liveness` demo. `0` is treated as unset → the default. |
+| `SYNADIA_<AGENT>_OWNER` | all | _(unset)_ | 4th subject token, per-agent override (e.g. `SYNADIA_ECHO_OWNER`). Highest-priority owner source. Same as `--owner`. |
+| `SYNADIA_OWNER` | all | _(unset)_ | 4th subject token, fleet-wide. Used when the per-agent var is unset. Same as `--owner`. |
+| `NATS_AGENT_OWNER` | all | `$USER`, else `anon` | 4th subject token, **legacy alias** (lowest-priority owner source). Same as `--owner`. Set it so several people on one server don't collide. |
+| `SYNADIA_<AGENT>_NAME` | all | _(unset)_ | 5th subject token / session, per-agent override (e.g. `SYNADIA_ECHO_NAME`). Highest-priority name source. Same as `--session-name`. |
+| `SYNADIA_NAME` | all | _(unset)_ | 5th subject token / session, fleet-wide. Used when the per-agent var is unset. Same as `--session-name`. |
+| `NATS_AGENT_NAME` | all | `main` | 5th subject token / session, **legacy alias** (lowest-priority name source). Same as `--session-name`. |
+| `NATS_AGENT_HEARTBEAT_INTERVAL` | all | `30` | Heartbeat cadence in **seconds** (config, not identity — no `SYNADIA_*` form). Same as `--heartbeat-interval`. Lower it (e.g. `2`) for a livelier `05-liveness` demo. `0` is treated as unset → the default. |
 | `OLLAMA_URL` | `02`, `04`, `05` | `http://localhost:11434` | Where Ollama is listening. |
 | `OLLAMA_MODEL` | `02`, `04`, `05` | `llama3.2` (`05`: `llama3.1:8b`) | Which Ollama model to prompt. |
 | `OPENROUTER_API_KEY` | `03`, `04` | _(required for `03`)_ | Your [OpenRouter key](https://openrouter.ai/keys). |
@@ -58,9 +70,13 @@ silent localhost fallback — pass one of these (the examples below use `--url`)
 ## Run
 
 ```sh
-# localhost, env-driven identity:
+# localhost, env-driven identity (fleet-wide SYNADIA_* vars):
+SYNADIA_OWNER=alice SYNADIA_NAME=demo uv run python examples/01-echo.py --url nats://127.0.0.1:4222
+# per-agent override beats the fleet-wide var:
+SYNADIA_ECHO_OWNER=alice uv run python examples/01-echo.py --url nats://127.0.0.1:4222
+# the legacy NATS_AGENT_* vars still work (lowest priority):
 NATS_AGENT_OWNER=alice NATS_AGENT_NAME=demo uv run python examples/01-echo.py --url nats://127.0.0.1:4222
-# or pass identity as flags instead:
+# or pass identity as flags instead (flags win over every env var):
 uv run python examples/01-echo.py --url nats://127.0.0.1:4222 --owner alice --session-name demo
 # fast heartbeats, to make the liveness demo lively:
 uv run python examples/01-echo.py --url nats://127.0.0.1:4222 --heartbeat-interval 2

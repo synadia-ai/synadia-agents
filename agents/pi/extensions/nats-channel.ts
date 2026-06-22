@@ -79,7 +79,9 @@ const SERVICE_VERSION = "0.4.0";
 // `pi` agent in ~15s instead of ~90s. The SDK's
 // `DEFAULT_HEARTBEAT_INTERVAL_S` stays at 30s as a sensible third-party
 // default — first-party harnesses opt into the snappier cadence.
-const HEARTBEAT_INTERVAL_S = 5;
+// Exported so the smoke test asserts the advertised `interval_s` against
+// this single source of truth (passes whether it's pinned at 5s or 30s).
+export const HEARTBEAT_INTERVAL_S = 5;
 
 // Spec §2, Appendix C: `pi` is both the canonical agent identifier and its
 // conventional subject abbreviation, so `metadata.agent` and the wire

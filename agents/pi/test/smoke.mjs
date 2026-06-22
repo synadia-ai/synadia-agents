@@ -118,7 +118,9 @@ delete process.env.NATS_PI_OWNER;
 delete process.env.SYNADIA_PI_NAME;
 delete process.env.SYNADIA_NAME;
 
-const { default: channelFactory } = await import("../extensions/nats-channel.ts");
+const { default: channelFactory, HEARTBEAT_INTERVAL_S } = await import(
+	"../extensions/nats-channel.ts"
+);
 const { formatHumanBytes } = await import("@synadia-ai/agents");
 const { DEFAULT_MAX_PAYLOAD } = await import("@synadia-ai/agent-service");
 
@@ -232,7 +234,10 @@ await step("heartbeat published on agents.hb.pi.{owner}.{session}", async () => 
 	assert.ok(mine, "no matching heartbeat received");
 	assert.equal(typeof mine.instance_id, "string");
 	assert.equal(typeof mine.ts, "string");
-	assert.equal(mine.interval_s, 30);
+	// Assert against the extension's own constant, not a hard-coded number —
+	// the advertised cadence is whatever HEARTBEAT_INTERVAL_S is pinned to
+	// (5s today, 30s if a future change reverts to the SDK default).
+	assert.equal(mine.interval_s, HEARTBEAT_INTERVAL_S);
 })();
 
 await step("status endpoint replies with a heartbeat-shaped payload", async () => {
@@ -243,7 +248,7 @@ await step("status endpoint replies with a heartbeat-shaped payload", async () =
 	assert.equal(body.session, session);
 	assert.equal(typeof body.instance_id, "string");
 	assert.equal(typeof body.ts, "string");
-	assert.equal(body.interval_s, 30);
+	assert.equal(body.interval_s, HEARTBEAT_INTERVAL_S);
 })();
 
 // Helper — consume a stream until terminator, capturing chunks + error.

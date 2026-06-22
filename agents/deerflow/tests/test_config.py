@@ -1,14 +1,36 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from synadia_ai.nats_deerflow_channel.config import resolve_config
+
+# Every identity env var the resolver reads. Cleared before each test so a
+# developer's shell env can't leak in — the SYNADIA_* vars outrank the legacy
+# aliases, so a stray export would otherwise turn the precedence tests flaky.
+_IDENTITY_ENV_VARS = (
+    "SYNADIA_DEERFLOW_OWNER",
+    "SYNADIA_OWNER",
+    "NATS_OWNER",
+    "DEERFLOW_NATS_OWNER",
+    "SYNADIA_DEERFLOW_NAME",
+    "SYNADIA_NAME",
+    "NATS_AGENT_NAME",
+    "NATS_SESSION",
+)
+
+
+@pytest.fixture(autouse=True)
+def _clean_identity_env(monkeypatch: Any) -> Iterator[None]:
+    for name in _IDENTITY_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    yield
 
 
 def test_defaults_include_df_agent(tmp_path: Path, monkeypatch: Any) -> None:
-    monkeypatch.delenv("NATS_OWNER", raising=False)
-    monkeypatch.delenv("NATS_AGENT_NAME", raising=False)
     monkeypatch.delenv("DEERFLOW_URL", raising=False)
 
     config = resolve_config(config_file=tmp_path / "missing.toml")
@@ -80,6 +102,54 @@ def test_config_file_then_env_then_cli_precedence(tmp_path: Path, monkeypatch: A
     assert config.deerflow_password == "cli-password"
     assert config.redacted_dict()["deerflow_username"] == "cli@example.com"
     assert config.redacted_dict()["deerflow_password"] == "[REDACTED]"
+
+
+def test_synadia_identity_env_precedence(tmp_path: Path, monkeypatch: Any) -> None:
+    """SYNADIA_DEERFLOW_* > SYNADIA_* > legacy aliases > config, and CLI beats all."""
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        'owner = "file-owner"\nsession = "file-session"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SYNADIA_DEERFLOW_OWNER", "synadia-deerflow-owner")
+    monkeypatch.setenv("SYNADIA_OWNER", "synadia-owner")
+    monkeypatch.setenv("NATS_OWNER", "nats-owner")
+    monkeypatch.setenv("DEERFLOW_NATS_OWNER", "deerflow-nats-owner")
+    monkeypatch.setenv("SYNADIA_DEERFLOW_NAME", "synadia-deerflow-name")
+    monkeypatch.setenv("SYNADIA_NAME", "synadia-name")
+    monkeypatch.setenv("NATS_AGENT_NAME", "nats-agent-name")
+    monkeypatch.setenv("NATS_SESSION", "nats-session")
+
+    # Top of each ladder: the per-agent SYNADIA_DEERFLOW_* var wins.
+    config = resolve_config(config_file=config_file)
+    assert config.owner == "synadia-deerflow-owner"
+    assert config.session == "synadia-deerflow-name"
+
+    # A CLI flag still overrides the SYNADIA_* env vars.
+    config = resolve_config(config_file=config_file, owner="cli-owner", session="cli-session")
+    assert config.owner == "cli-owner"
+    assert config.session == "cli-session"
+
+    # Drop the per-agent vars: the fleet-wide SYNADIA_* vars win over legacy.
+    monkeypatch.delenv("SYNADIA_DEERFLOW_OWNER")
+    monkeypatch.delenv("SYNADIA_DEERFLOW_NAME")
+    config = resolve_config(config_file=config_file)
+    assert config.owner == "synadia-owner"
+    assert config.session == "synadia-name"
+
+    # Drop the fleet-wide vars too: the legacy aliases win over the config file.
+    monkeypatch.delenv("SYNADIA_OWNER")
+    monkeypatch.delenv("SYNADIA_NAME")
+    config = resolve_config(config_file=config_file)
+    assert config.owner == "nats-owner"
+    assert config.session == "nats-agent-name"
+
+    # Drop the preferred legacy aliases: the secondary aliases win, then config.
+    monkeypatch.delenv("NATS_OWNER")
+    monkeypatch.delenv("NATS_AGENT_NAME")
+    config = resolve_config(config_file=config_file)
+    assert config.owner == "deerflow-nats-owner"
+    assert config.session == "nats-session"
 
 
 def test_nats_url_env_is_used(tmp_path: Path, monkeypatch: Any) -> None:

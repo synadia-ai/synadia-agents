@@ -89,7 +89,10 @@ def run_doctor(
 
     checks["owner_configured"] = bool(config.owner)
     if not config.owner:
-        messages.append("owner is not configured; set NATS_OWNER or pass --owner")
+        messages.append(
+            "owner is not configured; set SYNADIA_DEERFLOW_OWNER, SYNADIA_OWNER, "
+            "a legacy NATS_OWNER/DEERFLOW_NATS_OWNER alias, or pass --owner"
+        )
 
     parsed = urlparse(config.deerflow_url)
     checks["deerflow_url_shape"] = parsed.scheme in {"http", "https"} and bool(parsed.netloc)
