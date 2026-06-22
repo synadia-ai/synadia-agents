@@ -204,13 +204,6 @@ The app-server lifecycle smoke initializes a real `codex app-server --listen std
 - Manager mode exposes no sessions: confirm `--manager-enabled true`, at least one configured endpoint, and either `--auto-expose-current-sessions true` or `--auto-expose-future-sessions true`. Manager mode never scans GUI windows, terminal sessions, or desktop state. Current-session mode requires eligible sessions to already exist. Future-session mode requires the manager to be running first, then a Codex prompt/turn, then automatic reconciliation or manual `rescan`; if the prompt happened before future mode started, use current-session mode instead.
 - Prompts with attachments return `400`: this is expected for the current package; discovery advertises `attachments_ok=false` until Codex file/image ingestion is implemented end-to-end.
 
-## See also
-
-- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), [`flue`](../flue), [`open-agent`](../open-agent), and [`opencode`](../opencode).
-- TypeScript host SDK: [`../../agent-sdk/typescript`](../../agent-sdk/typescript).
-- NATS CLI cookbook: [`../../docs/using-nats-cli.md`](../../docs/using-nats-cli.md).
-- Wire protocol: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).
-
 ## Limitations
 
 - Managed mode owns only the app-server process and thread it starts. It does not discover or control arbitrary Codex GUI/TUI sessions.
@@ -219,3 +212,10 @@ The app-server lifecycle smoke initializes a real `codex app-server --listen std
 - Permission prompts default to deny/cancel for managed mode unless the adapter owns the active app-server callback path.
 - Attachments are rejected until Codex file/image ingestion is mapped end-to-end.
 - Public examples intentionally use safe session tokens and loopback NATS only; do not use raw Codex thread IDs, endpoints, socket paths, or credentials as subject tokens.
+
+## See also
+
+- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), [`flue`](../flue), [`open-agent`](../open-agent), and [`opencode`](../opencode).
+- TypeScript host SDK: [`../../agent-sdk/typescript`](../../agent-sdk/typescript).
+- NATS CLI cookbook: [`../../docs/using-nats-cli.md`](../../docs/using-nats-cli.md).
+- Wire protocol: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).
