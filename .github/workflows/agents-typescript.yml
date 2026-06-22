@@ -1,0 +1,185 @@
+name: CI — agents (TypeScript)
+
+# Runs the test suites for the TypeScript agent harnesses. Packages that
+# consume the published TS SDKs use semver ranges; older packages may still
+# use local file links, so SDK changes trigger this workflow too.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agents/pi/**"
+      - "agents/openclaw/**"
+      - "agents/opencode/**"
+      - "agents/codex/**"
+      - "client-sdk/typescript/**"
+      - "agent-sdk/typescript/**"
+      - ".github/workflows/agents-typescript.yml"
+  pull_request:
+    paths:
+      - "agents/pi/**"
+      - "agents/openclaw/**"
+      - "agents/opencode/**"
+      - "agents/codex/**"
+      - "client-sdk/typescript/**"
+      - "agent-sdk/typescript/**"
+      - ".github/workflows/agents-typescript.yml"
+
+concurrency:
+  group: ci-agents-ts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pi:
+    name: agents/pi (unit + spec smoke)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      # pi imports both SDKs via `file:` links, which resolve to each
+      # package's built `dist/` — so build them before installing pi.
+      - name: Build client-sdk
+        working-directory: client-sdk/typescript
+        run: bun install && bun run build
+      - name: Build agent-sdk
+        working-directory: agent-sdk/typescript
+        run: bun install && bun run build
+      - name: Install pi
+        working-directory: agents/pi
+        run: bun install
+      - name: Unit tests (owner-token precedence)
+        working-directory: agents/pi
+        run: bun test test/owner.test.ts
+      - name: Spec-compliance smoke (spawns its own nats-server)
+        working-directory: agents/pi
+        run: bun test/smoke.mjs
+
+  openclaw:
+    name: agents/openclaw (vitest)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build client-sdk
+        working-directory: client-sdk/typescript
+        run: npm install && npm run build
+      - name: Build agent-sdk
+        working-directory: agent-sdk/typescript
+        run: npm install && npm run build
+      # The `openclaw` peer is optional with an empty version range, so npm
+      # treats it as satisfied-by-absence: a plain `npm install`, `npm install
+      # --no-save openclaw`, and even `npm install openclaw` all leave it out,
+      # silently SKIPPING the account-resolution suite. Promote it to a real
+      # dependency (ephemeral on the CI checkout) so the full tree installs,
+      # then assert the subpath the tests import actually resolves — a broken
+      # peer fails the job instead of hollowing it out.
+      #
+      # Resolve the LATEST openclaw rather than pinning: this plugin's whole
+      # job is to track openclaw, so a breaking change to `plugin-sdk/core`
+      # SHOULD surface here (the resolve-assert guards presence; a broken API
+      # surfaces as a vitest failure). A pin silently rots — openclaw shipped
+      # 2026.6.5 -> 2026.6.6 within days of this workflow landing.
+      - name: Install openclaw deps + peer (latest)
+        working-directory: agents/openclaw
+        run: |
+          OPENCLAW_VERSION="$(npm view openclaw version)"
+          echo "openclaw peer: $OPENCLAW_VERSION"
+          npm pkg set "dependencies.openclaw=${OPENCLAW_VERSION}"
+          npm install
+          node -e "require.resolve('openclaw/plugin-sdk/core')"
+      - name: Tests (account resolution + protocol + context loader)
+        working-directory: agents/openclaw
+        run: npm test
+
+  opencode:
+    name: agents/opencode (typecheck + package-safe smokes)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Install dependencies
+        working-directory: agents/opencode
+        run: bun install
+      - name: Typecheck
+        working-directory: agents/opencode
+        run: bun run typecheck
+      - name: Unit tests
+        working-directory: agents/opencode
+        run: bun test
+      - name: Protocol smoke
+        working-directory: agents/opencode
+        run: bun run smoke:protocol
+      - name: Runtime lifecycle smoke
+        working-directory: agents/opencode
+        run: bun run smoke:opencode-lifecycle
+      - name: Plugin lifecycle smoke
+        working-directory: agents/opencode
+        run: bun run smoke:opencode-plugin-lifecycle
+      - name: Plugin permission smoke
+        working-directory: agents/opencode
+        run: bun run smoke:opencode-plugin-permission
+      - name: Package contents
+        working-directory: agents/opencode
+        run: npm pack --dry-run --json
+
+  codex:
+    name: agents/codex (typecheck + package-safe smokes)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Install dependencies
+        working-directory: agents/codex
+        run: bun install
+      - name: Typecheck
+        working-directory: agents/codex
+        run: bun run typecheck
+      - name: Unit tests
+        working-directory: agents/codex
+        run: bun test
+      - name: Protocol smoke
+        working-directory: agents/codex
+        run: bun run smoke:protocol
+      # `smoke:codex-runtime` includes `codex app-server`; CI does not install
+      # Codex. Run the deterministic fake-runtime and manager smokes here, and
+      # keep the real app-server lifecycle as a local/manual validation gate.
+      - name: Fake runtime smoke
+        working-directory: agents/codex
+        run: bun run smoke:codex-fake-runtime
+      - name: Session manager smoke
+        working-directory: agents/codex
+        run: bun run smoke:codex-session-manager
+      - name: Future watch smoke
+        working-directory: agents/codex
+        run: bun run smoke:codex-future-watch
+      - name: Permission smoke
+        working-directory: agents/codex
+        run: bun run smoke:codex-permission
+      - name: Package contents
+        working-directory: agents/codex
+        run: npm pack --dry-run --json
