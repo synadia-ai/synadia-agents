@@ -143,9 +143,8 @@ jobs:
       - name: Protocol smoke
         working-directory: agents/opencode
         run: bun run smoke:protocol
-      - name: Runtime lifecycle smoke
-        working-directory: agents/opencode
-        run: bun run smoke:opencode-lifecycle
+      # `smoke:opencode-lifecycle` starts the real opencode binary; GitHub
+      # runners do not install OpenCode. Keep it as a local/manual gate.
       - name: Plugin lifecycle smoke
         working-directory: agents/opencode
         run: bun run smoke:opencode-plugin-lifecycle
