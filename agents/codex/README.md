@@ -77,7 +77,7 @@ The doctor reports `codex --version`, NATS source, computed prompt subject, max-
 
 Manager mode is opt-in and registry-driven. It exposes only Codex app-server endpoints you explicitly configure with `--manager-endpoints`, `SYNADIA_CODEX_MANAGER_ENDPOINTS`, `[manager].endpoints`, or the single `--endpoint`/`SYNADIA_CODEX_ENDPOINT` value. There is no ambient desktop scan.
 
-A manager endpoint is not something users should hunt for. Use one of these known endpoints:
+A manager endpoint is not something users should hunt for. The Codex desktop app can start its own bundled `codex app-server`, but current evidence shows that child is wired to the GUI over private process-owned IPC rather than a documented third-party attach endpoint. Use one of these known endpoints instead:
 
 - macOS/Linux local daemon: start Codex remote control with `codex remote-control start`, then use `unix://${CODEX_HOME:-$HOME/.codex}/app-server-control/app-server-control.sock`.
 - Cross-platform/local TCP: start an explicit app server with `codex app-server --listen ws://127.0.0.1:8765`, then start Codex sessions with `codex --remote ws://127.0.0.1:8765` and point the manager at `ws://127.0.0.1:8765`.

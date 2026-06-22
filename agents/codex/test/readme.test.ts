@@ -40,6 +40,8 @@ describe("README public claims", () => {
   });
 
   test("documents how to create known manager endpoints", () => {
+    expect(readme).toContain("Codex desktop app can start its own bundled `codex app-server`");
+    expect(readme).toContain("private process-owned IPC");
     expect(readme).toContain("codex app-server --listen ws://127.0.0.1:8765");
     expect(readme).toContain("codex --remote ws://127.0.0.1:8765");
     expect(readme).toContain("codex remote-control start");
