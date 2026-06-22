@@ -32,6 +32,7 @@
     "src",
     "scripts",
     "README.md",
+    "CHANGELOG.md",
     ".env.example"
   ],
   "scripts": {
