@@ -124,6 +124,7 @@ jobs:
       - name: Build current agent-sdk
         working-directory: agent-sdk/typescript
         run: |
+          # CI-only: replace the relative file: link with an absolute tgz so the packed agent-service artifact resolves after install.
           npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
           bun install
           bun run build
@@ -179,6 +180,7 @@ jobs:
       - name: Build current agent-sdk
         working-directory: agent-sdk/typescript
         run: |
+          # CI-only: replace the relative file: link with an absolute tgz so the packed agent-service artifact resolves after install.
           npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
           bun install
           bun run build

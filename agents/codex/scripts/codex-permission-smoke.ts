@@ -3,6 +3,7 @@ import { ManagedCodexRuntime } from "../src/managed-runtime.js";
 import type { CodexChannelConfig } from "../src/config.js";
 
 const config: CodexChannelConfig = {
+  // Required by CodexChannelConfig; this smoke exercises only the stdio app-server runtime and never connects to NATS.
   nats: { url: "nats://127.0.0.1:4222" },
   agent: { owner: "smoke", session: "permission", subjectToken: "codex", heartbeatIntervalS: 1, keepaliveIntervalS: 1 },
   codex: { mode: "managed", codexBin: "bun", permissionPolicy: "reject" },
