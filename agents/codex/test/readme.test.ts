@@ -39,6 +39,16 @@ describe("README public claims", () => {
     expect(readme).not.toContain("smoke:attached-endpoint");
   });
 
+  test("documents live approval harness evidence boundaries", () => {
+    expect(readme).toContain("bun run manual:codex-live-approval -- deny");
+    expect(readme).toContain("answers app-server approval requests through the adapter's real `responseFor()` mapping");
+    expect(readme).toContain('"approvalMethods":["item/commandExecution/requestApproval"]');
+    expect(readme).toContain('"approvalResponses":[{"decision":"decline"}]');
+    expect(readme).toContain('"approvalResponses":[{"decision":"accept"}]');
+    expect(readme).toContain("It does not prove `item/permissions/requestApproval` unless that exact method appears in `approvalMethods`");
+    expect(readme).toContain("uses an explicit empty grant object for deny/cancel");
+  });
+
   test("documents how to create known manager endpoints", () => {
     expect(readme).toContain("To use manager mode, first start or choose a Codex app-server endpoint");
     expect(readme).toContain("create or load at least one Codex session on the endpoint first");

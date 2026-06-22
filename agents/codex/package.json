@@ -47,7 +47,8 @@
     "smoke:codex-session-manager": "bun scripts/codex-session-manager-smoke.ts",
     "smoke:codex-future-watch": "bun scripts/codex-future-watch-smoke.ts",
     "plugin:notify": "bun scripts/codex-plugin-hook.ts",
-    "smoke:codex-permission": "bun scripts/codex-permission-smoke.ts"
+    "smoke:codex-permission": "bun scripts/codex-permission-smoke.ts",
+    "manual:codex-live-approval": "bun scripts/live-codex-approval-harness.ts"
   },
   "dependencies": {
     "@nats-io/nats-core": "^3.4.0",
