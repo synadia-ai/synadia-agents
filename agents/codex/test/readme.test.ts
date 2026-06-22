@@ -43,6 +43,8 @@ describe("README public claims", () => {
     expect(readme).toContain("To use manager mode, first start or choose a Codex app-server endpoint");
     expect(readme).toContain("create or load at least one Codex session on the endpoint first");
     expect(readme).toContain("complete at least one turn");
+    expect(readme).toContain("An empty `codex --remote ...` session is not visible to the manager yet");
+    expect(readme).toContain("after you send a prompt and the first turn exists");
     expect(readme).toContain("If you start the manager before creating any sessions, it should report zero sessions");
     expect(readme).toContain("Codex desktop app can start its own bundled `codex app-server`");
     expect(readme).toContain("private process-owned IPC");

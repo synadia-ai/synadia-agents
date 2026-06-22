@@ -90,13 +90,14 @@ To expose current sessions, create or load at least one Codex session on the end
 codex app-server --listen ws://127.0.0.1:8765
 ```
 
-Then connect Codex to that endpoint in another terminal and complete at least one turn:
+Then connect Codex to that endpoint in another terminal and complete at least one turn. An empty `codex --remote ...` session is not visible to the manager yet; Codex only reports it in current-session inventory after you send a prompt and the first turn exists.
 
 ```sh
 codex --remote ws://127.0.0.1:8765
+# In Codex, send a small prompt such as: hello
 ```
 
-After the session exists on the endpoint, start a manager over the same endpoint and expose already-eligible current sessions:
+After the prompted session exists on the endpoint, start a manager over the same endpoint and expose already-eligible current sessions:
 
 ```sh
 codex-agent start \
