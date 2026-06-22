@@ -21,4 +21,16 @@ describe("Codex doctor", () => {
     expect(serialized).toContain("[REDACTED]");
     expect(serialized).toContain("plugin promptability gate");
   });
+
+  test("reports default reject permission policy as intentionally disabled", async () => {
+    const config: CodexChannelConfig = {
+      nats: { url: "nats://127.0.0.1:4222" },
+      agent: { owner: "local", session: "demo", subjectToken: "codex", heartbeatIntervalS: 30, keepaliveIntervalS: 30 },
+      codex: { mode: "managed", codexBin: "codex", permissionPolicy: "reject" },
+      manager: { enabled: false, autoExposeCurrentSessions: false, autoExposeFutureSessions: false, watchMode: "event-plus-poll", watchIntervalMs: 7500, staleGraceIntervals: 3, exposeEphemeralLoadedSessions: false },
+    };
+    const report = await runDoctor(config);
+    const permission = report.checks.find((check) => check.name === "permission callback");
+    expect(permission).toEqual({ name: "permission callback", ok: true, detail: "disabled by policy=reject" });
+  });
 });

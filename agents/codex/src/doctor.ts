@@ -29,7 +29,7 @@ export async function runDoctor(config: CodexChannelConfig): Promise<DoctorRepor
     { name: "nats source", ok: Boolean(config.nats.context || config.nats.url), detail: config.nats.context ? "context" : safeOrigin(config.nats.url ?? "") },
     { name: "computed subject", ok: true, detail: subject },
     { name: "max payload", ok: true, detail: "discovered from NATS connection at runtime" },
-    { name: "permission callback", ok: config.codex.permissionPolicy === "query", detail: config.codex.permissionPolicy === "query" ? "adapter-owned query mode requested" : `policy=${config.codex.permissionPolicy}` },
+    { name: "permission callback", ok: true, detail: config.codex.permissionPolicy === "query" ? "adapter-owned query mode requested" : `disabled by policy=${config.codex.permissionPolicy}` },
     { name: "plugin installed", ok: pluginReport.installed, detail: plugin.enabled ? (plugin.hookPath ? (pluginReport.installed ? "configured hook path exists" : "configured hook path missing") : "package hook available via scripts/codex-plugin-hook.ts") : "disabled" },
     { name: "plugin hook trusted", ok: pluginReport.hookTrusted, detail: plugin.enabled ? (plugin.registrarToken ? "shared registrar token configured" : "missing registrar token") : "disabled" },
     { name: "plugin registrar reachable", ok: pluginReport.registrarConfigured, detail: plugin.enabled ? (pluginReport.registrarUrl ?? "not configured") : "disabled" },
