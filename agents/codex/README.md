@@ -212,3 +212,10 @@ The app-server lifecycle smoke initializes a real `codex app-server --listen std
 - Permission prompts default to deny/cancel for managed mode unless the adapter owns the active app-server callback path.
 - Attachments are rejected until Codex file/image ingestion is mapped end-to-end.
 - Public examples intentionally use safe session tokens and loopback NATS only; do not use raw Codex thread IDs, endpoints, socket paths, or credentials as subject tokens.
+
+## See also
+
+- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), [`flue`](../flue), [`open-agent`](../open-agent), and [`opencode`](../opencode).
+- TypeScript host SDK: [`../../agent-sdk/typescript`](../../agent-sdk/typescript).
+- NATS CLI cookbook: [`../../docs/using-nats-cli.md`](../../docs/using-nats-cli.md).
+- Wire protocol: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).

@@ -146,6 +146,6 @@ The `cc-headless` controller has the same three verbs. See `examples/pi-headless
 ## See also
 
 - The protocol spec: <https://github.com/synadia-ai/synadia-agent-sdk-docs>
-- Per-agent READMEs with agent-specific subject layouts: `agents/{claude-code,deerflow,flue,hermes,open-agent,opencode,openclaw,pi}/README.md`
+- Per-agent READMEs with agent-specific subject layouts: `agents/{claude-code,codex,deerflow,flue,hermes,open-agent,opencode,openclaw,pi}/README.md`
 - Headless examples with control-plane endpoints: `examples/{pi,claude-code}-headless/README.md`
 - SDK-driven equivalents: `client-sdk/typescript/examples/`, `client-sdk/python/examples/`

@@ -221,7 +221,7 @@ The scripts refuse unexpected keys, chmod the env file to `0600`, and do not pri
 
 ## See also
 
-- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), [`flue`](../flue), and [`open-agent`](../open-agent).
+- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), [`flue`](../flue), [`open-agent`](../open-agent), and [`codex`](../codex).
 - TypeScript host SDK: [`../../agent-sdk/typescript`](../../agent-sdk/typescript).
 - NATS CLI cookbook: [`../../docs/using-nats-cli.md`](../../docs/using-nats-cli.md).
 - Wire protocol: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).
