@@ -21,6 +21,7 @@ describe("manager redaction", () => {
     assertNoPrivateValues("service options", opts, [privateEndpoint, rawThread, "/Users/alice"]);
     assertNoPrivateValues("doctor", doctor, [privateEndpoint, rawThread, "/Users/alice/private"]);
     expect(redactPrivateText(`connect ${privateEndpoint} ${rawThread}`)).not.toContain(privateEndpoint);
+    expect(redactPrivateText("open /home/alice/private/project and /run/user/501/codex.sock")).toBe("open [REDACTED] and [REDACTED]");
   });
 
   test("README examples avoid private raw endpoint/thread values and do not overclaim GUI discovery", () => {

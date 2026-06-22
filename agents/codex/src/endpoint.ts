@@ -89,6 +89,16 @@ export function createWebSocketTransport(url: string, authToken?: string): Promi
   });
 }
 
+export function normalizeWebSocketJsonRpcFrame(data: unknown): string | undefined {
+  if (typeof data === "string") return ensureJsonLineFrame(data);
+  if (data instanceof ArrayBuffer) return ensureJsonLineFrame(new TextDecoder().decode(data));
+  return undefined;
+}
+
+export function ensureJsonLineFrame(value: string): string {
+  return value.includes("\n") ? value : `${value}\n`;
+}
+
 class SocketJsonRpcTransport implements JsonRpcTransport {
   readonly #socket: Socket;
 
@@ -115,8 +125,8 @@ class WebSocketJsonRpcTransport implements JsonRpcTransport {
   close(): void { this.#ws.close(); }
   onData(listener: (chunk: string) => void): void {
     this.#ws.addEventListener("message", (event) => {
-      if (typeof event.data === "string") listener(event.data.includes("\n") ? event.data : `${event.data}\n`);
-      else if (event.data instanceof ArrayBuffer) listener(new TextDecoder().decode(event.data));
+      const frame = normalizeWebSocketJsonRpcFrame(event.data);
+      if (frame !== undefined) listener(frame);
     });
   }
   onStderr(_listener: (chunk: string) => void): void {}

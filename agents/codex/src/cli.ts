@@ -11,16 +11,18 @@ import { createCodexAgentService } from "./service.js";
 import { CodexSessionManager } from "./session-manager.js";
 
 async function main(): Promise<void> {
-  const config = loadConfigFromSources();
-  const command = resolveCliCommand(process.argv.slice(2));
-  if (config === undefined || command === "help" || process.argv.includes("--help") || process.argv.includes("-h")) {
+  const argv = process.argv.slice(2);
+  const command = resolveCliCommand(argv);
+  if (command === "help" || argv.includes("--help") || argv.includes("-h")) {
     console.log(helpText());
     return;
   }
-  if (command === "configure" && process.argv.includes("--print-template")) {
+  if (command === "configure" && argv.includes("--print-template")) {
     console.log(renderConfigTemplate());
     return;
   }
+
+  const config = loadConfigFromSources();
   if (command === "doctor") {
     console.log(JSON.stringify(await runDoctor(config), null, 2));
     return;
@@ -43,6 +45,7 @@ async function main(): Promise<void> {
     const manager = new CodexSessionManager({ nc, config, version: pkg.version ?? "0.0.0" });
     const snapshots = await manager.start();
     console.log(`codex-agent manager listening for ${snapshots.length} sessions`);
+    if (manager.endpointErrorCount > 0) console.error(`codex-agent manager endpoint errors: ${manager.endpointErrorCount}`);
     for (const snapshot of snapshots) console.log(snapshot.promptSubject);
     const stopCommands = installManagerCommands(manager);
     await waitForShutdown();
@@ -97,6 +100,7 @@ function installManagerCommands(manager: CodexSessionManager): () => void {
       void manager.rescan()
         .then((snapshots) => {
           console.log(`codex-agent manager rescan complete: ${snapshots.length} sessions`);
+          if (manager.endpointErrorCount > 0) console.error(`codex-agent manager endpoint errors: ${manager.endpointErrorCount}`);
           for (const snapshot of snapshots) console.log(snapshot.promptSubject);
         })
         .catch((err: unknown) => { console.error(err instanceof Error ? err.message : String(err)); });

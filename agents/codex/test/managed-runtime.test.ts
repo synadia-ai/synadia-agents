@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { ManagedCodexRuntime } from "../src/managed-runtime.js";
 import type { CodexChannelConfig } from "../src/config.js";
 
@@ -12,6 +13,21 @@ function config(): CodexChannelConfig {
 }
 
 describe("ManagedCodexRuntime", () => {
+  test("defers auto CODEX_HOME creation until start and removes it on close", async () => {
+    const runtime = new ManagedCodexRuntime({ config: config(), command: "bun", args: ["scripts/fake-codex-app-server.ts"], cwd: process.cwd() });
+    expect(runtime.codeHome).toBeUndefined();
+    try {
+      await runtime.start();
+      const codeHome = runtime.codeHome;
+      expect(codeHome).toBeDefined();
+      expect(existsSync(codeHome!)).toBe(true);
+    } finally {
+      const codeHome = runtime.codeHome;
+      await runtime.close();
+      if (codeHome) expect(existsSync(codeHome)).toBe(false);
+    }
+  });
+
   test("streams Codex app-server deltas without adding an empty response", async () => {
     const runtime = new ManagedCodexRuntime({ config: config(), command: "bun", args: ["scripts/fake-codex-app-server.ts"], cwd: process.cwd() });
     try {

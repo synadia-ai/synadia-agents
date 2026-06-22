@@ -62,6 +62,7 @@ export class CodexSessionManager {
   #poller: BoundedPollScheduler | undefined;
   #pluginRegistrar: CodexPluginRegistrar | undefined;
   #lastPluginEvent: CodexPluginEventRecord | undefined;
+  #endpointErrorCount = 0;
   #started = false;
 
   constructor(opts: CodexSessionManagerOptions) { this.#opts = opts; }
@@ -99,6 +100,7 @@ export class CodexSessionManager {
   }
 
   get pluginLastEvent(): CodexPluginEventRecord | undefined { return this.#lastPluginEvent; }
+  get endpointErrorCount(): number { return this.#endpointErrorCount; }
 
   async notifyPluginEvent(event: CodexPluginEventRecord): Promise<ManagedSessionSnapshot[]> {
     await this.#recordPluginEvent(event);
@@ -159,6 +161,7 @@ export class CodexSessionManager {
 
   async #discoverEligibleRows(entries: readonly EndpointRegistryEntry[]): Promise<EligibleSessionRow[]> {
     const eligibleRows: EligibleSessionRow[] = [];
+    this.#endpointErrorCount = 0;
     for (const entry of entries) {
       let inventoryClient: CodexAppServerClient | undefined;
       try {
@@ -166,6 +169,7 @@ export class CodexSessionManager {
         const rows = await discoverEndpointSessions({ client: inventoryClient, endpoint: entry.endpoint, manager: this.#opts.config.manager });
         eligibleRows.push(...rows.filter((row) => row.eligible));
       } catch {
+        this.#endpointErrorCount += 1;
         // Endpoint loss is handled by the stale state machine below. Do not log
         // endpoint URLs/socket paths here; those are private local identifiers.
       } finally {

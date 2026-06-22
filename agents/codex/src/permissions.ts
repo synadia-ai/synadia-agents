@@ -1,5 +1,6 @@
 import type { JsonValue, ServerRequestHandlerInput } from "./codex-jsonrpc.js";
 import { defaultServerRequestResponse } from "./codex-jsonrpc.js";
+import { redactPrivateText } from "./redaction.js";
 
 export interface CodexPermissionRequest {
   readonly kind: "command" | "file-change" | "permissions" | "tool-input" | "mcp-elicitation" | "unknown";
@@ -22,7 +23,7 @@ export function permissionKind(method: string): CodexPermissionRequest["kind"] {
 export function permissionPrompt(input: ServerRequestHandlerInput): string {
   const kind = permissionKind(input.method);
   const compact = JSON.stringify(input.params ?? {});
-  const redacted = compact.replace(/\/[A-Za-z0-9_.@%+\-\/]+/g, "[path]").slice(0, 1200);
+  const redacted = redactPrivateText(compact).slice(0, 1200);
   return `Codex requests ${kind} approval. Reply approve to allow once; anything else denies. Details: ${redacted}`;
 }
 
@@ -68,14 +69,14 @@ async function withTimeout(value: Promise<"approve" | "deny" | "cancel"> | "appr
   }
 }
 
-function responseFor(method: string, decision: "approve" | "deny" | "cancel"): JsonValue {
-  const denied = decision === "approve" ? "accept" : decision === "deny" ? "decline" : "cancel";
-  if (method === "item/commandExecution/requestApproval") return { decision: denied };
-  if (method === "item/fileChange/requestApproval") return { decision: denied };
+export function responseFor(method: string, decision: "approve" | "deny" | "cancel"): JsonValue {
+  const responseDecision = decision === "approve" ? "accept" : decision === "deny" ? "decline" : "cancel";
+  if (method === "item/commandExecution/requestApproval") return { decision: responseDecision };
+  if (method === "item/fileChange/requestApproval") return { decision: responseDecision };
   if (method === "item/permissions/requestApproval") {
     return decision === "approve"
       ? { permissions: {}, scope: "turn", strictAutoReview: true }
-      : { permissions: {}, scope: "turn", strictAutoReview: true };
+      : null;
   }
   if (method === "item/tool/requestUserInput") return { answer: { type: "cancel" } };
   if (method === "mcpServer/elicitation/request") return { action: "cancel" };

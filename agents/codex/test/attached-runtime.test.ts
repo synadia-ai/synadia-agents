@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createServer, type Server, type Socket } from "node:net";
 import { AttachedCodexRuntime } from "../src/attached-runtime.js";
 import type { CodexChannelConfig } from "../src/config.js";
-import { parseCodexEndpoint, requireAttachedEndpointAuth } from "../src/endpoint.js";
+import { parseCodexEndpoint, requireAttachedEndpointAuth, normalizeWebSocketJsonRpcFrame } from "../src/endpoint.js";
 
 function config(endpoint: string): CodexChannelConfig {
   return {
@@ -23,6 +23,12 @@ describe("attached Codex runtime", () => {
     expect(() => parseCodexEndpoint("http://127.0.0.1:5555")).toThrow("attached endpoint must be explicit");
     expect(() => requireAttachedEndpointAuth("ws://192.0.2.10:5555", undefined)).toThrow("non-loopback WebSocket attached endpoints require");
     expect(requireAttachedEndpointAuth("ws://192.0.2.10:5555", "token").kind).toBe("websocket");
+  });
+
+  test("normalizes WebSocket JSON-RPC frames with a trailing newline for text and binary messages", () => {
+    expect(normalizeWebSocketJsonRpcFrame('{"id":1}')).toBe('{"id":1}\n');
+    expect(normalizeWebSocketJsonRpcFrame(new TextEncoder().encode('{"id":1}').buffer)).toBe('{"id":1}\n');
+    expect(normalizeWebSocketJsonRpcFrame('{"id":1}\n')).toBe('{"id":1}\n');
   });
 
   test("preflights endpoint + private thread and prompts through safe public alias", async () => {

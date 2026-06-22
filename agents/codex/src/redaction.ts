@@ -1,4 +1,4 @@
-export const PRIVATE_VALUE_RE = /(?:\/(?:Users)\/[A-Za-z0-9._-]+|S[A-Z0-9]{57}|(?:unix|ws|wss):\/\/[^\s"'`]+|raw-[A-Za-z0-9._-]+|thread-(?:pr(?:ivate)?|secret)-[A-Za-z0-9._-]+)/g;
+export const PRIVATE_VALUE_RE = /(?:\/(?:Users|home|run|var|tmp)\/[A-Za-z0-9._@%+\/-]+|S[A-Z0-9]{57}|(?:unix|ws|wss):\/\/[^\s"'`]+|raw-[A-Za-z0-9._-]+|thread-(?:pr(?:ivate)?|secret)-[A-Za-z0-9._-]+)/g;
 
 export function redactPrivateText(value: string): string {
   return value.replace(PRIVATE_VALUE_RE, "[REDACTED]");

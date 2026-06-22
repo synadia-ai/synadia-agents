@@ -130,7 +130,9 @@ nats --no-context --server nats://127.0.0.1:4222 service info agents --json
 
 Type `rescan` in the manager terminal only when you want to force reconciliation now instead of waiting for event/poll discovery. If you send the prompt before starting this future-session manager, it is no longer future from that manager's point of view and will not be exposed unless you also enable `--auto-expose-current-sessions true`.
 
-`auto_expose_current_sessions` and `auto_expose_future_sessions` both default to `false`. Future-session watch mode listens for `thread/started` only as a wakeup, then reconciles `thread/loaded/list` plus `thread/list` before registering anything. Bounded polling catches missed events and restart gaps. While the manager is running, type `rescan` on stdin to trigger an immediate manual reconciliation.
+`auto_expose_current_sessions` and `auto_expose_future_sessions` both default to `false`. Future-session watch mode listens for `thread/started` only as a wakeup, then reconciles `thread/loaded/list` plus `thread/list` before registering anything. Bounded polling catches missed events and restart gaps. While the manager is running, type `rescan` on stdin to trigger an immediate manual reconciliation. If configured endpoints fail during discovery, the manager reports a redacted `endpoint errors` count without printing private endpoint paths.
+
+`SYNADIA_CODEX_ENDPOINT_AUTH` / `--endpoint-auth` is a single shared token applied to every configured manager endpoint. If different endpoints need different auth tokens, construct an `EndpointRegistry` programmatically and provide per-entry tokens.
 
 For each endpoint, the manager reconciles `thread/loaded/list` and `thread/list`, hides no-turn ephemeral loaded sessions by default, and requires both `thread/read` and `thread/resume` before registering a promptable NATS identity. It derives a safe public session token for each private Codex thread; that token is the last segment in subjects such as `agents.prompt.codex.local.<session-token>`.
 
@@ -187,6 +189,7 @@ The app-server lifecycle smoke initializes a real `codex app-server --listen std
 
 - Managed mode owns only the app-server process and thread it starts. It does not discover or control arbitrary Codex GUI/TUI sessions.
 - Session-manager mode only watches explicitly configured app-server endpoints; `auto_expose_current_sessions` and `auto_expose_future_sessions` are both opt-in.
+- The npm package is Bun-targeted and publishes TypeScript sources plus a Bun executable entry point; compiled JavaScript artifacts are not part of this package version.
 - Permission prompts default to deny/cancel for managed mode unless the adapter owns the active app-server callback path.
 - Attachments are rejected until Codex file/image ingestion is mapped end-to-end.
 - Public examples intentionally use safe session tokens and loopback NATS only; do not use raw Codex thread IDs, endpoints, socket paths, or credentials as subject tokens.

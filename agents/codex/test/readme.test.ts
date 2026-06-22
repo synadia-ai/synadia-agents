@@ -52,6 +52,9 @@ describe("README public claims", () => {
     expect(readme).toContain("nats --no-context --server nats://127.0.0.1:4222 service list");
     expect(readme).toContain("nats --no-context --server nats://127.0.0.1:4222 service info agents --json");
     expect(readme).toContain("Type `rescan` in the manager terminal only when you want to force reconciliation now");
+    expect(readme).toContain("reports a redacted `endpoint errors` count");
+    expect(readme).toContain("is a single shared token applied to every configured manager endpoint");
+    expect(readme).toContain("Bun-targeted and publishes TypeScript sources plus a Bun executable entry point");
     expect(readme).toContain("If you start the manager before creating any sessions, it should report zero sessions");
     expect(readme).toContain("Codex desktop app can start its own bundled `codex app-server`");
     expect(readme).toContain("private process-owned IPC");

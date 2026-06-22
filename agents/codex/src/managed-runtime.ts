@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CodexBridgeClient, CodexBridgeEvent, CodexPromptRequest } from "./bridge.js";
@@ -16,14 +16,18 @@ export interface ManagedCodexRuntimeOptions {
 
 export class ManagedCodexRuntime implements CodexBridgeClient {
   readonly mode = "managed" as const;
-  readonly codeHome: string;
+  codeHome: string | undefined;
   readonly #opts: ManagedCodexRuntimeOptions;
+  readonly #ownsCodeHome: boolean;
   #client: CodexAppServerClient | undefined;
 
   constructor(opts: ManagedCodexRuntimeOptions) {
     this.#opts = opts;
-    this.codeHome = resolve(opts.config.codex.codeHome ?? mkdtempSync(join(tmpdir(), "synadia-codex-home-")));
-    mkdirSync(this.codeHome, { recursive: true });
+    this.#ownsCodeHome = opts.config.codex.codeHome === undefined;
+    if (!this.#ownsCodeHome) {
+      this.codeHome = resolve(opts.config.codex.codeHome!);
+      mkdirSync(this.codeHome, { recursive: true });
+    }
   }
 
   get ready(): boolean { return this.#client !== undefined; }
@@ -32,10 +36,11 @@ export class ManagedCodexRuntime implements CodexBridgeClient {
 
   async start(): Promise<void> {
     if (this.#client) return;
+    const codeHome = this.#ensureCodeHome();
     const spawnOpts: { command: string; args?: readonly string[]; cwd: string; env: Record<string, string | undefined>; permissionTimeoutMs: number } = {
       command: this.#opts.command ?? this.#opts.config.codex.codexBin,
       cwd: this.#opts.cwd ?? process.cwd(),
-      env: { ...this.#opts.env, CODEX_HOME: this.codeHome },
+      env: { ...this.#opts.env, CODEX_HOME: codeHome },
       permissionTimeoutMs: this.#opts.permissionTimeoutMs ?? 30_000,
     };
     if (this.#opts.args !== undefined) spawnOpts.args = this.#opts.args;
@@ -66,5 +71,15 @@ export class ManagedCodexRuntime implements CodexBridgeClient {
   async close(): Promise<void> {
     await this.#client?.close();
     this.#client = undefined;
+    if (this.#ownsCodeHome && this.codeHome !== undefined) {
+      rmSync(this.codeHome, { recursive: true, force: true });
+      this.codeHome = undefined;
+    }
+  }
+
+  #ensureCodeHome(): string {
+    if (this.codeHome === undefined) this.codeHome = mkdtempSync(join(tmpdir(), "synadia-codex-home-"));
+    mkdirSync(this.codeHome, { recursive: true });
+    return this.codeHome;
   }
 }
