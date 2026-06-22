@@ -110,7 +110,7 @@ codex-agent start \
 
 If you start the manager before creating any sessions, it should report zero sessions. In that case, either create a session and type `rescan` in the manager terminal, or use future-session mode below.
 
-Start a manager that keeps current sessions private but exposes future eligible sessions on the same known endpoint set:
+Future-session mode is different: it keeps sessions that already existed at manager startup private and exposes sessions that become eligible after the manager is running. Start the manager first:
 
 ```sh
 codex-agent start \
@@ -120,6 +120,8 @@ codex-agent start \
   --auto-expose-future-sessions true \
   --manager-endpoints ws://127.0.0.1:8765
 ```
+
+Then create or open a `codex --remote ws://127.0.0.1:8765` session, send at least one prompt, and type `rescan` in the manager terminal if the session does not appear immediately. If you send the prompt before starting this future-session manager, it is no longer future from that manager's point of view and will not be exposed unless you also enable `--auto-expose-current-sessions true`.
 
 `auto_expose_current_sessions` and `auto_expose_future_sessions` both default to `false`. Future-session watch mode listens for `thread/started` only as a wakeup, then reconciles `thread/loaded/list` plus `thread/list` before registering anything. Bounded polling catches missed events and restart gaps. While the manager is running, type `rescan` on stdin to trigger an immediate manual reconciliation.
 
@@ -171,7 +173,7 @@ The app-server lifecycle smoke initializes a real `codex app-server --listen std
 - Protocol smoke cannot start NATS: install `nats-server`, or set `CODEX_SMOKE_USE_EXTERNAL_NATS=1` with `NATS_URL` pointing at a reachable server.
 - `codex-agent doctor` shows `Codex unavailable`: check that `codex` is on `PATH`, or pass `--codex-bin /absolute/path/to/codex`.
 - Managed prompts fail with `401 Unauthorized` from the model provider: managed mode uses an isolated generated `CODEX_HOME` unless configured. Either authenticate Codex in that isolated home, or pass `--code-home /path/to/an/already-authenticated/codex-home` for local testing.
-- Manager mode exposes no sessions: confirm `--manager-enabled true`, at least one configured endpoint, and either `--auto-expose-current-sessions true` or `--auto-expose-future-sessions true`. Manager mode never scans GUI windows, terminal sessions, or desktop state.
+- Manager mode exposes no sessions: confirm `--manager-enabled true`, at least one configured endpoint, and either `--auto-expose-current-sessions true` or `--auto-expose-future-sessions true`. Manager mode never scans GUI windows, terminal sessions, or desktop state. Current-session mode requires eligible sessions to already exist. Future-session mode requires the manager to be running first, then a Codex prompt/turn, then automatic reconciliation or manual `rescan`; if the prompt happened before future mode started, use current-session mode instead.
 - Prompts with attachments return `400`: this is expected for the current package; discovery advertises `attachments_ok=false` until Codex file/image ingestion is implemented end-to-end.
 
 ## Limitations
