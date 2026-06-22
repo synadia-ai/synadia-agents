@@ -77,6 +77,13 @@ The doctor reports `codex --version`, NATS source, computed prompt subject, max-
 
 Manager mode is opt-in and registry-driven. It exposes only Codex app-server endpoints you explicitly configure with `--manager-endpoints`, `SYNADIA_CODEX_MANAGER_ENDPOINTS`, `[manager].endpoints`, or the single `--endpoint`/`SYNADIA_CODEX_ENDPOINT` value. There is no ambient desktop scan.
 
+A manager endpoint is not something users should hunt for. Use one of these known endpoints:
+
+- macOS/Linux local daemon: start Codex remote control with `codex remote-control start`, then use `unix://${CODEX_HOME:-$HOME/.codex}/app-server-control/app-server-control.sock`.
+- Cross-platform/local TCP: start an explicit app server with `codex app-server --listen ws://127.0.0.1:8765`, then start Codex sessions with `codex --remote ws://127.0.0.1:8765` and point the manager at `ws://127.0.0.1:8765`.
+
+Use WebSocket endpoints on Windows; `unix://...` socket paths are Unix/macOS-only.
+
 Start a manager over known endpoints and expose already-eligible current sessions:
 
 ```sh
@@ -85,7 +92,7 @@ codex-agent start \
   --owner local \
   --manager-enabled true \
   --auto-expose-current-sessions true \
-  --manager-endpoints unix:///path/to/codex.sock
+  --manager-endpoints ws://127.0.0.1:8765
 ```
 
 Start a manager that keeps current sessions private but exposes future eligible sessions on the same known endpoint set:
@@ -96,7 +103,7 @@ codex-agent start \
   --owner local \
   --manager-enabled true \
   --auto-expose-future-sessions true \
-  --manager-endpoints unix:///path/to/codex.sock
+  --manager-endpoints ws://127.0.0.1:8765
 ```
 
 `auto_expose_current_sessions` and `auto_expose_future_sessions` both default to `false`. Future-session watch mode listens for `thread/started` only as a wakeup, then reconciles `thread/loaded/list` plus `thread/list` before registering anything. Bounded polling catches missed events and restart gaps. While the manager is running, type `rescan` on stdin to trigger an immediate manual reconciliation.

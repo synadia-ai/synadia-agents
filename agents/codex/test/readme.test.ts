@@ -38,4 +38,11 @@ describe("README public claims", () => {
     expect(readme).not.toContain("public alias");
     expect(readme).not.toContain("smoke:attached-endpoint");
   });
+
+  test("documents how to create known manager endpoints", () => {
+    expect(readme).toContain("codex app-server --listen ws://127.0.0.1:8765");
+    expect(readme).toContain("codex --remote ws://127.0.0.1:8765");
+    expect(readme).toContain("codex remote-control start");
+    expect(readme).toContain("Use WebSocket endpoints on Windows");
+  });
 });
