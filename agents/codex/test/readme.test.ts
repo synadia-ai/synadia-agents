@@ -41,6 +41,9 @@ describe("README public claims", () => {
 
   test("documents how to create known manager endpoints", () => {
     expect(readme).toContain("To use manager mode, first start or choose a Codex app-server endpoint");
+    expect(readme).toContain("create or load at least one Codex session on the endpoint first");
+    expect(readme).toContain("complete at least one turn");
+    expect(readme).toContain("If you start the manager before creating any sessions, it should report zero sessions");
     expect(readme).toContain("Codex desktop app can start its own bundled `codex app-server`");
     expect(readme).toContain("private process-owned IPC");
     expect(readme).toContain("codex app-server --listen ws://127.0.0.1:8765");

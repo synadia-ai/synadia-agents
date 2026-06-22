@@ -84,7 +84,19 @@ To use manager mode, first start or choose a Codex app-server endpoint. The Code
 
 Use WebSocket endpoints on Windows; `unix://...` socket paths are Unix/macOS-only.
 
-Start a manager over known endpoints and expose already-eligible current sessions:
+To expose current sessions, create or load at least one Codex session on the endpoint first. For example, keep the app-server running in one terminal:
+
+```sh
+codex app-server --listen ws://127.0.0.1:8765
+```
+
+Then connect Codex to that endpoint in another terminal and complete at least one turn:
+
+```sh
+codex --remote ws://127.0.0.1:8765
+```
+
+After the session exists on the endpoint, start a manager over the same endpoint and expose already-eligible current sessions:
 
 ```sh
 codex-agent start \
@@ -94,6 +106,8 @@ codex-agent start \
   --auto-expose-current-sessions true \
   --manager-endpoints ws://127.0.0.1:8765
 ```
+
+If you start the manager before creating any sessions, it should report zero sessions. In that case, either create a session and type `rescan` in the manager terminal, or use future-session mode below.
 
 Start a manager that keeps current sessions private but exposes future eligible sessions on the same known endpoint set:
 
