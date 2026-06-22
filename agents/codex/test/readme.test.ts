@@ -30,4 +30,12 @@ describe("README public claims", () => {
     expect(readme).toContain("nats --no-context --server nats://127.0.0.1:4222 req agents.status.codex.local.demo '' --replies=1 --timeout=5s");
     expect(readme).toContain("nats --no-context --server nats://127.0.0.1:4222 req agents.prompt.codex.local.demo 'say hello' --wait-for-empty");
   });
+
+  test("keeps low-UX attached-thread workflow out of public README", () => {
+    expect(readme).not.toMatch(/Attached endpoint mode|attached endpoint/i);
+    expect(readme).not.toContain("--thread-id");
+    expect(readme).not.toContain("--alias");
+    expect(readme).not.toContain("public alias");
+    expect(readme).not.toContain("smoke:attached-endpoint");
+  });
 });
