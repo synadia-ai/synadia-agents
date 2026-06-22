@@ -121,7 +121,14 @@ codex-agent start \
   --manager-endpoints ws://127.0.0.1:8765
 ```
 
-Then create or open a `codex --remote ws://127.0.0.1:8765` session, send at least one prompt, and type `rescan` in the manager terminal if the session does not appear immediately. If you send the prompt before starting this future-session manager, it is no longer future from that manager's point of view and will not be exposed unless you also enable `--auto-expose-current-sessions true`.
+Then create or open a `codex --remote ws://127.0.0.1:8765` session and send at least one prompt. When the manager reconciles that session, it creates a real `AgentService` immediately; you do not have to scrape manager stdout or type `rescan` before scripting against it. Discover exposed sessions through NATS:
+
+```sh
+nats --no-context --server nats://127.0.0.1:4222 service list
+nats --no-context --server nats://127.0.0.1:4222 service info agents --json
+```
+
+Type `rescan` in the manager terminal only when you want to force reconciliation now instead of waiting for event/poll discovery. If you send the prompt before starting this future-session manager, it is no longer future from that manager's point of view and will not be exposed unless you also enable `--auto-expose-current-sessions true`.
 
 `auto_expose_current_sessions` and `auto_expose_future_sessions` both default to `false`. Future-session watch mode listens for `thread/started` only as a wakeup, then reconciles `thread/loaded/list` plus `thread/list` before registering anything. Bounded polling catches missed events and restart gaps. While the manager is running, type `rescan` on stdin to trigger an immediate manual reconciliation.
 
