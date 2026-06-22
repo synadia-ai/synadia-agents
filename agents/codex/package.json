@@ -1,0 +1,65 @@
+{
+  "name": "@synadia-ai/codex-nats-channel",
+  "version": "0.1.0",
+  "description": "Synadia Agent Protocol for NATS adapter for Codex app-server-backed sessions.",
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "Apache-2.0",
+  "author": "Synadia Communications",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "agents/codex"
+  },
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agents/codex",
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "codex-agent": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    "CHANGELOG.md",
+    ".env.example"
+  ],
+  "scripts": {
+    "start": "bun src/cli.ts start",
+    "doctor": "bun src/cli.ts doctor",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "smoke:protocol": "bun scripts/protocol-smoke.ts",
+    "smoke:codex-appserver-lifecycle": "bun scripts/codex-appserver-lifecycle-smoke.ts",
+    "smoke:codex-fake-runtime": "bun scripts/codex-runtime-smoke.ts",
+    "smoke:codex-runtime": "bun run smoke:codex-appserver-lifecycle && bun run smoke:codex-fake-runtime",
+    "smoke:attached-endpoint": "bun scripts/attached-endpoint-smoke.ts",
+    "smoke:codex-session-manager": "bun scripts/codex-session-manager-smoke.ts",
+    "smoke:codex-future-watch": "bun scripts/codex-future-watch-smoke.ts",
+    "plugin:notify": "bun scripts/codex-plugin-hook.ts",
+    "smoke:codex-permission": "bun scripts/codex-permission-smoke.ts",
+    "manual:codex-live-approval": "bun scripts/live-codex-approval-harness.ts"
+  },
+  "dependencies": {
+    "@nats-io/nats-core": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
+    "@synadia-ai/agents": "^0.5.2",
+    "@synadia-ai/agent-service": "^0.5.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.16.0",
+    "typescript": "~5.6.0"
+  }
+}

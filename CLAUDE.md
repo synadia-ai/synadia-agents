@@ -65,6 +65,7 @@ compatibility between the two SDKs.
 | `agents/hermes/` | — | not in repo | README only; ships from upstream Hermes |
 | `agents/flue/` | `@synadia-ai/flue-nats-channel` | npm (public) | Flue sidecar channel |
 | `agents/opencode/` | `@synadia-ai/opencode-nats-channel` | npm (public) | OpenCode plugin channel |
+| `agents/codex/` | `@synadia-ai/codex-nats-channel` | npm (public) | Codex app-server-backed channel |
 | `examples/pi-headless/` | `@synadia-ai/nats-pi-headless` | npm (public) | depends on `@synadia-ai/agents@^0.5.x` |
 | `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | github only | local-clone test client; `private: true` so it never publishes |
 | `examples/dspy/` | `@synadia-ai/nats-dspy-agent` | private | uses `file:` link to local SDK |
@@ -243,7 +244,8 @@ token that doesn't surface the permissions sub-object at all.)
     `synadia-ai-agent-service` to PyPI on `python-agent-service-v*`
     tags.
 - **No automated TS publish workflow.** TS releases are manual (see
-  release ladder).
+  release ladder). The TypeScript agent CI workflow validates npm package
+  contents, but it does not publish `@synadia-ai/*` packages.
 - **`claude.yml`** runs the Claude reviewer bot on PRs. Treat its
   inline findings as review feedback to address before merge — they
   catch real issues (path traversal, missing test coverage, formatting

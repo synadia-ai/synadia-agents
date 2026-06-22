@@ -1,15 +1,16 @@
 name: CI — agents (TypeScript)
 
-# Runs the test suites for the TypeScript agent harnesses, which depend on
-# the TS SDKs via `file:` links — so SDK changes trigger this too, catching
-# cross-subtree regressions (e.g. an envelope-decode change breaking the pi
-# spec-compliance smoke).
+# Runs the test suites for the TypeScript agent harnesses. Packages that
+# consume the published TS SDKs use semver ranges; older packages may still
+# use local file links, so SDK changes trigger this workflow too.
 on:
   push:
     branches: [main]
     paths:
       - "agents/pi/**"
       - "agents/openclaw/**"
+      - "agents/opencode/**"
+      - "agents/codex/**"
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
       - ".github/workflows/agents-typescript.yml"
@@ -17,6 +18,8 @@ on:
     paths:
       - "agents/pi/**"
       - "agents/openclaw/**"
+      - "agents/opencode/**"
+      - "agents/codex/**"
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
       - ".github/workflows/agents-typescript.yml"
@@ -96,3 +99,122 @@ jobs:
       - name: Tests (account resolution + protocol + context loader)
         working-directory: agents/openclaw
         run: npm test
+
+  opencode:
+    name: agents/opencode (typecheck + package-safe smokes)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Build current client-sdk
+        working-directory: client-sdk/typescript
+        run: |
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk
+        working-directory: agent-sdk/typescript
+        run: |
+          # CI-only: replace the relative file: link with an absolute tgz so the packed agent-service artifact resolves after install.
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Install dependencies
+        working-directory: agents/opencode
+        run: |
+          bun install
+          npm install --no-save "$CLIENT_SDK_TGZ" "$AGENT_SDK_TGZ"
+      - name: Typecheck
+        working-directory: agents/opencode
+        run: bun run typecheck
+      - name: Unit tests
+        working-directory: agents/opencode
+        run: bun test
+      - name: Protocol smoke
+        working-directory: agents/opencode
+        run: bun run smoke:protocol
+      # `smoke:opencode-lifecycle` starts the real opencode binary; GitHub
+      # runners do not install OpenCode. Keep it as a local/manual gate.
+      - name: Plugin lifecycle smoke
+        working-directory: agents/opencode
+        run: bun run smoke:opencode-plugin-lifecycle
+      - name: Plugin permission smoke
+        working-directory: agents/opencode
+        run: bun run smoke:opencode-plugin-permission
+      - name: Package contents
+        working-directory: agents/opencode
+        run: npm pack --dry-run --json
+
+  codex:
+    name: agents/codex (typecheck + package-safe smokes)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Build current client-sdk
+        working-directory: client-sdk/typescript
+        run: |
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk
+        working-directory: agent-sdk/typescript
+        run: |
+          # CI-only: replace the relative file: link with an absolute tgz so the packed agent-service artifact resolves after install.
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Install dependencies
+        working-directory: agents/codex
+        run: |
+          bun install
+          npm install --no-save "$CLIENT_SDK_TGZ" "$AGENT_SDK_TGZ"
+      - name: Typecheck
+        working-directory: agents/codex
+        run: bun run typecheck
+      - name: Unit tests
+        working-directory: agents/codex
+        run: bun test
+      - name: Protocol smoke
+        working-directory: agents/codex
+        run: bun run smoke:protocol
+      # `smoke:codex-runtime` includes `codex app-server`; CI does not install
+      # Codex. Run the deterministic fake-runtime and manager smokes here, and
+      # keep the real app-server lifecycle as a local/manual validation gate.
+      - name: Fake runtime smoke
+        working-directory: agents/codex
+        run: bun run smoke:codex-fake-runtime
+      - name: Session manager smoke
+        working-directory: agents/codex
+        run: bun run smoke:codex-session-manager
+      - name: Future watch smoke
+        working-directory: agents/codex
+        run: bun run smoke:codex-future-watch
+      - name: Permission smoke
+        working-directory: agents/codex
+        run: bun run smoke:codex-permission
+      - name: Package contents
+        working-directory: agents/codex
+        run: npm pack --dry-run --json
