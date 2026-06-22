@@ -213,6 +213,7 @@ The app-server lifecycle smoke initializes a real `codex app-server --listen std
 - Non-loopback WebSocket endpoints fail preflight without auth: add `--endpoint-auth` or `SYNADIA_CODEX_ENDPOINT_AUTH`, or use a loopback Unix socket while developing locally.
 - Protocol smoke cannot start NATS: install `nats-server`, or set `CODEX_SMOKE_USE_EXTERNAL_NATS=1` with `NATS_URL` pointing at a reachable server.
 - `codex-agent doctor` shows `Codex unavailable`: check that `codex` is on `PATH`, or pass `--codex-bin /absolute/path/to/codex`.
+- Managed prompts fail with `401 Unauthorized` from the model provider: managed mode uses an isolated generated `CODEX_HOME` unless configured. Either authenticate Codex in that isolated home, or pass `--code-home /path/to/an/already-authenticated/codex-home` for local testing.
 - Manager mode exposes no sessions: confirm `--manager-enabled true`, at least one configured endpoint, and either `--auto-expose-current-sessions true` or `--auto-expose-future-sessions true`. Manager mode never scans GUI windows, terminal sessions, or desktop state.
 - Prompts with attachments return `400`: this is expected for the current package; discovery advertises `attachments_ok=false` until Codex file/image ingestion is implemented end-to-end.
 
