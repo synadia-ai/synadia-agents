@@ -124,6 +124,7 @@ jobs:
       - name: Build current agent-sdk
         working-directory: agent-sdk/typescript
         run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
           bun install
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
@@ -179,6 +180,7 @@ jobs:
       - name: Build current agent-sdk
         working-directory: agent-sdk/typescript
         run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
           bun install
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
