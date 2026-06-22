@@ -24,4 +24,10 @@ describe("README public claims", () => {
     expect(readme).not.toMatch(/\/Users\//);
     expect(readme).not.toMatch(/unix:\/\/\/(?:Users|var|tmp)\//);
   });
+
+  test("documents NATS CLI examples with correct reply semantics", () => {
+    expect(readme).toContain("nats --no-context --server nats://127.0.0.1:4222 req '$SRV.INFO.agents' '' --replies=1 --timeout=5s");
+    expect(readme).toContain("nats --no-context --server nats://127.0.0.1:4222 req agents.status.codex.local.demo '' --replies=1 --timeout=5s");
+    expect(readme).toContain("nats --no-context --server nats://127.0.0.1:4222 req agents.prompt.codex.local.demo 'say hello' --wait-for-empty");
+  });
 });

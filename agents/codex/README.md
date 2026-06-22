@@ -172,19 +172,19 @@ The registrar only records private metadata and wakes reconciliation. Plugin-ori
 Discover registered Codex agents:
 
 ```sh
-nats req '$SRV.INFO.agents' '' --wait-for-empty --reply-timeout=30s --timeout=5m
+nats --no-context --server nats://127.0.0.1:4222 req '$SRV.INFO.agents' '' --replies=1 --timeout=5s
 ```
 
 Prompt a managed or attached session:
 
 ```sh
-nats req agents.prompt.codex.local.demo 'say hello' --wait-for-empty --reply-timeout=30s --timeout=5m
+nats --no-context --server nats://127.0.0.1:4222 req agents.prompt.codex.local.demo 'say hello' --wait-for-empty --reply-timeout=30s --timeout=5m
 ```
 
 Read status:
 
 ```sh
-nats req agents.status.codex.local.demo '' --wait-for-empty --reply-timeout=30s --timeout=5m
+nats --no-context --server nats://127.0.0.1:4222 req agents.status.codex.local.demo '' --replies=1 --timeout=5s
 ```
 
 ## Validate
