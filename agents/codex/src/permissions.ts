@@ -1,5 +1,5 @@
 import type { JsonValue, ServerRequestHandlerInput } from "./codex-jsonrpc.js";
-import { defaultServerRequestResponse } from "./codex-jsonrpc.js";
+import { defaultServerRequestResponse, deniedPermissionsResponse } from "./codex-jsonrpc.js";
 import { redactPrivateText } from "./redaction.js";
 
 export interface CodexPermissionRequest {
@@ -76,7 +76,7 @@ export function responseFor(method: string, decision: "approve" | "deny" | "canc
   if (method === "item/permissions/requestApproval") {
     return decision === "approve"
       ? { permissions: {}, scope: "turn", strictAutoReview: true }
-      : null;
+      : deniedPermissionsResponse();
   }
   if (method === "item/tool/requestUserInput") return { answer: { type: "cancel" } };
   if (method === "mcpServer/elicitation/request") return { action: "cancel" };

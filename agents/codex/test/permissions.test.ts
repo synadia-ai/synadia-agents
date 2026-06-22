@@ -11,16 +11,16 @@ describe("Codex permission response mapping", () => {
 
   test("grants additional permissions only on approve", () => {
     expect(responseFor("item/permissions/requestApproval", "approve")).toEqual({ permissions: {}, scope: "turn", strictAutoReview: true });
-    expect(responseFor("item/permissions/requestApproval", "deny")).toBeNull();
-    expect(responseFor("item/permissions/requestApproval", "cancel")).toBeNull();
+    expect(responseFor("item/permissions/requestApproval", "deny")).toEqual({ permissions: {}, scope: "turn", strictAutoReview: false });
+    expect(responseFor("item/permissions/requestApproval", "cancel")).toEqual({ permissions: {}, scope: "turn", strictAutoReview: false });
   });
 
   test("default server request handling cancels permissions rather than granting access", () => {
-    expect(defaultServerRequestResponse("item/permissions/requestApproval")).toBeNull();
+    expect(defaultServerRequestResponse("item/permissions/requestApproval")).toEqual({ permissions: {}, scope: "turn", strictAutoReview: false });
   });
 
   test("resolvePermissionRequest defaults to cancel when no sink is configured", async () => {
-    await expect(resolvePermissionRequest({ method: "item/permissions/requestApproval", params: { reason: "more access" } })).resolves.toBeNull();
+    await expect(resolvePermissionRequest({ method: "item/permissions/requestApproval", params: { reason: "more access" } })).resolves.toEqual({ permissions: {}, scope: "turn", strictAutoReview: false });
   });
 
   test("permission prompts reuse shared private-value redaction", () => {

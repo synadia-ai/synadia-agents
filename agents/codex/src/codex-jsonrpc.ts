@@ -198,10 +198,14 @@ export class ChildProcessJsonRpcTransport implements JsonRpcTransport {
   }
 }
 
+const DENIED_PERMISSIONS_RESPONSE = { permissions: {}, scope: "turn", strictAutoReview: false } as const;
+
+export function deniedPermissionsResponse(): JsonValue { return DENIED_PERMISSIONS_RESPONSE; }
+
 export function defaultServerRequestResponse(method: string): JsonValue {
   if (method === "item/commandExecution/requestApproval") return { decision: "cancel" };
   if (method === "item/fileChange/requestApproval") return { decision: "cancel" };
-  if (method === "item/permissions/requestApproval") return null;
+  if (method === "item/permissions/requestApproval") return deniedPermissionsResponse();
   if (method === "item/tool/requestUserInput") return { answer: { type: "cancel" } };
   if (method === "mcpServer/elicitation/request") return { action: "cancel" };
   return null;
