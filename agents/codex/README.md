@@ -180,6 +180,9 @@ For optional live approval validation against a running Codex app-server endpoin
 ```sh
 CODEX_ENDPOINT=ws://127.0.0.1:8765 KEEP_HARNESS_ROOT=1 bun run manual:codex-live-approval -- deny
 CODEX_ENDPOINT=ws://127.0.0.1:8765 KEEP_HARNESS_ROOT=1 bun run manual:codex-live-approval -- approve
+
+# Or spawn a disposable stdio app-server instead of reusing a running endpoint:
+CODEX_ENDPOINT=spawn KEEP_HARNESS_ROOT=1 bun run manual:codex-live-approval -- deny
 ```
 
 This harness creates a scoped temporary `delete-me` directory, asks live Codex to run `rm -rf` on that path, and answers app-server approval requests through the adapter's real `responseFor()` mapping. Expected command-approval evidence is:
@@ -189,7 +192,7 @@ This harness creates a scoped temporary `delete-me` directory, asks live Codex t
 {"decision":"approve","approvalMethods":["item/commandExecution/requestApproval"],"approvalResponses":[{"decision":"accept"}],"targetExistsAfter":false}
 ```
 
-The live harness proves `item/commandExecution/requestApproval` approve/deny behavior against a real Codex app-server. It does not prove `item/permissions/requestApproval` unless that exact method appears in `approvalMethods`; for that permission-grant method, the adapter follows the Codex schema and uses an explicit empty grant object for deny/cancel.
+The live harness proves `item/commandExecution/requestApproval` approve/deny behavior against a real Codex app-server. `item/fileChange/requestApproval` uses the same accept/decline/cancel decision response shape and is routed through the same harness handler, but should only be claimed as live-tested when that exact method appears in `approvalMethods`. It does not prove `item/permissions/requestApproval` unless that exact method appears in `approvalMethods`; for that permission-grant method, the adapter follows the Codex schema and uses an explicit empty grant object for deny/cancel.
 
 The app-server lifecycle smoke initializes a real `codex app-server --listen stdio://` inside an isolated temporary `CODEX_HOME`; it proves the real Codex process and JSON-RPC initialize/initialized boundary without sending a model prompt. The fake-runtime smoke uses a deterministic fake app-server process to prove prompt/stream framing, text-delta streaming, managed lifecycle, and no empty response chunks without spending model tokens or requiring credentials. `smoke:codex-runtime` intentionally runs both checks so the final ladder contains real app-server process evidence plus deterministic fake-runtime prompt/stream evidence. Permission smokes use the same deterministic fake app-server process to prove default-deny permission handling. The session-manager smoke uses an explicit Unix-socket endpoint fixture to prove two eligible current sessions become separate discoverable NATS identities, duplicate inventory rows do not double-register, ineligible ephemeral no-turn sessions stay private, prompts are isolated, and public protocol surfaces stay redacted. The future-watch smoke starts with no exposed sessions, registers one future eligible thread exactly once, keeps a future non-eligible thread private, proves manual `rescan` idempotence, and verifies endpoint loss marks stale then removes the service.
 

@@ -40,11 +40,12 @@ describe("README public claims", () => {
   });
 
   test("documents live approval harness evidence boundaries", () => {
-    expect(readme).toContain("bun run manual:codex-live-approval -- deny");
+    expect(readme).toContain("CODEX_ENDPOINT=spawn KEEP_HARNESS_ROOT=1 bun run manual:codex-live-approval -- deny");
     expect(readme).toContain("answers app-server approval requests through the adapter's real `responseFor()` mapping");
     expect(readme).toContain('"approvalMethods":["item/commandExecution/requestApproval"]');
     expect(readme).toContain('"approvalResponses":[{"decision":"decline"}]');
     expect(readme).toContain('"approvalResponses":[{"decision":"accept"}]');
+    expect(readme).toContain("`item/fileChange/requestApproval` uses the same accept/decline/cancel decision response shape");
     expect(readme).toContain("It does not prove `item/permissions/requestApproval` unless that exact method appears in `approvalMethods`");
     expect(readme).toContain("uses an explicit empty grant object for deny/cancel");
   });
