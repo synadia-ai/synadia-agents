@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ManagedCodexRuntime } from "../src/managed-runtime.js";
 import type { CodexChannelConfig } from "../src/config.js";
 
@@ -25,6 +27,24 @@ describe("ManagedCodexRuntime", () => {
       const codeHome = runtime.codeHome;
       await runtime.close();
       if (codeHome) expect(existsSync(codeHome)).toBe(false);
+    }
+  });
+
+  test("creates user-supplied CODEX_HOME on start and does not delete it on close", async () => {
+    const root = mkdtempSync(join(tmpdir(), "managed-codex-user-home-test-"));
+    const codeHome = join(root, "existing-auth-home");
+    const base = config();
+    const cfg: CodexChannelConfig = { ...base, codex: { ...base.codex, codeHome } };
+    const runtime = new ManagedCodexRuntime({ config: cfg, command: "bun", args: ["scripts/fake-codex-app-server.ts"], cwd: process.cwd() });
+    expect(runtime.codeHome).toBe(codeHome);
+    expect(existsSync(codeHome)).toBe(false);
+    try {
+      await runtime.start();
+      expect(existsSync(codeHome)).toBe(true);
+    } finally {
+      await runtime.close();
+      expect(existsSync(codeHome)).toBe(true);
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

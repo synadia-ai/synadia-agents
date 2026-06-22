@@ -26,7 +26,6 @@ export class ManagedCodexRuntime implements CodexBridgeClient {
     this.#ownsCodeHome = opts.config.codex.codeHome === undefined;
     if (!this.#ownsCodeHome) {
       this.codeHome = resolve(opts.config.codex.codeHome!);
-      mkdirSync(this.codeHome, { recursive: true });
     }
   }
 

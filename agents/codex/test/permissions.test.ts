@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { defaultServerRequestResponse } from "../src/codex-jsonrpc.js";
 import { permissionPrompt, responseFor, resolvePermissionRequest } from "../src/permissions.js";
 
 describe("Codex permission response mapping", () => {
@@ -12,6 +13,10 @@ describe("Codex permission response mapping", () => {
     expect(responseFor("item/permissions/requestApproval", "approve")).toEqual({ permissions: {}, scope: "turn", strictAutoReview: true });
     expect(responseFor("item/permissions/requestApproval", "deny")).toBeNull();
     expect(responseFor("item/permissions/requestApproval", "cancel")).toBeNull();
+  });
+
+  test("default server request handling cancels permissions rather than granting access", () => {
+    expect(defaultServerRequestResponse("item/permissions/requestApproval")).toBeNull();
   });
 
   test("resolvePermissionRequest defaults to cancel when no sink is configured", async () => {
