@@ -210,9 +210,12 @@ export class CodexAppServerClient {
 
 function asThreadList(value: JsonValue, field: string): JsonObject[] {
   const obj = asObject(value, field);
-  const threads = obj.threads;
-  if (!Array.isArray(threads)) throw new Error(`${field}.threads must be an array`);
-  return threads.map((thread, index) => asObject(thread, `${field}.threads[${index}]`));
+  const threads = obj.threads ?? obj.data;
+  if (!Array.isArray(threads)) throw new Error(`${field}.threads/data must be an array`);
+  return threads.map((thread, index) => {
+    if (typeof thread === "string" && thread.length > 0) return { id: thread };
+    return asObject(thread, `${field}.threads[${index}]`);
+  });
 }
 
 function mapNotification(notification: JsonRpcNotification, threadId: string, turnId: string): CodexTurnStreamEvent | null {

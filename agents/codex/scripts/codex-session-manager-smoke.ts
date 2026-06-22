@@ -232,7 +232,7 @@ function serveJsonRpcSocket(socket: Socket, threads: Map<string, Record<string, 
       const message = JSON.parse(line);
       if (message.method === "initialize") send(socket, { id: message.id, result: { userAgent: "fake-manager/0.1", codexHome: "/tmp/fake", platformFamily: "unix", platformOs: "macos" } });
       else if (message.method === "initialized") {}
-      else if (message.method === "thread/loaded/list") send(socket, { id: message.id, result: { threads: [threads.get("thread-fixture-alpha"), threads.get("thread-fixture-empty")].filter(Boolean) } });
+      else if (message.method === "thread/loaded/list") send(socket, { id: message.id, result: { threads: [threads.get("thread-fixture-alpha"), threads.get("thread-fixture-beta"), threads.get("thread-fixture-empty")].filter(Boolean) } });
       else if (message.method === "thread/list") send(socket, { id: message.id, result: { threads: [...threads.values()].filter((value) => value.id !== "thread-fixture-empty") } });
       else if (message.method === "thread/read") {
         const row = threads.get(message.params.threadId);

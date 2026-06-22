@@ -74,7 +74,8 @@ function serveJsonRpcSocket(socket: Socket): void {
       const message = JSON.parse(line);
       if (message.method === "initialize") send(socket, { id: message.id, result: { userAgent: "fake-attached/0.1", codexHome: "/tmp/fake", platformFamily: "unix", platformOs: "macos" } });
       else if (message.method === "initialized") {}
-      else if (message.method === "thread/loaded/list" || message.method === "thread/list") send(socket, { id: message.id, result: { threads: [thread()] } });
+      else if (message.method === "thread/loaded/list") send(socket, { id: message.id, result: { data: ["private-thread"] } });
+      else if (message.method === "thread/list") send(socket, { id: message.id, result: { data: [thread()] } });
       else if (message.method === "thread/read") send(socket, { id: message.id, result: { thread: thread() } });
       else if (message.method === "thread/resume") send(socket, { id: message.id, result: { thread: thread(), approvalPolicy: "never", approvalsReviewer: "user" } });
       else if (message.method === "turn/start") {

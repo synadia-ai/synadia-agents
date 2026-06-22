@@ -18,7 +18,7 @@ export interface EligibleSessionRow extends InventoryThreadRow {
   readonly eligible: boolean;
   readonly readOk: boolean;
   readonly resumeOk: boolean;
-  readonly reason: "eligible" | "hidden-ephemeral-no-turn" | "read-failed" | "resume-failed";
+  readonly reason: "eligible" | "not-loaded" | "hidden-ephemeral-no-turn" | "read-failed" | "resume-failed";
   readonly error?: string;
 }
 
@@ -76,7 +76,11 @@ export async function discoverEndpointSessions(input: {
   const rows = reconcileThreadInventory({ endpoint: input.endpoint, loaded, listed });
   const out: EligibleSessionRow[] = [];
   for (const row of rows) {
-    if (row.loaded && row.ephemeral && row.turnCount === 0 && !input.manager.exposeEphemeralLoadedSessions) {
+    if (!row.loaded) {
+      out.push({ ...row, eligible: false, readOk: false, resumeOk: false, reason: "not-loaded" });
+      continue;
+    }
+    if (row.ephemeral && row.turnCount === 0 && !input.manager.exposeEphemeralLoadedSessions) {
       out.push({ ...row, eligible: false, readOk: false, resumeOk: false, reason: "hidden-ephemeral-no-turn" });
       continue;
     }
