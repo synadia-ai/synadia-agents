@@ -2,13 +2,13 @@
 
 **SDKs and ready-to-run agent plugins for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs).**
 
-The Synadia Agent Protocol for NATS lets any AI agent — OpenCode, Claude Code, OpenClaw, PI, Hermes, Flue, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official **caller** and **host** SDKs (TypeScript and Python — see [SDKs](#sdks) below), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
+The Synadia Agent Protocol for NATS lets any AI agent — Codex, OpenCode, Claude Code, OpenClaw, PI, Hermes, Flue, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official **caller** and **host** SDKs (TypeScript and Python — see [SDKs](#sdks) below), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
 
 ## Get started — pick your path
 
 | You want to… | Go to | Install |
 | --- | --- | --- |
-| **Put an existing AI agent on NATS** (OpenCode, Claude Code, OpenClaw, PI, Hermes, DeerFlow, Flue, DSPy ReAct) | [`agents/`](agents/) — pick the agent | per-agent README |
+| **Put an existing AI agent on NATS** (Codex, OpenCode, Claude Code, OpenClaw, PI, Hermes, DeerFlow, Flue, DSPy ReAct) | [`agents/`](agents/) — pick the agent | per-agent README |
 | **Build a caller** that discovers and prompts agents | [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/) | `npm i @synadia-ai/agents` · `pip install synadia-ai-agents` |
 | **Host a brand-new agent** built from scratch | [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/) | `npm i @synadia-ai/agent-service` · `pip install synadia-ai-agent-service` |
 | **See full end-to-end demos** — browser UI, session controllers, from-scratch agents | [`examples/`](examples/) | per-example README |
@@ -27,6 +27,7 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [Flue](agents/flue/) | `flue` | `@synadia-ai/flue-nats-channel` — sidecar for a running Flue app / agent |
 | [open-agent](agents/open-agent/) | `open-agent` | `@synadia-ai/open-agent` (private) — inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
 | [OpenCode](agents/opencode/) | `opencode` | `@synadia-ai/opencode-nats-channel` — OpenCode plugin that registers projects as NATS agents |
+| [Codex](agents/codex/) | `codex` | `@synadia-ai/codex-nats-channel` — Codex app-server-backed channel for managed or attached sessions |
 | [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 
 Subjects follow a verb-first pattern: `agents.{verb}.{token}.{owner}.{session}` where `verb` is `prompt`, `hb`, or `status`.
@@ -167,7 +168,8 @@ synadia-agents/
 │   ├── deerflow/
 │   ├── flue/
 │   ├── open-agent/              ← inbound bridge for vercel-labs/open-agents
-│   └── opencode/                ← managed/attached OpenCode server bridge
+│   ├── opencode/                ← OpenCode plugin channel
+│   └── codex/                   ← Codex app-server-backed channel
 └── examples/              ← apps built with the SDKs (callers and agents)
     ├── agent-web-ui/             ← Vue 3 + Bun browser client
     ├── claude-code-headless/     ← spawn/stop many Claude Code sessions
