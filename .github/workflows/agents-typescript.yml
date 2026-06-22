@@ -114,9 +114,25 @@ jobs:
           tar -xzf nats-server.tar.gz --strip-components=1
           sudo mv nats-server /usr/local/bin/
           nats-server --version
+      - name: Build current client-sdk
+        working-directory: client-sdk/typescript
+        run: |
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk
+        working-directory: agent-sdk/typescript
+        run: |
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
       - name: Install dependencies
         working-directory: agents/opencode
-        run: bun install
+        run: |
+          bun install
+          npm install --no-save "$CLIENT_SDK_TGZ" "$AGENT_SDK_TGZ"
       - name: Typecheck
         working-directory: agents/opencode
         run: bun run typecheck
@@ -153,9 +169,25 @@ jobs:
           tar -xzf nats-server.tar.gz --strip-components=1
           sudo mv nats-server /usr/local/bin/
           nats-server --version
+      - name: Build current client-sdk
+        working-directory: client-sdk/typescript
+        run: |
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk
+        working-directory: agent-sdk/typescript
+        run: |
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
       - name: Install dependencies
         working-directory: agents/codex
-        run: bun install
+        run: |
+          bun install
+          npm install --no-save "$CLIENT_SDK_TGZ" "$AGENT_SDK_TGZ"
       - name: Typecheck
         working-directory: agents/codex
         run: bun run typecheck
