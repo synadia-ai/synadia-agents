@@ -26,7 +26,7 @@
 //
 // Supported context fields: `url`, `creds` (path), `nkey` (path),
 // `user_jwt` (+ optional `user_seed` for nonce signing), `user`+`password`,
-// `token`, `inbox_prefix`, plus the TLS triple `cert`/`key`/`ca` and
+// `token`, `inbox_prefix`, plus the TLS file triple `cert`/`key`/`ca` and
 // `tls_first`.
 // Skipped: `nsc` integration.
 //
@@ -120,16 +120,16 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
   }
 
   // Optional TLS triple. `nats context add --tlscert/--tlskey/--tlsca`
-  // writes file paths; `--tlsfirst` toggles handshake-first.
+  // writes file paths; load them into standard node:tls options.
   const cert = str(parsed["cert"]);
   const key = str(parsed["key"]);
   const ca = str(parsed["ca"]);
   const tlsFirst = parsed["tls_first"];
   if (cert || key || ca || tlsFirst === true) {
     const tls: NonNullable<NodeConnectionOptions["tls"]> = {};
-    if (cert) tls.certFile = expandHome(cert);
-    if (key) tls.keyFile = expandHome(key);
-    if (ca) tls.caFile = expandHome(ca);
+    if (cert) tls.cert = await readTlsFile("cert", expandHome(cert));
+    if (key) tls.key = await readTlsFile("key", expandHome(key));
+    if (ca) tls.ca = await readTlsFile("ca", expandHome(ca));
     if (tlsFirst === true) tls.handshakeFirst = true;
     opts.tls = tls;
   }
@@ -143,6 +143,16 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
 /** Expand a leading `~/` to `$HOME/`. */
 function expandHome(path: string): string {
   return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
+}
+
+async function readTlsFile(field: string, path: string): Promise<string> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    throw new NatsContextError(`failed to read TLS ${field} file ${path}`, {
+      cause: error,
+    });
+  }
 }
 
 /**
