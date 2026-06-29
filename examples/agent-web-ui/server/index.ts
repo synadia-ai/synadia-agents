@@ -52,6 +52,7 @@ const distDir = join(import.meta.dir, "..", "dist");
 const sdkVersionString = formatSdkProtocolVersion(SDK_PROTOCOL_VERSION);
 
 const server = Bun.serve<BridgeWsData>({
+  ...(config.host ? { hostname: config.host } : {}),
   port: config.port,
   async fetch(req, srv) {
     const url = new URL(req.url);
@@ -106,7 +107,9 @@ const server = Bun.serve<BridgeWsData>({
   },
 });
 
-console.log(`[testui] listening on http://localhost:${server.port} (sdk protocol ${sdkVersionString})`);
+console.log(
+  `[testui] listening on http://${config.host ?? "localhost"}:${server.port} (sdk protocol ${sdkVersionString})`,
+);
 if (config.dev) {
   console.log(`[testui] dev mode — open http://localhost:5173 (Vite)`);
 } else if (!existsSync(distDir)) {

@@ -189,21 +189,41 @@ describe("loadContextOptions", () => {
     expect(opts.token).toBeUndefined();
   });
 
-  it("populates the TLS triple when cert/key/ca/tls_first are present", async () => {
+  it("loads the TLS triple when cert/key/ca/tls_first are present", async () => {
+    const certPath = join(baseDir, "client.pem");
+    const keyPath = join(baseDir, "client.key");
+    const caPath = join(baseDir, "ca.pem");
+    await writeFile(certPath, "client-cert");
+    await writeFile(keyPath, "client-key");
+    await writeFile(caPath, "ca-cert");
     await writeContext("with-tls", {
       url: "tls://nats.example.com:4222",
-      cert: "/etc/ssl/client.pem",
-      key: "/etc/ssl/client.key",
-      ca: "/etc/ssl/ca.pem",
+      cert: certPath,
+      key: keyPath,
+      ca: caPath,
       tls_first: true,
     });
     const opts = await loadContextOptions("with-tls");
     expect(opts.tls).toEqual({
-      certFile: "/etc/ssl/client.pem",
-      keyFile: "/etc/ssl/client.key",
-      caFile: "/etc/ssl/ca.pem",
+      cert: "client-cert",
+      key: "client-key",
+      ca: "ca-cert",
       handshakeFirst: true,
     });
+  });
+
+  it("wraps TLS file read failures", async () => {
+    const certPath = join(baseDir, "missing-client.pem");
+    await writeContext("missing-tls", {
+      url: "tls://nats.example.com:4222",
+      cert: certPath,
+    });
+    await expect(loadContextOptions("missing-tls")).rejects.toThrow(
+      NatsContextError,
+    );
+    await expect(loadContextOptions("missing-tls")).rejects.toThrow(
+      `failed to read TLS cert file ${certPath}`,
+    );
   });
 
   it("leaves TLS undefined when none of cert/key/ca/tls_first are set", async () => {

@@ -1,9 +1,10 @@
 // CLI + env parser. Flags beat env beats defaults.
 //
-//   bun run server/index.ts [--port 3300] [--context current]
-//                           [--servers nats://...] [--dev]
+//   bun run server/index.ts [--host 127.0.0.1] [--port 3300]
+//                           [--context current] [--servers nats://...] [--dev]
 
 export type ServerConfig = {
+  host?: string;
   port: number;
   context?: string;
   servers?: string;
@@ -25,6 +26,8 @@ export function parseConfig(argv: string[]): ServerConfig {
   };
   const hasFlag = (name: string): boolean => args.includes(name);
 
+  const host = pickFlag("--host") ?? process.env["AGENT_WEB_UI_HOST"];
+
   const portRaw = pickFlag("--port") ?? process.env["PORT"];
   const port = portRaw ? Number.parseInt(portRaw, 10) : 3300;
   if (!Number.isFinite(port) || port <= 0 || port > 65535) {
@@ -42,5 +45,5 @@ export function parseConfig(argv: string[]): ServerConfig {
     ? undefined
     : (contextFlag ?? process.env["NATS_CONTEXT"] ?? "current");
 
-  return { port, context, servers, dev };
+  return { host, port, context, servers, dev };
 }
