@@ -8,6 +8,7 @@ import { Agents, parseNatsUrl } from "@synadia-ai/agents";
 const NATS_URL = process.env.NATS_URL ?? "nats://127.0.0.1:4222";
 const PROMPT = process.argv.slice(2).join(" ") || "checkout is slow — investigate and fix.";
 const APPROVE = process.env.APPROVE ?? "yes";
+const AGENT = process.env.AGENT ?? "durable-sre"; // e.g. AGENT=durable-coder to reach the coding agent
 
 const nc = await connect(parseNatsUrl(NATS_URL));
 const agents = new Agents({ nc });
@@ -16,11 +17,11 @@ try {
   let agent: Awaited<ReturnType<typeof agents.discover>>[number] | undefined;
   for (let i = 0; i < 20 && !agent; i++) {
     const found = await agents.discover();
-    agent = found.find((a) => a.agent === "durable-sre") ?? found[0];
+    agent = found.find((a) => a.agent === AGENT) ?? found[0];
     if (!agent) await new Promise((r) => setTimeout(r, 500));
   }
   if (!agent) {
-    console.error("no durable-sre agent found — is `bun run src/sre/serve.ts` running?");
+    console.error(`no "${AGENT}" agent found — is the matching serve process running?`);
     process.exit(2);
   }
   console.log(`prompting ${agent.agent}/${agent.owner}/${agent.name}:\n  "${PROMPT}"\n`);

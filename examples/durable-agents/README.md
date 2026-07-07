@@ -18,6 +18,7 @@ durable function.
 | --- | --- | --- |
 | [`src/minimal/`](./src/minimal) | **Durability in ~10 lines** — a plain agent loop made durable with nothing but two `yield* ctx.run(...)` wraps. Native Resonate SDK, no abstraction. | none |
 | [`src/sre/`](./src/sre) | A concrete **SRE agent** (metrics → restart-with-approval → notify) on a thin **durable-execution abstraction**, run as a real Synadia agent with human approval surfaced as an in-chat query. | NATS + resonate-on-nats |
+| [`src/coding/`](./src/coding) | A **coding agent** ("durable Claude Code") — the _same_ abstraction, a different tool-set: sandboxed read/list/grep/write + an approval-gated `run_bash`. Proves "one loop, many agents." | NATS + resonate-on-nats |
 | [`src/crash/`](./src/crash) | The **crash-replay proof** — kill a worker mid-task, restart it, and verify the pre-crash model turn + tool were replayed, not re-run. | NATS + resonate-on-nats |
 
 ## The one idea
@@ -85,6 +86,23 @@ LLM_BACKEND=ollama OLLAMA_MODEL=gpt-oss:latest bun run sre:serve
 Once `sre:serve` is running, the agent also shows up in [`../agent-web-ui`](../agent-web-ui) with zero
 config — prompt it there and answer the approval as an in-chat allow/deny query.
 
+### The coding agent ("durable Claude Code")
+
+The _same_ core, a different tool-set — sandboxed fs ops plus an approval-gated `run_bash`:
+
+```sh
+bun run coder:offline                                        # deterministic smoke (no infra)
+
+bun run coder:serve                                          # a real Synadia agent on NATS
+AGENT=durable-coder bun run prompt "add hello.py and run it" # in another terminal
+
+# …or with a real local coding model:
+LLM_BACKEND=ollama OLLAMA_MODEL=qwen3.6:35b-mlx bun run coder:serve
+```
+
+Kill `coder:serve` mid-task and restart it (same group) and the run resumes from the journal exactly
+like the crash-replay proof below — a completed `write_file` or `run_bash` never re-fires.
+
 ### The crash-replay proof (the headline)
 
 ```sh
@@ -116,13 +134,12 @@ src/
   core/
     effects.ts         engine-neutral agentLoop + types
     resonate.ts        driveResonate — the only Resonate-aware code
+    subjects.ts        shared NATS subjects (the approval side-channel)
     llm.ts             LLM client — deterministic stub + OpenRouter + Ollama
     frontdoor.ts       AgentService front-door + approval-as-query bridge
-  sre/
-    agent.ts           SRE tools + system prompt + offline script
-    index.ts           offline smoke (in-memory)
-    serve.ts           the real agent: Resonate over NATS + front-door
-  caller.ts            a tiny client: discover → prompt → auto-approve
+  sre/                 the SRE agent — tools + prompt + offline smoke + serve
+  coding/              the coding agent — same core, fs tools + approval-gated run_bash
+  caller.ts            a tiny client: discover → prompt → auto-approve (AGENT=… picks one)
   crash/
     worker.ts          headless durable worker (crashes in phase 1, resumes in phase 2)
     demo.ts            orchestrates + verifies the crash-replay proof

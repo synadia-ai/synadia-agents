@@ -11,6 +11,8 @@
     "minimal": "bun run src/minimal/index.ts",
     "sre:offline": "bun run src/sre/index.ts",
     "sre:serve": "bun run src/sre/serve.ts",
+    "coder:offline": "bun run src/coding/index.ts",
+    "coder:serve": "bun run src/coding/serve.ts",
     "prompt": "bun run src/caller.ts",
     "crash": "bun run src/crash/demo.ts",
     "typecheck": "tsc --noEmit"
