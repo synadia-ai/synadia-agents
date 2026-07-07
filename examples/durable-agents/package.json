@@ -1,0 +1,30 @@
+{
+  "name": "@synadia-ai/nats-durable-agents",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Durable AI agents on NATS with the Resonate SDK — every LLM call and tool call is a durable step, so an agent survives a crash without re-calling the model or re-firing a side effect.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "minimal": "bun run src/minimal/index.ts",
+    "sre:offline": "bun run src/sre/index.ts",
+    "sre:serve": "bun run src/sre/serve.ts",
+    "coder:offline": "bun run src/coding/index.ts",
+    "coder:serve": "bun run src/coding/serve.ts",
+    "prompt": "bun run src/caller.ts",
+    "crash": "bun run src/crash/demo.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nats-io/transport-node": "^3.4.0",
+    "@resonatehq/sdk": "0.10.4",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}
