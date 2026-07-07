@@ -16,9 +16,10 @@ import { connect } from "@nats-io/transport-node";
 import { type Context, NatsNetwork, Resonate } from "@resonatehq/sdk";
 import { parseNatsUrl } from "@synadia-ai/agents";
 import { agentLoop } from "../core/effects";
-import { approvalSubject, serveAgent } from "../core/frontdoor";
+import { serveAgent } from "../core/frontdoor";
 import { createLlm } from "../core/llm";
 import { driveResonate, type Notify } from "../core/resonate";
+import { approvalSubject } from "../core/subjects";
 import { sreStub, sreSystem, sreTools } from "./agent";
 
 const NATS_URL = process.env.NATS_URL ?? "nats://127.0.0.1:4222";

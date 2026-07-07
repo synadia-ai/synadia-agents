@@ -9,9 +9,7 @@ import type { NatsConnection } from "@nats-io/transport-node";
 import { Codec, type Resonate } from "@resonatehq/sdk";
 import { AgentService } from "@synadia-ai/agent-service";
 import type { AgentResult } from "./effects";
-
-/** Subject a parked approval is announced on, so the front-door can raise an in-chat query. */
-export const approvalSubject = (runId: string): string => `de-agent.approval.${runId}`;
+import { approvalSubject } from "./subjects";
 
 export interface ServeConfig {
   nc: NatsConnection;
@@ -52,23 +50,29 @@ export async function serveAgent(cfg: ServeConfig): Promise<AgentService> {
       callback: (err, msg) => {
         if (err) return;
         void (async () => {
-          const { promiseId, ask } = JSON.parse(msg.string()) as {
-            awaitName: string;
-            promiseId: string;
-            ask?: { name?: string; args?: unknown };
-          };
-          let approved = false;
           try {
-            const reply = await response.ask(
-              `⏸ Approve \`${ask?.name}(${JSON.stringify(ask?.args ?? {})})\`? (yes/no)`,
-              { timeoutMs: cfg.approvalTimeoutMs ?? 5 * 60_000 },
-            );
-            approved = /^\s*(y|yes|approve|allow|ok|true)\b/i.test(reply.prompt ?? "");
-          } catch {
-            approved = false; // timeout ⇒ deny
+            const { promiseId, ask } = JSON.parse(msg.string()) as {
+              promiseId: string;
+              ask?: { name?: string; args?: unknown };
+            };
+            let approved = false;
+            try {
+              const reply = await response.ask(
+                `⏸ Approve \`${ask?.name}(${JSON.stringify(ask?.args ?? {})})\`? (yes/no)`,
+                { timeoutMs: cfg.approvalTimeoutMs ?? 5 * 60_000 },
+              );
+              approved = /^\s*(y|yes|approve|allow|ok|true)\b/i.test(reply.prompt ?? "");
+            } catch {
+              approved = false; // no reply in time ⇒ deny
+            }
+            await cfg.resonate.promises.resolve(promiseId, codec.encode({ approved }));
+            await response.send({ type: "status", status: approved ? "✅ approved" : "🚫 denied" });
+          } catch (e) {
+            // resolve()/send() can throw (promise already settled, stream closed). The durable
+            // ctx.await gate is still the source of truth — just never let this become a silent
+            // unhandled rejection that hides an approval failure.
+            console.error(`[frontdoor] approval bridge error: ${e instanceof Error ? e.message : String(e)}`);
           }
-          await cfg.resonate.promises.resolve(promiseId, codec.encode({ approved }));
-          await response.send({ type: "status", status: approved ? "✅ approved" : "🚫 denied" });
         })();
       },
     });

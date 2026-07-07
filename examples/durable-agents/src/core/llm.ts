@@ -90,7 +90,19 @@ function wireMessages(messages: ChatMessage[], withIds: boolean): unknown[] {
   });
 }
 
-let synthId = 0;
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 60_000);
+
+/** fetch with an AbortController timeout, so a hung model can't stall a durable step forever. */
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LLM_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function asArgs(raw: unknown): Record<string, unknown> {
   if (typeof raw === "string") {
     try {
@@ -111,10 +123,11 @@ interface OpenAiMessage {
 function openRouter(apiKey: string): LlmClient {
   const model = process.env.OPENROUTER_MODEL ?? "openai/gpt-4o-mini";
   const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+  let synthId = 0;
   return {
     label: `openrouter/${model}`,
     async decide(messages, tools) {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const res = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers,
         body: JSON.stringify({ model, messages: wireMessages(messages, true), tools: toolSchema(tools), stream: false }),
@@ -141,10 +154,11 @@ interface OllamaMessage {
 function ollama(): LlmClient {
   const url = process.env.OLLAMA_URL ?? "http://localhost:11434";
   const model = process.env.OLLAMA_MODEL ?? "llama3.1:8b";
+  let synthId = 0;
   return {
     label: `ollama/${model}`,
     async decide(messages, tools) {
-      const res = await fetch(`${url}/api/chat`, {
+      const res = await fetchWithTimeout(`${url}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, messages: wireMessages(messages, false), tools: toolSchema(tools), stream: false }),

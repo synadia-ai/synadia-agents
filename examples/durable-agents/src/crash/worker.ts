@@ -16,6 +16,7 @@ import { parseNatsUrl } from "@synadia-ai/agents";
 import { agentLoop } from "../core/effects";
 import { createLlm, type LlmClient } from "../core/llm";
 import { driveResonate, type Notify } from "../core/resonate";
+import { approvalSubject } from "../core/subjects";
 import { sreStub, sreSystem, sreTools } from "../sre/agent";
 
 const PHASE = process.env.PHASE ?? "1";
@@ -23,7 +24,6 @@ const RUN_ID = process.env.RUN_ID ?? "sre-crash-1";
 const NATS_URL = process.env.NATS_URL ?? "nats://127.0.0.1:4222";
 const EXEC_LOG = process.env.EXEC_LOG ?? "/tmp/de-crash-exec.jsonl";
 const GROUP = "sre-crash";
-const approvalSubject = (runId: string): string => `de-agent.approval.${runId}`; // same as the front-door
 
 const logExec = (kind: string, name: string): void =>
   appendFileSync(EXEC_LOG, `${JSON.stringify({ phase: PHASE, kind, name })}\n`);
@@ -64,7 +64,8 @@ resonate.register("sre-agent", function* (ctx: Context, input: { prompt: string 
     notify,
     {
       afterStep: (name) => {
-        // Phase 1: crash the instant get_metrics (tool-0-0) is journaled — a clean mid-run death.
+        // Phase 1: crash the instant get_metrics is journaled — a clean mid-run death. "tool-0-0" is
+        // the name effects.ts gives the first tool call (step 0, index 0); keep in sync with that scheme.
         if (PHASE === "1" && name === "tool-0-0") {
           console.log(`[phase 1] 💥 crashing right after ${name} (already journaled) — simulating worker death`);
           process.exit(137);
