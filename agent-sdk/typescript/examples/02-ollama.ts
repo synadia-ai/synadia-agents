@@ -5,6 +5,12 @@
 // identical — only the `onPrompt` body changes. Tokens are streamed back to
 // the caller as they arrive, so the front-end sees the answer render live.
 //
+// The completion rides Ollama's OpenAI-compatible endpoint
+// (`/v1/chat/completions`, SSE) rather than the native `/api/generate` — so
+// `OLLAMA_URL` accepts anything that speaks that wire shape: a local Ollama
+// (the default), or an OpenAI-style metering/audit proxy sitting in front of
+// one (e.g. a synadia-model-proxy per-agent identity URL).
+//
 // Prerequisites: a local Ollama (https://ollama.com) with the model pulled:
 //   ollama pull llama3.2
 //
@@ -17,24 +23,30 @@ import { connect as natsConnect } from "@nats-io/transport-node";
 import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
 
-// Which model to prompt, and where Ollama lives. Override either from the
-// environment, or just edit the defaults below.
+// Which model to prompt, and where the OpenAI-compatible endpoint lives.
+// Override either from the environment, or just edit the defaults below.
 const MODEL = process.env["OLLAMA_MODEL"] ?? "llama3.2";
 const OLLAMA_URL = process.env["OLLAMA_URL"] ?? "http://localhost:11434";
 
 /**
- * Stream a completion from Ollama, yielding each token as it arrives.
+ * Stream a completion from the OpenAI-compatible chat endpoint, yielding each
+ * token as it arrives.
  *
- * Ollama's `/api/generate` returns newline-delimited JSON — one object per
- * line, each carrying the next `response` fragment until a final `done`. We
- * read the HTTP body as a stream and re-assemble those lines as they trickle
- * in, so tokens flow out the moment the model produces them.
+ * `POST {OLLAMA_URL}/v1/chat/completions` with `stream: true` answers with
+ * OpenAI-style SSE: `data: {json}` lines whose `choices[0].delta.content`
+ * carries the next text fragment, closed by `data: [DONE]`. We read the HTTP
+ * body as a stream and re-assemble lines as they trickle in, so tokens flow
+ * out the moment the model produces them (same parsing as `03-openrouter.ts`).
  */
 async function* ollamaTokens(prompt: string): AsyncGenerator<string> {
-  const res = await fetch(`${OLLAMA_URL}/api/generate`, {
+  const res = await fetch(`${OLLAMA_URL}/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODEL, prompt, stream: true }),
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [{ role: "user", content: prompt }],
+      stream: true,
+    }),
   });
   if (!res.ok || res.body === null) {
     throw new Error(`Ollama request failed: ${res.status} ${res.statusText}`);
@@ -48,11 +60,18 @@ async function* ollamaTokens(prompt: string): AsyncGenerator<string> {
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      if (line.trim() === "") continue;
-      // The final `{"done":true,"response":""}` packet carries no text — skip
-      // empties so we never stream a vacuous chunk to the caller.
-      const token = (JSON.parse(line) as { response?: string }).response ?? "";
-      if (token) yield token;
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const data = trimmed.slice(5).trim();
+      if (data === "" || data === "[DONE]") continue;
+      try {
+        const token =
+          (JSON.parse(data) as { choices?: { delta?: { content?: string } }[] }).choices?.[0]?.delta
+            ?.content ?? "";
+        if (token) yield token;
+      } catch {
+        /* ignore the rare non-JSON keep-alive line */
+      }
     }
   }
 }

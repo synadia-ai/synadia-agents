@@ -92,10 +92,10 @@ bun examples/02-ollama.ts            # uses llama3.2 by default
 OLLAMA_MODEL=qwen2.5 bun examples/02-ollama.ts   # or pick another model
 ```
 
-| Variable       | Default                  | Purpose                    |
-| -------------- | ------------------------ | -------------------------- |
-| `OLLAMA_URL`   | `http://localhost:11434` | Where Ollama is listening. |
-| `OLLAMA_MODEL` | `llama3.2`               | Which model to prompt.     |
+| Variable       | Default                  | Purpose                                                                                                       |
+| -------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `OLLAMA_URL`   | `http://localhost:11434` | Base URL of the OpenAI-compatible endpoint — Ollama itself, or an OpenAI-style metering proxy in front of it. |
+| `OLLAMA_MODEL` | `llama3.2`               | Which model to prompt.                                                                                        |
 
 The agent registers as `ollama` and streams the model's answer back token by
 token. Drive it the same way, but point `nats req` at the `ollama` subject:
