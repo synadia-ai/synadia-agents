@@ -148,6 +148,30 @@ describe("loadContextOptions", () => {
     expect(opts.token).toBeUndefined();
   });
 
+  it("wraps creds file read failures", async () => {
+    const credsPath = join(baseDir, "missing.creds");
+    await writeContext("missing-creds", {
+      url: "nats://localhost:4222",
+      creds: credsPath,
+    });
+    await expect(loadContextOptions("missing-creds")).rejects.toThrow(NatsContextError);
+    await expect(loadContextOptions("missing-creds")).rejects.toThrow(
+      `failed to read creds file ${credsPath}`,
+    );
+  });
+
+  it("wraps nkey file read failures", async () => {
+    const nkeyPath = join(baseDir, "missing.nk");
+    await writeContext("missing-nkey", {
+      url: "nats://localhost:4222",
+      nkey: nkeyPath,
+    });
+    await expect(loadContextOptions("missing-nkey")).rejects.toThrow(NatsContextError);
+    await expect(loadContextOptions("missing-nkey")).rejects.toThrow(
+      `failed to read nkey file ${nkeyPath}`,
+    );
+  });
+
   it("uses inline user_jwt + user_seed when both are present", async () => {
     await writeContext("with-jwt-seed", {
       url: "nats://localhost:4222",
