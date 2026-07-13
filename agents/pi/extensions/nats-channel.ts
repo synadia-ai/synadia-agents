@@ -244,7 +244,7 @@ function readTlsFile(field: string, path: string): string {
 	try {
 		return readFileSync(path, "utf8");
 	} catch (err) {
-		throw new Error(`failed to read TLS ${field} file ${path} (${(err as Error).message})`);
+		throw new Error(`failed to read TLS ${field} file ${path}`, { cause: err });
 	}
 }
 
