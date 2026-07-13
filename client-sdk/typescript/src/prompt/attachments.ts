@@ -14,9 +14,7 @@ import { fileURLToPath } from "node:url";
 import type { RequestAttachment } from "./envelope.js";
 
 export type AttachmentInput =
-  | string
-  | URL
-  | { readonly filename: string; readonly content: Uint8Array };
+  string | URL | { readonly filename: string; readonly content: Uint8Array };
 
 /** Resolve an attachment input to the wire-ready `{ filename, content: Uint8Array }`. */
 export async function normalizeAttachment(input: AttachmentInput): Promise<RequestAttachment> {

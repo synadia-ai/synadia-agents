@@ -17,8 +17,7 @@ export function isTerminator(msg: MsgLike): boolean {
 /** True iff `msg` carries service-error headers (§9.1). */
 export function isErrorSignal(msg: MsgLike): boolean {
   const h = msg.headers as
-    | { get?: (k: string) => string; has?: (k: string) => boolean }
-    | undefined;
+    { get?: (k: string) => string; has?: (k: string) => boolean } | undefined;
   if (!h) return false;
   if (typeof h.has === "function") return h.has("Nats-Service-Error-Code");
   if (typeof h.get === "function") {
