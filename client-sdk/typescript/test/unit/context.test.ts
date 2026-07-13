@@ -224,6 +224,26 @@ describe("loadContextOptions", () => {
     );
   });
 
+  it("sets handshakeFirst alone when only tls_first is set", async () => {
+    await writeContext("tls-first-only", {
+      url: "tls://nats.example.com:4222",
+      tls_first: true,
+    });
+    const opts = await loadContextOptions("tls-first-only");
+    expect(opts.tls).toEqual({ handshakeFirst: true });
+  });
+
+  it("loads a partial TLS triple (ca only)", async () => {
+    const caPath = join(baseDir, "ca-only.pem");
+    await writeFile(caPath, "ca-only-cert");
+    await writeContext("ca-only", {
+      url: "tls://nats.example.com:4222",
+      ca: caPath,
+    });
+    const opts = await loadContextOptions("ca-only");
+    expect(opts.tls).toEqual({ ca: "ca-only-cert" });
+  });
+
   it("leaves TLS undefined when none of cert/key/ca/tls_first are set", async () => {
     await writeContext("no-tls", { url: "nats://localhost:4222" });
     const opts = await loadContextOptions("no-tls");
