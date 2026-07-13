@@ -218,9 +218,7 @@ describe("loadContextOptions", () => {
       url: "tls://nats.example.com:4222",
       cert: certPath,
     });
-    await expect(loadContextOptions("missing-tls")).rejects.toThrow(
-      NatsContextError,
-    );
+    await expect(loadContextOptions("missing-tls")).rejects.toThrow(NatsContextError);
     await expect(loadContextOptions("missing-tls")).rejects.toThrow(
       `failed to read TLS cert file ${certPath}`,
     );
