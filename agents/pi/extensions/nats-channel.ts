@@ -122,7 +122,8 @@ type PiNatsConfig = {
 };
 
 // Matches NATS CLI context files at ~/.config/nats/context/<name>.json.
-type NatsContext = {
+// Exported for unit tests (test/context.test.ts).
+export type NatsContext = {
 	description?: string;
 	url?: string;
 	token?: string;
@@ -188,7 +189,8 @@ function loadNatsContext(name: string): NatsContext {
 	}
 }
 
-function contextToConnectOpts(ctx: NatsContext): NodeConnectionOptions {
+// Exported for unit tests (test/context.test.ts).
+export function contextToConnectOpts(ctx: NatsContext): NodeConnectionOptions {
 	const opts: NodeConnectionOptions = { name: "pi-nats-channel" };
 
 	// Parse the URL once; extracted userinfo serves as a fallback only when
@@ -219,18 +221,31 @@ function contextToConnectOpts(ctx: NatsContext): NodeConnectionOptions {
 		opts.authenticator = usernamePasswordAuthenticator(urlOpts.user, urlOpts.pass ?? "");
 	}
 
-	if (ctx.cert || ctx.key || ctx.ca) {
-		opts.tls = {
-			certFile: ctx.cert || undefined,
-			keyFile: ctx.key || undefined,
-			caFile: ctx.ca || undefined,
-			handshakeFirst: ctx.tls_first || undefined,
-		};
+	// TLS triple: the context stores file *paths*; load their contents into
+	// the standard `tls.cert`/`key`/`ca` options rather than passing the
+	// Node-only `certFile`/`keyFile`/`caFile` helper fields, so mTLS
+	// contexts work on runtimes whose transports don't expand the helper
+	// fields (e.g. Bun). Mirrors the SDK's `loadContextOptions`.
+	if (ctx.cert || ctx.key || ctx.ca || ctx.tls_first) {
+		const tls: NonNullable<NodeConnectionOptions["tls"]> = {};
+		if (ctx.cert) tls.cert = readTlsFile("cert", ctx.cert);
+		if (ctx.key) tls.key = readTlsFile("key", ctx.key);
+		if (ctx.ca) tls.ca = readTlsFile("ca", ctx.ca);
+		if (ctx.tls_first) tls.handshakeFirst = true;
+		opts.tls = tls;
 	}
 
 	if (ctx.inbox_prefix) opts.inboxPrefix = ctx.inbox_prefix;
 
 	return opts;
+}
+
+function readTlsFile(field: string, path: string): string {
+	try {
+		return readFileSync(path, "utf8");
+	} catch (err) {
+		throw new Error(`failed to read TLS ${field} file ${path} (${(err as Error).message})`);
+	}
 }
 
 function loadConfig(): PiNatsConfig {
