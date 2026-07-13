@@ -75,11 +75,12 @@ bun run start        # http://localhost:3300
 ## Flags & env
 
 ```
-bun run server/index.ts [--port 3300] [--context current] [--servers nats://...] [--dev]
+bun run server/index.ts [--host 127.0.0.1] [--port 3300] [--context current] [--servers nats://...] [--dev]
 ```
 
 | flag | env | default | meaning |
 |------|-----|---------|---------|
+| `--host <addr>` | `AGENT_WEB_UI_HOST` | Bun default (all interfaces) | Interface to bind the HTTP + WS server to |
 | `--port <n>` | `PORT` | `3300` | HTTP + WS port |
 | `--context <name>` | `NATS_CONTEXT` | `current` | NATS CLI context in `~/.config/nats/context/` |
 | `--servers <url>` | `NATS_URL` | - | Raw NATS URL (overrides context if given) |

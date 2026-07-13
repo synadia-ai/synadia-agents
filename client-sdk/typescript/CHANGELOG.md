@@ -34,6 +34,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   missing / non-string / empty `prompt` and invalid attachments. The pi
   spec-compliance smoke (`agents/pi/test/smoke.mjs`) caught both gaps.
 
+- **`loadContextOptions` now loads the TLS triple's file contents**
+  (the `cert` / `key` / `ca` context fields) into the standard
+  `tls.cert` / `tls.key` / `tls.ca` connection options, instead of
+  passing paths through the Node-only `certFile` / `keyFile` / `caFile`
+  helper fields. Fixes client mTLS on runtimes whose transports don't
+  expand the helper fields (e.g. Bun) — a context created with
+  `nats context add --tlscert/--tlskey/--tlsca` now works everywhere
+  the standard options do. See
+  [#164](https://github.com/synadia-ai/synadia-agents/pull/164).
+
+  Behavior notes:
+
+  - Missing or unreadable TLS files now throw a `NatsContextError`
+    (with `cause`) from `loadContextOptions()` instead of failing
+    later inside `connect()`. This matches how `creds` / `nkey` files
+    are already read eagerly at context-load time, and it turns the
+    "stuck reconnecting on a bad cert path" failure mode (see the
+    0.5.2 behavior notes) into a fast, actionable error.
+  - TLS material is snapshotted at load time. Long-lived processes no
+    longer pick up rotated cert files on reconnect the way the
+    transport's per-attempt `certFile` reads did; call
+    `loadContextOptions()` again (and reconnect) to refresh.
+
 ## [0.5.2] - 2026-05-26
 
 ### Added
