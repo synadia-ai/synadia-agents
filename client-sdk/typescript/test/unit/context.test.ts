@@ -189,21 +189,59 @@ describe("loadContextOptions", () => {
     expect(opts.token).toBeUndefined();
   });
 
-  it("populates the TLS triple when cert/key/ca/tls_first are present", async () => {
+  it("loads the TLS triple when cert/key/ca/tls_first are present", async () => {
+    const certPath = join(baseDir, "client.pem");
+    const keyPath = join(baseDir, "client.key");
+    const caPath = join(baseDir, "ca.pem");
+    await writeFile(certPath, "client-cert");
+    await writeFile(keyPath, "client-key");
+    await writeFile(caPath, "ca-cert");
     await writeContext("with-tls", {
       url: "tls://nats.example.com:4222",
-      cert: "/etc/ssl/client.pem",
-      key: "/etc/ssl/client.key",
-      ca: "/etc/ssl/ca.pem",
+      cert: certPath,
+      key: keyPath,
+      ca: caPath,
       tls_first: true,
     });
     const opts = await loadContextOptions("with-tls");
     expect(opts.tls).toEqual({
-      certFile: "/etc/ssl/client.pem",
-      keyFile: "/etc/ssl/client.key",
-      caFile: "/etc/ssl/ca.pem",
+      cert: "client-cert",
+      key: "client-key",
+      ca: "ca-cert",
       handshakeFirst: true,
     });
+  });
+
+  it("wraps TLS file read failures", async () => {
+    const certPath = join(baseDir, "missing-client.pem");
+    await writeContext("missing-tls", {
+      url: "tls://nats.example.com:4222",
+      cert: certPath,
+    });
+    await expect(loadContextOptions("missing-tls")).rejects.toThrow(NatsContextError);
+    await expect(loadContextOptions("missing-tls")).rejects.toThrow(
+      `failed to read TLS cert file ${certPath}`,
+    );
+  });
+
+  it("sets handshakeFirst alone when only tls_first is set", async () => {
+    await writeContext("tls-first-only", {
+      url: "tls://nats.example.com:4222",
+      tls_first: true,
+    });
+    const opts = await loadContextOptions("tls-first-only");
+    expect(opts.tls).toEqual({ handshakeFirst: true });
+  });
+
+  it("loads a partial TLS triple (ca only)", async () => {
+    const caPath = join(baseDir, "ca-only.pem");
+    await writeFile(caPath, "ca-only-cert");
+    await writeContext("ca-only", {
+      url: "tls://nats.example.com:4222",
+      ca: caPath,
+    });
+    const opts = await loadContextOptions("ca-only");
+    expect(opts.tls).toEqual({ ca: "ca-only-cert" });
   });
 
   it("leaves TLS undefined when none of cert/key/ca/tls_first are set", async () => {
