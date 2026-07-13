@@ -119,9 +119,10 @@ Output (one `response` chunk per token, then the terminator):
 ### `03-openrouter.ts` — prompt a hosted LLM
 
 The same LLM agent as `02`, but powered by the hosted, OpenAI-compatible
-[OpenRouter](https://openrouter.ai) API instead of a local model. Needs an API
-key; no GPU required. The only thing that changes from `02-ollama` is how the
-backend streams (OpenAI **SSE**: `data: {json}` … `data: [DONE]`).
+[OpenRouter](https://openrouter.ai) API instead of a local model. Both examples
+speak the same wire shape (OpenAI **SSE**: `data: {json}` … `data: [DONE]`) —
+what changes is the backend: a remote hosted API that needs an API key, instead
+of a local Ollama that needs none (no GPU required here).
 
 ```sh
 export OPENROUTER_API_KEY=sk-or-...
