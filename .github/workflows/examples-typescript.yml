@@ -1,0 +1,71 @@
+name: CI — examples (TypeScript)
+
+# Typecheck smoke for the runnable examples. They all `file:`-link the
+# local SDKs, so an SDK surface change that breaks an example shows up
+# here instead of after a release. Typecheck-only by design: the
+# examples talk to live NATS servers / LLM backends, so their runtime
+# behavior is exercised manually (see each example's README).
+#
+# Installs use npm, not bun: bun 1.3.14's resolver is nondeterministic
+# on the client-sdk ⇄ agent-sdk `file:` cycle — it can hang forever or
+# die with SIGILL ("Illegal instruction") after ~7 minutes, on macOS
+# and Linux alike. npm symlinks `file:` deps and is unaffected. Revisit
+# once a bun release fixes cyclic file: resolution.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "examples/**"
+      - "client-sdk/typescript/**"
+      - "agent-sdk/typescript/**"
+      - ".github/workflows/examples-typescript.yml"
+  pull_request:
+    paths:
+      - "examples/**"
+      - "client-sdk/typescript/**"
+      - "agent-sdk/typescript/**"
+      - ".github/workflows/examples-typescript.yml"
+
+concurrency:
+  group: ci-examples-ts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: examples/${{ matrix.example }} (typecheck)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        example:
+          - agent-web-ui
+          - claude-code-headless
+          - dspy
+          - dspy-research-agent
+          - durable-agents
+          - open-agent-vercel
+          - pi-headless
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The examples import the SDKs via `file:` links, which resolve to
+      # each package's built `dist/` — build both before installing.
+      - name: Build client-sdk
+        working-directory: client-sdk/typescript
+        run: npm install --no-audit --no-fund && npm run build
+      - name: Build agent-sdk
+        working-directory: agent-sdk/typescript
+        run: npm install --no-audit --no-fund && npm run build
+      # open-agent-vercel file:-links agents/open-agent and path-aliases
+      # into its vendored sources, whose `ai`/`zod` imports resolve from
+      # that agent's own node_modules — install it first.
+      - name: Install agents/open-agent deps
+        if: matrix.example == 'open-agent-vercel'
+        working-directory: agents/open-agent
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        working-directory: examples/${{ matrix.example }}
+        run: npm install --no-audit --no-fund && npm run typecheck

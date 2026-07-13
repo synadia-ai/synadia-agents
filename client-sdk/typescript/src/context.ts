@@ -30,6 +30,11 @@
 // `tls_first`.
 // Skipped: `nsc` integration.
 //
+// File-path fields (`creds`, `nkey`, and the TLS triple) expand a leading
+// `~/` to the home directory; any other relative path resolves against the
+// process working directory (as the `nats` CLI does), not the context
+// file's directory.
+//
 // Precedence inside a context: `creds` > `nkey` > `user_jwt` (+`user_seed`
 // when present) > `user`/`password` > `token`.
 //
@@ -89,7 +94,7 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
   const userJwt = str(parsed["user_jwt"]);
   const userSeed = str(parsed["user_seed"]);
   if (creds) {
-    const bytes = await readFile(expandHome(creds));
+    const bytes = await readAuthFile("creds", expandHome(creds));
     opts.authenticator = credsAuthenticator(
       new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     );
@@ -97,7 +102,7 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
     // `nats context add` writes `nkey` as a path to a file containing the
     // raw seed. Read it once and pass through `nkeyAuthenticator`, which
     // signs the server nonce on each CONNECT.
-    const bytes = await readFile(expandHome(nkey));
+    const bytes = await readAuthFile("nkey", expandHome(nkey));
     opts.authenticator = nkeyAuthenticator(
       new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     );
@@ -150,6 +155,16 @@ async function readTlsFile(field: string, path: string): Promise<string> {
     return await readFile(path, "utf8");
   } catch (error) {
     throw new NatsContextError(`failed to read TLS ${field} file ${path}`, {
+      cause: error,
+    });
+  }
+}
+
+async function readAuthFile(field: string, path: string): Promise<Buffer> {
+  try {
+    return await readFile(path);
+  } catch (error) {
+    throw new NatsContextError(`failed to read ${field} file ${path}`, {
       cause: error,
     });
   }

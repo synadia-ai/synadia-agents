@@ -54,9 +54,9 @@ jobs:
       - name: Install pi
         working-directory: agents/pi
         run: bun install
-      - name: Unit tests (owner-token precedence)
+      - name: Unit tests (owner-token precedence + context TLS)
         working-directory: agents/pi
-        run: bun test test/owner.test.ts
+        run: bun test test/owner.test.ts test/context.test.ts
       - name: Spec-compliance smoke (spawns its own nats-server)
         working-directory: agents/pi
         run: bun test/smoke.mjs

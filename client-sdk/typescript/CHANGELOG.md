@@ -13,6 +13,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Missing or unreadable `creds` / `nkey` files now throw a
+  `NatsContextError`** (with the original filesystem error as `cause`)
+  from `loadContextOptions()`, matching the TLS triple's error handling
+  below, instead of letting the raw `ENOENT` escape. Code that matched
+  `err.code === "ENOENT"` on the thrown error should inspect
+  `err.cause` instead.
+- Documented in `src/context.ts` that file-path context fields
+  (`creds`, `nkey`, `cert` / `key` / `ca`) expand a leading `~/` and
+  otherwise resolve relative to the process working directory (as the
+  `nats` CLI does), not the context file's directory. Behavior is
+  unchanged — it was just never written down.
+
 ### Fixed
 
 - **`decodeEnvelope` now follows the §5.3 discrimination algorithm
