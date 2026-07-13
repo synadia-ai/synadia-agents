@@ -5,6 +5,12 @@ name: CI — examples (TypeScript)
 # here instead of after a release. Typecheck-only by design: the
 # examples talk to live NATS servers / LLM backends, so their runtime
 # behavior is exercised manually (see each example's README).
+#
+# Installs use npm, not bun: bun 1.3.14's resolver is nondeterministic
+# on the client-sdk ⇄ agent-sdk `file:` cycle — it can hang forever or
+# die with SIGILL ("Illegal instruction") after ~7 minutes, on macOS
+# and Linux alike. npm symlinks `file:` deps and is unaffected. Revisit
+# once a bun release fixes cyclic file: resolution.
 
 on:
   push:
@@ -42,17 +48,17 @@ jobs:
           - pi-headless
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: 22
       # The examples import the SDKs via `file:` links, which resolve to
       # each package's built `dist/` — build both before installing.
       - name: Build client-sdk
         working-directory: client-sdk/typescript
-        run: bun install && bun run build
+        run: npm install --no-audit --no-fund && npm run build
       - name: Build agent-sdk
         working-directory: agent-sdk/typescript
-        run: bun install && bun run build
+        run: npm install --no-audit --no-fund && npm run build
       - name: Typecheck
         working-directory: examples/${{ matrix.example }}
-        run: bun install && bun run typecheck
+        run: npm install --no-audit --no-fund && npm run typecheck
