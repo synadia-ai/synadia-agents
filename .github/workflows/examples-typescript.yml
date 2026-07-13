@@ -59,6 +59,13 @@ jobs:
       - name: Build agent-sdk
         working-directory: agent-sdk/typescript
         run: npm install --no-audit --no-fund && npm run build
+      # open-agent-vercel file:-links agents/open-agent and path-aliases
+      # into its vendored sources, whose `ai`/`zod` imports resolve from
+      # that agent's own node_modules — install it first.
+      - name: Install agents/open-agent deps
+        if: matrix.example == 'open-agent-vercel'
+        working-directory: agents/open-agent
+        run: npm install --no-audit --no-fund
       - name: Typecheck
         working-directory: examples/${{ matrix.example }}
         run: npm install --no-audit --no-fund && npm run typecheck
