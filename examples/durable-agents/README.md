@@ -17,9 +17,16 @@ durable function.
 | Path | What it shows | Infra |
 | --- | --- | --- |
 | [`src/minimal/`](./src/minimal) | **Durability in ~10 lines** — a plain agent loop made durable with nothing but two `yield* ctx.run(...)` wraps. Native Resonate SDK, no abstraction. | none |
+| [`src/core/`](./src/core) | The **shared engine-neutral core** the agents below run on — the effects loop, the Resonate driver, the LLM client, the front-door. Library code, nothing to run. | — |
 | [`src/sre/`](./src/sre) | A concrete **SRE agent** (metrics → restart-with-approval → notify) on a thin **durable-execution abstraction**, run as a real Synadia agent with human approval surfaced as an in-chat query. | NATS + resonate-on-nats |
 | [`src/coding/`](./src/coding) | A **coding agent** ("durable Claude Code") — the _same_ abstraction, a different tool-set: sandboxed read/list/grep/write + an approval-gated `run_bash`. Proves "one loop, many agents." | NATS + resonate-on-nats |
 | [`src/crash/`](./src/crash) | The **crash-replay proof** — kill a worker mid-task, restart it, and verify the pre-crash model turn + tool were replayed, not re-run. | NATS + resonate-on-nats |
+
+Each directory has its own README, and they read **in order** — a guided tour from the bare trick
+to the verified proof:
+[**1 · minimal**](./src/minimal/README.md) → [**2 · core**](./src/core/README.md) →
+[**3 · sre**](./src/sre/README.md) → [**4 · coding**](./src/coding/README.md) →
+[**5 · crash**](./src/crash/README.md)
 
 ## The one idea
 
