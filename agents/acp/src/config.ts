@@ -274,7 +274,7 @@ creds = ""
 [agent]
 owner = "local"
 session = "main"
-# Defaults to the preset's token (grok -> "grok", gemini -> "gemini").
+# Defaults to the preset's token (e.g. grok -> "grok").
 subject_token = ""
 heartbeat_interval_s = 30
 keepalive_interval_s = 30

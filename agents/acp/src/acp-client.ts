@@ -154,5 +154,28 @@ export class AcpAgentClient {
     if (this.#child.exitCode === null && !this.#child.killed) {
       this.#child.kill("SIGTERM");
     }
+    // Deterministic cleanup: wait for the child to actually exit so no agent
+    // process outlives the channel. Escalate to SIGKILL after a short grace
+    // period (agents exiting cleanly on SIGTERM never hit it).
+    if (this.#child.exitCode === null) {
+      await new Promise<void>((resolvePromise) => {
+        if (this.#child.exitCode !== null) {
+          resolvePromise();
+          return;
+        }
+        const timer = setTimeout(() => {
+          try {
+            this.#child.kill("SIGKILL");
+          } catch {
+            /* already gone */
+          }
+          resolvePromise();
+        }, 1_500);
+        this.#child.once("exit", () => {
+          clearTimeout(timer);
+          resolvePromise();
+        });
+      });
+    }
   }
 }

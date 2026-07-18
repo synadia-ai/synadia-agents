@@ -5,7 +5,7 @@ import type { ActiveSession, InitializeResponse, SessionUpdate } from "@agentcli
 import { AcpAgentClient } from "./acp-client.js";
 import type { AcpBridgeClient, AcpBridgeEvent, AcpPromptRequest } from "./bridge.js";
 import { resolvePermissionRequest, type AcpPermissionDecision } from "./permissions.js";
-import type { AcpChannelConfig, AcpPermissionPolicy } from "./types.js";
+import type { AcpChannelConfig } from "./types.js";
 
 export interface ManagedAcpRuntimeOptions {
   readonly config: AcpChannelConfig;
@@ -35,9 +35,9 @@ export interface ManagedAcpRuntimeOptions {
  */
 export class ManagedAcpRuntime implements AcpBridgeClient {
   readonly mode = "managed" as const;
-  agentHome: string | undefined;
   readonly #opts: ManagedAcpRuntimeOptions;
   readonly #ownsHome: boolean;
+  #agentHome: string | undefined;
   #client: AcpAgentClient | undefined;
   #session: ActiveSession | undefined;
   #initInfo: InitializeResponse | undefined;
@@ -48,8 +48,13 @@ export class ManagedAcpRuntime implements AcpBridgeClient {
     const acp = opts.config.acp;
     this.#ownsHome = acp.homeEnvVar !== undefined && acp.agentHome === undefined;
     if (acp.agentHome !== undefined) {
-      this.agentHome = resolve(acp.agentHome);
+      this.#agentHome = resolve(acp.agentHome);
     }
+  }
+
+  /** Resolved agent home (explicit or ephemeral); read-only for callers. */
+  get agentHome(): string | undefined {
+    return this.#agentHome;
   }
 
   get ready(): boolean {
@@ -110,7 +115,7 @@ export class ManagedAcpRuntime implements AcpBridgeClient {
     try {
       yield { type: "status", text: "managed ACP agent ready" };
       client.setPermissionHandler((params) => resolvePermissionRequest(params, {
-        policy: input.permissionPolicy as AcpPermissionPolicy,
+        policy: input.permissionPolicy,
         ...(input.askPermission !== undefined
           ? { sink: (prompt: string): Promise<AcpPermissionDecision> => input.askPermission!(prompt) }
           : {}),
@@ -147,16 +152,16 @@ export class ManagedAcpRuntime implements AcpBridgeClient {
     this.#session = undefined;
     await this.#client?.close();
     this.#client = undefined;
-    if (this.#ownsHome && this.agentHome !== undefined) {
-      rmSync(this.agentHome, { recursive: true, force: true });
-      this.agentHome = undefined;
+    if (this.#ownsHome && this.#agentHome !== undefined) {
+      rmSync(this.#agentHome, { recursive: true, force: true });
+      this.#agentHome = undefined;
     }
   }
 
   #ensureHome(): string {
-    if (this.agentHome === undefined) this.agentHome = mkdtempSync(join(tmpdir(), "synadia-acp-home-"));
-    mkdirSync(this.agentHome, { recursive: true });
-    return this.agentHome;
+    if (this.#agentHome === undefined) this.#agentHome = mkdtempSync(join(tmpdir(), "synadia-acp-home-"));
+    mkdirSync(this.#agentHome, { recursive: true });
+    return this.#agentHome;
   }
 
   async #acquireTurn(): Promise<() => void> {

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { buildPromptSubject } from "./subject.js";
 import type { AcpChannelConfig } from "./types.js";
 
 export interface DoctorBinaryCheck {
@@ -52,7 +53,7 @@ export function runDoctor(config: AcpChannelConfig): DoctorReport {
       owner: agent.owner,
       session: agent.session,
       subjectToken: agent.subjectToken,
-      promptSubject: `agents.prompt.${agent.subjectToken}.${agent.owner}.${agent.session}`,
+      promptSubject: buildPromptSubject(agent.subjectToken, agent.owner, agent.session),
     },
     acp: {
       preset: acp.preset,

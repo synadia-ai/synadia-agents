@@ -187,7 +187,7 @@ config file > derived defaults. Config file:
 | `SYNADIA_GROK_HOME`, `SYNADIA_ACP_HOME` | Agent home dir (reuse auth) | ephemeral temp dir (grok) |
 | `SYNADIA_ACP_CWD` | ACP session working directory | process cwd |
 | `SYNADIA_GROK_PERMISSION_POLICY`, `SYNADIA_ACP_PERMISSION_POLICY` | `reject`, `query`, `allow` | `reject` |
-| `NATS_URL` / `NATS_CONTEXT` / `NATS_CREDS` | NATS connection | `nats://127.0.0.1:4222` |
+| `NATS_URL` / `NATS_CONTEXT` / `NATS_CREDS` | NATS connection. A context carries its own auth, so `NATS_CREDS` applies only when no context is set. | `nats://127.0.0.1:4222` |
 
 Run `acp-agent doctor` to print the resolved identity, spawn command, and a
 `--version` probe of the agent binary.

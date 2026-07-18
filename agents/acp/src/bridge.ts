@@ -2,7 +2,7 @@ import type { RequestEnvelope } from "@synadia-ai/agents";
 import type { PromptResponse } from "@synadia-ai/agent-service";
 import { rejectUnsupportedAttachments } from "./attachments.js";
 import type { AcpPermissionDecision } from "./permissions.js";
-import type { AcpMapping } from "./types.js";
+import type { AcpMapping, AcpPermissionPolicy } from "./types.js";
 
 export interface AcpBridgeClient {
   readonly mode: "fake" | "managed";
@@ -13,7 +13,7 @@ export interface AcpBridgeClient {
 export interface AcpPromptRequest {
   readonly prompt: string;
   readonly publicSession: string;
-  readonly permissionPolicy: string;
+  readonly permissionPolicy: AcpPermissionPolicy;
   readonly askPermission?: (prompt: string) => Promise<AcpPermissionDecision>;
 }
 
