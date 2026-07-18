@@ -29,6 +29,7 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [OpenCode](agents/opencode/) | `opencode` | `@synadia-ai/opencode-nats-channel` — OpenCode plugin that registers projects as NATS agents |
 | [Codex](agents/codex/) | `codex` | `@synadia-ai/codex-nats-channel` — Codex app-server-backed channel for managed or attached sessions |
 | [ACP](agents/acp/) | `grok`, `gemini`, … | `@synadia-ai/acp-nats-channel` — generic channel for [ACP](https://agentclientprotocol.com)-speaking agents (Grok Build, Gemini CLI, custom) |
+| [Grok Build](agents/grok/) | `grok` | `@synadia-ai/grok-nats-channel` — grok-pinned front door to the ACP channel (`grok-agent start`) |
 | [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 
 Subjects follow a verb-first pattern: `agents.{verb}.{token}.{owner}.{session}` where `verb` is `prompt`, `hb`, or `status`.

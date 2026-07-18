@@ -8,8 +8,12 @@ import { ManagedAcpRuntime } from "./managed-runtime.js";
 import { resolveNatsOptions } from "./nats.js";
 import { createAcpAgentService } from "./service.js";
 
-async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
+/**
+ * Run the acp-agent CLI against an explicit argv (no trailing node/bun
+ * prefix). Exported so thin per-agent wrapper packages (e.g.
+ * `@synadia-ai/grok-nats-channel`) can pin preset defaults and delegate.
+ */
+export async function runCli(argv: readonly string[]): Promise<void> {
   const command = resolveCliCommand(argv);
   if (command === "help" || argv.includes("--help") || argv.includes("-h")) {
     console.log(helpText());
@@ -20,7 +24,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const config = loadConfigFromSources();
+  const config = loadConfigFromSources({ argv });
   if (command === "doctor") {
     console.log(JSON.stringify(runDoctor(config), null, 2));
     return;
@@ -66,7 +70,7 @@ async function waitForShutdown(): Promise<void> {
 }
 
 if (import.meta.main) {
-  main().catch((err: unknown) => {
+  runCli(process.argv.slice(2)).catch((err: unknown) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   });

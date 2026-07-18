@@ -42,6 +42,10 @@ Any agent on the [ACP agents list](https://agentclientprotocol.com/get-started/a
 that supports core `initialize` / `session/new` / `session/prompt` should work
 via `custom`; presets just bundle the spawn command and env-var conventions.
 
+The grok preset also ships as a pinned front-door package —
+[`agents/grok/`](../grok/) (`@synadia-ai/grok-nats-channel`, bin
+`grok-agent`) — with grok-specific setup and permission docs.
+
 ## Prerequisites
 
 - Bun 1.3+ for local development and smoke tests.

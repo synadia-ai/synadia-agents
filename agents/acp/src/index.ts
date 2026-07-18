@@ -1,4 +1,5 @@
 export { AcpAgentClient, type AcpAgentClientOptions, type PermissionRequestHandler } from "./acp-client.js";
+export { runCli } from "./cli.js";
 export { rejectUnsupportedAttachments } from "./attachments.js";
 export { bridgePromptToAcp, FakeAcpBridgeClient, type AcpBridgeClient, type AcpBridgeEvent, type AcpPromptRequest } from "./bridge.js";
 export { DEFAULT_CONFIG_PATH, helpText, loadConfigFromSources, mappingFromConfig, parseArgs, renderConfigTemplate } from "./config.js";
