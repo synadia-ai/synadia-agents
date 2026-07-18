@@ -17,6 +17,16 @@ describe("README", () => {
     expect(readme).toContain("no native ACP mode yet");
     expect(readme).toContain("--agent custom --agent-id antigravity");
     expect(readme).toContain("review third-party adapters before use");
+    // Regression guard: bare acp-agent defaults to fake mode, so the
+    // documented start command must carry --mode managed and point the
+    // adapter at the locally-authenticated agy.
+    expect(readme).toMatch(/--mode managed[\s\S]{0,200}--agent custom --agent-id antigravity/);
+    expect(readme).toContain('AGY_BIN="$(which agy)"');
+  });
+
+  test("documents running from a repo clone", () => {
+    expect(readme).toContain("ln -sf");
+    expect(readme).toContain("~/.local/bin/acp-agent");
   });
 
   test("is honest about attachments", () => {

@@ -55,15 +55,44 @@ such as [`antigravity-acp`](https://github.com/shubzkothekar/antigravity-acp)
 (review third-party adapters before use — they run with your `agy` auth):
 
 ```sh
+# One-time: install agy (https://antigravity.google) and authenticate it,
+# then install the adapter:
 npm install -g antigravity-acp     # adapter binary: agy-acp
-acp-agent start --agent custom --agent-id antigravity --acp-bin agy-acp
+
+# Sanity check — resolved identity + `agy-acp --version` probe:
+acp-agent doctor --agent custom --agent-id antigravity --acp-bin agy-acp
+```
+
+Start it on the bus. `--mode managed` is **required** (bare `acp-agent`
+defaults to `fake`); `AGY_BIN` points the adapter at your installed,
+authenticated `agy` instead of letting it download its own copy:
+
+```sh
+AGY_SKIP_DOWNLOAD=1 AGY_BIN="$(which agy)" \
+acp-agent start --mode managed \
+  --agent custom --agent-id antigravity --acp-bin agy-acp \
+  --permission-policy query --session agy-demo
+# -> acp-agent (antigravity, managed) listening on agents.prompt.antigravity.<you>.agy-demo
+```
+
+Prompt it from anywhere on the bus:
+
+```sh
+nats req "agents.prompt.antigravity.<you>.agy-demo" \
+  "explain what NATS subjects are, in two sentences" \
+  --replies=0 --reply-timeout=60s --timeout=180s
+
+# or, from this directory, with pretty-printed status/tool/query chunks:
+bun scripts/live-acp-harness.ts --agent antigravity --session agy-demo \
+  "summarize the files in this directory"
 ```
 
 Live-validated (agy 1.1.4, adapter 1.0.0): text prompts round-trip over the
 bus end-to-end; tool calls surface as status chunks, but the adapter's
 edit/permission flow is still maturing — writes did not complete in our
-runs. A first-party `antigravity` preset lands once `agy` speaks ACP
-natively.
+runs, so keep prompts on the read/chat/analysis side for now. A first-party
+`antigravity` preset (and a grok-style front-door package) lands once `agy`
+speaks ACP natively.
 
 ## Prerequisites
 
@@ -73,6 +102,18 @@ natively.
 - The agent binary for managed mode: [`grok`](https://x.ai/cli), or your
   custom agent/adapter binary. Not required for `fake` mode or the
   deterministic smokes.
+
+## Running from a repo clone
+
+The package is not on npm yet. From a checkout, `bun install` here, then
+either run `bun src/cli.ts` in place of `acp-agent`, or put the bin on your
+PATH (symlink, not copy — the file resolves its imports from this directory):
+
+```sh
+cd agents/acp && bun install
+ln -sf "$PWD/src/cli.ts" ~/.local/bin/acp-agent
+acp-agent doctor
+```
 
 ## Quickstart (grok)
 
