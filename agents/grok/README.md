@@ -28,21 +28,79 @@ limitations (no attachments yet, no subprocess supervision), see the
   `curl -fsSL https://x.ai/cli/install.sh | bash && grok`
 - A NATS server (`nats-server` locally, or any reachable deployment)
 
-## Quickstart
+## Try it out (from a repo clone)
+
+The package is not on npm yet (see [Publishing note](#publishing-note)), so
+run it straight from the checkout — the `file:../acp` link resolves in-repo:
 
 ```sh
-grok-agent start --agent-home ~/.grok --nats-url nats://127.0.0.1:4222
-# -> acp-agent (grok, managed) listening on agents.prompt.grok.<you>.<cwd-name>
+git clone https://github.com/synadia-ai/synadia-agents.git
+cd synadia-agents/agents/grok
+bun install
 ```
 
-Prompt it from anywhere on the bus:
+**Optional — put `grok-agent` on your PATH.** The bin is an executable
+script with a `bun` shebang, so a symlink into any PATH directory is all it
+takes (prefer a symlink over a global *copy*, which would break the
+repo-local `file:../acp` link):
 
 ```sh
-nats req agents.prompt.grok.<you>.<session> "hello grok" \
+ln -sf "$PWD/src/cli.ts" ~/.local/bin/grok-agent
+grok-agent doctor    # sanity check: identity, spawn command, `grok --version` probe
+```
+
+Without the symlink, substitute `bun src/cli.ts` for `grok-agent` below.
+
+**1. Start a NATS server** (or point at your own via `--nats-url`,
+`NATS_URL`, or `NATS_CONTEXT`):
+
+```sh
+nats-server
+```
+
+**2. Start the channel.** Run it from the directory you want grok to work
+in — its basename becomes the session token (or pass `--cwd` / `--session`).
+Pick a home (details in
+[Choosing the agent home](#choosing-the-agent-home---agent-home)):
+
+```sh
+# Fastest start — reuses your interactive grok login. Caveat: inherits your
+# config.toml; with permission_mode = "always-approve" grok never asks, so
+# no §7 queries will appear on the bus.
+grok-agent start --agent-home ~/.grok
+
+# Bus-governed — grok asks, and the asks reach the caller as §7 queries:
+GROK_HOME=~/grok-bot grok    # once: authenticate in the browser, then quit
+grok-agent start --agent-home ~/grok-bot --permission-policy query
+```
+
+Either way you should see:
+
+```
+acp-agent (grok, managed) listening on agents.prompt.grok.<you>.<session>
+```
+
+**3. Prompt it from another shell:**
+
+```sh
+nats req "agents.prompt.grok.<you>.<session>" "hello grok" \
   --replies=0 --reply-timeout=30s --timeout=120s
 ```
 
-Or with the [`@synadia-ai/agents`](../../client-sdk/typescript) SDK:
+**4. Watch the permission loop.** With the bus-governed setup from step 2,
+ask for a file write and answer the §7 query (the bundled harness prints
+the query — tool, path, content — and auto-answers):
+
+```sh
+bun run manual:live -- --session <session> --answer approve \
+  "create a file named hello.txt containing: hi from the bus"
+```
+
+Swap `--answer deny` to watch grok get refused mid-turn.
+
+## Prompting from code
+
+With the [`@synadia-ai/agents`](../../client-sdk/typescript) SDK:
 
 ```ts
 const [agent] = await agents.discover({ filter: { agent: "grok" } });
