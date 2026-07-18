@@ -12,17 +12,13 @@ describe("presets", () => {
     expect(grok?.envPrefix).toBe("SYNADIA_GROK");
   });
 
-  test("gemini preset uses the canonical gemini-cli id with the gemini wire token", () => {
-    const gemini = resolvePreset("gemini");
-    expect(gemini?.agentId).toBe("gemini-cli");
-    expect(gemini?.subjectToken).toBe("gemini");
-    expect(gemini?.args).toEqual(["--experimental-acp"]);
-    expect(gemini?.homeEnvVar).toBeUndefined();
-  });
-
   test("preset listing includes custom", () => {
     expect(resolvePreset("custom")).toBeUndefined();
     expect(presetKeys()).toContain("custom");
-    expect(ACP_PRESETS.length).toBeGreaterThanOrEqual(2);
+    expect(ACP_PRESETS.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("no gemini preset — superseded by Antigravity (custom-preset route)", () => {
+    expect(resolvePreset("gemini")).toBeUndefined();
   });
 });

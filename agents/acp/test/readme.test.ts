@@ -7,10 +7,16 @@ const readme = readFileSync(join(import.meta.dir, "..", "README.md"), "utf8");
 // Honesty guards in the codex-channel tradition: the README must not
 // overclaim what the adapter does.
 describe("README", () => {
-  test("documents both presets and the custom escape hatch", () => {
+  test("documents the grok preset and the custom escape hatch", () => {
     expect(readme).toContain("grok agent stdio");
-    expect(readme).toContain("--experimental-acp");
     expect(readme).toContain("`custom`");
+    expect(readme).not.toContain("--experimental-acp"); // gemini preset removed
+  });
+
+  test("documents the Antigravity custom-preset route honestly", () => {
+    expect(readme).toContain("no native ACP mode yet");
+    expect(readme).toContain("--agent custom --agent-id antigravity");
+    expect(readme).toContain("review third-party adapters before use");
   });
 
   test("is honest about attachments", () => {

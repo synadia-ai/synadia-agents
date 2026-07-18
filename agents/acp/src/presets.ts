@@ -39,15 +39,10 @@ export const ACP_PRESETS: readonly AcpAgentPreset[] = [
     envPrefix: "SYNADIA_GROK",
     description: "Grok Build (xAI) — native ACP via `grok agent stdio`",
   },
-  {
-    key: "gemini",
-    agentId: "gemini-cli",
-    subjectToken: "gemini",
-    bin: "gemini",
-    args: ["--experimental-acp"],
-    envPrefix: "SYNADIA_GEMINI",
-    description: "Gemini CLI (Google) — native ACP via `gemini --experimental-acp`",
-  },
+  // A `gemini` preset existed briefly pre-release; Gemini CLI was superseded
+  // by Google Antigravity (`agy`), which has no native ACP mode yet — drive
+  // it via `--agent custom` with an ACP adapter (see README), and add a
+  // first-party preset once `agy` ships an --acp flag.
 ];
 
 export function resolvePreset(key: string): AcpAgentPreset | undefined {

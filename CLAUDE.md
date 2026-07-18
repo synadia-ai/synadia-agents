@@ -66,7 +66,7 @@ compatibility between the two SDKs.
 | `agents/flue/` | `@synadia-ai/flue-nats-channel` | npm (public) | Flue sidecar channel |
 | `agents/opencode/` | `@synadia-ai/opencode-nats-channel` | npm (public) | OpenCode plugin channel |
 | `agents/codex/` | `@synadia-ai/codex-nats-channel` | npm (public) | Codex app-server-backed channel |
-| `agents/acp/` | `@synadia-ai/acp-nats-channel` | npm (public) | Generic ACP channel (grok, gemini, custom) |
+| `agents/acp/` | `@synadia-ai/acp-nats-channel` | npm (public) | Generic ACP channel (grok preset + custom) |
 | `agents/grok/` | `@synadia-ai/grok-nats-channel` | npm (public) | Grok Build front door — thin pin over `agents/acp` |
 | `examples/pi-headless/` | `@synadia-ai/nats-pi-headless` | npm (public) | depends on `@synadia-ai/agents@^0.5.x` |
 | `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | github only | local-clone test client; `private: true` so it never publishes |

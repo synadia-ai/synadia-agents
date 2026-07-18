@@ -5,11 +5,11 @@ const base = { argv: ["start"], env: { USER: "alice" }, readFile: () => "", cwd:
 
 describe("config", () => {
   test("parses CLI flags", () => {
-    const flags = parseArgs(["start", "--owner", "alice", "--session", "project-main", "--agent", "gemini", "--mode", "fake", "--permission-policy", "reject"]);
+    const flags = parseArgs(["start", "--owner", "alice", "--session", "project-main", "--agent", "custom", "--mode", "fake", "--permission-policy", "reject"]);
     expect(flags.command).toBe("start");
     expect(flags.owner).toBe("alice");
     expect(flags.session).toBe("project-main");
-    expect(flags.agent).toBe("gemini");
+    expect(flags.agent).toBe("custom");
     expect(flags.mode).toBe("fake");
     expect(flags.permissionPolicy).toBe("reject");
   });
@@ -26,15 +26,6 @@ describe("config", () => {
     expect(cfg.acp.permissionPolicy).toBe("reject");
     expect(cfg.agent.owner).toBe("alice");
     expect(cfg.agent.session).toBe("project-main");
-  });
-
-  test("gemini preset splits canonical agent id from subject token", () => {
-    const cfg = loadConfigFromSources({ ...base, argv: ["start", "--agent", "gemini"] });
-    expect(cfg.acp.agentId).toBe("gemini-cli");
-    expect(cfg.agent.subjectToken).toBe("gemini");
-    expect(cfg.acp.bin).toBe("gemini");
-    expect(cfg.acp.args).toEqual(["--experimental-acp"]);
-    expect(cfg.acp.homeEnvVar).toBeUndefined();
   });
 
   test("unknown preset is rejected with the available list", () => {
@@ -99,7 +90,7 @@ describe("config", () => {
   test("agent-home requires a preset with a home env var", () => {
     const cfg = loadConfigFromSources({ ...base, argv: ["start", "--agent-home", "/tmp/grok-home"] });
     expect(cfg.acp.agentHome).toBe("/tmp/grok-home");
-    expect(() => loadConfigFromSources({ ...base, argv: ["start", "--agent", "gemini", "--agent-home", "/tmp/gem-home"] })).toThrow("home env var");
+    expect(() => loadConfigFromSources({ ...base, argv: ["start", "--agent", "custom", "--agent-id", "antigravity", "--acp-bin", "agy-acp", "--agent-home", "/tmp/agy-home"] })).toThrow("home env var");
   });
 
   test("rejects invalid numeric and enum config values", () => {

@@ -28,7 +28,7 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [open-agent](agents/open-agent/) | `open-agent` | `@synadia-ai/open-agent` (private) — inbound bridge for [`vercel-labs/open-agents`](https://github.com/vercel-labs/open-agents); LocalSandbox + companion [`examples/open-agent-vercel/`](examples/open-agent-vercel/) |
 | [OpenCode](agents/opencode/) | `opencode` | `@synadia-ai/opencode-nats-channel` — OpenCode plugin that registers projects as NATS agents |
 | [Codex](agents/codex/) | `codex` | `@synadia-ai/codex-nats-channel` — Codex app-server-backed channel for managed or attached sessions |
-| [ACP](agents/acp/) | `grok`, `gemini`, … | `@synadia-ai/acp-nats-channel` — generic channel for [ACP](https://agentclientprotocol.com)-speaking agents (Grok Build, Gemini CLI, custom) |
+| [ACP](agents/acp/) | `grok`, … | `@synadia-ai/acp-nats-channel` — generic channel for [ACP](https://agentclientprotocol.com)-speaking agents (Grok Build preset + custom for adapters, e.g. Antigravity) |
 | [Grok Build](agents/grok/) | `grok` | `@synadia-ai/grok-nats-channel` — grok-pinned front door to the ACP channel (`grok-agent start`) |
 | [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 

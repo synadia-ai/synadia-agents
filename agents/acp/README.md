@@ -35,7 +35,6 @@ terminators come from `@synadia-ai/agent-service`, exactly as in the
 | Preset | `metadata.agent` | Subject token | Spawns | Home isolation |
 | --- | --- | --- | --- | --- |
 | `grok` (default) | `grok` | `grok` | `grok agent stdio` | `GROK_HOME` → ephemeral temp dir |
-| `gemini` | `gemini-cli` | `gemini` | `gemini --experimental-acp` | — |
 | `custom` | `--agent-id` | `--agent-id` (or `--subject-token`) | `--acp-bin` + `--acp-args` | — |
 
 Any agent on the [ACP agents list](https://agentclientprotocol.com/get-started/agents)
@@ -46,14 +45,34 @@ The grok preset also ships as a pinned front-door package —
 [`agents/grok/`](../grok/) (`@synadia-ai/grok-nats-channel`, bin
 `grok-agent`) — with grok-specific setup and permission docs.
 
+### Antigravity (`agy`) — via the custom preset
+
+Google Antigravity superseded Gemini CLI (whose preset was removed
+pre-release) but has **no native ACP mode yet**
+([feature request](https://github.com/google-antigravity/antigravity-cli/issues/31)).
+Until `agy` ships an `--acp` flag, drive it through a community ACP adapter
+such as [`antigravity-acp`](https://github.com/shubzkothekar/antigravity-acp)
+(review third-party adapters before use — they run with your `agy` auth):
+
+```sh
+npm install -g antigravity-acp     # adapter binary: agy-acp
+acp-agent start --agent custom --agent-id antigravity --acp-bin agy-acp
+```
+
+Live-validated (agy 1.1.4, adapter 1.0.0): text prompts round-trip over the
+bus end-to-end; tool calls surface as status chunks, but the adapter's
+edit/permission flow is still maturing — writes did not complete in our
+runs. A first-party `antigravity` preset lands once `agy` speaks ACP
+natively.
+
 ## Prerequisites
 
 - Bun 1.3+ for local development and smoke tests.
 - `nats-server` on `PATH` for the smoke tests (they start disposable loopback
   servers).
-- The agent binary for managed mode: [`grok`](https://x.ai/cli) or
-  [`gemini`](https://github.com/google-gemini/gemini-cli). Not required for
-  `fake` mode or the deterministic smokes.
+- The agent binary for managed mode: [`grok`](https://x.ai/cli), or your
+  custom agent/adapter binary. Not required for `fake` mode or the
+  deterministic smokes.
 
 ## Quickstart (grok)
 
@@ -118,7 +137,7 @@ config file > derived defaults. Config file:
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
-| `SYNADIA_ACP_AGENT` | Preset: `grok`, `gemini`, `custom` | `grok` |
+| `SYNADIA_ACP_AGENT` | Preset: `grok`, `custom` | `grok` |
 | `SYNADIA_GROK_OWNER`, `SYNADIA_ACP_OWNER`, `SYNADIA_OWNER` | Owner (4th subject token) | sanitized `$USER` |
 | `SYNADIA_GROK_SESSION`, `SYNADIA_ACP_SESSION`, `SYNADIA_NAME` | Session (5th subject token) | sanitized cwd basename |
 | `SYNADIA_ACP_MODE` | `fake` or `managed` | `fake` |
@@ -170,7 +189,7 @@ unauthenticated, so `session/new` fails with an auth error until you either
 - authenticate a dedicated home once: `GROK_HOME=/srv/grok-bot grok`, then
   `--agent-home /srv/grok-bot`.
 
-Gemini CLI has no home env var in the preset; it uses its normal user
+Custom-preset agents have no home isolation; they use their normal user
 configuration and auth.
 
 ## Protocol compliance and limitations

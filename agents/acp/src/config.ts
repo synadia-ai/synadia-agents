@@ -280,7 +280,7 @@ heartbeat_interval_s = 30
 keepalive_interval_s = 30
 
 [acp]
-# Preset: grok, gemini, or custom (custom requires agent_id + bin).
+# Preset: grok or custom (custom requires agent_id + bin).
 agent = "grok"
 # Managed spawns an adapter-owned ACP agent subprocess; fake is for protocol smoke tests.
 mode = "managed"
@@ -324,6 +324,7 @@ Options:
   --keepalive-interval-s SECONDS
 
 Presets spawn: grok -> \`grok agent stdio\` (GROK_HOME isolated per run unless
---agent-home is set), gemini -> \`gemini --experimental-acp\`.
+--agent-home is set). Use --agent custom with --agent-id/--acp-bin for any
+other ACP-speaking agent or adapter (e.g. Antigravity via an ACP adapter).
 `;
 }
