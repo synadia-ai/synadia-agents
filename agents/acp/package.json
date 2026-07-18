@@ -1,0 +1,59 @@
+{
+  "name": "@synadia-ai/acp-nats-channel",
+  "version": "0.1.0",
+  "description": "Synadia Agent Protocol for NATS adapter for ACP-speaking coding agents (grok-build, Gemini CLI, ...).",
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "Apache-2.0",
+  "author": "Synadia Communications",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "agents/acp"
+  },
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agents/acp",
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "acp-agent": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    "CHANGELOG.md",
+    ".env.example"
+  ],
+  "scripts": {
+    "start": "bun src/cli.ts start",
+    "doctor": "bun src/cli.ts doctor",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "smoke:protocol": "bun scripts/protocol-smoke.ts",
+    "smoke:acp-fake-runtime": "bun scripts/acp-runtime-smoke.ts",
+    "manual:acp-live": "bun scripts/live-acp-harness.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^1.2.1",
+    "@nats-io/nats-core": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
+    "@synadia-ai/agents": "^0.5.2",
+    "@synadia-ai/agent-service": "^0.5.2"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.16.0",
+    "typescript": "~5.6.0"
+  }
+}

@@ -11,6 +11,8 @@ on:
       - "agents/openclaw/**"
       - "agents/opencode/**"
       - "agents/codex/**"
+      - "agents/acp/**"
+      - "agents/grok/**"
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
       - ".github/workflows/agents-typescript.yml"
@@ -20,6 +22,8 @@ on:
       - "agents/openclaw/**"
       - "agents/opencode/**"
       - "agents/codex/**"
+      - "agents/acp/**"
+      - "agents/grok/**"
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
       - ".github/workflows/agents-typescript.yml"
@@ -218,3 +222,69 @@ jobs:
       - name: Package contents
         working-directory: agents/codex
         run: npm pack --dry-run --json
+
+  acp:
+    name: agents/acp + agents/grok (typecheck + package-safe smokes)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Build current client-sdk
+        working-directory: client-sdk/typescript
+        run: |
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk
+        working-directory: agent-sdk/typescript
+        run: |
+          # CI-only: replace the relative file: link with an absolute tgz so the packed agent-service artifact resolves after install.
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Install dependencies
+        working-directory: agents/acp
+        run: |
+          bun install
+          npm install --no-save "$CLIENT_SDK_TGZ" "$AGENT_SDK_TGZ"
+      - name: Typecheck
+        working-directory: agents/acp
+        run: bun run typecheck
+      - name: Unit tests
+        working-directory: agents/acp
+        run: bun test
+      - name: Protocol smoke
+        working-directory: agents/acp
+        run: bun run smoke:protocol
+      # The managed-runtime smoke drives a fake ACP agent subprocess over the
+      # real NDJSON wire; no grok/gemini binary is required. Real-agent runs
+      # stay a local/manual validation gate.
+      - name: Fake runtime smoke
+        working-directory: agents/acp
+        run: bun run smoke:acp-fake-runtime
+      - name: Package contents
+        working-directory: agents/acp
+        run: npm pack --dry-run --json
+      # The grok wrapper is a thin pin over agents/acp (file:../acp link
+      # pre-publish), so it rides in the same job: pure-argv unit tests, no
+      # NATS or grok binary required.
+      - name: Install grok wrapper deps
+        working-directory: agents/grok
+        run: bun install
+      - name: Typecheck grok wrapper
+        working-directory: agents/grok
+        run: bun run typecheck
+      - name: Grok wrapper unit tests
+        working-directory: agents/grok
+        run: bun test
