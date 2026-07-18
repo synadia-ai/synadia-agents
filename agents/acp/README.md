@@ -141,6 +141,18 @@ ACP agents ask the *client* for tool-call authorization
 - **`allow`** — approve everything (`allow_once`). Headless demos only; the
   agent runs commands without a human in the loop.
 
+**The agent decides *when* to ask.** The adapter policy only answers requests
+the agent actually sends. Grok runs its own authorization pipeline first
+(hooks → allow/ask/deny rules → built-in read-only auto-approvals → its
+*permission mode*), configured in the agent home's `config.toml`. In grok's
+`default` mode, file writes and non-read-only commands produce
+`session/request_permission` — which `query` relays to the bus. But if the
+agent home sets `permission_mode = "always-approve"` (common in interactive
+setups — check `~/.grok/config.toml` before reusing it via `--agent-home`),
+grok auto-approves internally and **no queries ever reach the caller**. For a
+bus-governed agent, use a dedicated home containing just the auth state and no
+`permission_mode` override.
+
 ## Auth and home isolation (grok)
 
 Managed grok runs with `GROK_HOME` pointed at an **ephemeral temp directory**
@@ -197,3 +209,6 @@ the actual wire shape without any real agent binary or model credentials.
   `acp-agent doctor` and `--acp-bin`.
 - **Prompt returns 500 mid-stream** — the agent process likely exited; the
   error carries the tail of its stderr. Restart the channel.
+- **`query` policy set but no queries arrive** — the agent isn't asking. For
+  grok, check the agent home's `config.toml` for
+  `permission_mode = "always-approve"` (see *Permissions* above).
