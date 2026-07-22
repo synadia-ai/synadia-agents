@@ -17,8 +17,8 @@ import { connect as natsConnect } from "@nats-io/transport-node";
 import { Agents, type StreamMessage } from "@synadia-ai/agents";
 import type { EveChannelConfig } from "../src/config.js";
 import { createEveAgentService } from "../src/service.js";
+import { ensureNats } from "./disposable-nats.js";
 
-const natsUrl = process.env["NATS_URL"] ?? "nats://127.0.0.1:4222";
 const port = Number(process.env["EVE_SMOKE_PORT"] ?? "2000");
 const baseUrl = `http://127.0.0.1:${port}`;
 const fixtureDir = fileURLToPath(new URL("../test/fixtures/eve-agent/", import.meta.url));
@@ -38,6 +38,9 @@ if (!existsSync(join(fixtureDir, "node_modules"))) {
   console.error("  ( cd test/fixtures/eve-agent && npm install )");
   process.exit(1);
 }
+
+const nats = await ensureNats();
+const natsUrl = nats.url;
 
 const config: EveChannelConfig = {
   nats: { url: natsUrl },
@@ -147,6 +150,7 @@ try {
   await service?.stop();
   await nc?.close();
   await callerNc?.close();
+  await nats.close();
   if (eveDev.exitCode === null) {
     eveDev.kill("SIGTERM");
     const killTimer = setTimeout(() => {

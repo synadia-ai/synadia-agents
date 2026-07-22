@@ -3,7 +3,8 @@
 // Exercises the full §12 surface end-to-end — discovery metadata
 // (attachments_ok=true), a plain streamed prompt, the §7 HITL query
 // round-trip (caller replies via `msg.reply`), and an attachment envelope
-// mapped to an inline data: URL file part. Requires a local nats-server.
+// mapped to an inline data: URL file part. Uses NATS_URL when set,
+// otherwise spawns a disposable nats-server.
 
 import { connect as natsConnect } from "@nats-io/transport-node";
 import { Agents, type StreamMessage } from "@synadia-ai/agents";
@@ -11,8 +12,10 @@ import type { HandleMessageStreamEvent, InputRequest } from "eve/client";
 import type { EveBridgeClient, EveSendInput } from "../src/bridge.js";
 import type { EveChannelConfig } from "../src/config.js";
 import { createEveAgentService } from "../src/service.js";
+import { ensureNats } from "./disposable-nats.js";
 
-const natsUrl = process.env["NATS_URL"] ?? "nats://127.0.0.1:4222";
+const nats = await ensureNats();
+const natsUrl = nats.url;
 const name = `smoke-${Math.random().toString(36).slice(2, 8)}`;
 
 const config: EveChannelConfig = {
@@ -188,4 +191,5 @@ try {
   await service.stop();
   await nc.close();
   await callerNc.close();
+  await nats.close();
 }
