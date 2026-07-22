@@ -1,0 +1,45 @@
+{
+  "name": "@synadia-ai/eve-nats-channel",
+  "version": "0.1.0",
+  "description": "Synadia Agent Protocol for NATS sidecar for Vercel Eve agents.",
+  "publishConfig": { "access": "public" },
+  "license": "Apache-2.0",
+  "author": "Synadia Communications",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synadia-ai/synadia-agents.git",
+    "directory": "agents/eve"
+  },
+  "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agents/eve",
+  "type": "module",
+  "bin": {
+    "eve-agent": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "start": "bun src/cli.ts start",
+    "doctor": "bun src/cli.ts doctor",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "smoke:protocol": "bun scripts/protocol-smoke.ts",
+    "smoke:real-eve": "bun scripts/real-eve-smoke.ts"
+  },
+  "dependencies": {
+    "@nats-io/nats-core": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
+    "ai": "^7.0.26",
+    "eve": "^0.27.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^20.16.0",
+    "typescript": "~5.6.0"
+  }
+}
