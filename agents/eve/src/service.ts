@@ -51,7 +51,20 @@ export function createEveAgentService(
   // second caller can't interleave turns into the shared ClientSession.
   let queue: Promise<void> = Promise.resolve();
   service.onPrompt((envelope, response) => {
-    const run = queue.then(() => bridgePromptToEve({ envelope, response, mapping, eveClient }));
+    // Split oversized response chunks against the broker's negotiated
+    // max_payload (read lazily — nc.info is populated once connected)
+    // rather than the bridge's conservative 1 MiB fallback, so a broker
+    // configured below the default doesn't reject large structured results.
+    const brokerCap = input.nc.info?.max_payload;
+    const run = queue.then(() =>
+      bridgePromptToEve({
+        envelope,
+        response,
+        mapping,
+        eveClient,
+        ...(typeof brokerCap === "number" && brokerCap > 0 ? { maxPayloadBytes: brokerCap } : {}),
+      }),
+    );
     queue = run.catch(() => {});
     return run;
   });
