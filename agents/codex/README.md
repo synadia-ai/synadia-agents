@@ -215,7 +215,7 @@ The app-server lifecycle smoke initializes a real `codex app-server --listen std
 
 ## See also
 
-- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), [`flue`](../flue), [`open-agent`](../open-agent), and [`opencode`](../opencode).
+- Sibling channel plugins: [`pi`](../pi), [`openclaw`](../openclaw), [`claude-code`](../claude-code), [`hermes`](../hermes), [`deerflow`](../deerflow), [`flue`](../flue), [`eve`](../eve), [`open-agent`](../open-agent), and [`opencode`](../opencode).
 - TypeScript host SDK: [`../../agent-sdk/typescript`](../../agent-sdk/typescript).
 - NATS CLI cookbook: [`../../docs/using-nats-cli.md`](../../docs/using-nats-cli.md).
 - Wire protocol: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).
