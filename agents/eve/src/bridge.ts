@@ -27,6 +27,8 @@ export interface EveSendInput {
 export interface EveBridgeClient {
   send(input: EveSendInput): Promise<AsyncIterable<HandleMessageStreamEvent>>;
   sessionId(): string | undefined;
+  /** Drop the current Eve session so the next send starts fresh. Called after `session.failed`. */
+  resetSession?(): void;
 }
 
 /** Narrow view of the SDK's PromptResponse, for focused bridge tests. */
@@ -84,8 +86,8 @@ export async function bridgePromptToEve(options: BridgePromptOptions): Promise<v
   const askTimeoutMs = mapping.eve.askTimeoutS * 1000;
 
   let sawResponseText = false;
+  let sawStructuredResult = false;
   let lastTerminalMessage: string | undefined;
-  const structuredResults: unknown[] = [];
 
   const consumeTurn = async (
     stream: AsyncIterable<HandleMessageStreamEvent>,
@@ -152,7 +154,12 @@ export async function bridgePromptToEve(options: BridgePromptOptions): Promise<v
           });
           break;
         case "result.completed":
-          structuredResults.push(event.data.result);
+          // Stream each structured result as it arrives — buffering them
+          // for the tail would grow unboundedly on result-heavy turns.
+          for (const piece of splitResponseText(JSON.stringify(event.data.result), maxPayloadBytes)) {
+            sawStructuredResult = true;
+            await response.send({ type: "response", text: piece });
+          }
           break;
         case "turn.cancelled":
           await response.send({ type: "status", status: "eve turn cancelled" });
@@ -184,6 +191,11 @@ export async function bridgePromptToEve(options: BridgePromptOptions): Promise<v
     const stream = await eveClient.send(input);
     const { pendingInputs, failure } = await consumeTurn(stream);
     if (failure) {
+      // `session.failed` is terminal on the Eve side — drop the client's
+      // session handle so the next prompt starts a fresh conversation
+      // instead of continuing a poisoned one. Step/turn failures leave the
+      // session parked; the next prompt continues it as a normal message.
+      if (failure.type === "session.failed") eveClient.resetSession?.();
       throw new Error(`eve ${failure.type} [${failure.code}]: ${failure.message}`);
     }
     if (pendingInputs.length === 0) break;
@@ -200,14 +212,7 @@ export async function bridgePromptToEve(options: BridgePromptOptions): Promise<v
     input = { inputResponses };
   }
 
-  let emitted = sawResponseText;
-  for (const result of structuredResults) {
-    for (const piece of splitResponseText(JSON.stringify(result), maxPayloadBytes)) {
-      emitted = true;
-      await response.send({ type: "response", text: piece });
-    }
-  }
-  if (!emitted) {
+  if (!sawResponseText && !sawStructuredResult) {
     await response.send({ type: "response", text: lastTerminalMessage ?? "" });
   }
 }

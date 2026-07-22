@@ -84,6 +84,19 @@ describe("SdkEveBridgeClient", () => {
     expect(sessionSend.mock.calls[2]?.[0]).toEqual({ message: "next" });
   });
 
+  test("resetSession drops the session so the next send starts fresh", async () => {
+    const client = new SdkEveBridgeClient({ baseUrl: "http://127.0.0.1:2000", askTimeoutS: 120 });
+    await client.send({ message: "hi" });
+    expect(client.sessionId()).toBe("sess-1");
+
+    client.resetSession();
+    expect(client.sessionId()).toBeUndefined();
+
+    await client.send({ message: "fresh" });
+    expect(clientCtor).toHaveBeenCalledTimes(2);
+    expect(sessionFactory).toHaveBeenCalledTimes(2);
+  });
+
   test("wraps transport failures with the eve base URL", async () => {
     sessionSend.mockImplementation(async () => {
       throw new Error("fetch failed");

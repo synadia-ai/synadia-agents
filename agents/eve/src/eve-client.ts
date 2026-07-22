@@ -39,6 +39,11 @@ export class SdkEveBridgeClient implements EveBridgeClient {
     return this.#session?.state.sessionId;
   }
 
+  /** Drop the current session handle; the next send creates a fresh Eve conversation. */
+  resetSession(): void {
+    this.#session = undefined;
+  }
+
   #ensureSession(): ClientSession {
     if (this.#session === undefined) {
       const client = new Client({

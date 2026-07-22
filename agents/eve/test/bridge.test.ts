@@ -25,10 +25,15 @@ function mapping(): EveMapping {
 
 class FakeEveBridgeClient implements EveBridgeClient {
   readonly sends: EveSendInput[] = [];
+  resets = 0;
   readonly #scripts: HandleMessageStreamEvent[][];
 
   constructor(scripts: HandleMessageStreamEvent[][]) {
     this.#scripts = scripts;
+  }
+
+  resetSession(): void {
+    this.resets += 1;
   }
 
   async send(input: EveSendInput): Promise<AsyncIterable<HandleMessageStreamEvent>> {
@@ -308,6 +313,9 @@ describe("bridgePromptToEve", () => {
       await expect(run(client, response)).rejects.toThrow(
         `eve ${type} [E_FATAL]: model exploded`,
       );
+      // Only a terminal session failure resets the Eve session; step/turn
+      // failures leave it parked for the next prompt.
+      expect(client.resets).toBe(type === "session.failed" ? 1 : 0);
     },
   );
 
