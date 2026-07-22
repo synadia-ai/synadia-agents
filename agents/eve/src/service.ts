@@ -1,11 +1,12 @@
 import type { NatsConnection } from "@nats-io/nats-core";
+import type { RequestEnvelope } from "@synadia-ai/agents";
 import {
   AgentService,
   type AgentServiceOptions,
 } from "@synadia-ai/agent-service";
-import type { EveBridgeClient } from "./bridge.js";
+import type { BridgeResponse, EveBridgeClient } from "./bridge.js";
 import { bridgePromptToEve } from "./bridge.js";
-import type { EveChannelConfig } from "./config.js";
+import type { EveChannelConfig, EveMapping } from "./config.js";
 import { mappingFromConfig } from "./config.js";
 import { SdkEveBridgeClient } from "./eve-client.js";
 
@@ -39,6 +40,40 @@ export function buildAgentServiceOptions(
   };
 }
 
+/**
+ * One sidecar process = one Eve conversation: prompts are chained onto a
+ * FIFO queue so a second caller can't interleave turns into the shared
+ * `ClientSession`. A rejected prompt still rejects for its own caller
+ * (the SDK turns that into a 500) without poisoning the queue for the
+ * next one.
+ */
+export function createSerializedPromptHandler(deps: {
+  readonly mapping: EveMapping;
+  readonly eveClient: EveBridgeClient;
+  /** Broker `max_payload` lookup, read per prompt (`nc.info` is populated once connected). */
+  readonly brokerMaxPayload?: () => number | undefined;
+}): (envelope: RequestEnvelope, response: BridgeResponse) => Promise<void> {
+  let queue: Promise<void> = Promise.resolve();
+  return (envelope, response) => {
+    // Split oversized response chunks against the broker's negotiated
+    // max_payload rather than the bridge's conservative 1 MiB fallback,
+    // so a broker configured below the default doesn't reject large
+    // structured results.
+    const brokerCap = deps.brokerMaxPayload?.();
+    const run = queue.then(() =>
+      bridgePromptToEve({
+        envelope,
+        response,
+        mapping: deps.mapping,
+        eveClient: deps.eveClient,
+        ...(typeof brokerCap === "number" && brokerCap > 0 ? { maxPayloadBytes: brokerCap } : {}),
+      }),
+    );
+    queue = run.catch(() => {});
+    return run;
+  };
+}
+
 export function createEveAgentService(
   input: BuildAgentServiceOptionsInput & {
     readonly eveClient?: EveBridgeClient;
@@ -47,26 +82,12 @@ export function createEveAgentService(
   const service = new AgentService(buildAgentServiceOptions(input));
   const mapping = mappingFromConfig(input.config);
   const eveClient = input.eveClient ?? new SdkEveBridgeClient(mapping.eve);
-  // One sidecar process = one Eve conversation. Serialize prompts so a
-  // second caller can't interleave turns into the shared ClientSession.
-  let queue: Promise<void> = Promise.resolve();
-  service.onPrompt((envelope, response) => {
-    // Split oversized response chunks against the broker's negotiated
-    // max_payload (read lazily — nc.info is populated once connected)
-    // rather than the bridge's conservative 1 MiB fallback, so a broker
-    // configured below the default doesn't reject large structured results.
-    const brokerCap = input.nc.info?.max_payload;
-    const run = queue.then(() =>
-      bridgePromptToEve({
-        envelope,
-        response,
-        mapping,
-        eveClient,
-        ...(typeof brokerCap === "number" && brokerCap > 0 ? { maxPayloadBytes: brokerCap } : {}),
-      }),
-    );
-    queue = run.catch(() => {});
-    return run;
-  });
+  service.onPrompt(
+    createSerializedPromptHandler({
+      mapping,
+      eveClient,
+      brokerMaxPayload: () => input.nc.info?.max_payload,
+    }),
+  );
   return service;
 }

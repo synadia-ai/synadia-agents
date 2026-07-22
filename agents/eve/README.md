@@ -28,8 +28,15 @@ From this monorepo:
 
 ```bash
 cd agents/eve
-bun install
+npm install --no-package-lock
 ```
+
+> **Why npm?** Bun 1.3.x's installer can hang or crash resolving eve's
+> large dependency tree (nitro + platform-optional packages) — observed
+> both in CI (Linux segfault) and locally (resolver spin). npm installs
+> the same tree in seconds; the committed `bun.lock` stays authoritative
+> when a working Bun resolves it. Bun remains the runtime for every
+> command below.
 
 ## Quickstart
 
@@ -64,7 +71,7 @@ Only `prompt` forwards work to Eve. `status` and `hb` are sidecar-owned protocol
 
 - One sidecar process drives **one Eve conversation**. The Eve session is created lazily on the first prompt and continued on every following prompt (`session.waiting` parks between turns). When Eve ends the session (`session.completed` / `session.failed`), the sidecar's client resets and the next prompt starts a fresh Eve session — the stream announces this with a status chunk.
 - Attachments are supported (`attachments_ok=true`). Protocol attachments become inline `data:` URL file parts on the Eve user message; the media type is derived from the filename extension.
-- Eve stream events map to protocol chunks: assistant text deltas become `response` chunks; tool/action activity, subagent calls, compaction, and authorization events become `status` chunks; `result.completed` structured outputs are emitted as JSON `response` chunks at the end of the turn.
+- Eve stream events map to protocol chunks: assistant text deltas become `response` chunks; tool/action activity, subagent calls, compaction, and authorization events become `status` chunks; `result.completed` structured outputs stream as JSON `response` chunks as they arrive.
 - Eve `input.requested` (HITL approvals/questions) becomes a §7 `query` chunk per request: the caller replies with an option number, id, label, or freeform text on the query's reply subject. On timeout (default 120 s) or an unresolvable reply, the sidecar auto-answers a deny-shaped option when one exists, otherwise the turn fails.
 
 ## Configuration
