@@ -143,7 +143,7 @@ Subject tokens are sanitized to the protocol-safe character set.
 | Auth token | `--eve-auth-token` | `EVE_AUTH_TOKEN` | `[eve].auth_token` | — | Bearer token for deployed Eve agents. Local `eve dev` needs none. |
 | Ask timeout | `--ask-timeout-s` | `EVE_ASK_TIMEOUT_S` | `[eve].ask_timeout_s` | `120` | Seconds a §7 HITL query waits for the caller's reply. |
 
-The auth token is used for the `Authorization: Bearer` header only; it never appears in NATS service metadata (the metadata advertises `eve_auth: bearer|none`). Vercel OIDC deployment protection is out of scope for v1 — use a bearer-capable route or run against `eve dev`.
+The auth token is used for the `Authorization: Bearer` header only; it never appears in NATS service metadata (the metadata advertises `eve_auth: bearer|none`). Prefer `EVE_AUTH_TOKEN` or the TOML file over the `--eve-auth-token` flag — CLI arguments are visible in process listings (`ps aux`). Vercel OIDC deployment protection is out of scope for v1 — use a bearer-capable route or run against `eve dev`.
 
 ## Commands
 
@@ -268,7 +268,7 @@ For owner specifically:
 
 ## Limitations
 
-- One Eve conversation per sidecar process; concurrent prompts are serialized into it (the protocol envelope has no session field to multiplex on).
+- One Eve conversation per sidecar process; concurrent prompts are serialized into it (the protocol envelope has no session field to multiplex on). The queue is unbounded FIFO — a long HITL turn delays every caller behind it, so run one sidecar per user/conversation rather than sharing one across many callers.
 - No cancellation bridging — protocol v0.3 has no host-side cancel signal, so a caller-side cancel does not cancel the Eve turn.
 - Eve reasoning deltas are not forwarded (candidate for an opt-in flag later).
 - Vercel OIDC deployment protection is not supported in v1; bearer tokens only.

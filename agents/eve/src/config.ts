@@ -106,6 +106,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 
 type TomlTree = Record<string, Record<string, string>>;
 
+// Deliberately tiny section-scoped grammar (shared with the sibling
+// channels): keys before the first `[section]` header are ignored — every
+// recognized key lives under [nats], [agent], or [eve].
 function parseTinyToml(source: string): TomlTree {
   const tree: TomlTree = {};
   let section = "";
@@ -230,7 +233,8 @@ Options:
   --name TOKEN
   --subject-token TOKEN
   --eve-base-url URL
-  --eve-auth-token TOKEN
+  --eve-auth-token TOKEN   (prefer EVE_AUTH_TOKEN or the TOML file:
+                            flags are visible in process listings)
   --ask-timeout-s SECONDS
   --heartbeat-interval-s SECONDS
   --keepalive-interval-s SECONDS
