@@ -40,7 +40,19 @@ npm install --no-package-lock
 
 ## Quickstart
 
-Start NATS and an Eve agent first, then run the sidecar:
+Start NATS and an Eve agent first, then run the sidecar.
+
+> **No Eve app yet?** This package ships a zero-key fixture agent for
+> trying the channel: it answers with a deterministic `mockModel`, so no
+> model provider key and no Vercel account are needed (Node ≥ 24 required):
+>
+> ```bash
+> ( cd test/fixtures/eve-agent && npm install )   # once
+> ( cd test/fixtures/eve-agent && npx eve dev --no-ui )
+> ```
+>
+> It serves on `http://127.0.0.1:2000` — the sidecar's default
+> `--eve-base-url`.
 
 ```bash
 bun src/cli.ts start \

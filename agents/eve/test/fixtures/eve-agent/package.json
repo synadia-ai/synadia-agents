@@ -12,5 +12,8 @@
   "dependencies": {
     "ai": "^7.0.26",
     "eve": "^0.27.0"
+  },
+  "devDependencies": {
+    "microsandbox": "^0.5.10"
   }
 }
