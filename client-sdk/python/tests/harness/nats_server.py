@@ -62,8 +62,10 @@ def _pick_free_ports(n: int) -> tuple[int, ...]:
     kernel cannot hand out the same ephemeral port twice across a
     single multi-port allocation. Two back-to-back :func:`_pick_free_port`
     calls would have a vanishingly rare TOCTOU collision when the
-    kernel reuses the same port for both — uncommon, but a bulletproof
-    harness shouldn't depend on luck.
+    kernel reuses the same port for both — uncommon, but a harness that
+    needs distinct ports shouldn't depend on luck. (The window between
+    closing the sockets here and nats-server binding them remains; this
+    only guarantees the two ports differ from each other.)
     """
     socks = [socket.socket(socket.AF_INET, socket.SOCK_STREAM) for _ in range(n)]
     try:

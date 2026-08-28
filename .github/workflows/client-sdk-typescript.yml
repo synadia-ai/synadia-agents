@@ -83,7 +83,13 @@ jobs:
       - name: Lint identity fixtures (nats-server -t)
         working-directory: ${{ github.workspace }}
         run: |
-          for f in test-fixtures/identity/*.conf; do
+          shopt -s nullglob
+          confs=(test-fixtures/identity/*.conf)
+          if [ "${#confs[@]}" -eq 0 ]; then
+            echo "no fixture configs found under test-fixtures/identity/" >&2
+            exit 1
+          fi
+          for f in "${confs[@]}"; do
             nats-server -t -c "$f"
           done
       - name: Install host deps
@@ -123,7 +129,13 @@ jobs:
       - name: Lint identity fixtures (nats-server -t)
         working-directory: ${{ github.workspace }}
         run: |
-          for f in test-fixtures/identity/*.conf; do
+          shopt -s nullglob
+          confs=(test-fixtures/identity/*.conf)
+          if [ "${#confs[@]}" -eq 0 ]; then
+            echo "no fixture configs found under test-fixtures/identity/" >&2
+            exit 1
+          fi
+          for f in "${confs[@]}"; do
             nats-server -t -c "$f"
           done
       - name: Install host deps

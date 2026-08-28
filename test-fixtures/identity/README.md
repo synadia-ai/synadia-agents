@@ -63,3 +63,9 @@ new TextDecoder().decode(kp.getSeed()); // "SU…" → "seed"
 
 Then replace every occurrence of the old public key in every `.conf` and run
 the fixture unit tests in all four suites.
+
+A seed that has been committed cannot be revoked, only abandoned — which is
+fine for keys that only ever authenticate to a per-test `nats-server` bound
+to `127.0.0.1`, and is exactly why they must never be reused anywhere else.
+Rotation therefore means *new* keys: never re-add a pair that was once
+removed.
