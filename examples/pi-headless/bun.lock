@@ -5,7 +5,7 @@
     "": {
       "name": "@synadia-ai/nats-pi-headless",
       "dependencies": {
-        "@earendil-works/pi-coding-agent": "latest",
+        "@earendil-works/pi-coding-agent": "0.74.0",
         "@nats-io/services": "^3.4.0",
         "@nats-io/transport-node": "^3.4.0",
         "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",

@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "^0.79.1",
-    "@earendil-works/pi-coding-agent": "latest",
+    "@earendil-works/pi-coding-agent": "0.74.0",
     "@nats-io/services": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
     "@synadia-ai/agents": "file:../../client-sdk/typescript",
