@@ -10,6 +10,7 @@ Primary use: manually poking at the [Synadia Agent Protocol for NATS](https://gi
 implementations - [`pi`](../../agents/pi), [`claude-code`](../../agents/claude-code),
 [`openclaw`](../../agents/openclaw), [`hermes`](../../agents/hermes),
 [`deerflow`](../../agents/deerflow), [`flue`](../../agents/flue),
+[`eve`](../../agents/eve),
 [`open-agent`](../../agents/open-agent), [`opencode`](../../agents/opencode),
 [`codex`](../../agents/codex),
 [`pi-headless`](../pi-headless), and the SDK's own reference agent.

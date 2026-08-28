@@ -91,7 +91,7 @@ the extension it follows the `file:` link in the extension's
 `dist/` when the extension is installed.
 
 Other agent packages in `agents/`, including `agents/flue/`,
-`agents/opencode/`, and `agents/codex/`, run as
+`agents/eve/`, `agents/opencode/`, and `agents/codex/`, run as
 sidecars or wrappers rather than host-loaded extensions; follow their
 per-agent READMEs for local startup.
 
@@ -216,6 +216,7 @@ npm whoami                                       # the @synadia-ai publish ident
 #    Plain plugin packages with Bun TypeScript entrypoints.
 (cd agents/opencode && bun install && npm publish --dry-run && npm publish)
 (cd agents/codex    && bun install && npm publish --dry-run && npm publish)
+(cd agents/eve      && bun install && npm publish --dry-run && npm publish)
 #    Plain (examples/pi-headless, examples/claude-code-headless) — the
 #    `prepack` hook builds dist/ on its own.
 (cd examples/pi-headless           && npm publish --dry-run && npm publish)

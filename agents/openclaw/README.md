@@ -301,7 +301,7 @@ The plugin pulls `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/
 
 ## See also
 
-- Sibling channel plugins: [`pi`](../pi) (PI Agent), [`claude-code`](../claude-code) (Claude Code), [`deerflow`](../deerflow) (DeerFlow), [`flue`](../flue) (Flue), [`opencode`](../opencode) (OpenCode), and [`codex`](../codex) (Codex).
+- Sibling channel plugins: [`pi`](../pi) (PI Agent), [`claude-code`](../claude-code) (Claude Code), [`deerflow`](../deerflow) (DeerFlow), [`flue`](../flue) (Flue), [`eve`](../eve) (Eve), [`opencode`](../opencode) (OpenCode), and [`codex`](../codex) (Codex).
 - The wire-level protocol behind it all: [`synadia-ai/synadia-agent-sdk-docs`](https://github.com/synadia-ai/synadia-agent-sdk-docs).
 
 ## License

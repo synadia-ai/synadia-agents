@@ -1,0 +1,19 @@
+{
+  "name": "eve-nats-channel-smoke-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "eve dev"
+  },
+  "dependencies": {
+    "ai": "^7.0.26",
+    "eve": "^0.27.0"
+  },
+  "devDependencies": {
+    "microsandbox": "^0.5.10"
+  }
+}
