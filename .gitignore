@@ -34,6 +34,11 @@ client-sdk/python/tests/_evidence/
 !.env.sample
 *.creds
 *.nkey
+# Throwaway, test-only credentials under test-fixtures/ are tracked on purpose
+# (see test-fixtures/identity/README.md). Negate exactly these two patterns —
+# a blanket `!test-fixtures/**` would un-ignore node_modules under operator/.
+!test-fixtures/**/*.creds
+!test-fixtures/**/*.nkey
 
 # Local review/research artifacts generated during adapter work
 # Keep these on disk for operator review, but do not include them in PRs.

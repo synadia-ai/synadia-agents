@@ -1,0 +1,149 @@
+{
+  "_comment": "Agent-ID parse fixtures for the sender-identity extension. `parse` carries the spec's own table (in order) followed by the rows the plan adds; `new` exercises the two-argument constructor. Keys are real NKEYs (they pass the nkeys prefix + CRC check); the bad-CRC row is the spec's account key with its last character changed.",
+  "_source": "https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md#parse-fixtures",
+  "regex": "^(A[A-Z2-7]{55}|[A-Za-z0-9_-]+|\\$G)\\.U[A-Z2-7]{55}$",
+  "parse": [
+    {
+      "input": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": true,
+      "account": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "length": 113,
+      "note": "valid, NKEY account — the 113-character operator form"
+    },
+    {
+      "input": "ACME.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": true,
+      "account": "ACME",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "note": "valid, config-file account name"
+    },
+    {
+      "input": "$G.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": true,
+      "account": "$G",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "note": "valid, global account"
+    },
+    {
+      "input": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI.AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL",
+      "valid": false,
+      "note": "invalid: tokens swapped"
+    },
+    {
+      "input": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL:UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "invalid: separator"
+    },
+    {
+      "input": "aabylmbr6q2cdxtlgrqcfa2gp76bgcdf7nzf2ovhh4rq7l3y3tzwjdrl.uaww24xplgox3r3jf4ozezz6ruxmb55dswjceffsudfbckjd4mscmqyi",
+      "valid": false,
+      "note": "invalid: case changed"
+    },
+    {
+      "input": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQY",
+      "valid": false,
+      "note": "invalid: user key truncated"
+    },
+    {
+      "input": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI.extra",
+      "valid": false,
+      "note": "invalid: three tokens"
+    },
+    {
+      "input": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "invalid: user key alone is not an agent ID"
+    },
+    {
+      "input": "acme corp.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "invalid: account name with a space (a config-mode name the form cannot carry)"
+    },
+    {
+      "input": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRM.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "invalid: account has the NKEY shape but fails the nkeys CRC check (last character changed)"
+    },
+    {
+      "input": "",
+      "valid": false,
+      "note": "invalid: empty string"
+    },
+    {
+      "input": ".UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "invalid: empty account token"
+    },
+    {
+      "input": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL.",
+      "valid": false,
+      "note": "invalid: empty user token"
+    },
+    {
+      "input": "a.b.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "invalid: config-mode account name containing `.` (unrepresentable; reads as three tokens)"
+    },
+    {
+      "input": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL.UBLDXJ5RTBM2WVPRKJ7TTWDLRTPCH7O3VMDSZPU55VWZVEW2PGHJBAEB",
+      "valid": true,
+      "account": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL",
+      "user": "UBLDXJ5RTBM2WVPRKJ7TTWDLRTPCH7O3VMDSZPU55VWZVEW2PGHJBAEB",
+      "length": 113,
+      "note": "valid — same account as the first row, other user: a distinct agent ID (equality is byte equality on the text form)"
+    }
+  ],
+  "new": [
+    {
+      "account": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": true,
+      "string": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "note": "round trip: new(account, user).toString() is the canonical form"
+    },
+    {
+      "account": "$G",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": true,
+      "string": "$G.UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "note": "global account"
+    },
+    {
+      "account": "",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "empty account token — there is no zero agent ID"
+    },
+    {
+      "account": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL",
+      "user": "",
+      "valid": false,
+      "note": "empty user token"
+    },
+    {
+      "account": "acme corp",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "config-mode name with a space"
+    },
+    {
+      "account": "a.b",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "config-mode name containing the separator"
+    },
+    {
+      "account": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRM",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQYI",
+      "valid": false,
+      "note": "NKEY-shaped account failing the CRC check"
+    },
+    {
+      "account": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL",
+      "user": "UAWW24XPLGOX3R3JF4OZEZZ6RUXMB55DSWJCEFFSUDFBCKJD4MSCMQY",
+      "valid": false,
+      "note": "55-character user key"
+    }
+  ]
+}

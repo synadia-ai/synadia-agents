@@ -1,0 +1,65 @@
+# `test-fixtures/identity/` — shared sender-identity test fixtures
+
+Repo-level fixtures for the **sender-identity extension** of the Synadia Agent
+Protocol (spec:
+[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
+in `synadia-agent-fabric-docs`). All four SDK test suites —
+`client-sdk/typescript`, `agent-sdk/typescript`, `client-sdk/python`,
+`agent-sdk/python` — consume the same files, so the TypeScript and Python
+SDKs are exercised against byte-identical nats-server topologies.
+
+| File                          | What                                                                                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `keys.json`                   | Five throwaway user nkeys (alice, bob, carol, dave, erin): public key + seed text. **Test-only. Never reuse.**                        |
+| `agent-id-fixtures.json`      | The spec's agent-ID parse table (first ten rows, in order) plus extra rows: bad-CRC account, empty tokens, unrepresentable names, `new()`. |
+| `nkey-noaccounts.conf`        | One nkey user, no accounts (global account `$G`).                                                                                     |
+| `nkey-deny-sys.conf`          | One nkey user with `publish: { deny: "$SYS.>" }` — `$SYS.REQ.USER.INFO` becomes a permissions violation.                              |
+| `accounts.conf`               | Four config-file accounts: ACME exports `agents.>` / `$SRV.>`; APP (`share: true` + a `to:` rename), APP2 (no `share`), APP3 (rename-only). |
+| `account-token-position.conf` | ACME exports `svc.*.prompt` with `account_token_position: 2`; APP imports it both with and without `to:`; APP2 without `share`.        |
+
+Rules that keep the four suites honest:
+
+- **Configs are port-less.** The harnesses always pass `-a 127.0.0.1 -p <port>`,
+  which supplies the listen address on the command line (verified on
+  nats-server 2.12.7) — no templating, no substitution. JetStream is
+  `-js -sd <tmpdir>` on the command line for the same reason; there is no
+  `jetstream.conf`.
+- **Literal keys.** Every `nkey: "U…"` in every `.conf` is one of the
+  `keys.json` public keys, verbatim. A unit test in each suite asserts that
+  every literal is a `keys.json` user, that each config names exactly the
+  users its header comment promises, and that every seed derives its public
+  key — regenerate the keys and every config must change with them.
+- **Lint:** `for f in test-fixtures/identity/*.conf; do nats-server -t -c "$f"; done`
+  — also a CI step in each SDK workflow.
+- **Test vectors** (`sender-vectors.json`, `id-sig-vectors.json`) are generated
+  by the TypeScript identity implementation and land with it; they are not
+  here yet.
+- `.gitignore` ignores `*.creds` / `*.nkey` repo-wide and negates exactly
+  `test-fixtures/**/*.creds` and `test-fixtures/**/*.nkey` (not a blanket
+  `!test-fixtures/**`, which would un-ignore a `node_modules/` under a future
+  `operator/` generator).
+
+## Harness entry points
+
+| Suite                | Fixture root                          | Start a topology                                                                                           |
+| -------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| TypeScript (both)    | `test/harness/nats-server.ts`         | `IDENTITY_FIXTURES_DIR`, `identityFixture(name)`, `new NatsServerProcess().start({ configPath, jetstream })` |
+| Python (both)        | `tests/harness/nats_server.py`        | `IDENTITY_FIXTURES_DIR`, `identity_fixture(name)`, `start_server(log_dir, config_path=…, jetstream=…)`      |
+| Python pytest fixtures | `tests/conftest.py`                 | `nats_server_nkey`, `nats_server_nkey_deny_sys`, `nats_server_accounts`, `nats_server_atp`, `nats_server_js`; `identity_keys`, `connect_nkey_user`, `nc_alice` … `nc_erin`, `nc_alice_deny_sys` |
+
+Smoke tests that boot every topology through the harness live next to each
+suite's other tests (`identity-fixtures.test.ts`, `test_identity_fixtures.py`).
+
+## Regenerating `keys.json`
+
+The keys were minted with `@nats-io/nkeys`:
+
+```ts
+import { createUser } from "@nats-io/nkeys";
+const kp = createUser();
+kp.getPublicKey(); // "U…"  → "public"
+new TextDecoder().decode(kp.getSeed()); // "SU…" → "seed"
+```
+
+Then replace every occurrence of the old public key in every `.conf` and run
+the fixture unit tests in all four suites.

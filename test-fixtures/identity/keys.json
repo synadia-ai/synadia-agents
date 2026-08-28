@@ -1,0 +1,26 @@
+{
+  "_warning": "TEST-ONLY throwaway user nkeys for the sender-identity test suites. They are committed on purpose so every SDK spawns identical nats-server topologies. Never reuse them anywhere else; they authenticate nothing outside a test process.",
+  "_generated_with": "@nats-io/nkeys createUser() — public: kp.getPublicKey(), seed: kp.getSeed() as text",
+  "users": {
+    "alice": {
+      "public": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+      "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE"
+    },
+    "bob": {
+      "public": "UDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4",
+      "seed": "SUAA37BA6WVMWPX27LE3AREHH5ELK2K5OYDECALTSZBJ7CDMW4AOC3GNAI"
+    },
+    "carol": {
+      "public": "UBTHWKVPPUINKFEZ6UZ6ZAWNT4RSRVVLELSMHWPMIRWRBFDCER5TSKLT",
+      "seed": "SUACJSIK64RJ6WLD3JSDQUXM7DERPDXON6UKYY3MAFHX24M2L5TRAKTWAM"
+    },
+    "dave": {
+      "public": "UCULTTUDI6HNG2UCJ7ORP4DMXRTLJ6HRBENRIPC6II77LO2BJMFGRU72",
+      "seed": "SUAJU25C7WYSZHFF6CJTDDIEMW32MTMDID5HFUBB2CXBSRPOH7CYL32VPI"
+    },
+    "erin": {
+      "public": "UAWSCQE7QNCWGK7CN7G5TS34T425NML5HETNUHYEAMGFVWBWGJI3K2WW",
+      "seed": "SUAP7CQZ52HMF645RH3JS6ZGG5ZCK6QSRLN3BHJGA44RT7AS2YFXNY5YIE"
+    }
+  }
+}

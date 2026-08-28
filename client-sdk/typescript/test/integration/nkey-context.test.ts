@@ -12,50 +12,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
-import { connect as tcpConnect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "@nats-io/transport-node";
 import { createUser } from "@nats-io/nkeys";
-import { findNatsServerBinary } from "../harness/nats-server.js";
+import { findFreePort, findNatsServerBinary, waitForTcp } from "../harness/nats-server.js";
 import { loadContextOptions } from "../../src/context.js";
-
-async function findFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = createServer();
-    srv.once("error", reject);
-    srv.listen(0, "127.0.0.1", () => {
-      const addr = srv.address();
-      if (addr && typeof addr === "object") {
-        const { port } = addr;
-        srv.close(() => resolve(port));
-      } else {
-        srv.close();
-        reject(new Error("unexpected socket address"));
-      }
-    });
-  });
-}
-
-async function waitForTcp(host: string, port: number, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const s = tcpConnect({ host, port });
-        s.once("connect", () => {
-          s.end();
-          resolve();
-        });
-        s.once("error", reject);
-      });
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  }
-  throw new Error(`nats-server did not open port ${port} within ${timeoutMs}ms`);
-}
 
 const bin = await findNatsServerBinary();
 

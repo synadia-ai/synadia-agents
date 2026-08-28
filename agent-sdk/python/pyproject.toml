@@ -54,6 +54,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
+    "nkeys>=0.2",
 ]
 
 [build-system]
@@ -92,6 +93,12 @@ plugins = ["pydantic.mypy"]
 module = "nats.*"
 ignore_missing_imports = true
 implicit_reexport = true
+
+[[tool.mypy.overrides]]
+# nkeys ships no py.typed marker; the tests (and, later, the identity
+# module) import it directly.
+module = "nkeys"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
