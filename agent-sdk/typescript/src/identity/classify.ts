@@ -36,9 +36,12 @@ export const DEFAULT_NONCE_CACHE_MAX_ENTRIES = 100_000;
 /**
  * Acceptance hook: runs for every classified `prompt` request (verified,
  * claimed, absent), never for `status`. `false` for a verified sender →
- * `403`; `false` for a claimed / absent sender → `401`; a throw → `500`
- * (logged, never served). Per-request network I/O here delays the §6.4
- * ack and is an amplification vector on `any` endpoints.
+ * `403`; `false` for a claimed / absent sender → `401` with the
+ * `signature required` description — on the wire that reads as "sign and
+ * retry", so a hook that wants to block an unsigned caller regardless of
+ * signing cannot express that distinction (§9.2 leaves no code for it);
+ * a throw → `500` (logged, never served). Per-request network I/O here
+ * delays the §6.4 ack and is an amplification vector on `any` endpoints.
  */
 export type AcceptSenderHook = (sender: SenderInfo | undefined) => boolean | Promise<boolean>;
 
@@ -85,20 +88,30 @@ export class NonceCache {
     return this.#expiry.size;
   }
 
-  /** True iff `(user, nonce)` is present and not expired. */
+  /**
+   * True iff `(user, nonce)` is present and not expired. The stored expiry
+   * is compared exactly; the second-granular buckets only bound *memory*
+   * (an entry can sit in the map for up to 1 s past its expiry before the
+   * sweep drops it, but it is never reported as present).
+   */
   has(user: string, nonce: string, now: number = Date.now()): boolean {
     this.sweep(now);
-    return this.#expiry.has(`${user}.${nonce}`);
+    const expiresAt = this.#expiry.get(`${user}.${nonce}`);
+    return expiresAt !== undefined && expiresAt > now;
   }
 
   /**
    * Check-and-set: record `(user, nonce)` expiring at `tsMs + window`.
-   * Returns `false` (and records nothing) when it is already present.
+   * Returns `false` (and records nothing) when it is already present and
+   * unexpired. Synchronous on purpose — it is the authoritative CAS when
+   * concurrent requests carry the same nonce (the earlier `has()` lookup
+   * in classification runs across an `await`).
    */
   record(user: string, nonce: string, tsMs: number, now: number = Date.now()): boolean {
     this.sweep(now);
     const key = `${user}.${nonce}`;
-    if (this.#expiry.has(key)) return false;
+    const existing = this.#expiry.get(key);
+    if (existing !== undefined && existing > now) return false;
     const expiresAt = tsMs + this.#window;
     if (expiresAt <= now) return true; // already outside the window: nothing to remember
     const bucket = Math.floor(expiresAt / 1000);
@@ -127,9 +140,12 @@ export class NonceCache {
     if (this.#expiry.size <= this.#max) return;
     if (!this.#capWarned) {
       this.#capWarned = true;
-      this.#logger?.warn("nonce cache reached its cap; evicting the oldest entries", {
-        maxEntries: this.#max,
-      });
+      // Evicted nonces are replayable for the rest of their `ts` window —
+      // an operator who sees this once should raise the cap.
+      this.#logger?.warn(
+        "nonce cache reached its cap; evicting the oldest entries — evicted nonces may be replayed within the ts window",
+        { maxEntries: this.#max },
+      );
     }
     const buckets = [...this.#buckets.keys()].sort((a, b) => a - b);
     for (const bucket of buckets) {
@@ -261,6 +277,7 @@ export class SenderGate {
       if (
         nonce !== undefined &&
         ts !== undefined &&
+        // CAS: synchronous check-and-set; one winner when concurrent requests carry the same nonce.
         !this.#nonces.record(user, nonce, parseSenderTimestamp(ts))
       ) {
         return this.#refuse(msg, {
@@ -284,8 +301,8 @@ export class SenderGate {
         return {
           ok: false,
           code: 500,
-          description: "acceptSender hook error",
-          detail: "hook threw",
+          description: "server error",
+          detail: "acceptSender hook threw",
         };
       }
       if (!accepted) {

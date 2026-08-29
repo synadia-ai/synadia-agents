@@ -52,7 +52,9 @@ export function base64UrlDecode(s: string): Uint8Array {
   let bits = 0;
   let o = 0;
   for (let i = 0; i < s.length; i++) {
-    buf = (buf << 6) | B64URL_LOOKUP[s.charCodeAt(i)]!;
+    // The regex guard above keeps every code unit < 128; `?? 0` keeps the
+    // dependency on that guard explicit should it ever be loosened.
+    buf = (buf << 6) | (B64URL_LOOKUP[s.charCodeAt(i)] ?? 0);
     bits += 6;
     if (bits >= 8) {
       bits -= 8;
@@ -104,8 +106,10 @@ function publicKeyPair(publicKey: string): KeyPair {
 /**
  * ed25519 verification against a public NKEY (`U…` / `A…`). Returns
  * `false` for an undecodable key rather than throwing — callers validate
- * the key shape before this point, so a throw here would only ever be a
- * bug surfacing as a 500 instead of a 401.
+ * the key shape before this point, so a decode failure is a malformed
+ * input, not a verifier fault. Anything `verify()` itself throws (it does
+ * not, for a decodable non-curve key) propagates: a verifier fault must
+ * surface as an error (→ `500` at a receiver), never as a silent `401`.
  */
 export function verifyWithPublicKey(
   publicKey: string,
@@ -118,11 +122,7 @@ export function verifyWithPublicKey(
   } catch {
     return false;
   }
-  try {
-    return kp.verify(input, sig);
-  } catch {
-    return false;
-  }
+  return kp.verify(input, sig);
 }
 
 export const utf8 = {

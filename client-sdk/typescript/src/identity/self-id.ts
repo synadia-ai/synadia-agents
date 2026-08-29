@@ -76,7 +76,12 @@ function entryFor(nc: NatsConnection): Entry {
     entry.listening = true;
     const e = entry;
     // One status listener per connection; a reconnect may land on a server
-    // with a different identity answer, so the memo is cleared.
+    // with a different identity answer, so the memo is cleared. It is never
+    // torn down explicitly: `nc.close()` / `drain()` end the status iterator
+    // and the loop exits, and the memo entry lives in a `WeakMap` keyed by
+    // the connection — so the loop's reference to `e` only outlives a
+    // connection that was dropped without ever being closed, which is not
+    // a supported shutdown path for `NatsConnection` anyway.
     void (async (): Promise<void> => {
       try {
         for await (const s of nc.status()) {

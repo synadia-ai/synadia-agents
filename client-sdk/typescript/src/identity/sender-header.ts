@@ -113,7 +113,7 @@ export type SenderInfo = VerifiedSender | ClaimedSender;
  */
 export function assertValidSenderName(name: string): void {
   if (name.length > MAX_SENDER_NAME_LENGTH) {
-    throw new IdentityError(`identity.name exceeds ${MAX_SENDER_NAME_LENGTH} characters`);
+    throw new IdentityError(`identity.name exceeds ${MAX_SENDER_NAME_LENGTH} UTF-16 code units`);
   }
   for (let i = 0; i < name.length; i++) {
     const c = name.charCodeAt(i);
@@ -494,7 +494,15 @@ function reject(detail: string): never {
  * Verify a parsed header against the message it arrived with. Check order
  * (cheap first; the wire outcome is `401` either way): `ts` window (live)
  * → `sub` acceptance → nonce lookup (live, via `opts.nonceSeen`) →
- * ed25519. An unsigned header yields a `ClaimedSender` without any check.
+ * ed25519. The nonce lookup deliberately precedes the signature so a
+ * replay — or a forgery reusing a seen nonce — costs no sha256/ed25519.
+ * An unsigned header yields a `ClaimedSender` without any check.
+ *
+ * **A returned `VerifiedSender` does not mean the nonce was recorded.**
+ * This function only *looks up* nonces; the receiver records the nonce
+ * (check-and-set) after every other admission step passed — see the host
+ * package's `SenderGate.admitPrompt()`. A caller that skips recording has
+ * no replay protection.
  *
  * Throws `SenderVerificationError` (`.code === 401`) on a failing check.
  */
