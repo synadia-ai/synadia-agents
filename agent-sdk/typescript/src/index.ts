@@ -16,6 +16,11 @@
 //                                helpers for emitting response chunks.
 //   - {@link buildHeartbeatPayload}, {@link encodeHeartbeatPayload} —
 //                                heartbeat-publisher helpers.
+//   - {@link SenderGate}, {@link NonceCache} — sender-identity
+//                                classification for hand-rolled services
+//                                (the shared codec lives in the caller
+//                                package: `verifySenderHeader`, `SenderInfo`,
+//                                `formatSender`, …).
 //
 // Subpath entry points:
 //   - `@synadia-ai/agent-service/testing` — the spec-compliant
@@ -29,9 +34,24 @@ export {
   DEFAULT_KEEPALIVE_INTERVAL_S,
   DEFAULT_MAX_PAYLOAD,
   type AgentServiceExtraEndpoint,
+  type AgentServiceIdentityOptions,
   type AgentServiceOptions,
   type PromptHandler,
 } from "./service.js";
+
+export {
+  DEFAULT_MIN_SENDER_TRUST,
+  DEFAULT_NONCE_CACHE_MAX_ENTRIES,
+  DEFAULT_REPLAY_WINDOW_MS,
+  NonceCache,
+  SenderGate,
+  type AcceptSenderHook,
+  type ClassifiableMsg,
+  type NonceCacheOptions,
+  type SenderAdmission,
+  type SenderGateOptions,
+  type SenderRejection,
+} from "./identity/classify.js";
 
 export {
   type Chunk,

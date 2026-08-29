@@ -14,8 +14,15 @@
 //
 // The caller owns `nc`. `agents.close()` tears down SDK-owned state only;
 // closing the underlying connection is the caller's responsibility.
+//
+// Sender identity (extension): pass `identity: { signer, name }` to sign
+// every `prompt` / `status` request; without a signer the SDK sends an
+// unsigned claim when the connection has an NKEY identity, and nothing
+// otherwise. `selfId()` is the connection's own agent ID; `signSender` /
+// `publishSigned` / `requestSigned` sign arbitrary publishes (JetStream
+// included).
 
-import type { NatsConnection } from "@nats-io/nats-core";
+import { headers, type Msg, type MsgHdrs, type NatsConnection } from "@nats-io/nats-core";
 import type { Agent } from "./agent.js";
 import {
   discoverAgents,
@@ -23,12 +30,26 @@ import {
   pingInstance,
   type DiscoverOptions,
 } from "./discovery/srv-ping.js";
+import { SenderSignatureRequiredError } from "./errors.js";
 import { HeartbeatTracker, type Liveness } from "./heartbeat/tracker.js";
 import { type HeartbeatPayload } from "./heartbeat/payload.js";
+import type { AgentId } from "./identity/agent-id.js";
+import { IdentityContext, type IdentityOptions } from "./identity/context.js";
+import {
+  AGENT_SENDER_HEADER,
+  serializeSenderHeader,
+  type AgentSenderHeader,
+} from "./identity/sender-header.js";
 import { type Logger, SILENT_LOGGER } from "./internal/logger.js";
 
 /** Default per-stream inactivity timeout (§6.6) — 60 seconds. */
 export const DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS = 60_000;
+
+/** Default `requestSigned()` timeout — 2 seconds. */
+export const DEFAULT_REQUEST_SIGNED_TIMEOUT_MS = 2_000;
+
+/** JetStream de-duplication header; `publishSigned` sets it to the nonce. */
+export const NATS_MSG_ID_HEADER = "Nats-Msg-Id";
 
 export interface AgentsOptions {
   /** A pre-connected `NatsConnection`. Caller retains ownership. */
@@ -37,6 +58,24 @@ export interface AgentsOptions {
   readonly streamInactivityTimeoutMs?: number;
   /** Pluggable logger. Default: silent. */
   readonly logger?: Logger;
+  /** Sender-identity configuration (signer, display name, unsigned-claim policy). */
+  readonly identity?: IdentityOptions;
+}
+
+/** Options for the signed low-level wrappers. */
+export interface SignedPublishOptions {
+  /**
+   * Subject to sign instead of the publish subject — only for a caller
+   * whose own account renamed the import (sign the exporter's subject).
+   */
+  readonly sub?: string;
+  /** Existing headers to add `Agent-Sender` (and `Nats-Msg-Id`) to. */
+  readonly headers?: MsgHdrs;
+}
+
+export interface SignedRequestOptions extends SignedPublishOptions {
+  /** Request timeout in milliseconds. Default {@link DEFAULT_REQUEST_SIGNED_TIMEOUT_MS}. */
+  readonly timeoutMs?: number;
 }
 
 export class Agents {
@@ -44,6 +83,7 @@ export class Agents {
   readonly #tracker: HeartbeatTracker;
   readonly #logger: Logger;
   readonly #streamInactivityTimeoutMs: number;
+  readonly #identity: IdentityContext;
   readonly #closeController = new AbortController();
   #closed = false;
 
@@ -52,6 +92,8 @@ export class Agents {
     this.#logger = options.logger ?? SILENT_LOGGER;
     this.#streamInactivityTimeoutMs =
       options.streamInactivityTimeoutMs ?? DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS;
+    // Validates `identity.name` up front (throws `IdentityError`).
+    this.#identity = new IdentityContext(options.nc, options.identity ?? {});
     this.#tracker = new HeartbeatTracker(options.nc, this.#logger);
   }
 
@@ -82,6 +124,8 @@ export class Agents {
    *
    * The first call to `discover()` lazily starts the heartbeat wildcard
    * subscription BEFORE publishing `$SRV.PING`, enforcing §8.5 automatically.
+   * It also *starts* the connection's identity lookup (fire-and-forget) so
+   * the first `prompt()` usually finds it memoised.
    *
    * Two instances of the same logical agent (same `(agent, owner, name)`)
    * show up as separate entries with distinct `instanceId`s; callers who
@@ -89,6 +133,7 @@ export class Agents {
    */
   async discover(opts: DiscoverOptions = {}): Promise<Agent[]> {
     this.#ensureOpen();
+    this.#identity.kickoff();
     if (!this.#tracker.isStarted) {
       // tracker.start() flushes internally so the SUB is at the server before
       // we send $SRV.PING (§8.5 subscribe-before-discover).
@@ -99,6 +144,7 @@ export class Agents {
       this.#streamInactivityTimeoutMs,
       this.#closeController.signal,
       opts,
+      this.#identity,
     );
   }
 
@@ -167,7 +213,108 @@ export class Agents {
       this.#streamInactivityTimeoutMs,
       this.#closeController.signal,
       opts,
+      this.#identity,
     );
+  }
+
+  // ---------------------------------------------------------------------
+  // Sender identity
+  // ---------------------------------------------------------------------
+
+  /**
+   * The connection's own agent ID (`{account}.{user}`), learned once per
+   * connection: from the credentials JWT when the signer carries one,
+   * else from `$SYS.REQ.USER.INFO`. Rejects with {@link NoIdentityError}
+   * (no NKEY user — the message names the fix), {@link IdentityUnavailableError}
+   * (no answer / permission violation), or {@link IdentityMismatchError}
+   * (a configured signer holds a different key). Failures are retried
+   * after 30 s; `refreshSelfId()` retries at once.
+   */
+  selfId(): Promise<AgentId> {
+    this.#ensureOpen();
+    return this.#identity.selfId();
+  }
+
+  /** Force a fresh identity lookup, discarding the memoised answer. */
+  refreshSelfId(): Promise<AgentId> {
+    this.#ensureOpen();
+    return this.#identity.refresh();
+  }
+
+  /**
+   * Build a complete `Agent-Sender` header *value* for a publish of
+   * `payload` to `subject` — the SDK supplies id, `ts` and a fresh nonce.
+   * Pass the exact subject and payload you will publish; set `opts.sub`
+   * only behind a rename by your own account. Works for any publish,
+   * JetStream included (`headers.set("Agent-Sender", value)`).
+   *
+   * Rejects with {@link SenderSignatureRequiredError} when no signer is
+   * configured, else with the `selfId()` error when the identity is
+   * unavailable.
+   */
+  async signSender(
+    subject: string,
+    payload: Uint8Array | string,
+    opts: { readonly sub?: string } = {},
+  ): Promise<string> {
+    return serializeSenderHeader(await this.#signedHeader(subject, toBytes(payload), opts.sub));
+  }
+
+  /**
+   * Sign and publish in one step (core `nc.publish`). Sets
+   * `Nats-Msg-Id` to the nonce so a JetStream stream's de-duplication
+   * window helps consumers. Same error rules as {@link signSender}.
+   */
+  async publishSigned(
+    subject: string,
+    payload: Uint8Array | string,
+    opts: SignedPublishOptions = {},
+  ): Promise<void> {
+    const bytes = toBytes(payload);
+    const hdrs = await this.#signedHeaders(subject, bytes, opts);
+    this.#nc.publish(subject, bytes, { headers: hdrs });
+  }
+
+  /**
+   * Sign and send a **single-reply** request (`nc.request`) — for
+   * services that answer once. Prompt streams go through
+   * `Agent.prompt()`. Same error rules as {@link signSender}.
+   */
+  async requestSigned(
+    subject: string,
+    payload: Uint8Array | string,
+    opts: SignedRequestOptions = {},
+  ): Promise<Msg> {
+    const bytes = toBytes(payload);
+    const hdrs = await this.#signedHeaders(subject, bytes, opts);
+    return this.#nc.request(subject, bytes, {
+      timeout: opts.timeoutMs ?? DEFAULT_REQUEST_SIGNED_TIMEOUT_MS,
+      headers: hdrs,
+    });
+  }
+
+  async #signedHeader(
+    subject: string,
+    payload: Uint8Array,
+    sub: string | undefined,
+  ): Promise<AgentSenderHeader> {
+    this.#ensureOpen();
+    if (!this.#identity.signer) throw new SenderSignatureRequiredError(subject);
+    const plan = await this.#identity.plan(sub ?? subject, true);
+    if (!plan) throw new SenderSignatureRequiredError(subject); // unreachable with a signer
+    return plan.build(payload);
+  }
+
+  async #signedHeaders(
+    subject: string,
+    payload: Uint8Array,
+    opts: SignedPublishOptions,
+  ): Promise<MsgHdrs> {
+    const h = await this.#signedHeader(subject, payload, opts.sub);
+    const hdrs = opts.headers ?? headers();
+    hdrs.set(AGENT_SENDER_HEADER, serializeSenderHeader(h));
+    if (h.nonce !== undefined) hdrs.set(NATS_MSG_ID_HEADER, h.nonce);
+    return hdrs;
   }
 
   /**
@@ -193,4 +340,8 @@ export class Agents {
       throw new Error("@synadia-ai/agents: Agents is closed");
     }
   }
+}
+
+function toBytes(payload: Uint8Array | string): Uint8Array {
+  return typeof payload === "string" ? new TextEncoder().encode(payload) : payload;
 }

@@ -26,6 +26,16 @@
 //   - Translates handler exceptions into `Nats-Service-Error-Code: 500`
 //     responses, while envelope decode failures and handler-raised
 //     `ProtocolError`s become `400` (§9.1).
+//   - Sender identity (extension): classifies every `prompt` request
+//     before the ack — malformed `Agent-Sender` → `400`, a failing
+//     signature / replay / `sub` mismatch → `401` in every mode, an
+//     unsigned request on a `min_sender_trust: signed` endpoint → `401`,
+//     a sender the `acceptSender` hook refuses → `403` (verified) / `401`
+//     (claimed / absent) — and hands the classified sender to the handler
+//     as `PromptResponse.sender`. `status` is classified and logged,
+//     never rejected. Registers `user_nkey` / `account` / `id_sig` when
+//     the connection has an identity (and a signer), and **always**
+//     advertises `min_sender_trust` on the prompt endpoint.
 //
 // Mirrors the Python SDK's `AgentService` (`client-sdk/python/src/synadia_ai/agents/service.py`)
 // — wire-equivalent behaviour, idiomatic TS API.
@@ -34,24 +44,45 @@ import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceHandler, type ServiceMsg } from "@nats-io/services";
 
 import {
+  agentIdAccount,
+  agentIdUser,
   AgentSubject,
   decodeEnvelope,
   encodeBase64,
   formatHumanBytes,
+  formatSender,
+  IDENTITY_METADATA_KEYS,
+  IdentityMismatchError,
+  MIN_SENDER_TRUST_KEY,
   newInbox,
+  normalizeAccountTokenPosition,
   parseHumanBytes,
   PROMPT_ENDPOINT_NAME,
   PROMPT_QUEUE_GROUP,
   ProtocolError,
   SDK_PROTOCOL_VERSION,
+  selfId,
   SERVICE_NAME,
+  signAgentId,
+  SILENT_LOGGER,
   STATUS_ENDPOINT_NAME,
   STATUS_QUEUE_GROUP,
+  type AgentId,
+  type Logger,
+  type MinSenderTrust,
   type RequestAttachment,
   type RequestEnvelope,
+  type SenderInfo,
+  type SenderSigner,
 } from "@synadia-ai/agents";
 
 import { buildHeartbeatPayload, encodeHeartbeatPayload } from "./heartbeat/payload.js";
+import {
+  DEFAULT_MIN_SENDER_TRUST,
+  DEFAULT_REPLAY_WINDOW_MS,
+  SenderGate,
+  type AcceptSenderHook,
+} from "./identity/classify.js";
 import {
   encodeChunk,
   type Chunk,
@@ -81,6 +112,12 @@ export const DEFAULT_KEEPALIVE_INTERVAL_S = 30;
 
 /** Default `service.version` advertised in `$SRV.INFO`. */
 const DEFAULT_VERSION = "0.0.1";
+
+/** Sender-identity options of the host: the signer for `id_sig`. The host never sends `Agent-Sender`. */
+export interface AgentServiceIdentityOptions {
+  /** Signs `id_sig` (`AGENT-ID-V1`) over the prompt subject. Must hold the connection's user NKEY. */
+  readonly signer?: SenderSigner;
+}
 
 export interface AgentServiceOptions {
   /** A pre-connected `NatsConnection`. Caller retains ownership. */
@@ -157,6 +194,51 @@ export interface AgentServiceOptions {
    * time, use the {@link AgentService.service} getter as an escape hatch.
    */
   readonly extraEndpoints?: ReadonlyArray<AgentServiceExtraEndpoint>;
+  /**
+   * Pluggable logger for warnings and identity classification outcomes.
+   * Default: silent.
+   */
+  readonly logger?: Logger;
+  /**
+   * Sender-identity: the host's own signer. With it, `start()` registers
+   * `id_sig` next to `user_nkey` / `account`; without it the identity
+   * keys are a display-grade claim (still registered when the connection
+   * has an identity). `start()` throws `IdentityMismatchError` when the
+   * signer's key is not the connection's user; on `NoIdentityError` /
+   * `IdentityUnavailableError` it logs and starts without identity
+   * metadata (verification of *senders* needs no host identity).
+   */
+  readonly identity?: AgentServiceIdentityOptions;
+  /**
+   * `min_sender_trust` advertised on the prompt endpoint — **always
+   * emitted**. `"any"` (default) serves unsigned and header-less
+   * requests; `"signed"` answers `401` to anything not verified.
+   */
+  readonly minSenderTrust?: MinSenderTrust;
+  /**
+   * Replay window in milliseconds (also the `ts` skew). Nonces expire at
+   * `ts + replayWindowMs`. Default 30 000.
+   */
+  readonly replayWindowMs?: number;
+  /**
+   * 1-based position of the caller's account token the server inserts
+   * into the arrival subject when this agent sits behind a service export
+   * with `account_token_position`. Precondition: the inserted token is a
+   * server stamp only on a **closed** endpoint. Note `AgentService` hosts
+   * five-token `agents.{verb}.a.o.n` subjects, which such an export turns
+   * into six-token arrivals its subscription never sees — the option is
+   * validated and passed to classification for a future subject override;
+   * today a service behind such an export uses `verifySenderHeader` on its
+   * own subscription.
+   */
+  readonly accountTokenPosition?: number;
+  /**
+   * Acceptance hook — runs for every classified `prompt` request (never
+   * for `status`), after classification and before the ack. `false` for a
+   * verified sender → `403`; for a claimed / absent one → `401`; a throw →
+   * `500`, never served. What it consults is the harness's business.
+   */
+  readonly acceptSender?: AcceptSenderHook;
 }
 
 /**
@@ -198,10 +280,18 @@ function randomId(): string {
 export class PromptResponse {
   readonly #msg: ServiceMsg;
   readonly #nc: NatsConnection;
+  /**
+   * The classified sender of this request (sender-identity extension):
+   * a `VerifiedSender` (has `id`), a `ClaimedSender` (has `claim`, no
+   * `id` — never use it for authorization), or `undefined` when no
+   * `Agent-Sender` header arrived. Render with `formatSender()`.
+   */
+  readonly sender: SenderInfo | undefined;
 
-  constructor(msg: ServiceMsg, nc: NatsConnection) {
+  constructor(msg: ServiceMsg, nc: NatsConnection, sender: SenderInfo | undefined = undefined) {
     this.#msg = msg;
     this.#nc = nc;
+    this.sender = sender;
   }
 
   /**
@@ -299,6 +389,10 @@ export class AgentService {
   readonly #subject: AgentSubject;
   readonly #heartbeatIntervalS: number;
   readonly #keepaliveIntervalS: number | null;
+  readonly #logger: Logger;
+  readonly #minSenderTrust: MinSenderTrust;
+  readonly #gate: SenderGate;
+  #identity: AgentId | undefined;
   #handler: PromptHandler | null = null;
   #service: Service | null = null;
   #heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -320,6 +414,16 @@ export class AgentService {
       );
     }
 
+    const minSenderTrust = options.minSenderTrust ?? DEFAULT_MIN_SENDER_TRUST;
+    if (minSenderTrust !== "any" && minSenderTrust !== "signed") {
+      throw new Error('AgentService: minSenderTrust must be "any" or "signed"');
+    }
+    const replayWindowMs = options.replayWindowMs ?? DEFAULT_REPLAY_WINDOW_MS;
+    if (!(replayWindowMs > 0)) {
+      throw new Error("AgentService: replayWindowMs must be > 0");
+    }
+    const accountTokenPosition = normalizeAccountTokenPosition(options.accountTokenPosition);
+
     this.#options = options;
     this.#subject = AgentSubject.new(
       options.agent,
@@ -329,6 +433,28 @@ export class AgentService {
     );
     this.#heartbeatIntervalS = heartbeatIntervalS;
     this.#keepaliveIntervalS = keepaliveIntervalS;
+    this.#logger = options.logger ?? SILENT_LOGGER;
+    this.#minSenderTrust = minSenderTrust;
+    this.#gate = new SenderGate({
+      minSenderTrust,
+      replayWindowMs,
+      ...(accountTokenPosition !== undefined ? { accountTokenPosition } : {}),
+      ...(options.acceptSender !== undefined ? { acceptSender: options.acceptSender } : {}),
+      logger: this.#logger,
+    });
+  }
+
+  /**
+   * The agent ID this instance registered (`user_nkey` + `account`), or
+   * `undefined` when the connection has no identity. Set by `start()`.
+   */
+  get identity(): AgentId | undefined {
+    return this.#identity;
+  }
+
+  /** The `min_sender_trust` advertised on the prompt endpoint. */
+  get minSenderTrust(): MinSenderTrust {
+    return this.#minSenderTrust;
   }
 
   /** The validated subject for this agent. */
@@ -394,13 +520,12 @@ export class AgentService {
       return override;
     }
     const clamped = formatHumanBytes(serverBytes);
-    // `console.warn` keeps the warning visible without taking an SDK-wide
-    // logger dependency; matches the Python SDK's `log.warning` level.
-    console.warn(
+    this.#logger.warn(
       `AgentService: maxPayload=${override} (${overrideBytes} bytes) exceeds ` +
         `server limit ${clamped} (${serverBytes} bytes); clamping advertised ` +
         `value to ${clamped} — anything larger would be rejected by the ` +
         `broker before reaching the handler`,
+      { maxPayload: override, serverMaxPayload: serverBytes },
     );
     return clamped;
   }
@@ -430,6 +555,22 @@ export class AgentService {
       }
     }
 
+    // Sender identity: learn the connection's own agent ID once. A signer
+    // that does not match the connection's user is a configuration error
+    // (throw); a connection without an identity starts without the
+    // metadata keys — verifying *senders* needs no host identity.
+    const signer = this.#options.identity?.signer;
+    let identity: AgentId | undefined;
+    try {
+      identity = await selfId(this.#options.nc, signer ? { signer } : {});
+    } catch (err) {
+      if (err instanceof IdentityMismatchError) throw err;
+      this.#logger.warn("AgentService: starting without identity metadata", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+    this.#identity = identity;
+
     const svcm = new Svcm(this.#options.nc);
     const metadata: Record<string, string> = {
       agent: this.#subject.agent,
@@ -439,6 +580,27 @@ export class AgentService {
     };
     if (this.#options.session !== undefined) {
       metadata["session"] = this.#options.session;
+    }
+    // Identity keys win over `extraMetadata` (a harness cannot register a
+    // foreign key by accident).
+    if (identity !== undefined) {
+      metadata[IDENTITY_METADATA_KEYS.userNkey] = agentIdUser(identity);
+      metadata[IDENTITY_METADATA_KEYS.account] = agentIdAccount(identity);
+      if (signer) {
+        metadata[IDENTITY_METADATA_KEYS.idSig] = await signAgentId({
+          signer,
+          id: identity,
+          agent: this.#subject.agent,
+          owner: this.#subject.owner,
+          promptSubject: this.#subject.prompt,
+        });
+      } else {
+        delete metadata[IDENTITY_METADATA_KEYS.idSig];
+      }
+    } else {
+      delete metadata[IDENTITY_METADATA_KEYS.userNkey];
+      delete metadata[IDENTITY_METADATA_KEYS.account];
+      delete metadata[IDENTITY_METADATA_KEYS.idSig];
     }
 
     this.#service = await svcm.add({
@@ -469,15 +631,18 @@ export class AgentService {
       metadata: {
         max_payload: maxPayloadStr,
         attachments_ok: (this.#options.attachmentsOk ?? DEFAULT_ATTACHMENTS_OK) ? "true" : "false",
+        // Always emitted: its presence is what advertises the extension.
+        [MIN_SENDER_TRUST_KEY]: this.#minSenderTrust,
       },
     });
 
+    // `status` declares nothing about identity (§ "Declaring the requirement").
     this.#service.addEndpoint(STATUS_ENDPOINT_NAME, {
       subject: this.#subject.status,
       queue: STATUS_QUEUE_GROUP,
       handler: (err, msg) => {
         if (err) return;
-        this.#dispatchStatus(msg);
+        void this.#dispatchStatus(msg);
       },
     });
 
@@ -489,6 +654,11 @@ export class AgentService {
         ...(ep.metadata !== undefined ? { metadata: ep.metadata } : {}),
       });
     }
+
+    // "Started" means "registered at the server": a caller on another
+    // connection that discovers or prompts right after `start()` resolves
+    // must not race the endpoint subscriptions (→ no responders).
+    await this.#options.nc.flush();
 
     this.#startHeartbeats();
   }
@@ -522,10 +692,13 @@ export class AgentService {
     this.#heartbeatTimer.unref?.();
   }
 
-  #dispatchStatus(msg: ServiceMsg): void {
+  async #dispatchStatus(msg: ServiceMsg): Promise<void> {
     const service = this.#service;
     if (!service) return;
     try {
+      // Classify-only: the prober is logged, never rejected.
+      const sender = await this.#gate.classifyStatus(msg);
+      this.#logger.debug("status request", { subject: msg.subject, sender: formatSender(sender) });
       const payload = buildHeartbeatPayload(
         this.#subject,
         this.#heartbeatIntervalS,
@@ -562,7 +735,36 @@ export class AgentService {
       return;
     }
 
-    const response = new PromptResponse(msg, this.#options.nc);
+    // Sender identity: classify after the envelope, before the ack.
+    let sender: SenderInfo | undefined;
+    try {
+      const admission = await this.#gate.admitPrompt(msg);
+      if (!admission.ok) {
+        try {
+          msg.respondError(admission.code, sanitizeErrorDesc(admission.description));
+        } catch {
+          /* connection may already be gone */
+        }
+        tryRespondTerminator(msg);
+        return;
+      }
+      sender = admission.sender;
+    } catch (err) {
+      this.#logger.error("sender classification failed", {
+        subject: msg.subject,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      try {
+        msg.respondError(500, "sender classification error");
+      } catch {
+        /* connection may already be gone */
+      }
+      tryRespondTerminator(msg);
+      return;
+    }
+    this.#logger.debug("prompt request", { subject: msg.subject, sender: formatSender(sender) });
+
+    const response = new PromptResponse(msg, this.#options.nc, sender);
 
     // §6.4: emit the mandatory leading `ack` status chunk as the first
     // message on the reply subject, before the handler runs. Confirms

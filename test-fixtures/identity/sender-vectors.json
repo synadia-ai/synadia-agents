@@ -1,0 +1,215 @@
+{
+  "_comment": "Known-answer vectors for the Agent-Sender header (sender-identity extension). `expected.header` is the exact header value (UTF-8); `header_wire_bytes` adds the 28 framing bytes the server counts against max_payload. Seeds are the throwaway keys.json users. TEST-ONLY.",
+  "_generated_by": "client-sdk/typescript/scripts/generate-identity-vectors.ts",
+  "signed_input_format": "AGENT-SENDER-V1\\n{account}\\n{user}\\n{subject}\\n{ts}\\n{nonce}\\n{sha256(payload) lowercase hex}\\n",
+  "header_framing_bytes": 28,
+  "vectors": [
+    {
+      "id": "global-account-signed",
+      "note": "config-file server, no accounts ($G); JSON envelope",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "$G",
+        "subject": "agents.prompt.demo-agent.alice.example",
+        "payload_b64": "eyJwcm9tcHQiOiJoZWxsbyJ9",
+        "ts": "2026-08-28T12:00:00Z",
+        "nonce": "nonce-global-account-signed",
+        "signed": true
+      },
+      "expected": {
+        "signed_input": "AGENT-SENDER-V1\n$G\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\nagents.prompt.demo-agent.alice.example\n2026-08-28T12:00:00Z\nnonce-global-account-signed\n8a44725210b9dcd4fefd9f0eca07b70ae45e69274a3105fb25eb426a2cf8bbf4\n",
+        "sig": "NlnxA8iJk5QpVhPXXIpupBplgKpqeGKuHZVqlKMn-koXrvdnE-Er_qUMX1jkOYLEmRPR9DuthxlxZRAVFueEDw",
+        "header": "{\"v\":1,\"account\":\"$G\",\"user\":\"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\",\"sub\":\"agents.prompt.demo-agent.alice.example\",\"ts\":\"2026-08-28T12:00:00Z\",\"nonce\":\"nonce-global-account-signed\",\"sig\":\"NlnxA8iJk5QpVhPXXIpupBplgKpqeGKuHZVqlKMn-koXrvdnE-Er_qUMX1jkOYLEmRPR9DuthxlxZRAVFueEDw\"}",
+        "header_bytes": 296,
+        "header_wire_bytes": 324
+      }
+    },
+    {
+      "id": "named-account-signed",
+      "note": "config-file account name (ACME)",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "ACME",
+        "subject": "agents.prompt.demo-agent.alice.example",
+        "payload_b64": "eyJwcm9tcHQiOiJoZWxsbyJ9",
+        "ts": "2026-08-28T12:00:00Z",
+        "nonce": "nonce-named-account-signed",
+        "name": "claude-code",
+        "signed": true
+      },
+      "expected": {
+        "signed_input": "AGENT-SENDER-V1\nACME\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\nagents.prompt.demo-agent.alice.example\n2026-08-28T12:00:00Z\nnonce-named-account-signed\n8a44725210b9dcd4fefd9f0eca07b70ae45e69274a3105fb25eb426a2cf8bbf4\n",
+        "sig": "mnC5G9UMTeicJ5F5gQ3kVGUUraiGKs-ugwqz7nruKIdmnrWpBlVNhgBUdlIKTGgy9bt24XHZc7XpY5wXBKRXCA",
+        "header": "{\"v\":1,\"account\":\"ACME\",\"user\":\"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\",\"name\":\"claude-code\",\"sub\":\"agents.prompt.demo-agent.alice.example\",\"ts\":\"2026-08-28T12:00:00Z\",\"nonce\":\"nonce-named-account-signed\",\"sig\":\"mnC5G9UMTeicJ5F5gQ3kVGUUraiGKs-ugwqz7nruKIdmnrWpBlVNhgBUdlIKTGgy9bt24XHZc7XpY5wXBKRXCA\"}",
+        "header_bytes": 318,
+        "header_wire_bytes": 346
+      }
+    },
+    {
+      "id": "operator-account-signed",
+      "note": "operator-mode account NKEY (113-char agent ID)",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL",
+        "subject": "agents.prompt.demo-agent.alice.example",
+        "payload_b64": "eyJwcm9tcHQiOiJoZWxsbyJ9",
+        "ts": "2026-08-28T12:00:00Z",
+        "nonce": "nonce-operator-account-signed",
+        "name": "claude-code",
+        "signed": true
+      },
+      "expected": {
+        "signed_input": "AGENT-SENDER-V1\nAABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\nagents.prompt.demo-agent.alice.example\n2026-08-28T12:00:00Z\nnonce-operator-account-signed\n8a44725210b9dcd4fefd9f0eca07b70ae45e69274a3105fb25eb426a2cf8bbf4\n",
+        "sig": "EPGc0tNF0ZQeBqXUduwUp3zdi33k1AKIXOX-PUPSeY9QtS4V3d2EZLq-fHuPuYkw6Cc3HdVn_jVI58Y_3YBZBw",
+        "header": "{\"v\":1,\"account\":\"AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL\",\"user\":\"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\",\"name\":\"claude-code\",\"sub\":\"agents.prompt.demo-agent.alice.example\",\"ts\":\"2026-08-28T12:00:00Z\",\"nonce\":\"nonce-operator-account-signed\",\"sig\":\"EPGc0tNF0ZQeBqXUduwUp3zdi33k1AKIXOX-PUPSeY9QtS4V3d2EZLq-fHuPuYkw6Cc3HdVn_jVI58Y_3YBZBw\"}",
+        "header_bytes": 373,
+        "header_wire_bytes": 401
+      }
+    },
+    {
+      "id": "empty-payload-status",
+      "note": "empty payload (a status request): sha256 of zero bytes",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "$G",
+        "subject": "agents.status.demo-agent.alice.example",
+        "payload_b64": "",
+        "ts": "2026-08-28T12:00:00Z",
+        "nonce": "nonce-empty-payload-status",
+        "signed": true
+      },
+      "expected": {
+        "signed_input": "AGENT-SENDER-V1\n$G\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\nagents.status.demo-agent.alice.example\n2026-08-28T12:00:00Z\nnonce-empty-payload-status\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n",
+        "sig": "Z4Dv8YE7z_cMMFRwD6qRgdhAVw2iD2JbtjYr6iOB9GkD7oXYQMHuu58_lQTQxv2P8sv8KLHIFpSq6u9s3VioAg",
+        "header": "{\"v\":1,\"account\":\"$G\",\"user\":\"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\",\"sub\":\"agents.status.demo-agent.alice.example\",\"ts\":\"2026-08-28T12:00:00Z\",\"nonce\":\"nonce-empty-payload-status\",\"sig\":\"Z4Dv8YE7z_cMMFRwD6qRgdhAVw2iD2JbtjYr6iOB9GkD7oXYQMHuu58_lQTQxv2P8sv8KLHIFpSq6u9s3VioAg\"}",
+        "header_bytes": 295,
+        "header_wire_bytes": 323
+      }
+    },
+    {
+      "id": "non-ascii-name",
+      "note": "non-ASCII display name serialised raw (no \\u escapes)",
+      "input": {
+        "user": "UDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4",
+        "seed": "SUAA37BA6WVMWPX27LE3AREHH5ELK2K5OYDECALTSZBJ7CDMW4AOC3GNAI",
+        "account": "APP",
+        "subject": "agents.prompt.demo-agent.alice.example",
+        "payload_b64": "eyJwcm9tcHQiOiJoZWxsbyJ9",
+        "ts": "2026-08-28T12:00:00Z",
+        "nonce": "nonce-non-ascii-name",
+        "name": "Bob · 日本語 🤖",
+        "signed": true
+      },
+      "expected": {
+        "signed_input": "AGENT-SENDER-V1\nAPP\nUDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4\nagents.prompt.demo-agent.alice.example\n2026-08-28T12:00:00Z\nnonce-non-ascii-name\n8a44725210b9dcd4fefd9f0eca07b70ae45e69274a3105fb25eb426a2cf8bbf4\n",
+        "sig": "zdNrRoWiGhOI0l2aH8bZxkbuUlPdMZnWWtVNOsQq-T-0a3XhB8fVSmnj13ONTkCpL-SOG_hEPNrBUTERJ_TBCg",
+        "header": "{\"v\":1,\"account\":\"APP\",\"user\":\"UDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4\",\"name\":\"Bob · 日本語 🤖\",\"sub\":\"agents.prompt.demo-agent.alice.example\",\"ts\":\"2026-08-28T12:00:00Z\",\"nonce\":\"nonce-non-ascii-name\",\"sig\":\"zdNrRoWiGhOI0l2aH8bZxkbuUlPdMZnWWtVNOsQq-T-0a3XhB8fVSmnj13ONTkCpL-SOG_hEPNrBUTERJ_TBCg\"}",
+        "header_bytes": 321,
+        "header_wire_bytes": 349
+      }
+    },
+    {
+      "id": "renamed-import-sub",
+      "note": "caller behind its own account's `to:` rename publishes the local name and signs the exporter's subject",
+      "input": {
+        "user": "UDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4",
+        "seed": "SUAA37BA6WVMWPX27LE3AREHH5ELK2K5OYDECALTSZBJ7CDMW4AOC3GNAI",
+        "account": "APP",
+        "subject": "local.agents.prompt.demo-agent.alice.example",
+        "sub": "agents.prompt.demo-agent.alice.example",
+        "payload_b64": "eyJwcm9tcHQiOiJoZWxsbyJ9",
+        "ts": "2026-08-28T12:00:00Z",
+        "nonce": "nonce-renamed-import-sub",
+        "signed": true
+      },
+      "expected": {
+        "signed_input": "AGENT-SENDER-V1\nAPP\nUDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4\nagents.prompt.demo-agent.alice.example\n2026-08-28T12:00:00Z\nnonce-renamed-import-sub\n8a44725210b9dcd4fefd9f0eca07b70ae45e69274a3105fb25eb426a2cf8bbf4\n",
+        "sig": "qHjqULCYzbq0BYOdOaBWqT-lXpdtRfiU567Ug5WXlf0Zy0Fvfj-vxPBil2qEe24ZAk3VGTLtXV-p6dNOQ7pBCw",
+        "header": "{\"v\":1,\"account\":\"APP\",\"user\":\"UDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4\",\"sub\":\"agents.prompt.demo-agent.alice.example\",\"ts\":\"2026-08-28T12:00:00Z\",\"nonce\":\"nonce-renamed-import-sub\",\"sig\":\"qHjqULCYzbq0BYOdOaBWqT-lXpdtRfiU567Ug5WXlf0Zy0Fvfj-vxPBil2qEe24ZAk3VGTLtXV-p6dNOQ7pBCw\"}",
+        "header_bytes": 294,
+        "header_wire_bytes": 322
+      }
+    },
+    {
+      "id": "max-nonce",
+      "note": "64-character nonce (upper bound of the alphabet rule)",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "$G",
+        "subject": "agents.prompt.demo-agent.alice.example",
+        "payload_b64": "eyJwcm9tcHQiOiJoZWxsbyJ9",
+        "ts": "2026-08-28T12:00:00Z",
+        "nonce": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
+        "signed": true
+      },
+      "expected": {
+        "signed_input": "AGENT-SENDER-V1\n$G\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\nagents.prompt.demo-agent.alice.example\n2026-08-28T12:00:00Z\nNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\n8a44725210b9dcd4fefd9f0eca07b70ae45e69274a3105fb25eb426a2cf8bbf4\n",
+        "sig": "OVZ_tQw4GlXGg2X9zn1AIyNA6BGEAlJceQQIvYnzDAQLOO_ZbXT8PvVXtTsq4MWC3rOuTo1wO6TDxTm41x6FCw",
+        "header": "{\"v\":1,\"account\":\"$G\",\"user\":\"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\",\"sub\":\"agents.prompt.demo-agent.alice.example\",\"ts\":\"2026-08-28T12:00:00Z\",\"nonce\":\"NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\",\"sig\":\"OVZ_tQw4GlXGg2X9zn1AIyNA6BGEAlJceQQIvYnzDAQLOO_ZbXT8PvVXtTsq4MWC3rOuTo1wO6TDxTm41x6FCw\"}",
+        "header_bytes": 333,
+        "header_wire_bytes": 361
+      }
+    },
+    {
+      "id": "non-ascii-payload",
+      "note": "payload bytes with multi-byte UTF-8; hash is over the raw bytes",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "$G",
+        "subject": "agents.prompt.demo-agent.alice.example",
+        "payload_b64": "eyJwcm9tcHQiOiJncsO8w59lIPCfjI0ifQ==",
+        "ts": "2026-08-28T12:00:00Z",
+        "nonce": "nonce-non-ascii-payload",
+        "signed": true
+      },
+      "expected": {
+        "signed_input": "AGENT-SENDER-V1\n$G\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\nagents.prompt.demo-agent.alice.example\n2026-08-28T12:00:00Z\nnonce-non-ascii-payload\nbca08f289a7b57263bcc58e4af2cde045dc12d709e68092df9263515e383c6b5\n",
+        "sig": "91ZhWlzEUh-_fvePmp65078hme4BsSiTMDZHKm9RasgORvdPaBbt75trkc1OShmlXIISUiHeRexZKqkcmsNXBQ",
+        "header": "{\"v\":1,\"account\":\"$G\",\"user\":\"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\",\"sub\":\"agents.prompt.demo-agent.alice.example\",\"ts\":\"2026-08-28T12:00:00Z\",\"nonce\":\"nonce-non-ascii-payload\",\"sig\":\"91ZhWlzEUh-_fvePmp65078hme4BsSiTMDZHKm9RasgORvdPaBbt75trkc1OShmlXIISUiHeRexZKqkcmsNXBQ\"}",
+        "header_bytes": 292,
+        "header_wire_bytes": 320
+      }
+    },
+    {
+      "id": "unsigned-claim",
+      "note": "unsigned claim: exactly v, account, user, name",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "$G",
+        "subject": "agents.prompt.demo-agent.alice.example",
+        "payload_b64": "eyJwcm9tcHQiOiJoZWxsbyJ9",
+        "name": "claude-code",
+        "signed": false
+      },
+      "expected": {
+        "header": "{\"v\":1,\"account\":\"$G\",\"user\":\"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\",\"name\":\"claude-code\"}",
+        "header_bytes": 109,
+        "header_wire_bytes": 137
+      }
+    },
+    {
+      "id": "unsigned-claim-no-name",
+      "note": "unsigned claim without a name: exactly v, account, user",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "ACME",
+        "subject": "agents.prompt.demo-agent.alice.example",
+        "payload_b64": "eyJwcm9tcHQiOiJoZWxsbyJ9",
+        "signed": false
+      },
+      "expected": {
+        "header": "{\"v\":1,\"account\":\"ACME\",\"user\":\"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\"}",
+        "header_bytes": 90,
+        "header_wire_bytes": 118
+      }
+    }
+  ]
+}

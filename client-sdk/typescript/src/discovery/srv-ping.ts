@@ -9,6 +9,7 @@ import {
 } from "@nats-io/nats-core";
 import { Svcm } from "@nats-io/services";
 import { Agent } from "../agent.js";
+import type { IdentityContext } from "../identity/context.js";
 import { SERVICE_NAME } from "../internal/service-name.js";
 import { assertValidToken } from "../subjects.js";
 import { buildAgentInfo, type AgentInfo, type RawServiceInfo } from "./agent-info.js";
@@ -59,6 +60,7 @@ export async function discoverAgents(
   defaultInactivityTimeoutMs: number,
   closeSignal: AbortSignal,
   opts: DiscoverOptions = {},
+  identity?: IdentityContext,
 ): Promise<Agent[]> {
   const requestOpts: RequestManyOptions =
     opts.timeoutMs !== undefined
@@ -77,7 +79,7 @@ export async function discoverAgents(
     for await (const info of infos) {
       const agentInfo = buildAgentInfo(info);
       if (agentInfo && matchesFilter(agentInfo, opts.filter)) {
-        found.push(new Agent(nc, agentInfo, defaultInactivityTimeoutMs, closeSignal));
+        found.push(new Agent(nc, agentInfo, defaultInactivityTimeoutMs, closeSignal, identity));
       }
     }
   } catch (err) {
@@ -118,6 +120,7 @@ export async function lookupAgentInstance(
   defaultInactivityTimeoutMs: number,
   closeSignal: AbortSignal,
   opts: { timeoutMs?: number } = {},
+  identity?: IdentityContext,
 ): Promise<Agent | null> {
   const timeout = opts.timeoutMs ?? 2000;
   // §2 MUST rules — instanceIds are normally server-generated UUIDs, but a
@@ -142,7 +145,7 @@ export async function lookupAgentInstance(
   if (!raw || typeof raw !== "object") return null;
   const info = buildAgentInfo(raw);
   if (!info) return null;
-  return new Agent(nc, info, defaultInactivityTimeoutMs, closeSignal);
+  return new Agent(nc, info, defaultInactivityTimeoutMs, closeSignal, identity);
 }
 
 /** On-demand reachability check for a single instance (§8.4). */

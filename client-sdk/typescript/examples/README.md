@@ -33,6 +33,19 @@ identity to set, so the identity vars (`SYNADIA_OWNER` / `SYNADIA_NAME`, legacy
 
 When neither is set, the demos fall back to `nats://127.0.0.1:4222`.
 
+`_run-reference-agent.ts` additionally reads the sender-identity knobs (they
+merge into whichever connection path is active):
+
+| Variable                           | Default   | Purpose                                                                                                                      |
+| ---------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `NATS_NKEY_SEED_FILE`              | _(unset)_ | Path to a user seed file (`SU…`): authenticates the connection **and** signs `id_sig`. A file on purpose — not an env value. |
+| `NATS_CREDS`                       | _(unset)_ | Path to a credentials file (JWT + seed); same effect.                                                                        |
+| `REFERENCE_AGENT_MIN_SENDER_TRUST` | `any`     | `any` or `signed` — what the prompt endpoint requires of callers.                                                            |
+
+Its echo ends with `sender: <id> (<trust>)` only when a sender was classified,
+e.g. `demo agent received your prompt. sender: $G.UCDU… (verified user, claimed account)`;
+the identity is printed on its own line after the `reference agent listening on …` marker.
+
 ## Run
 
 ```sh
@@ -53,7 +66,7 @@ NATS_CONTEXT=my-context bun examples/02-prompt-text.ts "hello"
 ## Notes
 
 - **`04-query-reply.ts`** needs an agent whose handler actually asks a mid-stream
-  question (`PromptStream.ask`). The bundled reference agent's echo handler does
+  question (`PromptResponse.ask` in `@synadia-ai/agent-service`). The bundled reference agent's echo handler does
   not emit queries, so `04` against it just streams the echo back without hitting
   the interactive path.
 - **`_run-client-probe.ts`** is the TypeScript leg of the _reverse_ cross-SDK

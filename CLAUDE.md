@@ -118,11 +118,19 @@ Two distinct version axes:
     the SDK constants in both languages and the harnesses pick it up
     automatically.
 - **Package version (npm/PyPI)** — independent per SDK pair.
-  - TS: `@synadia-ai/agents` + `@synadia-ai/agent-service` — both at
-    `0.4.0` in lockstep, neither published to npm yet.
-  - Python: `synadia-ai-agents` (`0.6.0`) +
-    `synadia-ai-agent-service` (`0.2.0`) — both published to PyPI;
+  - TS: `@synadia-ai/agents` + `@synadia-ai/agent-service` — released
+    in lockstep (`0.5.2` on npm; the sender-identity work lands as
+    `0.6.0`). The release flow is in `README-DEV.md`.
+  - Python: `synadia-ai-agents` (`0.7.1`) +
+    `synadia-ai-agent-service` (`0.4.1`) — both published to PyPI;
     versions diverge per package.
+- **Sender-identity extension** — additive on top of `0.3`, no
+  protocol bump. Spec: `docs/agent-protocol-sender-identity.md` in
+  `synadia-ai/synadia-agent-fabric-docs`; the implementation plan with
+  its per-PR log is `docs/plans/agent-identity-sdk-implementation-plan.md`
+  in that repo (read its §12 before touching identity code). Shared
+  fixtures and the TS-generated known-answer vectors live under
+  `test-fixtures/identity/`.
 
 The package versions differ for historical reasons. They are **not** a
 protocol skew. The Python `tests/test_interop_e2e.py` runs the TS
@@ -158,7 +166,9 @@ subtree affects another. Before finishing a change, walk the list:
     doc, not the local `protocol-mapping.md`, is the source of truth.
 - **Touched an agent harness** (`agents/*`)?
   - Update its README if user-visible config / subject layout changed.
-  - Don't reach for the SDK package — agents stay on raw `@nats-io/*`.
+  - Prefer the SDK package over inlined `@nats-io/*` logic where it
+    helps (see "Agents _should_ reuse the SDK package" above); migrating
+    an existing harness is opportunistic, not a standalone PR.
 - **Touched an example**?
   - Update the example's README if its CLI / config / quickstart
     changed.
@@ -173,8 +183,10 @@ description.
 
 ## Release ladder for SDK changes that examples need
 
-The trap: published examples (`pi-headless`, `claude-code-headless`) pin
-`@synadia-ai/agents@^0.4.x` from npm, not via `file:` links. A new SDK
+The trap: consumers that pin the SDK from npm (`agents/acp`, `codex`,
+`opencode` at `^0.5.2`, `agents/claude-code` at `^0.5.0`) do not see an
+unpublished change; the in-repo examples and the `file:`-linked harnesses
+(`flue`, `open-agent`, `openclaw`, `pi`) pick it up on their next install. A new SDK
 export does not exist for them until it is **published**. Don't try to
 land an example migration alongside an unpublished SDK change — typecheck
 will fail in CI, and you'll waste a force-push fixing it.

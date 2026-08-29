@@ -1,0 +1,122 @@
+{
+  "_comment": "Known-answer vectors for the AGENT-ID-V1 registration signature (`id_sig`). Verify `expected.id_sig` over `expected.signed_input` with `input.user`. Seeds are the throwaway keys.json users. TEST-ONLY.",
+  "_generated_by": "client-sdk/typescript/scripts/generate-identity-vectors.ts",
+  "signed_input_format": "AGENT-ID-V1\\n{user_nkey}\\n{account}\\n{agent}\\n{owner}\\n{prompt_subject}\\n",
+  "vectors": [
+    {
+      "id": "global-account",
+      "note": "default prompt subject on a $G server",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "$G",
+        "agent": "demo-agent",
+        "owner": "alice",
+        "prompt_subject": "agents.prompt.demo-agent.alice.example"
+      },
+      "expected": {
+        "signed_input": "AGENT-ID-V1\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\n$G\ndemo-agent\nalice\nagents.prompt.demo-agent.alice.example\n",
+        "id_sig": "5DRGElZdruU8BTo_RbSaiR6_gzCz3NaHUaT7IN6DKkZtcVsotC-hQCtvKTmIugvVbet_BDO98_-BrZHbCjyqBw",
+        "metadata": {
+          "agent": "demo-agent",
+          "owner": "alice",
+          "user_nkey": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+          "account": "$G",
+          "id_sig": "5DRGElZdruU8BTo_RbSaiR6_gzCz3NaHUaT7IN6DKkZtcVsotC-hQCtvKTmIugvVbet_BDO98_-BrZHbCjyqBw"
+        }
+      }
+    },
+    {
+      "id": "named-account",
+      "note": "config-file account name",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "ACME",
+        "agent": "demo-agent",
+        "owner": "alice",
+        "prompt_subject": "agents.prompt.demo-agent.alice.example"
+      },
+      "expected": {
+        "signed_input": "AGENT-ID-V1\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\nACME\ndemo-agent\nalice\nagents.prompt.demo-agent.alice.example\n",
+        "id_sig": "FtqjE18eA5JN96EcjcNfPv85HvVJei61NEOTjUbAFUdbx8OmeebCdV8tOLS8dg1AgKeQVkPbFoKLy_ePzmlABw",
+        "metadata": {
+          "agent": "demo-agent",
+          "owner": "alice",
+          "user_nkey": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+          "account": "ACME",
+          "id_sig": "FtqjE18eA5JN96EcjcNfPv85HvVJei61NEOTjUbAFUdbx8OmeebCdV8tOLS8dg1AgKeQVkPbFoKLy_ePzmlABw"
+        }
+      }
+    },
+    {
+      "id": "operator-account",
+      "note": "operator-mode account NKEY",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL",
+        "agent": "demo-agent",
+        "owner": "alice",
+        "prompt_subject": "agents.prompt.demo-agent.alice.example"
+      },
+      "expected": {
+        "signed_input": "AGENT-ID-V1\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\nAABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL\ndemo-agent\nalice\nagents.prompt.demo-agent.alice.example\n",
+        "id_sig": "3y2A8fPJKZBTRqMh_dZJ7ZbN4lroOJhbh0czRW9v5ruEdJAwkEzdh1SYsM3fL22PdpydiHC-l0t69QqSpO1hDQ",
+        "metadata": {
+          "agent": "demo-agent",
+          "owner": "alice",
+          "user_nkey": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+          "account": "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL",
+          "id_sig": "3y2A8fPJKZBTRqMh_dZJ7ZbN4lroOJhbh0czRW9v5ruEdJAwkEzdh1SYsM3fL22PdpydiHC-l0t69QqSpO1hDQ"
+        }
+      }
+    },
+    {
+      "id": "custom-prompt-subject",
+      "note": "the signature binds the advertised prompt subject, not the name-derived one",
+      "input": {
+        "user": "UDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4",
+        "seed": "SUAA37BA6WVMWPX27LE3AREHH5ELK2K5OYDECALTSZBJ7CDMW4AOC3GNAI",
+        "account": "APP",
+        "agent": "custom-agent",
+        "owner": "bob",
+        "prompt_subject": "svc.custom.prompt"
+      },
+      "expected": {
+        "signed_input": "AGENT-ID-V1\nUDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4\nAPP\ncustom-agent\nbob\nsvc.custom.prompt\n",
+        "id_sig": "Sas6PufKYLbFU67oqj6kv1bZL-LUwI-FejOu31qoXA7lFnp1RW-38MgRTtmzX_XYg5b21Ww99UTEXZKzc11vAQ",
+        "metadata": {
+          "agent": "custom-agent",
+          "owner": "bob",
+          "user_nkey": "UDLPRVYPNSPIPYH4RVGKEHP2AAG4J2CN4GQ3IBTKC6ZDV6SR7ONG27D4",
+          "account": "APP",
+          "id_sig": "Sas6PufKYLbFU67oqj6kv1bZL-LUwI-FejOu31qoXA7lFnp1RW-38MgRTtmzX_XYg5b21Ww99UTEXZKzc11vAQ"
+        }
+      }
+    },
+    {
+      "id": "subject-token-abbrev",
+      "note": "metadata.agent differs from the wire token (subjectToken)",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "$G",
+        "agent": "claude-code",
+        "owner": "alice",
+        "prompt_subject": "agents.prompt.cc.alice.laptop"
+      },
+      "expected": {
+        "signed_input": "AGENT-ID-V1\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\n$G\nclaude-code\nalice\nagents.prompt.cc.alice.laptop\n",
+        "id_sig": "CQHb49N_2H33nB99PCcvI_nflmmpF6nfHNqAt_1RvFSd6qv15TbpaIwmQN85lxVsGDajjNDthB80OiADFkpJAA",
+        "metadata": {
+          "agent": "claude-code",
+          "owner": "alice",
+          "user_nkey": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+          "account": "$G",
+          "id_sig": "CQHb49N_2H33nB99PCcvI_nflmmpF6nfHNqAt_1RvFSd6qv15TbpaIwmQN85lxVsGDajjNDthB80OiADFkpJAA"
+        }
+      }
+    }
+  ]
+}

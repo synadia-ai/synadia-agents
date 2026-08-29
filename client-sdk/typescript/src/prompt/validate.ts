@@ -33,11 +33,17 @@ export function assertAttachmentsAllowed(
  * for either means "not declared / not known" — when both are
  * `undefined` we don't enforce locally and let the server decide
  * (§5.4 last paragraph).
+ *
+ * `headerBytes` is the framed wire size of the `Agent-Sender` header the
+ * request will carry (sender-identity extension): the server applies
+ * `max_payload` to headers and payload together, so the check counts
+ * both. Zero when no header is sent.
  */
 export function assertWithinMaxPayload(
   encodedByteSize: number,
   endpoint: EndpointInfo,
   connectionMaxPayload?: number,
+  headerBytes = 0,
 ): void {
   const endpointLimit = endpoint.maxPayloadBytes;
   const connLimit =
@@ -52,7 +58,7 @@ export function assertWithinMaxPayload(
     effective = endpointLimit ?? connLimit;
   }
   if (effective === undefined) return;
-  if (encodedByteSize > effective) {
-    throw new PayloadTooLargeError(effective, encodedByteSize);
+  if (encodedByteSize + headerBytes > effective) {
+    throw new PayloadTooLargeError(effective, encodedByteSize, headerBytes);
   }
 }
