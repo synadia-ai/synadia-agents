@@ -35,6 +35,7 @@ from synadia_ai.agents.identity import (
     self_id_failure_expired,
     start_self_id_lookup,
 )
+from tests.harness.wait import wait_for
 from tests.test_signer_creds import fake_jwt
 
 if TYPE_CHECKING:
@@ -123,8 +124,9 @@ async def test_t0_no_identity_names_the_fix_and_is_asked_once(
         with pytest.raises(NoIdentityError):
             await agents.self_id()  # negative-cached: no second request
         assert isinstance(peek_self_id(nc), NoIdentityError)
+        await wait_for(lambda: len(probes) == 1, what="one $SYS.REQ.USER.INFO probe")
         await nc.flush()
-        assert len(probes) == 1
+        assert len(probes) == 1  # still one: the negative cache answered the second call
         recorder.write_json(
             "probes.json", [{"subject": m.subject, "reply": m.reply} for m in probes]
         )
@@ -158,12 +160,12 @@ async def test_t1_self_id_is_global_account_user_and_lookups_are_shared(
     assert all(r == expected for r in results)
     assert await self_id(nc) == expected  # module-level, same memo
     assert peek_self_id(nc) == expected
+    await wait_for(lambda: len(probes) == 1, what="one $SYS.REQ.USER.INFO probe")
     await nc.flush()
     assert len(probes) == 1  # concurrent callers shared one in-flight lookup
     assert await agents.refresh_self_id() == expected
     assert await refresh_self_id(nc) == expected
-    await nc.flush()
-    assert len(probes) == 3
+    await wait_for(lambda: len(probes) == 3, what="three probes after two refreshes")
     await agents.close()
 
 

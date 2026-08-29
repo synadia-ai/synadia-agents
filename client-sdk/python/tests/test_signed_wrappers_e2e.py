@@ -65,17 +65,10 @@ async def test_sign_sender_and_publish_signed(
         verify_sender_header(renamed, "events.a", b"x", mode="stored"), VerifiedSender
     )
 
-    received: list[Msg] = []
-
-    async def capture(msg: Msg) -> None:
-        received.append(msg)
-
-    await nc.subscribe("events.>", cb=capture)
+    events = await nc.subscribe("events.>")
     await nc.flush()
     await agents.publish_signed("events.b", b"hello", headers={"X-Extra": "1"})
-    await nc.flush()
-    assert len(received) == 1
-    msg = received[0]
+    msg = await events.next_msg(timeout=2.0)
     sender = verify_sender(msg, "live")
     assert isinstance(sender, VerifiedSender) and sender.id == alice_id
     assert msg.headers is not None
@@ -91,7 +84,8 @@ async def test_sign_sender_and_publish_signed(
     with pytest.raises(SenderSignatureRequiredError):
         await plain.request_signed("events.c", b"x")
     await nc.flush()
-    assert len(received) == 1
+    with pytest.raises(TimeoutError):
+        await events.next_msg(timeout=0.2)  # nothing was published
     await agents.close()
     await plain.close()
 

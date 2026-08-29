@@ -41,6 +41,7 @@ from synadia_ai.agents import (
 )
 from synadia_ai.agents.identity import USER_INFO_SUBJECT, encoded_header_length
 from tests.harness.fake_agent import FakePromptAgent, FakeStatusAgent
+from tests.harness.wait import wait_for
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -365,9 +366,10 @@ async def test_t0_no_header_no_sender_lookup_once(
             assert events[-1] == StatusChunk(status="ack") or any(
                 isinstance(m, ResponseChunk) for m in events
             )
-        await caller.flush()
         assert len(fake.seen) == 2
         assert all(s.header is None and s.sender is None for s in fake.seen)
+        await wait_for(lambda: len(probes) == 1, what="one $SYS.REQ.USER.INFO probe")
+        await caller.flush()
         assert len(probes) == 1  # the lookup ran once per connection
         recorder.write_json("probes.json", len(probes))
 
