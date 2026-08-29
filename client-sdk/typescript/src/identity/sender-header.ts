@@ -32,6 +32,7 @@ import {
   utf8,
   verifyWithPublicKey,
 } from "./crypto.js";
+import { readRequestInfo } from "./request-info.js";
 import type { SenderSigner } from "./signer.js";
 
 /** The header name — matched case-sensitively. */
@@ -81,14 +82,22 @@ export interface VerifiedSender {
   readonly trust: "verified";
   readonly id: AgentId;
   /**
-   * `true` only when the deployment declared the endpoint closed
-   * (`operatorAttested`) and the server stamp agreed with the signed
-   * `account`. Always `false` until that mode ships (PR-T2).
+   * `true` only when the receiver runs in operator-attested mode
+   * (`operatorAttested: true` — the deployment declared the endpoint
+   * closed, spec Appendix A) **and** a server stamp agreed with the
+   * signed `account`: the `Nats-Request-Info` `acc`, or the token an
+   * `account_token_position` export inserted. Otherwise `account` is the
+   * sender's signed word next to a verified `user`.
    */
   readonly accountAttested: boolean;
   readonly name?: string;
   readonly header: AgentSenderHeader;
-  /** Reverse lookup (PR-T2); returns `undefined` when unbound or not found. */
+  /**
+   * Reverse lookup (spec "Reverse lookup"): the verified `AgentInfo`
+   * registered under this agent ID, via the resolver the host bound
+   * (`resolveTtlMs` on the host options). `undefined` when unbound or when
+   * no verified instance claims the key.
+   */
   readonly resolve: () => Promise<AgentInfo | undefined>;
 }
 
@@ -443,9 +452,35 @@ export interface VerifySenderOptions {
    * Recording a nonce is the caller's job, after every check passed.
    */
   readonly nonceSeen?: (user: string, nonce: string) => boolean;
-  /** Reverse-lookup binding for the returned `VerifiedSender` (PR-T2). */
+  /** Reverse-lookup binding for the returned `VerifiedSender.resolve()`. */
   readonly resolver?: (id: AgentId) => Promise<AgentInfo | undefined>;
+  /**
+   * Operator-attested mode (spec Appendix A) — **off by default**, and a
+   * deployment promise the SDK cannot verify: every request reaching
+   * this receiver crossed a service import, so `Nats-Request-Info` (and
+   * an inserted account token) is the server's stamp, never a peer's
+   * forgery. With it on, a signed header is cross-checked against the
+   * stamp in `headers`: a present `acc` must equal the signed `account`
+   * and a present `user` (a `share: true` import) the signed `user`;
+   * disagreement, or a stamp the server would not write, → `401`. A
+   * missing stamp is compared to nothing. Agreement on `acc` — or the
+   * `accountTokenPosition` cross-check — sets `accountAttested`.
+   * Unsigned claims are never cross-checked.
+   */
+  readonly operatorAttested?: boolean;
+  /** The message headers; consulted only under `operatorAttested` for `Nats-Request-Info`. */
+  readonly headers?: MsgHdrs | undefined;
 }
+
+/** The structural message shape `verifySender` takes (`Msg`, `ServiceMsg`, `JsMsg` all fit). */
+export interface VerifiableMsg {
+  readonly subject: string;
+  readonly data: Uint8Array;
+  readonly headers?: MsgHdrs | undefined;
+}
+
+/** {@link VerifySenderOptions} without what `verifySender` supplies itself. */
+export type VerifySenderMsgOptions = Omit<VerifySenderOptions, "mode" | "headers">;
 
 /** Validate `accountTokenPosition`; returns it or `undefined`. */
 export function normalizeAccountTokenPosition(p: number | undefined): number | undefined {
@@ -542,6 +577,29 @@ export async function verifySenderHeader(
   );
   if (subjectProblem !== null) reject(subjectProblem);
 
+  // Operator-attested cross-check (cheap; before the nonce lookup and the
+  // signature, same 401 outcome). Only here is `Nats-Request-Info` ever read.
+  let accountAttested = false;
+  if (opts.operatorAttested) {
+    const stamp = readRequestInfo(opts.headers);
+    if (stamp === null) {
+      reject("Nats-Request-Info is present but is not a server stamp (operator-attested mode)");
+    }
+    if (stamp !== undefined) {
+      if (stamp.account !== undefined && stamp.account !== header.account) {
+        reject(
+          `Nats-Request-Info acc ${JSON.stringify(stamp.account)} disagrees with the signed account ${JSON.stringify(header.account)}`,
+        );
+      }
+      if (stamp.user !== undefined && stamp.user !== header.user) {
+        reject(
+          `Nats-Request-Info user ${JSON.stringify(stamp.user)} disagrees with the signed user ${header.user}`,
+        );
+      }
+    }
+    accountAttested = accountTokenPosition !== undefined || stamp?.account !== undefined;
+  }
+
   if (opts.mode === "live" && opts.nonceSeen?.(header.user, header.nonce)) {
     reject(`nonce ${JSON.stringify(header.nonce)} already seen for ${header.user}`);
   }
@@ -563,11 +621,40 @@ export async function verifySenderHeader(
   return Object.freeze({
     trust: "verified" as const,
     id,
-    accountAttested: false,
+    accountAttested,
     ...(header.name !== undefined ? { name: header.name } : {}),
     header,
     resolve: resolver
       ? (): Promise<AgentInfo | undefined> => resolver(id)
       : (): Promise<undefined> => Promise.resolve(undefined),
+  });
+}
+
+/**
+ * The spec's `VerifySender(msg, mode)` over a structural message: reads
+ * and parses `Agent-Sender` from `msg.headers`, then applies
+ * {@link verifySenderHeader} with `msg.subject` as the arrival subject
+ * (the stored subject for a JetStream record) and `msg.data` as the
+ * payload. `undefined` when the message carries no `Agent-Sender` or one
+ * with an unknown `v`. Throws `MalformedSenderHeaderError` (→ `400`) and
+ * `SenderVerificationError` (`.code` `401`) like the underlying function;
+ * a nonce is only *looked up* here, never recorded.
+ *
+ * `live` for a request being served now; `stored` for a JetStream
+ * consumer (freshness skipped — dedupe on `(user, nonce)` yourself).
+ */
+export async function verifySender(
+  msg: VerifiableMsg,
+  mode: "live" | "stored",
+  opts: VerifySenderMsgOptions = {},
+): Promise<SenderInfo | undefined> {
+  const value = readSenderHeaderValue(msg.headers);
+  if (value === undefined) return undefined;
+  const header = parseSenderHeader(value);
+  if (header === null) return undefined;
+  return verifySenderHeader(header, msg.subject, msg.data, {
+    ...opts,
+    mode,
+    headers: msg.headers,
   });
 }

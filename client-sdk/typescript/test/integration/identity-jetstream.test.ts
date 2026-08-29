@@ -1,7 +1,8 @@
 // Stored mode over JetStream: `publishSigned` into a stream (`Nats-Msg-Id`
 // = nonce), a consumer verifies the header against the *stored* subject
-// with `verifySenderHeader(…, { mode: "stored" })` — freshness skipped,
-// identity proven. The stream's de-duplication window catches a copy
+// with the spec-shaped `verifySender(msg, "stored")` (a `JsMsg` is a
+// structural `{ subject, data, headers }`) — freshness skipped, identity
+// proven. The stream's de-duplication window catches a copy
 // inside the window; a copy after it verifies too and is only caught by
 // consumer-side `(user, nonce)` dedupe (documented). A client-set
 // `Nats-Request-Info` is not stored. Renamed-import variant: the stored
@@ -19,11 +20,10 @@ import {
   Agents,
   NATS_MSG_ID_HEADER,
   newAgentId,
-  parseSenderHeader,
   readSenderHeaderValue,
   SenderVerificationError,
   signerFromSeed,
-  verifySenderHeader,
+  verifySender,
   type SenderInfo,
 } from "../../src/index.js";
 import {
@@ -75,9 +75,7 @@ async function readAll(
     let sender: SenderInfo | undefined;
     let error: unknown;
     try {
-      const value = readSenderHeaderValue(m.headers);
-      const header = value === undefined ? null : parseSenderHeader(value);
-      if (header) sender = await verifySenderHeader(header, m.subject, m.data, { mode: "stored" });
+      sender = await verifySender(m, "stored");
     } catch (err) {
       error = err;
     }

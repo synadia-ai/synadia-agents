@@ -28,7 +28,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - New `AgentServiceOptions`: `identity: { signer? }`, `minSenderTrust`,
     `replayWindowMs` (default 30 000; nonces expire at `ts + window`),
     `accountTokenPosition` (validated, passed to classification),
-    `acceptSender`, `logger` (replaces the bare `console.warn`).
+    `acceptSender`, `logger` (replaces the bare `console.warn`),
+    `resolveTtlMs` (default 10 000) and `operatorAttested` (default
+    `false`).
+  - `PromptResponse.sender.resolve()` is bound: a verified sender resolves
+    to the `AgentInfo` that registered its ID with a verifying `id_sig`
+    (a `SenderResolver` on the host's connection, index cached for
+    `resolveTtlMs`; `undefined` when no verified instance claims the key).
+  - Operator-attested mode (spec Appendix A), `operatorAttested: true`:
+    a verified header is cross-checked against the server's
+    `Nats-Request-Info` stamp — disagreement on `acc` / `user`, or a stamp
+    the server would not write, → `401`; agreement on `acc` (or the
+    `accountTokenPosition` cross-check) → `sender.accountAttested === true`
+    and `formatSender` renders `(verified)`. A deployment promise (closed
+    endpoint) the SDK cannot verify; off by default, and `Nats-Request-Info`
+    is never read otherwise. `AgentService.operatorAttested` getter.
+  - `SenderGateOptions.operatorAttested` / `.resolver`,
+    `SenderGate.operatorAttested`; `SenderGate.classify` now runs the
+    caller package's `verifySender(msg, "live", …)`.
   - `start()` throws `IdentityMismatchError` when the signer's key is not
     the connection's user; on `NoIdentityError` / `IdentityUnavailableError`
     it logs and starts without identity metadata.
@@ -38,9 +55,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     codec — `verifySenderHeader`, `SenderInfo`, `formatSender` — lives in
     `@synadia-ai/agents` and is not re-exported here).
   - `ReferenceAgent`: `identity`, `minSenderTrust`, `acceptSender`,
-    `replayWindowMs`, `accountTokenPosition`, `logger`; the prompt handler
-    receives the classified sender as its second argument; the same
-    registration metadata and classification as `AgentService`.
+    `replayWindowMs`, `accountTokenPosition`, `resolveTtlMs`,
+    `operatorAttested`, `logger`; the prompt handler receives the
+    classified sender as its second argument; the same registration
+    metadata and classification as `AgentService`.
 
 ### Changed
 

@@ -1,7 +1,8 @@
 // Host-side identity rows (plan §6.4 T0 / T1) through `AgentService`:
 // registration metadata, classification before the ack, `min_sender_trust`,
 // the acceptance hook, `status` classify-only, the `PromptResponse.sender`
-// shape the harness sees, and a cross-account (T3) row.
+// shape the harness sees; and on `accounts.conf` the operator-attested
+// cross-check plus `response.sender.resolve()` (T2 / T3).
 
 import { readFile } from "node:fs/promises";
 import {
@@ -22,12 +23,14 @@ import {
   IDENTITY_METADATA_KEYS,
   IdentityMismatchError,
   MIN_SENDER_TRUST_KEY,
+  NATS_REQUEST_INFO_HEADER,
   newAgentId,
   serializeSenderHeader,
   type ServiceError,
   signerFromSeed,
   signSenderHeader,
   verifyAgentId,
+  type AgentInfo,
   type Logger,
   type SenderInfo,
   type StreamMessage,
@@ -330,7 +333,7 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
     ).toBe(true);
   });
 
-  it("option validation: minSenderTrust, replayWindowMs, accountTokenPosition", () => {
+  it("option validation: minSenderTrust, replayWindowMs, accountTokenPosition, resolveTtlMs, operatorAttested", () => {
     const base = { nc: hostNc, agent: "id-svc", owner: "testers", name: "opts" };
     expect(
       () => new AgentService({ ...base, minSenderTrust: "verified" as unknown as "any" }),
@@ -340,8 +343,185 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
       /accountTokenPosition/,
     );
     expect(() => new AgentService({ ...base, accountTokenPosition: 2 })).not.toThrow();
+    expect(() => new AgentService({ ...base, resolveTtlMs: -1 })).toThrow(/resolveTtlMs/);
+    expect(() => new AgentService({ ...base, resolveTtlMs: Number.NaN })).toThrow(/resolveTtlMs/);
+    expect(() => new AgentService({ ...base, resolveTtlMs: 0 })).not.toThrow();
+    expect(
+      () => new AgentService({ ...base, operatorAttested: "yes" as unknown as boolean }),
+    ).toThrow(/operatorAttested/);
+    const svc = new AgentService({ ...base, operatorAttested: true });
+    expect(svc.operatorAttested).toBe(true);
+    expect(new AgentService(base).operatorAttested).toBe(false);
+  });
+
+  it("response.sender.resolve() is bound: a verified sender resolves to the agent registered under its ID (here: this very service, alice on both ends)", async () => {
+    const resolved: Array<AgentInfo | undefined> = [];
+    const service = new AgentService({
+      nc: hostNc,
+      agent: "id-svc",
+      owner: "testers",
+      name: "resolving",
+      heartbeatIntervalS: 1,
+      keepaliveIntervalS: null,
+      identity: { signer: aliceSigner },
+    });
+    service.onPrompt(async (_env, response) => {
+      const s = response.sender;
+      resolved.push(s?.trust === "verified" ? await s.resolve() : undefined);
+      await response.send("ok");
+    });
+    await service.start();
+    perTest.push(() => service.stop());
+    await drain(await (await discover(client({ signer: aliceSigner }), service)).prompt("hi"));
+    expect(resolved).toHaveLength(1);
+    expect(resolved[0]?.identity).toBe(ALICE_ID);
+    expect(resolved[0]?.idSigVerified).toBe(true);
+    expect(resolved[0]?.instanceId).toBe(service.instanceId);
   });
 });
+
+describe.skipIf(!bin)(
+  "AgentService — operator-attested mode and resolve() across accounts (accounts.conf)",
+  () => {
+    const server = new NatsServerProcess();
+    const conns = new Map<string, NatsConnection>();
+    const perTest: Array<() => Promise<void>> = [];
+    const seen: Array<{ sender: SenderInfo | undefined; resolved: AgentInfo | undefined }> = [];
+    let host: AgentService;
+    let aliceSvc: AgentService;
+    let hostLines: LogLine[];
+
+    function user(name: string): { public: string; seed: string } {
+      const u = keys.users[name];
+      if (!u) throw new Error(`no fixture user ${name}`);
+      return u;
+    }
+
+    beforeAll(async () => {
+      await server.start({ configPath: identityFixture("accounts.conf") });
+      for (const name of ["alice", "bob", "carol"]) {
+        conns.set(name, await connectAs(server.url, user(name).seed));
+      }
+      const { logger, lines } = capturingLogger();
+      hostLines = lines;
+      // carol (ACME) hosts with operatorAttested: the deployment "closed" the
+      // endpoint; for the test, ACME's own users play the forgers.
+      host = new AgentService({
+        nc: conns.get("carol")!,
+        agent: "acme-svc",
+        owner: "acme",
+        name: "attested",
+        heartbeatIntervalS: 1,
+        keepaliveIntervalS: null,
+        identity: { signer: signerFromSeed(user("carol").seed) },
+        operatorAttested: true,
+        logger,
+      });
+      host.onPrompt(async (_env, response) => {
+        const s = response.sender;
+        seen.push({ sender: s, resolved: s?.trust === "verified" ? await s.resolve() : undefined });
+        await response.send(formatSender(s));
+      });
+      await host.start();
+      // alice (ACME) registers her own service with a signer → her ID resolves.
+      aliceSvc = new AgentService({
+        nc: conns.get("alice")!,
+        agent: "alice-svc",
+        owner: "acme",
+        name: "own",
+        heartbeatIntervalS: 1,
+        keepaliveIntervalS: null,
+        identity: { signer: signerFromSeed(user("alice").seed) },
+      });
+      aliceSvc.onPrompt(async (_e, r) => {
+        await r.send("mine");
+      });
+      await aliceSvc.start();
+    });
+
+    afterEach(async () => {
+      for (const c of perTest.splice(0).reverse()) await c();
+    });
+
+    afterAll(async () => {
+      await aliceSvc.stop();
+      await host.stop();
+      for (const nc of conns.values()) await nc.close();
+      await server.stop();
+    });
+
+    function agentsFor(name: string): Agents {
+      const agents = new Agents({
+        nc: conns.get(name)!,
+        identity: { signer: signerFromSeed(user(name).seed), name },
+      });
+      perTest.push(() => agents.close());
+      return agents;
+    }
+
+    async function discoverHost(agents: Agents) {
+      const [agent] = await agents.discover({ timeoutMs: 800, filter: { agent: "acme-svc" } });
+      if (!agent) throw new Error("acme-svc not discovered");
+      return agent;
+    }
+
+    const echoOf = (events: StreamMessage[]): string =>
+      (events.find((e) => e.type === "response") as { text: string }).text;
+
+    it("bob (APP, share: true): the server stamp agrees → accountAttested, echo `(verified)`; resolve() → undefined (APP's registrations are invisible from ACME)", async () => {
+      const bob = agentsFor("bob");
+      const events = await drain(await (await discoverHost(bob)).prompt("hi"));
+      const bobId = newAgentId("APP", user("bob").public);
+      expect(echoOf(events)).toBe(`${bobId} (verified)`);
+      expect(seen.at(-1)?.sender).toMatchObject({
+        trust: "verified",
+        id: bobId,
+        accountAttested: true,
+      });
+      expect(seen.at(-1)?.resolved).toBeUndefined();
+    });
+
+    it("alice (ACME, no stamp): verified, account not attested; resolve() → alice's own AgentService registration", async () => {
+      const alice = agentsFor("alice");
+      const events = await drain(await (await discoverHost(alice)).prompt("hi"));
+      const aliceId = newAgentId("ACME", user("alice").public);
+      expect(echoOf(events)).toBe(`${aliceId} (verified user, claimed account)`);
+      expect(seen.at(-1)?.sender).toMatchObject({
+        trust: "verified",
+        id: aliceId,
+        accountAttested: false,
+      });
+      expect(seen.at(-1)?.resolved?.identity).toBe(aliceId);
+      expect(seen.at(-1)?.resolved?.idSigVerified).toBe(true);
+      expect(seen.at(-1)?.resolved?.instanceId).toBe(aliceSvc.instanceId);
+      expect(seen.at(-1)?.resolved?.promptEndpoint.subject).toBe(aliceSvc.subject.prompt);
+    });
+
+    it("a forged Nats-Request-Info from a same-account user → 401 `sender rejected`, logged with the disagreeing field, before the ack", async () => {
+      const h = await signSenderHeader({
+        signer: signerFromSeed(user("alice").seed),
+        id: newAgentId("ACME", user("alice").public),
+        sub: host.subject.prompt,
+        payload: PAYLOAD,
+      });
+      const hdrs = withHeader(serializeSenderHeader(h));
+      hdrs.set(NATS_REQUEST_INFO_HEADER, JSON.stringify({ acc: "APP", user: user("bob").public }));
+      const before = seen.length;
+      const msgs = await rawPrompt(conns.get("alice")!, host.subject.prompt, PAYLOAD, hdrs);
+      expect(msgs).toHaveLength(1); // the error frame — no ack preceded it
+      expect(errorCode(msgs)).toBe("401");
+      expect(msgs[0]?.headers?.get("Nats-Service-Error")).toBe("sender rejected");
+      expect(seen).toHaveLength(before);
+      expect(
+        hostLines.some(
+          (l) =>
+            l.level === "warn" &&
+            /Nats-Request-Info acc "APP" disagrees/.test(String(l.ctx?.["reason"])),
+        ),
+      ).toBe(true);
+    });
+  },
+);
 
 describe.skipIf(!bin)("AgentService — sender identity on a no-auth server (T0)", () => {
   const server = new NatsServerProcess();

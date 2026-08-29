@@ -73,21 +73,22 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 
 ## What's in the box
 
-| API                                                                                     | Purpose                                                                                 |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `new Agents({ nc, ... })`                                                               | Construct from a caller-owned `NatsConnection`.                                         |
-| `agents.discover({filter?, timeoutMs?})`                                                | Return a live `Agent[]`; auto subscribe-before-ping (§8.5).                             |
-| `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})`                        | Return a `PromptStream`.                                                                |
-| `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`                              | Heartbeat tracking and on-demand ping.                                                  |
-| `agent.status({ subject?, sub?, timeoutMs? })`                                          | §8.7 status probe; returns the agent's heartbeat payload.                               |
-| `agents.close()`                                                                        | Tear down SDK state; aborts all in-flight streams.                                      |
-| `loadContextOptions(name)` / `parseNatsUrl(url)`                                        | Bridge `nats` CLI context files / URLs into `NodeConnectionOptions` for `connect()`.    |
-| `withAgentReconnectDefaults(opts?)`                                                     | Opt-in resilient reconnect defaults for agent runtimes — see below. Pure transform.     |
-| `new Agents({ nc, identity: { signer, name } })`                                        | Sender identity: sign every `prompt` / `status` with the connection's NKEY — see below. |
-| `agents.selfId()` / `refreshSelfId()`                                                   | The connection's own agent ID (`{account}.{user}`), learned once per connection.        |
-| `agents.signSender` / `publishSigned` / `requestSigned`                                 | Signed publishes for any subject, JetStream included.                                   |
-| `signerFromSeed` / `signerFromCreds` / `signerFromCredsFile` / `signerFromContext`      | Build a `SenderSigner`; custom HSM / KMS signers implement the interface.               |
-| `verifySenderHeader`, `parseSenderHeader`, `formatSender`, `newAgentId`, `parseAgentId` | The shared identity codec (also used by the host package).                              |
+| API                                                                                                                | Purpose                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `new Agents({ nc, ... })`                                                                                          | Construct from a caller-owned `NatsConnection`.                                          |
+| `agents.discover({filter?, timeoutMs?})`                                                                           | Return a live `Agent[]`; auto subscribe-before-ping (§8.5).                              |
+| `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})`                                                   | Return a `PromptStream`.                                                                 |
+| `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`                                                         | Heartbeat tracking and on-demand ping.                                                   |
+| `agent.status({ subject?, sub?, timeoutMs? })`                                                                     | §8.7 status probe; returns the agent's heartbeat payload.                                |
+| `agents.close()`                                                                                                   | Tear down SDK state; aborts all in-flight streams.                                       |
+| `loadContextOptions(name)` / `parseNatsUrl(url)`                                                                   | Bridge `nats` CLI context files / URLs into `NodeConnectionOptions` for `connect()`.     |
+| `withAgentReconnectDefaults(opts?)`                                                                                | Opt-in resilient reconnect defaults for agent runtimes — see below. Pure transform.      |
+| `new Agents({ nc, identity: { signer, name } })`                                                                   | Sender identity: sign every `prompt` / `status` with the connection's NKEY — see below.  |
+| `agents.selfId()` / `refreshSelfId()`                                                                              | The connection's own agent ID (`{account}.{user}`), learned once per connection.         |
+| `agents.signSender` / `publishSigned` / `requestSigned`                                                            | Signed publishes for any subject, JetStream included.                                    |
+| `agents.resolveSender(id)`                                                                                         | Reverse lookup: agent ID → the agent that registered it (`id_sig` verified, TTL-cached). |
+| `signerFromSeed` / `signerFromCreds` / `signerFromCredsFile` / `signerFromContext`                                 | Build a `SenderSigner`; custom HSM / KMS signers implement the interface.                |
+| `verifySender(msg, mode)`, `verifySenderHeader`, `parseSenderHeader`, `formatSender`, `newAgentId`, `parseAgentId` | The shared identity codec (also used by the host package).                               |
 
 ### Resilient reconnect defaults
 
@@ -128,7 +129,9 @@ What to know:
 - **Cost.** One `$SYS.REQ.USER.INFO` round trip per connection (2 s timeout at most), awaited by the first request only; failures are memoised for 30 s and retried in the background. A signed header is ~400 bytes and counts against `max_payload` (header framing included — `PayloadTooLargeError.headerBytes`).
 - **Behind a service import that remaps the subject** — an export that inserts the caller's account token (`account_token_position`), or a `to:` / `local_subject` rename by your own account — discovery reports the exporter's subject, which you cannot publish to. Pass `prompt(text, { subject })` / `status({ subject })` with the local name; the receiver strips an inserted token by itself. Only for a rename by **your own** account also pass `sub: agent.promptEndpoint.subject` (sign the exporter's subject). `signSender` / `publishSigned` / `requestSigned` take the same `sub` option.
 - **A trusted server over TLS is a precondition.** The NATS handshake signs a server-chosen nonce with the same seed that signs `Agent-Sender`; a server you should not have trusted could obtain a signature valid for 30 s. Identity is meaningful only over TLS to a server whose certificate you verify.
-- The verified identity is the **user** key; `account` is the sender's signed claim (`formatSender` renders `… (verified user, claimed account)`). Which verified senders a receiver accepts is the receiver's business — see the host package's `acceptSender`.
+- The verified identity is the **user** key; `account` is the sender's signed claim (`formatSender` renders `… (verified user, claimed account)`). Which verified senders a receiver accepts is the receiver's business — see the host package's `acceptSender`. A receiver whose deployment has _closed_ its endpoint can turn on the host package's `operatorAttested` mode, which cross-checks the signed pair against the server's `Nats-Request-Info` stamp and renders an agreeing account as `(verified)`.
+- **Reverse lookup.** `agents.resolveSender(id)` (also `new SenderResolver(nc, { ttlMs })` and the uncached `resolveSender(nc, id)`) turns a verified agent ID back into the `AgentInfo` that registered it: `$SRV.INFO.agents` is enumerated, every candidate's `id_sig` verified against its own prompt subject, and the index cached for `resolveTtlMs` (default 10 s; concurrent callers share one enumeration). `undefined` means "not a reachable agent" — a human user, a plain service, or an agent that is offline. Discovery is account-local, and the lookup identifies, never authorizes. On the host side the same lookup is bound to `response.sender.resolve()`.
+- **`verifySender(msg, "live" | "stored")`** is the spec's `VerifySender` over anything shaped `{ subject, data, headers? }` — a core `Msg`, a `ServiceMsg`, a JetStream `JsMsg`. `live` runs the freshness checks (the nonce is only _looked up_ — the receiver records it); `stored` proves authorship of a stored record against its stored subject and skips freshness, so consumers dedupe on `(user, nonce)` themselves.
 
 Subpath exports:
 

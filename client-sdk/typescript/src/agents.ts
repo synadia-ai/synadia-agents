@@ -20,10 +20,12 @@
 // unsigned claim when the connection has an NKEY identity, and nothing
 // otherwise. `selfId()` is the connection's own agent ID; `signSender` /
 // `publishSigned` / `requestSigned` sign arbitrary publishes (JetStream
-// included).
+// included); `resolveSender(id)` is the reverse lookup (agent ID → the
+// agent that registered it, `id_sig` verified, TTL-cached).
 
 import { headers, type Msg, type MsgHdrs, type NatsConnection } from "@nats-io/nats-core";
 import type { Agent } from "./agent.js";
+import type { AgentInfo } from "./discovery/agent-info.js";
 import {
   discoverAgents,
   lookupAgentInstance,
@@ -35,6 +37,7 @@ import { HeartbeatTracker, type Liveness } from "./heartbeat/tracker.js";
 import { type HeartbeatPayload } from "./heartbeat/payload.js";
 import type { AgentId } from "./identity/agent-id.js";
 import { IdentityContext, type IdentityOptions } from "./identity/context.js";
+import { SenderResolver } from "./identity/resolve-sender.js";
 import {
   AGENT_SENDER_HEADER,
   serializeSenderHeader,
@@ -60,6 +63,11 @@ export interface AgentsOptions {
   readonly logger?: Logger;
   /** Sender-identity configuration (signer, display name, unsigned-claim policy). */
   readonly identity?: IdentityOptions;
+  /**
+   * TTL of the `$SRV.INFO.agents` index behind {@link Agents.resolveSender},
+   * in milliseconds; `0` enumerates on every call. Default 10 000.
+   */
+  readonly resolveTtlMs?: number;
 }
 
 /** Options for the signed low-level wrappers. */
@@ -84,6 +92,7 @@ export class Agents {
   readonly #logger: Logger;
   readonly #streamInactivityTimeoutMs: number;
   readonly #identity: IdentityContext;
+  readonly #resolver: SenderResolver;
   readonly #closeController = new AbortController();
   #closed = false;
 
@@ -94,6 +103,11 @@ export class Agents {
       options.streamInactivityTimeoutMs ?? DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS;
     // Validates `identity.name` up front (throws `IdentityError`).
     this.#identity = new IdentityContext(options.nc, options.identity ?? {});
+    // Validates `resolveTtlMs` up front (throws `IdentityError`).
+    this.#resolver = new SenderResolver(
+      options.nc,
+      options.resolveTtlMs !== undefined ? { ttlMs: options.resolveTtlMs } : {},
+    );
     this.#tracker = new HeartbeatTracker(options.nc, this.#logger);
   }
 
@@ -291,6 +305,20 @@ export class Agents {
       timeout: opts.timeoutMs ?? DEFAULT_REQUEST_SIGNED_TIMEOUT_MS,
       headers: hdrs,
     });
+  }
+
+  /**
+   * Reverse lookup (spec "Reverse lookup: from agent ID to agent"): the
+   * `AgentInfo` of the instance that registered `id` with a verifying
+   * `id_sig`, or `undefined` when no verified instance claims the key —
+   * the sender is then not a reachable agent (a human user, a plain
+   * service, an agent that is offline). Enumerates `$SRV.INFO.agents`
+   * and caches the index for `resolveTtlMs` (default 10 s); discovery is
+   * account-local. Identifies, never authorizes.
+   */
+  resolveSender(id: AgentId | string): Promise<AgentInfo | undefined> {
+    this.#ensureOpen();
+    return this.#resolver.resolve(id);
   }
 
   async #signedHeader(

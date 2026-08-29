@@ -1,0 +1,19 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "@synadia-ai/identity-operator-fixture",
+      "dependencies": {
+        "@nats-io/jwt": "0.0.10-5",
+      },
+    },
+  },
+  "packages": {
+    "@nats-io/jwt": ["@nats-io/jwt@0.0.10-5", "", { "dependencies": { "@nats-io/nkeys": "^1.2.0-4" } }, "sha512-DoBIEJIgWZJLtMRef+oFvk1lEgyTIVcAZbBXYGm91B7az1bCu7A3Npsn/VD7RH5waYAz+EPS8Ot7zyU6iKAuqg=="],
+
+    "@nats-io/nkeys": ["@nats-io/nkeys@1.2.0-8", "", { "dependencies": { "tweetnacl": "^1.0.3" } }, "sha512-o6nfNYySzVZL7mIJA+ejD3JdMFbLn9VWtptM2cnHh4jeF/FvhPhCkn8BH4jQE7asCV/SSialu6jGhsAFV1FKkQ=="],
+
+    "tweetnacl": ["tweetnacl@1.0.3", "", {}, "sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw=="],
+  }
+}

@@ -70,17 +70,32 @@ export async function discoverAgents(
           maxWait: DEFAULT_DISCOVER_MAX_WAIT_MS,
           stall: DEFAULT_DISCOVER_STALL_MS,
         };
+  const infos = await enumerateAgentInfos(nc, requestOpts);
+  return infos
+    .filter((info) => matchesFilter(info, opts.filter))
+    .map((info) => new Agent(nc, info, defaultInactivityTimeoutMs, closeSignal, identity));
+}
+
+/**
+ * One `$SRV.INFO.agents` scatter-gather: every protocol-compliant record
+ * as an {@link AgentInfo} (non-agent services dropped), in reply order.
+ * The shared enumeration behind {@link discoverAgents} and the identity
+ * reverse lookup (`SenderResolver`), which needs the records without
+ * `Agent` handles, timeouts or close signals.
+ */
+export async function enumerateAgentInfos(
+  nc: NatsConnection,
+  requestOpts: RequestManyOptions,
+): Promise<AgentInfo[]> {
   const svcm = new Svcm(nc);
   const client = svcm.client(requestOpts);
 
-  const found: Agent[] = [];
+  const found: AgentInfo[] = [];
   try {
     const infos = await client.info(SERVICE_NAME);
     for await (const info of infos) {
       const agentInfo = buildAgentInfo(info);
-      if (agentInfo && matchesFilter(agentInfo, opts.filter)) {
-        found.push(new Agent(nc, agentInfo, defaultInactivityTimeoutMs, closeSignal, identity));
-      }
+      if (agentInfo) found.push(agentInfo);
     }
   } catch (err) {
     // NATS server replies NoResponders the moment there are zero

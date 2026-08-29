@@ -172,7 +172,9 @@ export {
   type SenderInfo,
   type SignedInputFields,
   type SignSenderHeaderOptions,
+  type VerifiableMsg,
   type VerifiedSender,
+  type VerifySenderMsgOptions,
   type VerifySenderOptions,
   AGENT_SENDER_HEADER,
   AGENT_SENDER_SIGNED_INPUT_TAG,
@@ -197,8 +199,22 @@ export {
   readSenderHeaderValue,
   serializeSenderHeader,
   signSenderHeader,
+  verifySender,
   verifySenderHeader,
 } from "./identity/sender-header.js";
+export {
+  type RequestInfoStamp,
+  NATS_REQUEST_INFO_HEADER,
+  parseRequestInfo,
+  readRequestInfo,
+} from "./identity/request-info.js";
+export {
+  type SenderResolverOptions,
+  DEFAULT_RESOLVE_TTL_MS,
+  normalizeResolveTtlMs,
+  resolveSender,
+  SenderResolver,
+} from "./identity/resolve-sender.js";
 export {
   type AgentIdSignedInputFields,
   type SignAgentIdOptions,

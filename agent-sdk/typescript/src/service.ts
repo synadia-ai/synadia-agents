@@ -32,10 +32,13 @@
 //     unsigned request on a `min_sender_trust: signed` endpoint → `401`,
 //     a sender the `acceptSender` hook refuses → `403` (verified) / `401`
 //     (claimed / absent) — and hands the classified sender to the handler
-//     as `PromptResponse.sender`. `status` is classified and logged,
-//     never rejected. Registers `user_nkey` / `account` / `id_sig` when
-//     the connection has an identity (and a signer), and **always**
-//     advertises `min_sender_trust` on the prompt endpoint.
+//     as `PromptResponse.sender` (a `VerifiedSender.resolve()` is bound to
+//     a TTL-cached `$SRV.INFO` reverse lookup, `resolveTtlMs`). `status`
+//     is classified and logged, never rejected. Registers `user_nkey` /
+//     `account` / `id_sig` when the connection has an identity (and a
+//     signer), and **always** advertises `min_sender_trust` on the prompt
+//     endpoint. `operatorAttested` (off by default) adds the
+//     `Nats-Request-Info` cross-check of a closed endpoint.
 //
 // Mirrors the Python SDK's `AgentService` (`client-sdk/python/src/synadia_ai/agents/service.py`)
 // — wire-equivalent behaviour, idiomatic TS API.
@@ -56,12 +59,14 @@ import {
   MIN_SENDER_TRUST_KEY,
   newInbox,
   normalizeAccountTokenPosition,
+  normalizeResolveTtlMs,
   parseHumanBytes,
   PROMPT_ENDPOINT_NAME,
   PROMPT_QUEUE_GROUP,
   ProtocolError,
   SDK_PROTOCOL_VERSION,
   selfId,
+  SenderResolver,
   SERVICE_NAME,
   signAgentId,
   SILENT_LOGGER,
@@ -239,6 +244,27 @@ export interface AgentServiceOptions {
    * `500`, never served. What it consults is the harness's business.
    */
   readonly acceptSender?: AcceptSenderHook;
+  /**
+   * TTL, in milliseconds, of the `$SRV.INFO.agents` index behind
+   * `response.sender.resolve()` (the reverse lookup from a verified agent
+   * ID to the agent that registered it, `id_sig` verified). `0`
+   * enumerates on every call. Default 10 000.
+   */
+  readonly resolveTtlMs?: number;
+  /**
+   * Operator-attested mode (spec Appendix A) — **off by default**. Turn it
+   * on only when the deployment has **closed** this endpoint (no
+   * same-account user may publish to its subjects, so every arriving
+   * request crossed a service import and `Nats-Request-Info` is the
+   * server's stamp). The SDK cannot verify that promise. With it on, a
+   * verified header whose signed `account` / `user` disagree with the
+   * stamp is refused (`401`), a present but unparseable stamp is refused,
+   * and agreement on `acc` — or the `accountTokenPosition` cross-check —
+   * surfaces as `sender.accountAttested === true` (`formatSender` then
+   * renders `(verified)`). An absent stamp is compared to nothing.
+   * Unsigned claims are never cross-checked.
+   */
+  readonly operatorAttested?: boolean;
 }
 
 /**
@@ -392,6 +418,7 @@ export class AgentService {
   readonly #logger: Logger;
   readonly #minSenderTrust: MinSenderTrust;
   readonly #gate: SenderGate;
+  readonly #resolver: SenderResolver;
   #identity: AgentId | undefined;
   #handler: PromptHandler | null = null;
   #service: Service | null = null;
@@ -423,6 +450,10 @@ export class AgentService {
       throw new Error("AgentService: replayWindowMs must be > 0");
     }
     const accountTokenPosition = normalizeAccountTokenPosition(options.accountTokenPosition);
+    const resolveTtlMs = normalizeResolveTtlMs(options.resolveTtlMs);
+    if (options.operatorAttested !== undefined && typeof options.operatorAttested !== "boolean") {
+      throw new Error("AgentService: operatorAttested must be a boolean");
+    }
 
     this.#options = options;
     this.#subject = AgentSubject.new(
@@ -435,12 +466,15 @@ export class AgentService {
     this.#keepaliveIntervalS = keepaliveIntervalS;
     this.#logger = options.logger ?? SILENT_LOGGER;
     this.#minSenderTrust = minSenderTrust;
+    this.#resolver = new SenderResolver(options.nc, { ttlMs: resolveTtlMs });
     this.#gate = new SenderGate({
       minSenderTrust,
       replayWindowMs,
       ...(accountTokenPosition !== undefined ? { accountTokenPosition } : {}),
       ...(options.acceptSender !== undefined ? { acceptSender: options.acceptSender } : {}),
       logger: this.#logger,
+      operatorAttested: options.operatorAttested ?? false,
+      resolver: (id) => this.#resolver.resolve(id),
     });
   }
 
@@ -455,6 +489,11 @@ export class AgentService {
   /** The `min_sender_trust` advertised on the prompt endpoint. */
   get minSenderTrust(): MinSenderTrust {
     return this.#minSenderTrust;
+  }
+
+  /** Whether the operator-attested cross-check is on. */
+  get operatorAttested(): boolean {
+    return this.#gate.operatorAttested;
   }
 
   /** The validated subject for this agent. */

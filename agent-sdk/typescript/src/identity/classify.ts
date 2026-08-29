@@ -13,14 +13,14 @@
 import type { MsgHdrs } from "@nats-io/nats-core";
 import {
   MalformedSenderHeaderError,
-  parseSenderHeader,
   parseSenderTimestamp,
-  readSenderHeaderValue,
   SenderVerificationError,
   SENDER_REJECTED_DESCRIPTION,
   SIGNATURE_REQUIRED_DESCRIPTION,
-  verifySenderHeader,
+  verifySender,
   formatSender,
+  type AgentId,
+  type AgentInfo,
   type Logger,
   type MinSenderTrust,
   type SenderInfo,
@@ -126,7 +126,13 @@ export class NonceCache {
     return true;
   }
 
-  /** Drop every entry whose expiry has passed. */
+  /**
+   * Drop every entry whose expiry has passed. Once normal expiry has
+   * brought the set down to half the cap, the cap warning is re-armed, so
+   * a later overload is reported again — with hysteresis, because every
+   * eviction round itself leaves the set just under the cap and a plain
+   * "below the cap" reset would log on every round.
+   */
   sweep(now: number = Date.now()): void {
     const nowBucket = Math.floor(now / 1000);
     for (const [bucket, keys] of this.#buckets) {
@@ -134,6 +140,7 @@ export class NonceCache {
       for (const key of keys) this.#expiry.delete(key);
       this.#buckets.delete(bucket);
     }
+    if (this.#capWarned && this.#expiry.size <= this.#max / 2) this.#capWarned = false;
   }
 
   #enforceCap(): void {
@@ -168,6 +175,15 @@ export interface SenderGateOptions {
   readonly logger?: Logger;
   /** Share a nonce set between gates (default: a fresh one). */
   readonly nonceCache?: NonceCache;
+  /**
+   * Operator-attested mode (spec Appendix A): cross-check a verified
+   * header against the server's `Nats-Request-Info` stamp (and count the
+   * `accountTokenPosition` cross-check as attestation). Off by default —
+   * a deployment promise (closed endpoint) the SDK cannot verify.
+   */
+  readonly operatorAttested?: boolean;
+  /** Reverse-lookup binding for `VerifiedSender.resolve()` (default: unbound → `undefined`). */
+  readonly resolver?: (id: AgentId) => Promise<AgentInfo | undefined>;
 }
 
 /** A refusal, with the generic wire description and the log-only detail. */
@@ -200,6 +216,8 @@ export class SenderGate {
   readonly #acceptSender: AcceptSenderHook | undefined;
   readonly #logger: Logger;
   readonly #nonces: NonceCache;
+  readonly #operatorAttested: boolean;
+  readonly #resolver: ((id: AgentId) => Promise<AgentInfo | undefined>) | undefined;
 
   constructor(opts: SenderGateOptions = {}) {
     this.#minSenderTrust = opts.minSenderTrust ?? DEFAULT_MIN_SENDER_TRUST;
@@ -210,6 +228,8 @@ export class SenderGate {
     this.#nonces =
       opts.nonceCache ??
       new NonceCache({ replayWindowMs: this.#replayWindowMs, logger: this.#logger });
+    this.#operatorAttested = opts.operatorAttested ?? false;
+    this.#resolver = opts.resolver;
   }
 
   get minSenderTrust(): MinSenderTrust {
@@ -220,6 +240,10 @@ export class SenderGate {
     return this.#nonces;
   }
 
+  get operatorAttested(): boolean {
+    return this.#operatorAttested;
+  }
+
   /**
    * Parse and verify (live mode) without recording anything. A malformed
    * header → `400`; a failing check → `401`; no header / unknown `v` →
@@ -228,19 +252,15 @@ export class SenderGate {
   async classify(
     msg: ClassifiableMsg,
   ): Promise<{ sender: SenderInfo | undefined } | SenderRejection> {
-    let value: string | undefined;
     try {
-      value = readSenderHeaderValue(msg.headers);
-      if (value === undefined) return { sender: undefined };
-      const header = parseSenderHeader(value);
-      if (header === null) return { sender: undefined };
-      const sender = await verifySenderHeader(header, msg.subject, msg.data, {
-        mode: "live",
+      const sender = await verifySender(msg, "live", {
         replayWindowMs: this.#replayWindowMs,
         ...(this.#accountTokenPosition !== undefined
           ? { accountTokenPosition: this.#accountTokenPosition }
           : {}),
         nonceSeen: (user, nonce) => this.#nonces.has(user, nonce),
+        operatorAttested: this.#operatorAttested,
+        ...(this.#resolver !== undefined ? { resolver: this.#resolver } : {}),
       });
       return { sender };
     } catch (err) {
@@ -277,7 +297,12 @@ export class SenderGate {
       if (
         nonce !== undefined &&
         ts !== undefined &&
-        // CAS: synchronous check-and-set; one winner when concurrent requests carry the same nonce.
+        // CAS: synchronous check-and-set; one winner when concurrent requests
+        // carry the same nonce. Atomic because there is no `await` between
+        // `classify()` resolving above and this call — the event loop cannot
+        // interleave another request's `record()` in between (JS is
+        // single-threaded); the earlier `nonceSeen` lookup inside
+        // `classify()` ran across awaits and is only the cheap early exit.
         !this.#nonces.record(user, nonce, parseSenderTimestamp(ts))
       ) {
         return this.#refuse(msg, {
