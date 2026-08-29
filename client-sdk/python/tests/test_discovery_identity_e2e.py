@@ -14,6 +14,7 @@ from synadia_ai.agents import (
 )
 from synadia_ai.agents.identity import IDENTITY_METADATA_KEYS
 from tests.harness.fake_agent import register_agent_service
+from tests.harness.wait import wait_for
 
 if TYPE_CHECKING:
     from nats.aio.msg import Msg
@@ -133,6 +134,7 @@ async def test_resolve_sender_indexes_verified_registrations_with_a_ttl_cache(
         assert info.instance_id == good.instance_id
         assert await agents.resolve_sender(str(alice_id)) is not None  # text form accepted
         assert await agents.resolve_sender(AgentId.new("$G", identity_keys["bob"].public)) is None
+        await wait_for(lambda: len(infos) == 1, what="one $SRV.INFO enumeration")
         await caller.flush()
         assert len(infos) == 1  # three lookups, one enumeration (TTL cache)
 
