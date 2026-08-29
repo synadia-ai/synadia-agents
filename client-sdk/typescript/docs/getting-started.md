@@ -194,6 +194,31 @@ bun run examples/01-discover.ts
 
 The underlying transport (`@nats-io/transport-node`) is explicitly supported on both Node and Bun by the NATS maintainers.
 
+## Sender identity
+
+If your connection authenticates with an NKEY or a credentials file, hand the
+SDK the seed and every `prompt` / `status` request carries a signed
+`Agent-Sender` header the receiver can verify:
+
+```ts
+import { Agents, signerFromCredsFile } from "@synadia-ai/agents";
+
+const agents = new Agents({
+  nc,
+  identity: { signer: await signerFromCredsFile("~/.config/nats/agent.creds"), name: "my-tool" },
+});
+
+console.log("I am", await agents.selfId());
+```
+
+Without a signer the SDK sends an unsigned claim (or nothing when the
+connection has no NKEY identity — every `min_sender_trust: any` endpoint,
+the default, still serves you). An endpoint that requires `signed` rejects
+with `SenderSignatureRequiredError` before anything hits the wire. Check
+`agent.supportsSenderIdentity` / `agent.minSenderTrust` after discovery,
+and read the README's "Sender identity" section for the remapped-import
+overrides and the TLS precondition.
+
 ## Next steps
 
 - [`docs/protocol-mapping.md`](./protocol-mapping.md) - every SDK call mapped to its spec section.

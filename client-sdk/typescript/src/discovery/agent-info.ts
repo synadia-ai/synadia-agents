@@ -3,6 +3,8 @@
 // `NatsConnection` needed to prompt it.
 
 import { buildEndpointInfo, PROMPT_ENDPOINT_NAME, type EndpointInfo } from "./endpoint-info.js";
+import { newAgentId, type AgentId } from "../identity/agent-id.js";
+import { IDENTITY_METADATA_KEYS, verifyAgentId } from "../identity/id-sig.js";
 import { isAgentServiceName } from "../internal/service-name.js";
 
 export interface AgentInfo {
@@ -28,6 +30,24 @@ export interface AgentInfo {
   readonly endpoints: ReadonlyArray<EndpointInfo>;
   /** Convenience — the `prompt` endpoint (guaranteed present on valid records). */
   readonly promptEndpoint: EndpointInfo;
+  /**
+   * `true` iff the prompt endpoint metadata carries `min_sender_trust` —
+   * the feature-detection rule of the sender-identity extension. A 0.3
+   * agent that never heard of identity reports `false`.
+   */
+  readonly supportsSenderIdentity: boolean;
+  /**
+   * The agent ID the instance registered (`user_nkey` + `account`
+   * metadata), when both are present and well-formed. A registration
+   * claim until {@link idSigVerified} says otherwise.
+   */
+  readonly identity?: AgentId;
+  /**
+   * `true` iff `id_sig` is present and verifies over the instance's own
+   * `prompt` endpoint subject (`AGENT-ID-V1`). Computed only when
+   * `id_sig` is present; one ed25519 verification per record.
+   */
+  readonly idSigVerified: boolean;
 }
 
 /** The shape of a `ServiceInfo` record as returned by `@nats-io/services`. */
@@ -83,6 +103,11 @@ export function buildAgentInfo(info: RawServiceInfo): AgentInfo | null {
   const rawSession = metadata["session"];
   const session = rawSession !== undefined && rawSession !== "" ? rawSession : undefined;
 
+  const identity = registeredIdentity(metadata);
+  const idSigVerified =
+    metadata[IDENTITY_METADATA_KEYS.idSig] !== undefined &&
+    verifyAgentId(metadata, promptEndpoint.subject);
+
   return Object.freeze({
     instanceId: info.id,
     agent,
@@ -94,6 +119,20 @@ export function buildAgentInfo(info: RawServiceInfo): AgentInfo | null {
     metadata: Object.freeze({ ...metadata }),
     endpoints: Object.freeze(endpoints),
     promptEndpoint,
+    supportsSenderIdentity: promptEndpoint.minSenderTrust !== undefined,
+    idSigVerified,
+    ...(identity !== undefined ? { identity } : {}),
     ...(session !== undefined ? { session } : {}),
   });
+}
+
+function registeredIdentity(metadata: Record<string, string>): AgentId | undefined {
+  const user = metadata[IDENTITY_METADATA_KEYS.userNkey];
+  const account = metadata[IDENTITY_METADATA_KEYS.account];
+  if (user === undefined || account === undefined) return undefined;
+  try {
+    return newAgentId(account, user);
+  } catch {
+    return undefined;
+  }
 }

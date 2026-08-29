@@ -22,6 +22,29 @@ export interface EndpointInfo {
    * and only when the agent declared a value.
    */
   readonly attachmentsOk?: boolean;
+  /**
+   * `min_sender_trust` (sender-identity extension). Present only on the
+   * prompt endpoint and only when the key exists — its presence is what
+   * advertises the extension. `"any"` verbatim; `"signed"` for `"signed"`
+   * and for any unknown value (the strictest level a caller can satisfy
+   * on its own). The raw string stays in `metadata`.
+   */
+  readonly minSenderTrust?: MinSenderTrust;
+}
+
+/** The two `min_sender_trust` levels a caller can act on. */
+export type MinSenderTrust = "any" | "signed";
+
+/** The `prompt` endpoint metadata key that advertises the sender-identity extension. */
+export const MIN_SENDER_TRUST_KEY = "min_sender_trust";
+
+/**
+ * Parse a raw `min_sender_trust` value: `undefined` when absent, `"any"`
+ * for `"any"`, `"signed"` for `"signed"` and for anything unknown.
+ */
+export function parseMinSenderTrust(raw: string | undefined): MinSenderTrust | undefined {
+  if (raw === undefined) return undefined;
+  return raw === "any" ? "any" : "signed";
 }
 
 export interface RawEndpoint {
@@ -65,6 +88,8 @@ export function buildEndpointInfo(raw: RawEndpoint): EndpointInfo {
   if (ao === "true") attachmentsOk = true;
   else if (ao === "false") attachmentsOk = false;
 
+  const minSenderTrust = parseMinSenderTrust(metadata[MIN_SENDER_TRUST_KEY]);
+
   return Object.freeze({
     name: raw.name,
     subject: raw.subject,
@@ -72,5 +97,6 @@ export function buildEndpointInfo(raw: RawEndpoint): EndpointInfo {
     metadata,
     ...(maxPayloadBytes !== undefined ? { maxPayloadBytes } : {}),
     ...(attachmentsOk !== undefined ? { attachmentsOk } : {}),
+    ...(minSenderTrust !== undefined ? { minSenderTrust } : {}),
   });
 }

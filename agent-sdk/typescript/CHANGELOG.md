@@ -6,7 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Sender identity (the sender-identity extension).** `AgentService`
+  classifies every `prompt` request before the §6.4 ack: a malformed
+  `Agent-Sender` header → `400`; a failing signature, replayed nonce,
+  stale `ts` or `sub` mismatch → `401` in every mode; an unsigned or
+  header-less request on a `min_sender_trust: signed` endpoint → `401`
+  (`signature required`); a sender the `acceptSender` hook refuses →
+  `403` (verified) / `401` (claimed or absent); a throwing hook → `500`,
+  never served. The classified sender reaches the handler as
+  `PromptResponse.sender` (`VerifiedSender` with `id`, `ClaimedSender`
+  without — never authorize on a claim — or `undefined`). `status` is
+  classified and logged, never rejected. Spec:
+  [`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+  - Registration: `user_nkey` / `account` when the connection has an
+    identity, `id_sig` (`AGENT-ID-V1` over the prompt subject) when
+    `identity.signer` is set; identity keys override `extraMetadata`.
+    `min_sender_trust` is **always** emitted on the prompt endpoint
+    (default `"any"`) — that key is what advertises the extension.
+  - New `AgentServiceOptions`: `identity: { signer? }`, `minSenderTrust`,
+    `replayWindowMs` (default 30 000; nonces expire at `ts + window`),
+    `accountTokenPosition` (validated, passed to classification),
+    `acceptSender`, `logger` (replaces the bare `console.warn`).
+  - `start()` throws `IdentityMismatchError` when the signer's key is not
+    the connection's user; on `NoIdentityError` / `IdentityUnavailableError`
+    it logs and starts without identity metadata.
+  - `AgentService.identity` / `.minSenderTrust` getters.
+  - `SenderGate` and `NonceCache` (`@synadia-ai/agent-service`) for
+    hand-rolled services that want the same classification (the shared
+    codec — `verifySenderHeader`, `SenderInfo`, `formatSender` — lives in
+    `@synadia-ai/agents` and is not re-exported here).
+  - `ReferenceAgent`: `identity`, `minSenderTrust`, `acceptSender`,
+    `replayWindowMs`, `accountTokenPosition`, `logger`; the prompt handler
+    receives the classified sender as its second argument; the same
+    registration metadata and classification as `AgentService`.
+
 ### Changed
+
+- `PromptResponse` takes an optional third constructor argument (the
+  classified sender) and exposes it as `sender`.
+- `ReferenceAgentPromptHandler` is now `(msg, sender) => …`; handlers
+  that ignore the second argument are unaffected.
+- `maxPayload` clamping warns through the configured `logger` instead of
+  `console.warn`.
+
+### Changed (pre-identity)
 
 - **Examples: identity env vars moved to the `SYNADIA_*` scheme.** The
   numbered examples now resolve `owner`/`name` through the per-agent >

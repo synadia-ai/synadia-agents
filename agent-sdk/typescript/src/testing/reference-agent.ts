@@ -13,6 +13,12 @@
 //     §8.3 fields including `instance_id` (from the service id).
 //   - Emits an empty-body no-headers terminator after each prompt
 //     (default handler).
+//   - Sender identity (extension): registers `user_nkey` / `account` /
+//     `id_sig` when the connection has an identity (and a signer), always
+//     advertises `min_sender_trust` on `prompt`, classifies every prompt
+//     (400 / 401 / 403 / 500 before the handler runs) and hands the
+//     classified sender to the handler as its second argument; `status`
+//     is classified and logged, never rejected.
 //
 // Kept intentionally permissive — the `promptHandler` callback receives
 // the raw `ServiceMsg` so tests can assert on malformed inputs, drop
@@ -24,20 +30,48 @@
 import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";
 import {
+  agentIdAccount,
+  agentIdUser,
   AgentSubject,
   formatHumanBytes,
+  formatSender,
+  IDENTITY_METADATA_KEYS,
+  IdentityMismatchError,
+  MIN_SENDER_TRUST_KEY,
+  normalizeAccountTokenPosition,
   parseHumanBytes,
   PROMPT_ENDPOINT_NAME,
   PROMPT_QUEUE_GROUP,
   SDK_PROTOCOL_VERSION,
+  selfId,
   SERVICE_NAME,
+  signAgentId,
+  SILENT_LOGGER,
   STATUS_ENDPOINT_NAME,
   STATUS_QUEUE_GROUP,
+  type AgentId,
+  type Logger,
+  type MinSenderTrust,
+  type SenderInfo,
+  type SenderSigner,
 } from "@synadia-ai/agents";
 
 import { buildHeartbeatPayload, encodeHeartbeatPayload } from "../heartbeat/payload.js";
+import {
+  DEFAULT_MIN_SENDER_TRUST,
+  DEFAULT_REPLAY_WINDOW_MS,
+  SenderGate,
+  type AcceptSenderHook,
+} from "../identity/classify.js";
 
-export type ReferenceAgentPromptHandler = (msg: ServiceMsg) => void | Promise<void>;
+/**
+ * Prompt handler: the raw `ServiceMsg` plus the classified sender
+ * (`undefined` when the request carried no `Agent-Sender`).
+ */
+export type ReferenceAgentPromptHandler = (
+  msg: ServiceMsg,
+  sender: SenderInfo | undefined,
+) => void | Promise<void>;
 
 export interface ReferenceAgentOptions {
   /** Active NATS connection. */
@@ -71,6 +105,18 @@ export interface ReferenceAgentOptions {
   readonly promptHandler?: ReferenceAgentPromptHandler;
   /** Extra metadata keys merged into the service metadata (forward-compat). */
   readonly extraMetadata?: Readonly<Record<string, string>>;
+  /** Sender-identity: the agent's own signer (registers `id_sig`). */
+  readonly identity?: { readonly signer?: SenderSigner };
+  /** `min_sender_trust` on the prompt endpoint. Default `"any"`; always emitted. */
+  readonly minSenderTrust?: MinSenderTrust;
+  /** Replay window in milliseconds. Default 30 000. */
+  readonly replayWindowMs?: number;
+  /** 1-based `account_token_position` of the export this agent sits behind. */
+  readonly accountTokenPosition?: number;
+  /** Acceptance hook — see `AgentServiceOptions.acceptSender`. */
+  readonly acceptSender?: AcceptSenderHook;
+  /** Logger for classification outcomes. Default: silent. */
+  readonly logger?: Logger;
 }
 
 const DEFAULT_MAX_PAYLOAD = "1MB";
@@ -80,12 +126,41 @@ const DEFAULT_VERSION = "0.0.1";
 export class ReferenceAgent {
   readonly #options: ReferenceAgentOptions;
   readonly #subject: AgentSubject;
+  readonly #logger: Logger;
+  readonly #minSenderTrust: MinSenderTrust;
+  readonly #gate: SenderGate;
+  #identity: AgentId | undefined;
   #service: Service | null = null;
   #heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ReferenceAgentOptions) {
     this.#options = options;
     this.#subject = AgentSubject.new(options.agent, options.owner, options.name);
+    this.#logger = options.logger ?? SILENT_LOGGER;
+    this.#minSenderTrust = options.minSenderTrust ?? DEFAULT_MIN_SENDER_TRUST;
+    const accountTokenPosition = normalizeAccountTokenPosition(options.accountTokenPosition);
+    this.#gate = new SenderGate({
+      minSenderTrust: this.#minSenderTrust,
+      replayWindowMs: options.replayWindowMs ?? DEFAULT_REPLAY_WINDOW_MS,
+      ...(accountTokenPosition !== undefined ? { accountTokenPosition } : {}),
+      ...(options.acceptSender !== undefined ? { acceptSender: options.acceptSender } : {}),
+      logger: this.#logger,
+    });
+  }
+
+  /** The agent ID this instance registered, or `undefined` (set by `start()`). */
+  get identity(): AgentId | undefined {
+    return this.#identity;
+  }
+
+  /** The `min_sender_trust` advertised on the prompt endpoint. */
+  get minSenderTrust(): MinSenderTrust {
+    return this.#minSenderTrust;
+  }
+
+  /** The nonce set / classification gate (for tests that inspect it). */
+  get senderGate(): SenderGate {
+    return this.#gate;
   }
 
   /** Prompt endpoint subject this agent listens on (§2 v0.3 — verb-first). */
@@ -113,6 +188,21 @@ export class ReferenceAgent {
 
   async start(): Promise<void> {
     if (this.#service) return;
+
+    // Same policy as `AgentService.start()`: a mismatching signer throws;
+    // no identity → log and register without the identity keys.
+    const signer = this.#options.identity?.signer;
+    let identity: AgentId | undefined;
+    try {
+      identity = await selfId(this.#options.nc, signer ? { signer } : {});
+    } catch (err) {
+      if (err instanceof IdentityMismatchError) throw err;
+      this.#logger.warn("ReferenceAgent: starting without identity metadata", {
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+    this.#identity = identity;
+
     const svcm = new Svcm(this.#options.nc);
 
     const metadata: Record<string, string> = {
@@ -123,6 +213,25 @@ export class ReferenceAgent {
     };
     if (this.#options.session !== undefined) {
       metadata["session"] = this.#options.session;
+    }
+    if (identity !== undefined) {
+      metadata[IDENTITY_METADATA_KEYS.userNkey] = agentIdUser(identity);
+      metadata[IDENTITY_METADATA_KEYS.account] = agentIdAccount(identity);
+      if (signer) {
+        metadata[IDENTITY_METADATA_KEYS.idSig] = await signAgentId({
+          signer,
+          id: identity,
+          agent: this.#subject.agent,
+          owner: this.#subject.owner,
+          promptSubject: this.#subject.prompt,
+        });
+      } else {
+        delete metadata[IDENTITY_METADATA_KEYS.idSig];
+      }
+    } else {
+      delete metadata[IDENTITY_METADATA_KEYS.userNkey];
+      delete metadata[IDENTITY_METADATA_KEYS.account];
+      delete metadata[IDENTITY_METADATA_KEYS.idSig];
     }
 
     this.#service = await svcm.add({
@@ -144,19 +253,12 @@ export class ReferenceAgent {
       queue: PROMPT_QUEUE_GROUP,
       handler: (err, msg) => {
         if (err) return;
-        void Promise.resolve(promptHandler(msg)).catch((handlerErr: unknown) => {
-          try {
-            msg.respondError(500, "reference agent handler error");
-          } catch {
-            /* connection may already be gone */
-          }
-
-          console.error("ReferenceAgent prompt handler threw", handlerErr);
-        });
+        void this.#dispatchPrompt(msg, promptHandler);
       },
       metadata: {
         max_payload: maxPayload,
         attachments_ok: attachmentsOk ? "true" : "false",
+        [MIN_SENDER_TRUST_KEY]: this.#minSenderTrust,
       },
     });
 
@@ -171,6 +273,16 @@ export class ReferenceAgent {
         if (err) return;
         const service = this.#service;
         if (!service) return;
+        // Classify-only; the reply is sent whatever the outcome.
+        void this.#gate.classifyStatus(msg).then(
+          (sender) => {
+            this.#logger.debug("status request", {
+              subject: msg.subject,
+              sender: formatSender(sender),
+            });
+          },
+          () => undefined,
+        );
         const payload = buildHeartbeatPayload(
           this.#subject,
           this.#options.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S,
@@ -198,6 +310,48 @@ export class ReferenceAgent {
     }
   }
 
+  async #dispatchPrompt(
+    msg: ServiceMsg,
+    promptHandler: ReferenceAgentPromptHandler,
+  ): Promise<void> {
+    let sender: SenderInfo | undefined;
+    try {
+      const admission = await this.#gate.admitPrompt(msg);
+      if (!admission.ok) {
+        try {
+          msg.respondError(admission.code, admission.description);
+        } catch {
+          /* connection may already be gone */
+        }
+        // §9.3 — the error frame is not the terminator.
+        msg.respond(new Uint8Array(0));
+        return;
+      }
+      sender = admission.sender;
+    } catch (err) {
+      this.#logger.error("ReferenceAgent: sender classification failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      try {
+        msg.respondError(500, "sender classification error");
+      } catch {
+        /* connection may already be gone */
+      }
+      msg.respond(new Uint8Array(0));
+      return;
+    }
+    try {
+      await promptHandler(msg, sender);
+    } catch (handlerErr) {
+      try {
+        msg.respondError(500, "reference agent handler error");
+      } catch {
+        /* connection may already be gone */
+      }
+      console.error("ReferenceAgent prompt handler threw", handlerErr);
+    }
+  }
+
   /**
    * Mirrors `AgentService.#effectiveMaxPayload`: when no `maxPayload`
    * option is passed, advertise the broker's negotiated
@@ -216,10 +370,11 @@ export class ReferenceAgent {
       return override;
     }
     const clamped = formatHumanBytes(serverBytes);
-    console.warn(
+    this.#logger.warn(
       `ReferenceAgent: maxPayload=${override} (${overrideBytes} bytes) exceeds ` +
         `server limit ${clamped} (${serverBytes} bytes); clamping advertised ` +
         `value to ${clamped}`,
+      { maxPayload: override, serverMaxPayload: serverBytes },
     );
     return clamped;
   }

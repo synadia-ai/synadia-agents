@@ -3,9 +3,13 @@
 // caller writes `for await (const msg of stream) { ... }`.
 //
 // Wire behavior:
-//   - Calls `nc.requestMany(subject, payload, { strategy: "sentinel", maxWait })`.
-//     The connection's mux inbox handles the reply routing; the empty-body
-//     terminator (§6.5) ends the iterator.
+//   - Calls `nc.requestMany(subject, payload, { strategy: "sentinel", maxWait, headers })`
+//     on the first iteration. The connection's mux inbox handles the reply
+//     routing; the empty-body terminator (§6.5) ends the iterator.
+//   - The optional `buildHeaders` callback runs at publish time (inside
+//     that first iteration), so an `Agent-Sender` header's `ts` / nonce
+//     are fresh even when the caller iterates late; the signature covers
+//     the exact `payload` bytes handed in.
 //   - Yields `{ type: "response" }`, `{ type: "status" }`, `QueryEvent` per
 //     §6.3–§7.
 //   - Emits a synthetic `{ type: "status", status: "done" }` when the wire
@@ -17,7 +21,7 @@
 //   - `cancel()` and early break from `for await` both stop the iterator
 //     cleanly.
 
-import type { Msg, NatsConnection, QueuedIterator } from "@nats-io/nats-core";
+import type { Msg, MsgHdrs, NatsConnection, QueuedIterator } from "@nats-io/nats-core";
 import {
   ServiceError,
   StreamMaxWaitExceededError,
@@ -25,7 +29,6 @@ import {
   type ServiceErrorBody,
 } from "../errors.js";
 import { abortError } from "../internal/abort.js";
-import { encodeEnvelope, type RequestEnvelope } from "../prompt/envelope.js";
 import { buildQueryEvent, type QueryEvent } from "../query/query-event.js";
 import { decodeChunk, type DecodedAttachment, type DecodedChunk } from "./chunk-decoder.js";
 import { withInactivityTimeout } from "./inactivity.js";
@@ -42,10 +45,28 @@ export type StreamMessage =
   | { readonly type: "status"; readonly status: string }
   | QueryEvent;
 
+export interface PromptStreamOptions {
+  readonly nc: NatsConnection;
+  /** The subject the request is published to. */
+  readonly subject: string;
+  /** The exact request bytes (encoded once by `Agent.prompt()`). */
+  readonly payload: Uint8Array;
+  /**
+   * Builds the request headers at publish time (first iteration). Used
+   * for the `Agent-Sender` header, signed over `payload`. `undefined`
+   * → no headers.
+   */
+  readonly buildHeaders?: () => Promise<MsgHdrs | undefined>;
+  readonly inactivityTimeoutMs: number;
+  readonly maxWaitMs: number;
+  readonly signal?: AbortSignal;
+}
+
 export class PromptStream implements AsyncIterable<StreamMessage> {
   readonly #nc: NatsConnection;
   readonly #requestSubject: string;
-  readonly #envelope: RequestEnvelope;
+  readonly #payload: Uint8Array;
+  readonly #buildHeaders: (() => Promise<MsgHdrs | undefined>) | undefined;
   readonly #inactivityTimeoutMs: number;
   readonly #maxWaitMs: number;
   readonly #signal: AbortSignal | undefined;
@@ -53,20 +74,19 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
   #iterated = false;
   #cancelled = false;
 
-  constructor(
-    nc: NatsConnection,
-    requestSubject: string,
-    envelope: RequestEnvelope,
-    inactivityTimeoutMs: number,
-    maxWaitMs: number,
-    signal?: AbortSignal,
-  ) {
-    this.#nc = nc;
-    this.#requestSubject = requestSubject;
-    this.#envelope = envelope;
-    this.#inactivityTimeoutMs = inactivityTimeoutMs;
-    this.#maxWaitMs = maxWaitMs;
-    this.#signal = signal;
+  constructor(options: PromptStreamOptions) {
+    this.#nc = options.nc;
+    this.#requestSubject = options.subject;
+    this.#payload = options.payload;
+    this.#buildHeaders = options.buildHeaders;
+    this.#inactivityTimeoutMs = options.inactivityTimeoutMs;
+    this.#maxWaitMs = options.maxWaitMs;
+    this.#signal = options.signal;
+  }
+
+  /** The subject this stream publishes its request to. */
+  get subject(): string {
+    return this.#requestSubject;
   }
 
   /**
@@ -91,9 +111,13 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
     // transport-node / Bun ws) all return a `QueuedIterator<Msg>` whose
     // `.stop()` is the only way to bail out early without waiting for
     // `maxWait` to expire. Cast at the boundary.
-    const iter = (await this.#nc.requestMany(this.#requestSubject, encodeEnvelope(this.#envelope), {
+    // Headers are built here — at publish time — so a signed
+    // `Agent-Sender` carries a fresh `ts` and nonce.
+    const hdrs = this.#buildHeaders ? await this.#buildHeaders() : undefined;
+    const iter = (await this.#nc.requestMany(this.#requestSubject, this.#payload, {
       strategy: "sentinel",
       maxWait: this.#maxWaitMs,
+      ...(hdrs ? { headers: hdrs } : {}),
     })) as QueuedIterator<Msg>;
     this.#iter = iter;
     // cancel() may have fired during the requestMany await — the early
@@ -179,7 +203,8 @@ function toStreamMessage(decoded: DecodedChunk, nc: NatsConnection): StreamMessa
   }
 }
 
-function buildServiceErrorFromMsg(msg: Msg): ServiceError {
+/** Turn a `Nats-Service-Error-Code`-headered message into a {@link ServiceError} (§9.1). */
+export function buildServiceErrorFromMsg(msg: Msg): ServiceError {
   const h = msg.headers;
   const codeStr = h?.get("Nats-Service-Error-Code") ?? "500";
   const code = Number(codeStr);

@@ -73,15 +73,21 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 
 ## What's in the box
 
-| API                                                              | Purpose                                                                              |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `new Agents({ nc, ... })`                                        | Construct from a caller-owned `NatsConnection`.                                      |
-| `agents.discover({filter?, timeoutMs?})`                         | Return a live `Agent[]`; auto subscribe-before-ping (§8.5).                          |
-| `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})` | Return a `PromptStream`.                                                             |
-| `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`       | Heartbeat tracking and on-demand ping.                                               |
-| `agents.close()`                                                 | Tear down SDK state; aborts all in-flight streams.                                   |
-| `loadContextOptions(name)` / `parseNatsUrl(url)`                 | Bridge `nats` CLI context files / URLs into `NodeConnectionOptions` for `connect()`. |
-| `withAgentReconnectDefaults(opts?)`                              | Opt-in resilient reconnect defaults for agent runtimes — see below. Pure transform.  |
+| API                                                                                     | Purpose                                                                                 |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `new Agents({ nc, ... })`                                                               | Construct from a caller-owned `NatsConnection`.                                         |
+| `agents.discover({filter?, timeoutMs?})`                                                | Return a live `Agent[]`; auto subscribe-before-ping (§8.5).                             |
+| `agent.prompt(text, {attachments, signal, inactivityTimeoutMs})`                        | Return a `PromptStream`.                                                                |
+| `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`                              | Heartbeat tracking and on-demand ping.                                                  |
+| `agent.status({ subject?, sub?, timeoutMs? })`                                          | §8.7 status probe; returns the agent's heartbeat payload.                               |
+| `agents.close()`                                                                        | Tear down SDK state; aborts all in-flight streams.                                      |
+| `loadContextOptions(name)` / `parseNatsUrl(url)`                                        | Bridge `nats` CLI context files / URLs into `NodeConnectionOptions` for `connect()`.    |
+| `withAgentReconnectDefaults(opts?)`                                                     | Opt-in resilient reconnect defaults for agent runtimes — see below. Pure transform.     |
+| `new Agents({ nc, identity: { signer, name } })`                                        | Sender identity: sign every `prompt` / `status` with the connection's NKEY — see below. |
+| `agents.selfId()` / `refreshSelfId()`                                                   | The connection's own agent ID (`{account}.{user}`), learned once per connection.        |
+| `agents.signSender` / `publishSigned` / `requestSigned`                                 | Signed publishes for any subject, JetStream included.                                   |
+| `signerFromSeed` / `signerFromCreds` / `signerFromCredsFile` / `signerFromContext`      | Build a `SenderSigner`; custom HSM / KMS signers implement the interface.               |
+| `verifySenderHeader`, `parseSenderHeader`, `formatSender`, `newAgentId`, `parseAgentId` | The shared identity codec (also used by the host package).                              |
 
 ### Resilient reconnect defaults
 
@@ -97,6 +103,32 @@ const nc = await connect(withAgentReconnectDefaults({ servers: "nats://localhost
 The helper merges defaults into caller-provided options, preserving any field the caller explicitly set (including `0` and `false`). The defaults — `maxReconnectAttempts: -1`, `reconnectTimeWait: 2000`, `reconnectJitter: 200`, `waitOnFirstConnect: true` — are also exported as `AGENT_RECONNECT_DEFAULTS` for introspection or selective override.
 
 When you adopt these defaults, also handle the terminal `close` status event in your `for await (const s of nc.status())` loop — it still fires on repeated identical auth errors and on explicit `nc.close()` / `nc.drain()`, and a stuck "reconnecting…" UI on a truly dead connection is worse than an honest "disconnected" one.
+
+### Sender identity
+
+The [sender-identity extension](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md) lets a receiving agent know _who_ prompted it, verified per message: the caller attaches an `Agent-Sender` header that names its agent ID — the `(account, user)` NKEY pair the connection already has — and, with a signer, an ed25519 signature bound to the subject, the payload, a timestamp and a nonce. Nothing in it changes protocol `0.3`: an agent that implements the extension says so with `min_sender_trust` on its prompt endpoint (`agent.supportsSenderIdentity`), and a caller that has no identity simply sends no header.
+
+```ts
+import { Agents, signerFromCredsFile } from "@synadia-ai/agents";
+
+const agents = new Agents({
+  nc,
+  identity: { signer: await signerFromCredsFile("~/.config/nats/user.creds"), name: "claude-code" },
+});
+console.log(await agents.selfId()); // "AABY….UAWW…" — 113 chars on NGS, "$G.U…" / "ACME.U…" on a config-file server
+for await (const msg of await agent.prompt("hello")) {
+  /* the receiver sees a VerifiedSender */
+}
+```
+
+What to know:
+
+- **The seed is handed in explicitly.** The SDK never reads credentials out of the connection. `signerFromSeed` (an `SU…` seed, or a seed file's contents), `signerFromCreds` / `signerFromCredsFile` (a `.creds` file — the identity is then read from its JWT, without asking the server) and `signerFromContext` (a `nats` CLI context) cover the common cases. Runners should take the seed from a **file** (`NATS_NKEY_SEED_FILE`), not from an environment value every spawned tool process inherits.
+- **Without a signer** the SDK sends an unsigned _claim_ when the connection has an NKEY identity (`identity.sendUnsignedClaim: false` turns that off — a claim discloses your user NKEY to every receiver), and nothing when it has none (no auth, password or token users → `NoIdentityError`, whose message names the fix). An endpoint that declares `min_sender_trust: signed` fails early with `SenderSignatureRequiredError` when no signer is configured, and with the `selfId()` error when the identity is unavailable.
+- **Cost.** One `$SYS.REQ.USER.INFO` round trip per connection (2 s timeout at most), awaited by the first request only; failures are memoised for 30 s and retried in the background. A signed header is ~400 bytes and counts against `max_payload` (header framing included — `PayloadTooLargeError.headerBytes`).
+- **Behind a service import that remaps the subject** — an export that inserts the caller's account token (`account_token_position`), or a `to:` / `local_subject` rename by your own account — discovery reports the exporter's subject, which you cannot publish to. Pass `prompt(text, { subject })` / `status({ subject })` with the local name; the receiver strips an inserted token by itself. Only for a rename by **your own** account also pass `sub: agent.promptEndpoint.subject` (sign the exporter's subject). `signSender` / `publishSigned` / `requestSigned` take the same `sub` option.
+- **A trusted server over TLS is a precondition.** The NATS handshake signs a server-chosen nonce with the same seed that signs `Agent-Sender`; a server you should not have trusted could obtain a signature valid for 30 s. Identity is meaningful only over TLS to a server whose certificate you verify.
+- The verified identity is the **user** key; `account` is the sender's signed claim (`formatSender` renders `… (verified user, claimed account)`). Which verified senders a receiver accepts is the receiver's business — see the host package's `acceptSender`.
 
 Subpath exports:
 

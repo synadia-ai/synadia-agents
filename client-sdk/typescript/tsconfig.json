@@ -47,6 +47,7 @@
     "src/**/*.ts",
     "test/**/*.ts",
     "examples/**/*.ts",
+    "scripts/**/*.ts",
     "*.config.ts",
     "*.config.mts",
     "eslint.config.mjs"

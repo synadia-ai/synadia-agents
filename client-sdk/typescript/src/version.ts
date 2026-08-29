@@ -3,6 +3,8 @@
 // Only MAJOR.MINOR is significant for compatibility. Patch/pre-release
 // qualifiers (e.g. `"0.1.0-draft"`) are parsed-and-discarded.
 
+import { NatsAgentError } from "./errors.js";
+
 export interface ProtocolVersion {
   readonly major: number;
   readonly minor: number;
@@ -13,7 +15,7 @@ const VERSION_PATTERN = /^\s*(\d+)\.(\d+)(?:[.-].*)?\s*$/;
 /** The protocol version this SDK implements. */
 export const SDK_PROTOCOL_VERSION: ProtocolVersion = Object.freeze({ major: 0, minor: 3 });
 
-export class InvalidProtocolVersionError extends Error {
+export class InvalidProtocolVersionError extends NatsAgentError {
   constructor(public readonly input: string) {
     super(`invalid protocol version "${input}": expected MAJOR.MINOR`);
     this.name = "InvalidProtocolVersionError";

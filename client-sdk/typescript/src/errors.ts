@@ -43,14 +43,22 @@ export class AttachmentsNotSupportedError extends ValidationError {
   }
 }
 
-/** Serialized envelope exceeds the endpoint's `max_payload` (spec §5.4). */
+/**
+ * Serialized envelope exceeds the endpoint's `max_payload` (spec §5.4).
+ * `headerBytes` is the framed `Agent-Sender` header size counted alongside
+ * the payload (sender-identity extension); `0` when no header is sent.
+ */
 export class PayloadTooLargeError extends ValidationError {
   constructor(
     public readonly limit: number,
     public readonly actual: number,
+    public readonly headerBytes: number = 0,
   ) {
     super(
-      `payload size ${actual} bytes exceeds endpoint max_payload of ${limit} bytes (spec §5.4)`,
+      headerBytes > 0
+        ? `payload size ${actual} bytes plus Agent-Sender header ${headerBytes} bytes exceeds ` +
+            `endpoint max_payload of ${limit} bytes (spec §5.4)`
+        : `payload size ${actual} bytes exceeds endpoint max_payload of ${limit} bytes (spec §5.4)`,
     );
     this.name = "PayloadTooLargeError";
   }
@@ -120,5 +128,111 @@ export class NatsContextError extends NatsAgentError {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "NatsContextError";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sender identity (the sender-identity extension, spec
+// `agent-protocol-sender-identity.md`). Base class is `IdentityError`,
+// deliberately NOT under `ValidationError`: only the two errors the
+// caller can know synchronously (`SenderSignatureRequiredError`, the size
+// bound) are thrown from `prompt()`; the rest reject the returned promise.
+// ---------------------------------------------------------------------------
+
+/** Base class for every sender-identity error. */
+export class IdentityError extends NatsAgentError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "IdentityError";
+  }
+}
+
+/**
+ * The server answered `$SYS.REQ.USER.INFO` but the connection has no NKEY
+ * user (no authentication, a password or token user), or reported a
+ * config-mode account name the canonical agent-ID form cannot carry. The
+ * message names the fix.
+ */
+export class NoIdentityError extends IdentityError {
+  constructor(reason: string) {
+    super(
+      `this connection has no NKEY identity (${reason}); configure an nkey user on ` +
+        `the server and connect with its seed, or connect with a credentials file`,
+    );
+    this.name = "NoIdentityError";
+  }
+}
+
+/**
+ * The SDK does not know the connection's identity: `$SYS.REQ.USER.INFO`
+ * did not answer within the timeout, a permission blocks it, or the two
+ * identity sources (credentials JWT, server) disagree.
+ */
+export class IdentityUnavailableError extends IdentityError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(`identity unavailable: ${message}`, options);
+    this.name = "IdentityUnavailableError";
+  }
+}
+
+/** The configured signer's public key is not the connection's user NKEY. */
+export class IdentityMismatchError extends IdentityError {
+  constructor(
+    public readonly signerPublicKey: string,
+    public readonly identityUser: string,
+  ) {
+    super(
+      `identity mismatch: the configured signer holds ${signerPublicKey} but the ` +
+        `connection's user NKEY is ${identityUser}`,
+    );
+    this.name = "IdentityMismatchError";
+  }
+}
+
+/** `parseAgentId` / `newAgentId` rejected the input (also for empty tokens). */
+export class InvalidAgentIdError extends IdentityError {
+  constructor(message: string) {
+    super(`invalid agent id: ${message}`);
+    this.name = "InvalidAgentIdError";
+  }
+}
+
+/** The `Agent-Sender` header failed the parser (spec: `400`). */
+export class MalformedSenderHeaderError extends IdentityError {
+  constructor(message: string) {
+    super(`malformed Agent-Sender header: ${message}`);
+    this.name = "MalformedSenderHeaderError";
+  }
+}
+
+/** The endpoint declares `min_sender_trust: signed` and no signer is configured. */
+export class SenderSignatureRequiredError extends IdentityError {
+  constructor(subject: string) {
+    super(
+      `${subject} requires a signed Agent-Sender header (min_sender_trust=signed) but no ` +
+        `identity.signer is configured`,
+    );
+    this.name = "SenderSignatureRequiredError";
+  }
+}
+
+/**
+ * Host-internal: a classified request is refused. `.code` is the wire
+ * status — `401` for a required-but-absent signature, a failing check
+ * (signature, `sub`, stale `ts`, replayed nonce, operator-attested
+ * disagreement) or a claimed / absent sender the acceptance hook refused;
+ * `403` for a verified sender the hook refused. The description carries
+ * one of two generic texts; details go to the receiver's log only.
+ */
+export class SenderVerificationError extends IdentityError {
+  constructor(
+    public readonly code: 401 | 403,
+    /** Generic wire description ("signature required" or "sender rejected"). */
+    public readonly description: string,
+    /** Receiver-side detail — never sent on the wire. */
+    public readonly detail: string,
+  ) {
+    super(`sender verification failed (${code}): ${detail}`);
+    this.name = "SenderVerificationError";
   }
 }

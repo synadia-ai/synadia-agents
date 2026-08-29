@@ -48,12 +48,24 @@ import { credsAuthenticator, jwtAuthenticator, nkeyAuthenticator } from "@nats-i
 import type { NodeConnectionOptions } from "@nats-io/transport-node";
 import { NatsContextError } from "./errors.js";
 
+/** A NATS CLI context file, read but not yet turned into connection options. */
+export interface NatsContextFile {
+  /** The resolved context name (after `"current"` resolution). */
+  readonly name: string;
+  /** Absolute path of the context JSON file. */
+  readonly path: string;
+  /** The parsed JSON object, verbatim. */
+  readonly fields: Readonly<Record<string, unknown>>;
+}
+
 /**
- * Resolve a NATS CLI context by name into `NodeConnectionOptions` ready to
- * pass to `connect()`. Pass `"current"` to resolve via `$NATS_CONTEXT` or
- * the `context.txt` selection file.
+ * Read a NATS CLI context by name. Pass `"current"` to resolve via
+ * `$NATS_CONTEXT` or the `context.txt` selection file. This is the
+ * *reading* half of {@link loadContextOptions}; `signerFromContext` in the
+ * identity module reuses it to find the seed / creds path without
+ * building connection options.
  */
-export async function loadContextOptions(selector: string): Promise<NodeConnectionOptions> {
+export async function readContextFile(selector: string): Promise<NatsContextFile> {
   const baseDir = resolveBaseDir();
   const name = selector === "current" ? await resolveCurrentName(baseDir) : selector;
 
@@ -71,14 +83,27 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
     throw err;
   }
 
-  let parsed: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw) as Record<string, unknown>;
+    parsed = JSON.parse(raw);
   } catch (err) {
     throw new NatsContextError(
       `NATS context "${name}" is not valid JSON: ${(err as Error).message}`,
     );
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new NatsContextError(`NATS context "${name}" is not a JSON object`);
+  }
+  return { name, path, fields: parsed as Record<string, unknown> };
+}
+
+/**
+ * Resolve a NATS CLI context by name into `NodeConnectionOptions` ready to
+ * pass to `connect()`. Pass `"current"` to resolve via `$NATS_CONTEXT` or
+ * the `context.txt` selection file.
+ */
+export async function loadContextOptions(selector: string): Promise<NodeConnectionOptions> {
+  const { name, fields: parsed } = await readContextFile(selector);
 
   const url = str(parsed["url"]);
   if (!url) throw new NatsContextError(`NATS context "${name}" is missing \`url\``);
@@ -146,7 +171,7 @@ export async function loadContextOptions(selector: string): Promise<NodeConnecti
 }
 
 /** Expand a leading `~/` to `$HOME/`. */
-function expandHome(path: string): string {
+export function expandHome(path: string): string {
   return path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
 }
 
@@ -160,7 +185,8 @@ async function readTlsFile(field: string, path: string): Promise<string> {
   }
 }
 
-async function readAuthFile(field: string, path: string): Promise<Buffer> {
+/** Read a credentials / seed file, wrapping filesystem errors in `NatsContextError`. */
+export async function readAuthFile(field: string, path: string): Promise<Buffer> {
   try {
     return await readFile(path);
   } catch (error) {

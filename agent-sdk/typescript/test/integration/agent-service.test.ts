@@ -340,32 +340,32 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
 
   it("clamps maxPayload down to nc.info.max_payload when over-advertised", async () => {
     // Test broker is started with the nats-server default 1MB. A constructor
-    // override of 16MB should clamp down to "1MB" with a console.warn rather
-    // than advertising more than the broker would accept (which would only
-    // set up callers for `MAX_PAYLOAD_VIOLATION` rejections at publish).
+    // override of 16MB should clamp down to "1MB" with a warning on the
+    // configured logger rather than advertising more than the broker would
+    // accept (which would only set up callers for `MAX_PAYLOAD_VIOLATION`
+    // rejections at publish).
     const warnings: string[] = [];
-    const originalWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      const first = args[0];
-      warnings.push(typeof first === "string" ? first : "");
+    const logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (msg: string) => {
+        warnings.push(msg);
+      },
+      error: () => undefined,
     };
-    try {
-      const service = startService({ maxPayload: "16MB" });
-      service.onPrompt(async () => {});
-      await service.start();
+    const service = startService({ maxPayload: "16MB", logger });
+    service.onPrompt(async () => {});
+    await service.start();
 
-      const found = await client.discover({
-        timeoutMs: 1000,
-        filter: { agent: "svc-test", name: service.subject.name },
-      });
-      expect(found).toHaveLength(1);
-      const ep = found[0]!.endpoints.find((e) => e.name === "prompt");
-      expect(ep).toBeDefined();
-      expect(ep!.metadata["max_payload"]).toBe("1MB");
-      expect(warnings.some((w) => w.includes("clamping"))).toBe(true);
-    } finally {
-      console.warn = originalWarn;
-    }
+    const found = await client.discover({
+      timeoutMs: 1000,
+      filter: { agent: "svc-test", name: service.subject.name },
+    });
+    expect(found).toHaveLength(1);
+    const ep = found[0]!.endpoints.find((e) => e.name === "prompt");
+    expect(ep).toBeDefined();
+    expect(ep!.metadata["max_payload"]).toBe("1MB");
+    expect(warnings.some((w) => w.includes("clamping"))).toBe(true);
   });
 
   it("honours a maxPayload override smaller than the server limit", async () => {
