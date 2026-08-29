@@ -50,6 +50,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   that ignore the second argument are unaffected.
 - `maxPayload` clamping warns through the configured `logger` instead of
   `console.warn`.
+- `AgentService.start()` and `ReferenceAgent.start()` now flush the
+  connection before returning, so "started" means the endpoint
+  subscriptions are registered at the server — a caller on another
+  connection that discovers or prompts right away no longer races them
+  (no responders).
 
 ### Changed (pre-identity)
 

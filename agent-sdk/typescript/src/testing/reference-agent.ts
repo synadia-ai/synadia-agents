@@ -293,6 +293,11 @@ export class ReferenceAgent {
       },
     });
 
+    // "Started" means "registered at the server": a test that discovers or
+    // prompts on another connection right after `start()` must not race
+    // the endpoint subscriptions (→ no responders).
+    await this.#options.nc.flush();
+
     // §8.2: begin publishing heartbeats AFTER service registration so that
     // callers discovering via $SRV.INFO find the metadata first. We also
     // emit one immediately so tests don't wait a full interval.

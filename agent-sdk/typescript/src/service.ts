@@ -655,6 +655,11 @@ export class AgentService {
       });
     }
 
+    // "Started" means "registered at the server": a caller on another
+    // connection that discovers or prompts right after `start()` resolves
+    // must not race the endpoint subscriptions (→ no responders).
+    await this.#options.nc.flush();
+
     this.#startHeartbeats();
   }
 
