@@ -7,16 +7,16 @@ Counterpart to the host-side examples in
 the TypeScript mirror of
 [`client-sdk/python/examples/`](../../../client-sdk/python/examples/).
 
-| Script                                               | What it does                                                                                                                                           |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [`01-discover.ts`](01-discover.ts)                   | Enumerate every reachable agent via `$SRV.INFO.agents` and print identity + capabilities.                                                              |
-| [`02-prompt-text.ts`](02-prompt-text.ts)             | Send a text prompt to the first discovered agent and stream the response. Prompt is the first CLI arg (default `"hello"`).                             |
-| [`03-prompt-attachment.ts`](03-prompt-attachment.ts) | Prompt with a file attached; shows §5.4 pre-publish validation (`max_payload`, `attachments_ok`). First CLI arg is the file path.                      |
-| [`04-query-reply.ts`](04-query-reply.ts)             | Answer an agent's mid-stream queries (clarifications, permission prompts). Prompt is the first CLI arg.                                                |
-| [`05-liveness.ts`](05-liveness.ts)                   | Per-instance heartbeat listener + periodic liveness snapshot.                                                                                          |
-| [`06-chat.ts`](06-chat.ts)                           | Interactive multi-turn chat REPL against the first discovered agent (built-in `readline`, no UI deps).                                                 |
-| [`_run-reference-agent.ts`](_run-reference-agent.ts) | (not a demo) spins up the spec-compliant `ReferenceAgent` for the others to discover and prompt.                                                       |
-| [`_run-client-probe.ts`](_run-client-probe.ts)       | (not a demo) one-shot caller probe for the cross-SDK interop tests: `--agent` / `--owner` / `--prompt`, NDJSON out, exit 0 iff the terminator arrived. |
+| Script                                               | What it does                                                                                                                                                        |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`01-discover.ts`](01-discover.ts)                   | Enumerate every reachable agent via `$SRV.INFO.agents` and print identity + capabilities.                                                                           |
+| [`02-prompt-text.ts`](02-prompt-text.ts)             | Send a text prompt to the first discovered agent and stream the response. Prompt is the first CLI arg (default `"hello"`).                                          |
+| [`03-prompt-attachment.ts`](03-prompt-attachment.ts) | Prompt with a file attached; shows §5.4 pre-publish validation (`max_payload`, `attachments_ok`). First CLI arg is the file path.                                   |
+| [`04-query-reply.ts`](04-query-reply.ts)             | Answer an agent's mid-stream queries (clarifications, permission prompts). Prompt is the first CLI arg.                                                             |
+| [`05-liveness.ts`](05-liveness.ts)                   | Per-instance heartbeat listener + periodic liveness snapshot.                                                                                                       |
+| [`06-chat.ts`](06-chat.ts)                           | Interactive multi-turn chat REPL against the first discovered agent (built-in `readline`, no UI deps).                                                              |
+| [`_run-reference-agent.ts`](_run-reference-agent.ts) | (not a demo) spins up the spec-compliant `ReferenceAgent` for the others to discover and prompt.                                                                    |
+| [`_run-client-probe.ts`](_run-client-probe.ts)       | (not a demo) one-shot caller probe for the cross-SDK interop tests: `--agent` / `--owner` / `--prompt` [`--signed`], NDJSON out, exit 0 iff the terminator arrived. |
 
 ## Environment variables
 
@@ -45,6 +45,15 @@ merge into whichever connection path is active):
 Its echo ends with `sender: <id> (<trust>)` only when a sender was classified,
 e.g. `demo agent received your prompt. sender: $G.UCDU… (verified user, claimed account)`;
 the identity is printed on its own line after the `reference agent listening on …` marker.
+
+`_run-client-probe.ts` reads `NATS_URL` only (never `NATS_CONTEXT`) plus the
+same `NATS_NKEY_SEED_FILE` / `NATS_CREDS` knobs to authenticate the connection.
+With `--signed` the same file also signs the prompt's `Agent-Sender`, and a
+first NDJSON line `{"type":"identity","id":"<account>.<user>"}` precedes the
+chunks (not counted in `done.chunks`); without `--signed` the probe sends no
+`Agent-Sender` at all — the two modes are exactly "verified" and "absent" at
+the receiver. `--signed` without a seed / creds file exits 64. A refused
+request surfaces on stderr as `{"type":"error","name":"ServiceError","code":401,…}`.
 
 ## Run
 
@@ -75,7 +84,7 @@ NATS_CONTEXT=my-context bun examples/02-prompt-text.ts "hello"
   test asserts on the NDJSON lines (one per decoded chunk, then
   `{"type":"done","chunks":N}`). It honours `NATS_URL` only — never
   `NATS_CONTEXT` — so a test run cannot pick up your selected context.
-  Unsigned for now.
+  `--signed` (with `NATS_NKEY_SEED_FILE` / `NATS_CREDS`) is the signed leg.
 - **`06-chat.ts`** reads as a real conversation only against a _stateful_ agent —
   under v0.3 one chat = one session = one subject. The bundled reference agent is
   stateless, so it replies to each turn independently; it's still the simplest

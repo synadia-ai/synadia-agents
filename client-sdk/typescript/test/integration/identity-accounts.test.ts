@@ -2,6 +2,9 @@
 // APP, APP2, APP3) plus the `account_token_position` variant on
 // `account-token-position.conf` — cross-account signing needs nothing from
 // either side but the caller's own import configuration (plan §2.3b).
+// Also the operator-attested rows (`Nats-Request-Info` cross-check on a
+// receiver that declared its endpoint closed) and the `resolveSender`
+// reverse lookup end to end.
 
 import { readFile } from "node:fs/promises";
 import {
@@ -20,16 +23,24 @@ import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
 import {
   AGENT_SENDER_HEADER,
   Agents,
+  base64UrlEncode,
   formatSender,
+  IDENTITY_METADATA_KEYS,
+  InvalidAgentIdError,
+  MIN_SENDER_TRUST_KEY,
+  NATS_REQUEST_INFO_HEADER,
   newAgentId,
   parseSenderHeader,
   readSenderHeaderValue,
+  resolveSender,
+  SenderResolver,
   SenderVerificationError,
   serializeSenderHeader,
   ServiceError,
   signerFromSeed,
   signSenderHeader,
   verifySenderHeader,
+  type AgentInfo,
   type SenderInfo,
   type StreamMessage,
 } from "../../src/index.js";
@@ -105,10 +116,22 @@ const errorCode = (msgs: Msg[]): string | undefined =>
 describe.skipIf(!bin)("identity T2/T3/T4 — accounts.conf", () => {
   const server = new NatsServerProcess();
   const conns = new Map<string, NatsConnection>();
-  const seen: Array<{ sender: SenderInfo | undefined; requestInfo: string | undefined }> = [];
+  interface Seen {
+    readonly sender: SenderInfo | undefined;
+    readonly requestInfo: string | undefined;
+    /** Set by the `resolving` agent's handler only. */
+    readonly resolved?: AgentInfo | undefined;
+  }
+  const seen: Seen[] = [];
   let ref: ReferenceAgent;
   let sibling: ReferenceAgent;
+  let attested: ReferenceAgent;
+  let resolving: ReferenceAgent;
+  let aliceAgent: ReferenceAgent;
+  let srvInfoRequests = 0;
+  let tamperedStop: (() => Promise<void>) | undefined;
   const perTest: Array<() => Promise<void>> = [];
+  const perTestGlobal: Array<() => Promise<void>> = [];
 
   beforeAll(async () => {
     await server.start({ configPath: identityFixture("accounts.conf") });
@@ -140,6 +163,85 @@ describe.skipIf(!bin)("identity T2/T3/T4 — accounts.conf", () => {
       promptHandler: handler,
     });
     await sibling.start();
+    // Operator-attested receiver: the deployment "declared the endpoint
+    // closed" — for the test, ACME's own users are the forgers.
+    attested = new ReferenceAgent({
+      nc: conns.get("carol")!,
+      agent: "acme-agent",
+      owner: "acme",
+      name: "attested",
+      identity: { signer: signerFromSeed(user("carol").seed) },
+      operatorAttested: true,
+      promptHandler: handler,
+    });
+    await attested.start();
+    // Reverse lookup from inside a handler: `sender.resolve()` is bound to
+    // carol's connection (ACME), so it sees ACME registrations only.
+    resolving = new ReferenceAgent({
+      nc: conns.get("carol")!,
+      agent: "acme-agent",
+      owner: "acme",
+      name: "resolving",
+      promptHandler: async (msg, sender) => {
+        const resolved = sender?.trust === "verified" ? await sender.resolve() : undefined;
+        seen.push({
+          sender,
+          requestInfo: msg.headers?.get("Nats-Request-Info") || undefined,
+          resolved,
+        });
+        msg.respond(
+          enc.encode(
+            JSON.stringify({
+              type: "response",
+              data: resolved ? resolved.promptEndpoint.subject : "unresolved",
+            }),
+          ),
+        );
+        msg.respond(Empty);
+      },
+    });
+    await resolving.start();
+    // alice registers an agent of her own (with a signer → `id_sig`), so
+    // her ID resolves to it.
+    aliceAgent = new ReferenceAgent({
+      nc: conns.get("alice")!,
+      agent: "alice-agent",
+      owner: "acme",
+      name: "own",
+      identity: { signer: signerFromSeed(user("alice").seed) },
+    });
+    await aliceAgent.start();
+    // An imposter: a hand-registered service claiming bob's key under ACME
+    // with an `id_sig` that does not verify — the reverse lookup must drop it.
+    const imposter = await new Svcm(conns.get("carol")!).add({
+      name: "agents",
+      version: "0.0.1",
+      metadata: {
+        agent: "acme-agent",
+        owner: "acme",
+        protocol_version: "0.3",
+        [IDENTITY_METADATA_KEYS.userNkey]: user("bob").public,
+        [IDENTITY_METADATA_KEYS.account]: "ACME",
+        [IDENTITY_METADATA_KEYS.idSig]: base64UrlEncode(new Uint8Array(64)),
+      },
+    });
+    imposter.addEndpoint("prompt", {
+      subject: "agents.prompt.acme-agent.acme.imposter",
+      queue: "agents",
+      handler: (err, msg) => {
+        if (!err) msg.respond(Empty);
+      },
+      metadata: { [MIN_SENDER_TRUST_KEY]: "any" },
+    });
+    tamperedStop = () => imposter.stop().then(() => undefined);
+    // Count `$SRV.INFO.agents` enumerations reaching ACME (from any account).
+    const spy = conns.get("carol")!.subscribe("$SRV.INFO.agents", {
+      callback: () => {
+        srvInfoRequests++;
+      },
+    });
+    perTestGlobal.push(() => Promise.resolve(spy.unsubscribe()));
+    await conns.get("carol")!.flush();
   });
 
   afterEach(async () => {
@@ -147,28 +249,45 @@ describe.skipIf(!bin)("identity T2/T3/T4 — accounts.conf", () => {
   });
 
   afterAll(async () => {
+    for (const c of perTestGlobal.splice(0).reverse()) await c();
+    await tamperedStop?.();
+    await aliceAgent.stop();
+    await resolving.stop();
+    await attested.stop();
     await ref.stop();
     await sibling.stop();
     for (const nc of conns.values()) await nc.close();
     await server.stop();
   });
 
-  function agentsFor(name: string): Agents {
+  function agentsFor(name: string, resolveTtlMs?: number): Agents {
     const agents = new Agents({
       nc: conns.get(name)!,
       identity: { signer: signerFromSeed(user(name).seed), name },
+      ...(resolveTtlMs !== undefined ? { resolveTtlMs } : {}),
     });
     perTest.push(() => agents.close());
     return agents;
   }
 
-  async function discoverMain(agents: Agents) {
+  async function discoverByName(agents: Agents, name: string) {
     const [agent] = await agents.discover({
       timeoutMs: 800,
-      filter: { agent: "acme-agent", name: "main" },
+      filter: { agent: "acme-agent", name },
     });
-    if (!agent) throw new Error("acme-agent/main not discovered");
+    if (!agent) throw new Error(`acme-agent/${name} not discovered`);
     return agent;
+  }
+
+  const discoverMain = (agents: Agents) => discoverByName(agents, "main");
+
+  /** Wait until the spy has counted at least `n` `$SRV.INFO.agents` requests. */
+  async function srvInfoCountAtLeast(n: number): Promise<number> {
+    const deadline = Date.now() + 2_000;
+    while (srvInfoRequests < n && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return srvInfoRequests;
   }
 
   it("T2 same account: selfId is ACME.<user>; alice → carol's agent verifies; a forged Nats-Request-Info is ignored", async () => {
@@ -291,6 +410,142 @@ describe.skipIf(!bin)("identity T2/T3/T4 — accounts.conf", () => {
     const statusLocal = `local.${ref.statusSubject}`;
     const hb = await agent.status({ subject: statusLocal, sub: ref.statusSubject });
     expect(hb.instanceId).toBe(ref.instanceId);
+  });
+
+  it("operator-attested (T2): a forged Nats-Request-Info from a same-account user → 401; no stamp at all → verified but not attested", async () => {
+    const alice = agentsFor("alice");
+    const agent = await discoverByName(alice, "attested");
+    // Same-account traffic carries no stamp: compared to nothing.
+    await drain(await agent.prompt("hi"));
+    expect(seen.at(-1)?.requestInfo).toBeUndefined();
+    expect(seen.at(-1)?.sender).toMatchObject({
+      trust: "verified",
+      id: newAgentId("ACME", user("alice").public),
+      accountAttested: false,
+    });
+
+    const h = await signSenderHeader({
+      signer: signerFromSeed(user("alice").seed),
+      id: newAgentId("ACME", user("alice").public),
+      sub: attested.promptSubject,
+      payload: PAYLOAD,
+    });
+    const forged = withHeader(serializeSenderHeader(h));
+    forged.set(NATS_REQUEST_INFO_HEADER, JSON.stringify({ acc: "APP", user: user("bob").public }));
+    const before = seen.length;
+    const msgs = await rawPrompt(conns.get("alice")!, attested.promptSubject, PAYLOAD, forged);
+    expect(errorCode(msgs)).toBe("401");
+    expect(msgs[0]?.headers?.get("Nats-Service-Error")).toBe("sender rejected");
+    expect(seen).toHaveLength(before); // never reached the handler
+
+    // A stamp that agrees with the signature attests the account — here the
+    // "stamp" is written by alice herself: exactly why the mode is a
+    // deployment promise the SDK cannot verify. `h` is reusable: the forged
+    // request was refused before its nonce was recorded.
+    const selfStamped = withHeader(serializeSenderHeader(h));
+    selfStamped.set(NATS_REQUEST_INFO_HEADER, JSON.stringify({ acc: "ACME" }));
+    expect(
+      errorCode(await rawPrompt(conns.get("alice")!, attested.promptSubject, PAYLOAD, selfStamped)),
+    ).toBeUndefined();
+    expect(seen.at(-1)?.sender).toMatchObject({ trust: "verified", accountAttested: true });
+  });
+
+  it("operator-attested (T3/T4): the server stamp agrees → accountAttested=true and formatSender renders `(verified)` — with `user` (share) and with `acc` only (no share)", async () => {
+    const bob = agentsFor("bob");
+    await drain(await (await discoverByName(bob, "attested")).prompt("hi"));
+    const viaShare = seen.at(-1)!;
+    expect(JSON.parse(viaShare.requestInfo!)).toMatchObject({
+      acc: "APP",
+      user: user("bob").public,
+    });
+    expect(viaShare.sender).toMatchObject({
+      trust: "verified",
+      id: newAgentId("APP", user("bob").public),
+      accountAttested: true,
+    });
+    expect(formatSender(viaShare.sender)).toBe(`APP.${user("bob").public} (verified)`);
+
+    const dave = agentsFor("dave");
+    await drain(await (await discoverByName(dave, "attested")).prompt("hi"));
+    const accOnly = seen.at(-1)!;
+    expect(JSON.parse(accOnly.requestInfo!)).toMatchObject({ acc: "APP2" });
+    expect((JSON.parse(accOnly.requestInfo!) as { user?: string }).user).toBeUndefined();
+    expect(accOnly.sender).toMatchObject({
+      trust: "verified",
+      id: newAgentId("APP2", user("dave").public),
+      accountAttested: true,
+    });
+
+    // The same requests against the plain receiver stay "claimed account".
+    await drain(await (await discoverMain(bob)).prompt("hi"));
+    expect(seen.at(-1)?.sender).toMatchObject({ trust: "verified", accountAttested: false });
+  });
+
+  it("resolveSender end to end: a handler resolves the prompt sender to her registration; an imposter with a bad id_sig is dropped; unknown key → undefined; a second call within the TTL hits the cache", async () => {
+    const alice = agentsFor("alice");
+    const aliceId = newAgentId("ACME", user("alice").public);
+    const agent = await discoverByName(alice, "resolving");
+
+    // Host side: `sender.resolve()` inside the handler → alice's own agent.
+    const start = await srvInfoCountAtLeast(0);
+    const first = await drain(await agent.prompt("who am I?"));
+    expect((first.find((e) => e.type === "response") as { text: string }).text).toBe(
+      aliceAgent.promptSubject,
+    );
+    const resolved = seen.at(-1)?.resolved;
+    expect(resolved).toBeDefined();
+    expect(resolved?.identity).toBe(aliceId);
+    expect(resolved?.idSigVerified).toBe(true);
+    expect(resolved?.instanceId).toBe(aliceAgent.instanceId);
+    const afterFirst = await srvInfoCountAtLeast(start + 1);
+    expect(afterFirst).toBe(start + 1);
+    // Second prompt within the 10 s TTL: no new enumeration.
+    await drain(await agent.prompt("again"));
+    expect(seen.at(-1)?.resolved?.instanceId).toBe(aliceAgent.instanceId);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(srvInfoRequests).toBe(afterFirst);
+
+    // Caller side: `Agents.resolveSender` with the default TTL, then with TTL 0.
+    const before = srvInfoRequests;
+    expect((await alice.resolveSender(aliceId))?.instanceId).toBe(aliceAgent.instanceId);
+    expect((await alice.resolveSender(String(aliceId)))?.instanceId).toBe(aliceAgent.instanceId);
+    expect(await srvInfoCountAtLeast(before + 1)).toBe(before + 1);
+    const uncached = agentsFor("carol", 0);
+    await uncached.resolveSender(aliceId);
+    await uncached.resolveSender(aliceId);
+    expect(await srvInfoCountAtLeast(before + 3)).toBe(before + 3);
+
+    // The imposter claims bob's key under ACME with a bad id_sig → dropped;
+    // erin's key is registered nowhere → undefined.
+    expect(await alice.resolveSender(newAgentId("ACME", user("bob").public))).toBeUndefined();
+    expect(await alice.resolveSender(newAgentId("ACME", user("erin").public))).toBeUndefined();
+    // The imposter is still *discoverable* — it is only the verified index that drops it.
+    const found = await alice.discover({ timeoutMs: 800, filter: { name: "imposter" } });
+    expect(found).toHaveLength(1);
+    expect(found[0]?.identity).toBe(newAgentId("ACME", user("bob").public));
+    expect(found[0]?.idSigVerified).toBe(false);
+
+    // Module-level uncached form and the resolver class directly.
+    expect((await resolveSender(conns.get("carol")!, aliceId))?.instanceId).toBe(
+      aliceAgent.instanceId,
+    );
+    const resolver = new SenderResolver(conns.get("carol")!, { ttlMs: 60_000 });
+    expect((await resolver.resolve(aliceId))?.instanceId).toBe(aliceAgent.instanceId);
+    resolver.invalidate();
+    expect((await resolver.resolve(aliceId))?.instanceId).toBe(aliceAgent.instanceId);
+    expect(resolver.ttlMs).toBe(60_000);
+    await expect(resolver.resolve("not-an-id")).rejects.toBeInstanceOf(InvalidAgentIdError);
+  });
+
+  it("resolveSender is account-local: bob (APP) resolves an ACME agent through the exported $SRV.>, but ACME cannot resolve bob", async () => {
+    const bob = agentsFor("bob");
+    const carolId = newAgentId("ACME", user("carol").public);
+    expect((await bob.resolveSender(carolId))?.identity).toBe(carolId);
+    const carol = agentsFor("carol");
+    expect(await carol.resolveSender(newAgentId("APP", user("bob").public))).toBeUndefined();
+    // Bob prompting the resolving agent: verified, but not a reachable agent from ACME's view.
+    const events = await drain(await (await discoverByName(bob, "resolving")).prompt("hi"));
+    expect((events.find((e) => e.type === "response") as { text: string }).text).toBe("unresolved");
   });
 });
 

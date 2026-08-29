@@ -39,11 +39,13 @@ import {
   IdentityMismatchError,
   MIN_SENDER_TRUST_KEY,
   normalizeAccountTokenPosition,
+  normalizeResolveTtlMs,
   parseHumanBytes,
   PROMPT_ENDPOINT_NAME,
   PROMPT_QUEUE_GROUP,
   SDK_PROTOCOL_VERSION,
   selfId,
+  SenderResolver,
   SERVICE_NAME,
   signAgentId,
   SILENT_LOGGER,
@@ -117,6 +119,10 @@ export interface ReferenceAgentOptions {
   readonly acceptSender?: AcceptSenderHook;
   /** Logger for classification outcomes. Default: silent. */
   readonly logger?: Logger;
+  /** TTL of the reverse-lookup index behind `sender.resolve()` — see `AgentServiceOptions.resolveTtlMs`. */
+  readonly resolveTtlMs?: number;
+  /** Operator-attested mode — see `AgentServiceOptions.operatorAttested`. Default `false`. */
+  readonly operatorAttested?: boolean;
 }
 
 const DEFAULT_MAX_PAYLOAD = "1MB";
@@ -129,6 +135,7 @@ export class ReferenceAgent {
   readonly #logger: Logger;
   readonly #minSenderTrust: MinSenderTrust;
   readonly #gate: SenderGate;
+  readonly #resolver: SenderResolver;
   #identity: AgentId | undefined;
   #service: Service | null = null;
   #heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -139,12 +146,17 @@ export class ReferenceAgent {
     this.#logger = options.logger ?? SILENT_LOGGER;
     this.#minSenderTrust = options.minSenderTrust ?? DEFAULT_MIN_SENDER_TRUST;
     const accountTokenPosition = normalizeAccountTokenPosition(options.accountTokenPosition);
+    this.#resolver = new SenderResolver(options.nc, {
+      ttlMs: normalizeResolveTtlMs(options.resolveTtlMs),
+    });
     this.#gate = new SenderGate({
       minSenderTrust: this.#minSenderTrust,
       replayWindowMs: options.replayWindowMs ?? DEFAULT_REPLAY_WINDOW_MS,
       ...(accountTokenPosition !== undefined ? { accountTokenPosition } : {}),
       ...(options.acceptSender !== undefined ? { acceptSender: options.acceptSender } : {}),
       logger: this.#logger,
+      operatorAttested: options.operatorAttested ?? false,
+      resolver: (id) => this.#resolver.resolve(id),
     });
   }
 
