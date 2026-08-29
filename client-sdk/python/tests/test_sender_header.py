@@ -599,3 +599,88 @@ def test_format_sender_forms(alice_id: AgentId) -> None:
     assert str(claimed) == f"{alice_id} (claimed)"
     assert format_sender(None) == "(no sender)"
     assert verified.trust == "verified" and claimed.trust == "claimed"
+
+
+# --- operator-attested cross-check (spec Appendix A; PR-T2 rules, byte for byte) -----
+
+
+async def test_verify_operator_attested_cross_check(
+    alice: NkeySigner, bob: NkeySigner, alice_id: AgentId
+) -> None:
+    h = await _signed(alice, alice_id)
+    stamp_ok = {"Nats-Request-Info": json.dumps({"acc": alice_id.account, "user": alice_id.user})}
+    stamp_acc = {"Nats-Request-Info": json.dumps({"acc": alice_id.account, "rtt": 1})}
+
+    def verify(headers: dict[str, str] | None, **o: Any) -> VerifiedSender:
+        got = verify_sender_header(
+            h, SUBJECT, PAYLOAD, mode="live", operator_attested=True, headers=headers, **o
+        )
+        assert isinstance(got, VerifiedSender)
+        return got
+
+    def rejected(headers: dict[str, str] | None, **o: Any) -> str:
+        with pytest.raises(SenderVerificationError) as exc_info:
+            verify_sender_header(
+                h, SUBJECT, PAYLOAD, mode="live", operator_attested=True, headers=headers, **o
+            )
+        assert exc_info.value.code == 401
+        assert exc_info.value.description == "sender rejected"
+        return exc_info.value.detail
+
+    # Off by default: the stamp is never read, `account_attested` stays False.
+    off = verify_sender_header(
+        h, SUBJECT, PAYLOAD, mode="live", headers={"Nats-Request-Info": '{"acc":"EVIL"}'}
+    )
+    assert isinstance(off, VerifiedSender) and off.account_attested is False
+    # Agreement on `acc` (+ `user`) attests the account; `format_sender` → `(verified)`.
+    assert verify(stamp_ok).account_attested is True
+    assert str(verify(stamp_ok)) == f"{alice_id} (verified)"
+    # A no-`share` stamp (`acc` only) attests too: `user` is verified by the signature.
+    assert verify(stamp_acc).account_attested is True
+    # An absent stamp is compared to nothing — verified, not attested.
+    assert verify(None).account_attested is False
+    assert verify({}).account_attested is False
+    # Disagreement on either field → 401 with the field in the detail.
+    assert "acc 'APP' disagrees" in rejected({"Nats-Request-Info": '{"acc":"APP"}'})
+    assert f"user {bob.public_key!r} disagrees" in rejected(
+        {"Nats-Request-Info": json.dumps({"acc": alice_id.account, "user": bob.public_key})}
+    )
+    # A stamp the server would not write → 401.
+    assert "not a server stamp" in rejected({"Nats-Request-Info": "{"})
+    assert "not a server stamp" in rejected({"Nats-Request-Info": '{"acc":7}'})
+    # The `account_token_position` cross-check counts as attestation on its own.
+    arrival = "svc." + alice_id.account + ".prompt"
+    h_svc = await _signed(alice, alice_id, sub="svc.prompt")
+    got = verify_sender_header(
+        h_svc, arrival, PAYLOAD, mode="live", operator_attested=True, account_token_position=2
+    )
+    assert isinstance(got, VerifiedSender) and got.account_attested is True
+    # Claims are never cross-checked.
+    claim = parse_sender_header(serialize_sender_header(build_claim_header(id=alice_id)))
+    assert claim is not None
+    got_claim = verify_sender_header(
+        claim,
+        SUBJECT,
+        PAYLOAD,
+        mode="live",
+        operator_attested=True,
+        headers={"Nats-Request-Info": '{"acc":"EVIL"}'},
+    )
+    assert isinstance(got_claim, ClaimedSender)
+    # `verify_sender(msg, mode, operator_attested=True)` reads the stamp from `msg.headers`.
+
+    class FakeMsg:
+        def __init__(self, headers: dict[str, str]) -> None:
+            self.subject = SUBJECT
+            self.data = PAYLOAD
+            self.headers = headers
+
+    both = {"Agent-Sender": serialize_sender_header(h), **stamp_ok}
+    got_msg = verify_sender(FakeMsg(both), "live", operator_attested=True)
+    assert isinstance(got_msg, VerifiedSender) and got_msg.account_attested is True
+    with pytest.raises(SenderVerificationError):
+        verify_sender(
+            FakeMsg({"Agent-Sender": serialize_sender_header(h), "Nats-Request-Info": "{"}),
+            "live",
+            operator_attested=True,
+        )

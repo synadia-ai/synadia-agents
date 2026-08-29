@@ -8,8 +8,93 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-29
+
+The receiver side of the **sender-identity extension** (PR-P2 of the
+identity plan; the caller side is `synadia-ai-agents` 0.8.0, now the
+floor). Every `prompt` request is classified **before** the §6.4 ack
+and the handler sees the result as `stream.sender`; the registration
+carries the agent's own identity; `min_sender_trust` is always
+advertised. The wire protocol stays `0.3` — support is advertised by
+feature detection (`min_sender_trust` on the prompt endpoint ⇔ the agent
+implements the extension). Spec:
+[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+Behaviour-equal with `@synadia-ai/agent-service` 0.6.0 (same dispatch
+order, wire descriptions, nonce-cache semantics); the reverse interop
+test runs the TS client probe signed against this host.
+
 ### Added
 
+- **Classification before the ack** — `AgentService` runs the shared
+  verifier (`synadia_ai.agents.verify_sender`) on every `prompt`
+  request after the envelope checks and before the leading ack: no
+  `Agent-Sender` / unknown `v` → served with `stream.sender is None`;
+  malformed header → `400 malformed Agent-Sender header`; failing
+  signature, replayed nonce, stale `ts`, `sub` not the arrival subject
+  → `401 sender rejected` in every mode; unsigned / header-less request
+  on a `min_sender_trust: signed` endpoint → `401 signature required`.
+  A refused request yields exactly the §9 error frame and the §9.3
+  terminator — no ack, no handler call. `status` is classified and
+  logged (its verified nonce enters the shared set), never rejected.
+- **`PromptStream.sender`** (`PromptStream(request, nc, *, sender=None)`)
+  — the classified `VerifiedSender` (has `id`, `account_attested`,
+  `resolve()`), `ClaimedSender` (has `claim`, **no** `id`) or `None`.
+  `VerifiedSender.resolve()` is bound to a TTL-cached `$SRV.INFO.agents`
+  reverse lookup on the host's connection (`resolve_ttl_s`, default
+  10 s; `0` enumerates per call).
+- **`AgentService` options** — `identity=ServiceIdentity(signer=…)`
+  (the host's own signer; the host never sends `Agent-Sender`, so no
+  display name), `min_sender_trust` (`"any"` default / `"signed"`),
+  `replay_window_s` (30), `account_token_position` (1-based; validated
+  and honoured by the classifier — note the five-token hosting limit in
+  the README), `accept_sender` (the acceptance hook: `False` → `403` for
+  a verified sender, `401 signature required` for a claimed / absent
+  one; a raise → `500 server error`, logged, never served; sync or
+  async), `resolve_ttl_s`, `operator_attested` (off by default — the
+  `Nats-Request-Info` cross-check of a *closed* endpoint: a present
+  stamp that disagrees with the signed `account` / `user`, or a stamp
+  the server would not write, → `401`; agreement on `acc` — or the
+  `account_token_position` cross-check — sets
+  `sender.account_attested`, rendered `(verified)`). Properties
+  `identity` (the registered `AgentId`, `None` without one),
+  `min_sender_trust`, `operator_attested`, `instance_id`.
+- **Registration metadata** — `start()` learns the connection's agent
+  ID once (`self_id`; a signer that is not the connection's user raises
+  `IdentityMismatchError`; no identity → logged, started without the
+  keys) and registers `user_nkey` / `account` whenever it is known,
+  `id_sig` (`AGENT-ID-V1` over the prompt subject) only with a signer,
+  and **always** `min_sender_trust` on the prompt endpoint (never on
+  `status`). `start()` now `flush()`es before returning — "started"
+  means registered at the server, so a prompt from another connection
+  right after `start()` cannot race the subscriptions.
+- **`SenderGate` / `NonceCache`** (`synadia_ai.agent_service.identity`,
+  re-exported) — the stateful classification for hand-rolled services:
+  `SenderGate(min_sender_trust=…, replay_window_s=…,
+  account_token_position=…, accept_sender=…, operator_attested=…,
+  resolver=…)` with `classify(msg)`, `admit_prompt(msg)` →
+  `SenderAdmission(sender, rejection)`, `classify_status(msg)`;
+  `NonceCache` keyed `(user, nonce)`, expiry anchored on the header `ts`
+  (a `ts = now + 29 s` header is still rejected on replay at arrival +
+  31 s), second-bucketed sweeps, a hard cap (100 000; oldest evicted,
+  warned once per overload with hysteresis), synchronous check-and-set
+  `record()` — the CAS under concurrent requests with the same nonce.
+  Defaults `DEFAULT_MIN_SENDER_TRUST`, `DEFAULT_REPLAY_WINDOW_S`,
+  `DEFAULT_NONCE_CACHE_MAX_ENTRIES`; `AcceptSenderHook`,
+  `SenderRejection`, `SenderAdmission`, `ServiceIdentity` exported.
+- **Examples** — `examples/_connect_cli.py` gained `--nkey` / `--creds`
+  (`$NATS_NKEY_SEED_FILE` / `$NATS_CREDS`; a file, never an environment
+  value holding the seed) and `signer_from_cli`; `_reference_agent.py`
+  and the ladder examples pass the resulting `ServiceIdentity`; the
+  reference agent adds `--min-sender-trust any|signed`
+  (`$REFERENCE_AGENT_MIN_SENDER_TRUST`), prints
+  `identity: <id> (min_sender_trust=…)` (or `identity: none (…)`) on
+  its own line after the ready marker, and appends ` sender: <id>
+  (<trust class>)` to the echo only when a sender was classified.
+- Tests: `test_nonce_cache.py`, `test_identity_classify_e2e.py` (T0 /
+  T1), `test_identity_accounts_e2e.py` (T2–T4 incl. operator-attested
+  mode, the remapped import and `resolve()` across accounts),
+  `test_registration_identity_e2e.py`, the signed reverse-interop leg
+  (`--signed` probe), the reference agent under `--nkey`.
 - **Agent-ladder examples** (`examples/01-echo.py` … `05-tools.py`,
   plus the shared `examples/llm.py` base) — the Python mirror of
   `agent-sdk/typescript/examples/`: echo, Ollama, OpenRouter, a
@@ -32,6 +117,19 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   working as lowest-priority aliases.
 - **`examples` extra** — `httpx`, used by the LLM/tool example scripts
   (`uv sync --extra examples`). Not part of the published SDK surface.
+
+### Changed
+
+- **Dependency floor `synadia-ai-agents>=0.8`** (was `>=0.7`): the
+  shared identity codec (`synadia_ai.agents.identity`) is what this
+  package classifies with. `python-v0.8.0` must be on PyPI before
+  `python-agent-service-v0.5.0` is tagged.
+- The host does **not** count `Agent-Sender` bytes in its own
+  `max_payload` check (`len(request.data)`) — the broker enforces the
+  total; the caller SDKs count the framed header on their side.
+- The debug log of every served `prompt` / `status` request and the
+  warning of every refusal render the sender through `format_sender`,
+  so a claimed identity never reads as verified in a log line.
 
 ## [0.4.1] - 2026-05-12
 

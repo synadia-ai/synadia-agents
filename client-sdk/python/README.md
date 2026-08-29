@@ -170,7 +170,9 @@ What to know:
   signed claim (`format_sender` / `str(sender)` renders
   `… (verified user, claimed account)`). Which verified senders a
   receiver accepts is the receiver's business — see the host package's
-  `accept_sender` (from `synadia-ai-agent-service` 0.5.0).
+  `accept_sender` (`synadia-ai-agent-service` 0.5.0, whose `AgentService`
+  classifies every prompt before the ack and hands the handler
+  `stream.sender`).
 - `scripts/whoami.py` prints what `self_id()` resolves for a connection
   (or why it resolves nothing).
 

@@ -87,13 +87,17 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         assert "type" not in srv_info_parsed["metadata"]
         assert "platform" not in srv_info_parsed["metadata"]
         assert "protocol" not in srv_info_parsed["metadata"]
-        # Metadata is exactly four fields under v0.3 (§3.2).
-        assert set(srv_info_parsed["metadata"].keys()) == {
+        # The four §3.2 fields are always present; the sender-identity
+        # extension adds `user_nkey` / `account` / `id_sig` when the
+        # connection has an NKEY identity (not on this no-auth server —
+        # the identity rows live in test_registration_identity_e2e.py).
+        assert set(srv_info_parsed["metadata"].keys()) >= {
             "agent",
             "owner",
             "session",
             "protocol_version",
         }
+        assert "user_nkey" not in srv_info_parsed["metadata"]
 
         # §2.1: prompt endpoint declares capability metadata. On the wire it's
         # Record<string,string>, so attachments_ok is "true"/"false".
@@ -101,6 +105,9 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         assert prompt_ep["subject"] == service.subject.prompt
         assert prompt_ep["metadata"]["max_payload"] == "1MB"
         assert prompt_ep["metadata"]["attachments_ok"] == "true"
+        # Sender-identity extension: `min_sender_trust` is ALWAYS emitted on
+        # the prompt endpoint (feature detection), never on `status`.
+        assert prompt_ep["metadata"]["min_sender_trust"] == "any"
         # §3.3: the prompt endpoint MUST register queue group "agents" so
         # multiple instances of the same logical agent load-balance. The
         # micro service framework reports this back in $SRV.INFO as
@@ -112,6 +119,7 @@ async def test_echo_agent_roundtrip(  # noqa: PLR0915 — integration test inten
         status_ep = next(ep for ep in srv_info_parsed["endpoints"] if ep["name"] == "status")
         assert status_ep["subject"] == service.subject.status
         assert status_ep["queue_group"] == "agents"
+        assert "min_sender_trust" not in (status_ep.get("metadata") or {})
 
         agents = Agents(nc=nc)
         try:

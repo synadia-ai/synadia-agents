@@ -33,9 +33,11 @@ from synadia_ai.agents import Envelope
 from examples._connect_cli import (
     add_agent_identity_flags,
     add_connection_flags,
+    add_identity_flags,
     connect_from_cli,
+    signer_from_cli,
 )
-from synadia_ai.agent_service import AgentService, PromptStream
+from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
@@ -73,6 +75,7 @@ async def main() -> None:
         description="LLM agent — streams replies from a local Ollama model."
     )
     add_connection_flags(parser)
+    add_identity_flags(parser)
     add_agent_identity_flags(parser, agent="ollama")
     args = parser.parse_args()
 
@@ -85,6 +88,10 @@ async def main() -> None:
         nc=nc,
         description=f"LLM agent — answers prompts with the local Ollama '{MODEL}' model",
         heartbeat_interval_s=args.heartbeat_interval,
+        # Sender identity: --nkey / --creds ($NATS_NKEY_SEED_FILE / $NATS_CREDS)
+        # sign the registration's id_sig; without them the identity keys are
+        # registered unsigned when the connection has an NKEY identity.
+        identity=ServiceIdentity(signer=signer_from_cli(args)),
     )
 
     # Same handler shape as the echo agent: instead of one reply, we send each

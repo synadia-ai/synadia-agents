@@ -71,7 +71,12 @@ Byte-for-byte compatible with the TypeScript SDK (`@synadia-ai/agents`
   `str` subclass), `parse_sender_header` / `serialize_sender_header` /
   `sign_sender_header` / `verify_sender_header(header, arrival_subject,
   payload, mode="live" | "stored", account_token_position=…)` /
-  `verify_sender(msg, mode)` / `read_sender_header_value`,
+  `verify_sender(msg, mode)` / `read_sender_header_value` — both with
+  `operator_attested=` (spec Appendix A: a present `Nats-Request-Info`
+  `acc` / `user` must equal the signed pair, a stamp the server would
+  not write → `401`, agreement sets `VerifiedSender.account_attested`;
+  `identity/request_info.py`: `NATS_REQUEST_INFO_HEADER`,
+  `RequestInfoStamp`, `parse_request_info`, `read_request_info`),
   `SenderInfo = VerifiedSender | ClaimedSender` (a claim has no `id`;
   `str()` renders the trust class), `format_sender`, `sign_agent_id` /
   `verify_agent_id`, `max_sender_header_bytes` /

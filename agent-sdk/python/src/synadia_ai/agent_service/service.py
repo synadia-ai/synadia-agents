@@ -11,6 +11,22 @@ The **client side** of the protocol (discover-and-prompt) lives in the
 sibling distribution :mod:`synadia_ai.agents` as
 :class:`~synadia_ai.agents.Agent` returned from
 :meth:`~synadia_ai.agents.Agents.discover`.
+
+Sender identity (extension): every ``prompt`` request is classified
+**before** the §6.4 ack — a malformed ``Agent-Sender`` → ``400``, a
+failing signature / replay / ``sub`` mismatch → ``401`` in every mode, an
+unsigned request on a ``min_sender_trust: signed`` endpoint → ``401``, a
+sender the ``accept_sender`` hook refuses → ``403`` (verified) / ``401``
+(claimed / absent) — and the classified sender reaches the handler as
+:attr:`PromptStream.sender` (a ``VerifiedSender.resolve()`` is bound to a
+TTL-cached ``$SRV.INFO`` reverse lookup, ``resolve_ttl_s``). ``status``
+is classified and logged, never rejected. :meth:`AgentService.start`
+registers ``user_nkey`` / ``account`` (and ``id_sig`` with a signer) when
+the connection has an identity and **always** advertises
+``min_sender_trust`` on the prompt endpoint. ``operator_attested`` (off
+by default) adds the ``Nats-Request-Info`` cross-check of a closed
+endpoint. The codec itself lives in :mod:`synadia_ai.agents.identity`;
+the stateful parts are in :mod:`synadia_ai.agent_service.identity`.
 """
 
 from __future__ import annotations
@@ -26,6 +42,7 @@ from typing import TYPE_CHECKING
 from nats.micro import ServiceConfig, add_service
 from nats.micro.service import EndpointConfig
 from synadia_ai.agents import (
+    MIN_SENDER_TRUST_KEY,
     PROMPT_ENDPOINT_NAME,
     PROMPT_QUEUE_GROUP,
     SERVICE_NAME,
@@ -35,12 +52,24 @@ from synadia_ai.agents import (
     Attachment,
     Chunk,
     Envelope,
+    IdentityError,
+    IdentityMismatchError,
     ProtocolError,
     QueryChunk,
     QueryTimeout,
     ResponseChunk,
+    SenderResolver,
     StatusChunk,
     decode,
+    format_sender,
+    self_id,
+)
+from synadia_ai.agents.identity import (
+    DEFAULT_RESOLVE_TTL_S,
+    METADATA_ACCOUNT,
+    METADATA_ID_SIG,
+    METADATA_USER_NKEY,
+    sign_agent_id,
 )
 from synadia_ai.agents.messages import encode_chunk
 
@@ -48,10 +77,18 @@ from ._bytes import format_human_bytes, parse_human_bytes
 from ._inbox import new_inbox
 from ._logging import get_logger
 from .heartbeat import build_heartbeat_payload, run_publisher
+from .identity import (
+    DEFAULT_MIN_SENDER_TRUST,
+    DEFAULT_REPLAY_WINDOW_S,
+    AcceptSenderHook,
+    SenderGate,
+    ServiceIdentity,
+)
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
     from nats.micro.service import Request, Service
+    from synadia_ai.agents import AgentId, MinSenderTrust, SenderInfo
 
 
 log = get_logger(__name__)
@@ -118,9 +155,25 @@ class PromptStream:
         self,
         request: Request,
         nc: NATSClient,
+        *,
+        sender: SenderInfo | None = None,
     ) -> None:
         self._request = request
         self._nc = nc
+        self._sender = sender
+
+    @property
+    def sender(self) -> SenderInfo | None:
+        """The classified sender of this request (sender-identity extension).
+
+        A :class:`~synadia_ai.agents.VerifiedSender` (has ``id``), a
+        :class:`~synadia_ai.agents.ClaimedSender` (has ``claim``, **no**
+        ``id`` — never authorize on it), or ``None`` when no
+        ``Agent-Sender`` header arrived (or one with an unknown ``v``).
+        Render with :func:`~synadia_ai.agents.format_sender` /
+        ``str(sender)`` — the trust class is always shown next to the id.
+        """
+        return self._sender
 
     async def send(self, chunk: str | Chunk) -> None:
         """Publish one chunk to the caller's reply subject.
@@ -223,6 +276,38 @@ class AgentService:
     over-advertising would only break callers. Smaller overrides are
     honored (use case: shed expensive prompts before they reach the
     handler).
+
+    Sender identity (extension) — all optional, all additive:
+
+    - ``identity=ServiceIdentity(signer=…)``: the host's own signer. With
+      it :meth:`start` registers ``id_sig`` next to ``user_nkey`` /
+      ``account``; without it the identity keys are registered unsigned
+      (when the connection has an identity). A signer that is not the
+      connection's user makes :meth:`start` raise
+      :class:`~synadia_ai.agents.IdentityMismatchError`; a connection
+      without an identity starts without the keys (logged) — verifying
+      *senders* needs no host identity.
+    - ``min_sender_trust``: ``"any"`` (default) or ``"signed"`` —
+      **always** advertised on the prompt endpoint (its presence is what
+      advertises the extension), never on ``status``.
+    - ``replay_window_s`` (default 30): the ``ts`` skew and the nonce
+      set's horizon; entries expire at ``ts + window``.
+    - ``account_token_position``: 1-based position of the caller's
+      account token an export inserts (``account_token_position``). Note
+      that this service hosts five-token ``agents.{verb}.a.o.n``
+      subjects, which such an export turns into six-token arrivals the
+      subscription never sees — the option is validated and honoured by
+      the classifier; hosting *behind* such an export today means a
+      hand-rolled service on the wildcard subject calling
+      :func:`~synadia_ai.agents.verify_sender_header`.
+    - ``accept_sender``: the acceptance hook (see
+      :data:`~synadia_ai.agent_service.AcceptSenderHook`).
+    - ``resolve_ttl_s`` (default 10): TTL of the ``$SRV.INFO`` index
+      behind ``sender.resolve()``; ``0`` enumerates per call.
+    - ``operator_attested`` (default ``False``): the ``Nats-Request-Info``
+      cross-check — a deployment promise the SDK cannot verify (the
+      endpoint is *closed*); a present stamp that disagrees with the
+      signed pair → ``401``, agreement → ``sender.account_attested``.
     """
 
     def __init__(
@@ -237,11 +322,25 @@ class AgentService:
         max_payload: str = DEFAULT_MAX_PAYLOAD,
         attachments_ok: bool = DEFAULT_ATTACHMENTS_OK,
         keepalive_interval_s: float | None = DEFAULT_KEEPALIVE_INTERVAL_S,
+        identity: ServiceIdentity | None = None,
+        min_sender_trust: MinSenderTrust = DEFAULT_MIN_SENDER_TRUST,
+        replay_window_s: float = DEFAULT_REPLAY_WINDOW_S,
+        account_token_position: int | None = None,
+        accept_sender: AcceptSenderHook | None = None,
+        resolve_ttl_s: float = DEFAULT_RESOLVE_TTL_S,
+        operator_attested: bool = False,
     ) -> None:
         if heartbeat_interval_s <= 0:
             raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.3)")
         if keepalive_interval_s is not None and keepalive_interval_s <= 0:
             raise ValueError("keepalive_interval_s must be > 0 or None (None disables keep-alive)")
+        if identity is not None and not isinstance(identity, ServiceIdentity):
+            raise TypeError(
+                "identity must be a ServiceIdentity(signer=...) (the host never sends "
+                f"Agent-Sender, so there is no display name); got {type(identity).__name__}"
+            )
+        if resolve_ttl_s < 0:
+            raise ValueError(f"resolve_ttl_s must be >= 0 (got {resolve_ttl_s!r})")
         # Validate max_payload eagerly so misconfiguration fails at construction
         # rather than surfacing later via caller-side validation (§5.4).
         parse_human_bytes(max_payload)
@@ -257,6 +356,47 @@ class AgentService:
         self._service: Service | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._heartbeat_stop = asyncio.Event()
+        # Sender identity: the gate validates `min_sender_trust`,
+        # `replay_window_s`, `account_token_position` and `operator_attested`
+        # eagerly; the resolver behind `sender.resolve()` enumerates
+        # `$SRV.INFO.agents` on this connection (account-local).
+        self._service_identity = identity if identity is not None else ServiceIdentity()
+        self._agent_id: AgentId | None = None
+        self._resolver = SenderResolver(nc, ttl_s=resolve_ttl_s)
+        self._gate = SenderGate(
+            min_sender_trust=min_sender_trust,
+            replay_window_s=replay_window_s,
+            account_token_position=account_token_position,
+            accept_sender=accept_sender,
+            operator_attested=operator_attested,
+            resolver=self._resolver.resolve,
+        )
+
+    @property
+    def identity(self) -> AgentId | None:
+        """The agent ID this instance registered (``user_nkey`` + ``account``).
+
+        ``None`` before :meth:`start` and when the connection has no
+        identity.
+        """
+        return self._agent_id
+
+    @property
+    def min_sender_trust(self) -> MinSenderTrust:
+        """The ``min_sender_trust`` advertised on the prompt endpoint."""
+        return self._gate.min_sender_trust
+
+    @property
+    def operator_attested(self) -> bool:
+        """Whether the operator-attested cross-check is on."""
+        return self._gate.operator_attested
+
+    @property
+    def instance_id(self) -> str:
+        """The micro-service instance id (= heartbeat ``instance_id``); raises before start."""
+        if self._service is None:
+            raise RuntimeError("instance_id is not known before start()")
+        return self._service.id
 
     def on_prompt(self, handler: PromptHandler) -> None:
         """Register the prompt handler. Must be called before :meth:`start`."""
@@ -306,6 +446,21 @@ class AgentService:
         max_payload_str = self._effective_max_payload()
         self._effective_max_payload_value = max_payload_str
 
+        # Sender identity: learn the connection's own agent ID once (awaited
+        # here, never again per request). A signer that does not match the
+        # connection's user is a configuration error (raise); a connection
+        # without an identity starts without the metadata keys — verifying
+        # *senders* needs no host identity.
+        signer = self._service_identity.signer
+        agent_id: AgentId | None = None
+        try:
+            agent_id = await self_id(self._nc, signer=signer)
+        except IdentityMismatchError:
+            raise
+        except IdentityError as exc:
+            log.warning("starting %s without identity metadata: %s", self.subject.prompt, exc)
+        self._agent_id = agent_id
+
         # §3.2: metadata.session matches the 5th subject token. For session-
         # less harnesses (e.g. openclaw) the spec allows omitting the field
         # OR setting it to "default"; the Python constructor takes a required
@@ -318,6 +473,21 @@ class AgentService:
             "session": self.subject.session_name,
             "protocol_version": _PROTOCOL_VERSION,
         }
+        # Identity keys (spec "Registration"): `user_nkey` / `account`
+        # whenever the identity is known; `id_sig` (`AGENT-ID-V1` over the
+        # prompt subject) only with a signer — a registration without it is
+        # the spec's display-grade claim.
+        if agent_id is not None:
+            metadata[METADATA_USER_NKEY] = agent_id.user
+            metadata[METADATA_ACCOUNT] = agent_id.account
+            if signer is not None:
+                metadata[METADATA_ID_SIG] = await sign_agent_id(
+                    signer=signer,
+                    id=agent_id,
+                    agent=self.subject.agent,
+                    owner=self.subject.owner,
+                    prompt_subject=self.subject.prompt,
+                )
         config = ServiceConfig(
             name=SERVICE_NAME,
             version=_SDK_VERSION,
@@ -340,12 +510,17 @@ class AgentService:
                 metadata={
                     "max_payload": max_payload_str,
                     "attachments_ok": "true" if self._attachments_ok else "false",
+                    # Always emitted: its presence is what advertises the
+                    # sender-identity extension (feature detection, no
+                    # protocol bump).
+                    MIN_SENDER_TRUST_KEY: self._gate.min_sender_trust,
                 },
             )
         )
         # v0.3 §-TBD: the status endpoint returns a freshly-built heartbeat-
         # shaped payload. Same queue group as `prompt` so callers load-balance
-        # to one responder per logical agent.
+        # to one responder per logical agent. `status` declares nothing about
+        # identity (spec "Declaring the requirement").
         await self._service.add_endpoint(
             EndpointConfig(
                 name=STATUS_ENDPOINT_NAME,
@@ -354,6 +529,10 @@ class AgentService:
                 queue_group=STATUS_QUEUE_GROUP,
             )
         )
+        # "Started" means "registered at the server": a caller on another
+        # connection that discovers or prompts right after `start()` returns
+        # must not race the endpoint subscriptions (→ no responders).
+        await self._nc.flush()
 
         self._heartbeat_stop.clear()
         # §8.3 instance_id matches the micro-service instance id assigned by
@@ -400,6 +579,11 @@ class AgentService:
         if self._service is None:  # pragma: no cover — defensive
             raise RuntimeError("status handler invoked before start()")
         try:
+            # Classify-only, and *before* the reply (never spawned): the
+            # prober is logged, its verified nonce enters the shared set,
+            # and the reply is sent whatever the outcome.
+            sender = self._gate.classify_status(request)
+            log.debug("status request on %s from %s", request.subject, format_sender(sender))
             payload = build_heartbeat_payload(
                 self.subject,
                 self._heartbeat_interval_s,
@@ -417,6 +601,33 @@ class AgentService:
                 await request.respond_error(
                     "500", _sanitize_error_desc(f"status handler error: {exc}")
                 )
+
+    async def _admit_prompt(self, request: Request) -> tuple[bool, SenderInfo | None]:
+        """Run the sender gate; answer the §9 error frame on a refusal.
+
+        Returns ``(admitted, sender)``. The caller's ``finally`` emits the
+        §9.3 terminator after a refusal, so a rejected request yields
+        exactly an error frame and a terminator — no ack, no handler call.
+        """
+        # Both error frames are best-effort: if `respond_error` itself fails
+        # (reply subject gone, broker dropped) the outer `finally` still
+        # emits the terminator and nothing escapes as an unhandled exception.
+        try:
+            admission = await self._gate.admit_prompt(request)
+        except Exception:
+            log.exception("sender classification failed on %s", request.subject)
+            with contextlib.suppress(Exception):
+                await request.respond_error("500", "sender classification error")
+            return (False, None)
+        if admission.rejection is not None:
+            with contextlib.suppress(Exception):
+                await request.respond_error(
+                    str(admission.rejection.code),
+                    _sanitize_error_desc(admission.rejection.description),
+                )
+            return (False, None)
+        log.debug("prompt request on %s from %s", request.subject, format_sender(admission.sender))
+        return (True, admission.sender)
 
     async def _on_prompt_request(self, request: Request) -> None:
         keepalive_task: asyncio.Task[None] | None = None
@@ -454,6 +665,13 @@ class AgentService:
                 )
                 return
 
+            # Sender identity: classify after the envelope checks, before the
+            # ack. A rejected request gets the §9 error frame and — from the
+            # outer `finally` — the §9.3 terminator, and no ack.
+            admitted, sender = await self._admit_prompt(request)
+            if not admitted:
+                return
+
             # §6.4: emit the leading ack BEFORE any handler work so warm-up
             # latency stays inside the §6.6 budget and the stream is observable
             # to plain `nats req --wait-for-empty`. Best-effort, mirroring the
@@ -464,7 +682,7 @@ class AgentService:
             except Exception:
                 log.exception("failed to emit leading ack on %s", request.subject)
 
-            stream = PromptStream(request, self._nc)
+            stream = PromptStream(request, self._nc, sender=sender)
             handler = self._prompt_handler
             if handler is None:  # pragma: no cover — start() rejects this path
                 raise RuntimeError("prompt handler invoked before on_prompt() registered one")

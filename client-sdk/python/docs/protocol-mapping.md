@@ -128,7 +128,8 @@ protocol; its
 lives in `synadia-ai/synadia-agent-fabric-docs`. Section names below refer
 to that document. This package ships the **caller** side and the shared
 codec; the receiver side (classification, nonce cache, `accept_sender`,
-registration metadata) lands in `synadia-ai-agent-service` 0.5.0.
+registration metadata) is `synadia-ai-agent-service` 0.5.0 — see its
+[`docs/protocol-mapping.md`](../../../agent-sdk/python/docs/protocol-mapping.md).
 
 | SDK | Wire behaviour | Spec ref |
 | --- | --- | --- |
@@ -149,7 +150,13 @@ Not in the spec (SDK choices, shared with the TypeScript SDK): the 64-char
 `name` cap (counted in UTF-16 code units on both sides), the 64-byte
 account allowance behind the size bound, the 2 KiB header-value cap, and
 the exact hardening rules of the parser (plan §2.2). `operator_attested`
-mode is receiver-side (PR-P2).
+mode lives in the shared verifier (`verify_sender_header(…,
+operator_attested=True, headers=…)` / `verify_sender(msg, mode,
+operator_attested=True)`: a present `Nats-Request-Info` `acc` / `user`
+must equal the signed pair, a stamp the server would not write → `401`,
+agreement on `acc` — or the `account_token_position` cross-check — sets
+`VerifiedSender.account_attested`; signed headers only, read nowhere
+else); the switch is exposed by the host package's `AgentService`.
 
 ## Cancellation (§6.7)
 

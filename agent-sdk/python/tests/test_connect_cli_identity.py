@@ -17,9 +17,12 @@ import argparse
 import importlib.util
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if TYPE_CHECKING:
+    from tests.conftest import NkeyUser
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONNECT_CLI_SCRIPT = REPO_ROOT / "examples" / "_connect_cli.py"
@@ -34,6 +37,8 @@ _IDENTITY_ENV_VARS = (
     "SYNADIA_ECHO_NAME",
     "SYNADIA_NAME",
     "NATS_AGENT_NAME",
+    "NATS_NKEY_SEED_FILE",
+    "NATS_CREDS",
 )
 
 
@@ -154,3 +159,32 @@ def test_agent_env_token_maps_hyphens(connect_cli: Any, monkeypatch: Any) -> Non
     args = _resolve(connect_cli, agent="my-agent")
     assert args.owner == "per-agent"
     assert args.session_name == "per-agent-name"
+
+
+# --- sender identity: --nkey / --creds → the host's signer -----------------------
+
+
+def test_signer_from_cli_nkey_file_and_none(
+    connect_cli: Any, monkeypatch: Any, tmp_path: Path, identity_keys: dict[str, NkeyUser]
+) -> None:
+    """``--nkey`` (or ``$NATS_NKEY_SEED_FILE``) yields alice's signer; nothing → ``None``."""
+    seed_file = tmp_path / "alice.nk"
+    seed_file.write_text(identity_keys["alice"].seed + "\n", encoding="utf-8")
+
+    parser = argparse.ArgumentParser()
+    connect_cli.add_identity_flags(parser)
+    assert connect_cli.signer_from_cli(parser.parse_args([])) is None
+    assert connect_cli._auth_kwargs(parser.parse_args([])) == {}
+
+    signer = connect_cli.signer_from_cli(parser.parse_args(["--nkey", str(seed_file)]))
+    assert signer is not None and signer.public_key == identity_keys["alice"].public
+    # The trailing newline is trimmed for nats-py (`nkeys_seed_str`, not `nkeys_seed=<path>`).
+    assert connect_cli._auth_kwargs(parser.parse_args(["--nkey", str(seed_file)])) == {
+        "nkeys_seed_str": identity_keys["alice"].seed
+    }
+
+    monkeypatch.setenv("NATS_NKEY_SEED_FILE", str(seed_file))
+    parser = argparse.ArgumentParser()
+    connect_cli.add_identity_flags(parser)
+    env_signer = connect_cli.signer_from_cli(parser.parse_args([]))
+    assert env_signer is not None and env_signer.public_key == identity_keys["alice"].public

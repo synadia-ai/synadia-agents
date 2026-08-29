@@ -33,9 +33,11 @@ from synadia_ai.agents import Envelope
 from examples._connect_cli import (
     add_agent_identity_flags,
     add_connection_flags,
+    add_identity_flags,
     connect_from_cli,
+    signer_from_cli,
 )
-from synadia_ai.agent_service import AgentService, PromptStream
+from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
 API_KEY = os.environ.get("OPENROUTER_API_KEY")
 MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-4o-mini")
@@ -79,6 +81,7 @@ async def main() -> None:
         description="LLM agent — streams replies from a hosted OpenRouter model."
     )
     add_connection_flags(parser)
+    add_identity_flags(parser)
     add_agent_identity_flags(parser, agent="openrouter")
     args = parser.parse_args()
 
@@ -99,6 +102,10 @@ async def main() -> None:
         nc=nc,
         description=f"LLM agent — answers prompts with OpenRouter '{MODEL}'",
         heartbeat_interval_s=args.heartbeat_interval,
+        # Sender identity: --nkey / --creds ($NATS_NKEY_SEED_FILE / $NATS_CREDS)
+        # sign the registration's id_sig; without them the identity keys are
+        # registered unsigned when the connection has an NKEY identity.
+        identity=ServiceIdentity(signer=signer_from_cli(args)),
     )
 
     async def handler(envelope: Envelope, stream: PromptStream) -> None:

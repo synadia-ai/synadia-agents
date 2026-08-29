@@ -25,6 +25,16 @@ Flags::
     --heartbeat-interval SECONDS    default 5 (matches TS ref agent)
     --description TEXT              service description
     --context NAME / --url URL      shared connection flags
+    --nkey SEED_FILE / --creds FILE sender identity: authenticates the connection and
+                                    signs the registration's ``id_sig``
+                                    (default: $NATS_NKEY_SEED_FILE / $NATS_CREDS)
+    --min-sender-trust any|signed   what the prompt endpoint requires of callers
+                                    (default: $REFERENCE_AGENT_MIN_SENDER_TRUST, else any)
+
+Sender identity (extension): the echo appends `` sender: <id> (<trust>)``
+only when a sender was classified (the same shape as the TS runner);
+after the ready marker the agent prints its own identity on a separate
+line, ``identity: <id> (min_sender_trust=…)`` or ``identity: none (…)``.
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 from collections import deque
@@ -41,14 +52,16 @@ from pathlib import Path
 # `python examples/_reference_agent.py` or `python -m examples._reference_agent`.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from synadia_ai.agents import Envelope
+from synadia_ai.agents import Envelope, IdentityError, format_sender
 
 from examples._connect_cli import (
     add_agent_identity_flags,
     add_connection_flags,
+    add_identity_flags,
     connect_from_cli,
+    signer_from_cli,
 )
-from synadia_ai.agent_service import AgentService, PromptStream
+from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
 log = logging.getLogger("synadia_ai.agent_service.examples.reference")
 
@@ -95,6 +108,14 @@ def _parse_args() -> argparse.Namespace:
     # "example" and a snappy 5s heartbeat (vs. the ladder's "main" / 30s).
     add_agent_identity_flags(parser, session_fallback="example", heartbeat_fallback=5)
     add_connection_flags(parser)
+    add_identity_flags(parser)
+    parser.add_argument(
+        "--min-sender-trust",
+        choices=("any", "signed"),
+        default=os.environ.get("REFERENCE_AGENT_MIN_SENDER_TRUST") or "any",
+        help="min_sender_trust advertised on the prompt endpoint "
+        "(default: $REFERENCE_AGENT_MIN_SENDER_TRUST, else any)",
+    )
     return parser.parse_args()
 
 
@@ -149,7 +170,19 @@ async def main() -> None:
                         len(raw),
                         dest.resolve(),
                     )
+        # Sender identity: only when a sender was classified — the trust
+        # class is always rendered next to the id (a claim never reads as
+        # proof). Absent → the echo is exactly what it was in 0.3.
+        if stream.sender is not None:
+            echoed += f" sender: {format_sender(stream.sender)}"
         await stream.send(echoed)
+
+    try:
+        signer = signer_from_cli(args)
+    except (OSError, IdentityError) as exc:
+        print(f"cannot build the signer from --nkey / --creds: {exc}", file=sys.stderr)
+        await nc.close()
+        sys.exit(2)
 
     agent = AgentService(
         agent=args.agent,
@@ -158,11 +191,18 @@ async def main() -> None:
         nc=nc,
         description=args.description,
         heartbeat_interval_s=args.heartbeat_interval,
+        identity=ServiceIdentity(signer=signer),
+        min_sender_trust=args.min_sender_trust,
     )
     agent.on_prompt(handler)
     await agent.start()
 
     print(f"reference agent listening on {agent.subject.prompt}")
+    # Its own line, after the ready marker (the marker line is scraped verbatim).
+    if agent.identity is not None:
+        print(f"identity: {agent.identity} (min_sender_trust={agent.min_sender_trust})")
+    else:
+        print(f"identity: none (min_sender_trust={agent.min_sender_trust})")
     print("press Ctrl+C to stop")
 
     # add_signal_handler is the asyncio-safe way to wake `await stop.wait()`
