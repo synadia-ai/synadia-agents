@@ -141,8 +141,7 @@ async def test_resolve_sender_indexes_verified_registrations_with_a_ttl_cache(
         resolver = SenderResolver(caller, ttl_s=0.0)
         assert (await resolver.resolve(alice_id)) is not None
         assert (await resolver.resolve(alice_id)) is not None
-        await caller.flush()
-        assert len(infos) == 3
+        await wait_for(lambda: len(infos) == 3, what="three enumerations")
         await good.stop()
         resolver.invalidate()
         assert await resolver.resolve(alice_id) is None  # only the tampered one is left
