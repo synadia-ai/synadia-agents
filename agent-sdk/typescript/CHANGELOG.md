@@ -47,7 +47,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `PromptResponse` takes an optional third constructor argument (the
   classified sender) and exposes it as `sender`.
 - `ReferenceAgentPromptHandler` is now `(msg, sender) => …`; handlers
-  that ignore the second argument are unaffected.
+  that ignore the second argument are unaffected. The reference agent's
+  `status` endpoint awaits classification before replying (like
+  `AgentService`), so consecutive probes see each other's nonces in
+  order.
 - `maxPayload` clamping warns through the configured `logger` instead of
   `console.warn`.
 - `AgentService.start()` and `ReferenceAgent.start()` now flush the

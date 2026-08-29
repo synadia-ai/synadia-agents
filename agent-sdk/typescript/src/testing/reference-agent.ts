@@ -271,25 +271,7 @@ export class ReferenceAgent {
       queue: STATUS_QUEUE_GROUP,
       handler: (err, msg) => {
         if (err) return;
-        const service = this.#service;
-        if (!service) return;
-        // Classify-only; the reply is sent whatever the outcome.
-        void this.#gate.classifyStatus(msg).then(
-          (sender) => {
-            this.#logger.debug("status request", {
-              subject: msg.subject,
-              sender: formatSender(sender),
-            });
-          },
-          () => undefined,
-        );
-        const payload = buildHeartbeatPayload(
-          this.#subject,
-          this.#options.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S,
-          service.info().id,
-          this.#options.session !== undefined ? { session: this.#options.session } : {},
-        );
-        msg.respond(encodeHeartbeatPayload(payload));
+        void this.#dispatchStatus(msg);
       },
     });
 
@@ -313,6 +295,31 @@ export class ReferenceAgent {
       await this.#service.stop();
       this.#service = null;
     }
+  }
+
+  // Classify-only, awaited before the reply so consecutive probes see each
+  // other's nonces in order; the reply is sent whatever the outcome.
+  async #dispatchStatus(msg: ServiceMsg): Promise<void> {
+    const service = this.#service;
+    if (!service) return;
+    try {
+      const sender = await this.#gate.classifyStatus(msg);
+      this.#logger.debug("status request", {
+        subject: msg.subject,
+        sender: formatSender(sender),
+      });
+    } catch (err) {
+      this.#logger.error("ReferenceAgent: status classification failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const payload = buildHeartbeatPayload(
+      this.#subject,
+      this.#options.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S,
+      service.info().id,
+      this.#options.session !== undefined ? { session: this.#options.session } : {},
+    );
+    msg.respond(encodeHeartbeatPayload(payload));
   }
 
   async #dispatchPrompt(

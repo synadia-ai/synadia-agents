@@ -336,6 +336,7 @@ describe.skipIf(!bin)("identity T3 — account_token_position (account-token-pos
       },
     });
     svcStop = () => svc.stop().then(() => undefined);
+    await conns.get("alice")!.flush(); // SUBs at the server before the first request
   });
 
   afterEach(async () => {

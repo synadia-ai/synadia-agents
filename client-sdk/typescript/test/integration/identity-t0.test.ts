@@ -113,6 +113,7 @@ describe.skipIf(!bin)("identity T0 — no auth", () => {
       metadata: { max_payload: "1MB", attachments_ok: "true" },
     });
     cleanups.push(() => legacy.stop().then(() => undefined));
+    await hostNc.flush(); // the hand-registered SUBs must be at the server before discovery
 
     const agents = new Agents({ nc });
     cleanups.push(() => agents.close());

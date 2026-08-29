@@ -630,6 +630,7 @@ describe.skipIf(!bin)("identity T1 — nkey user, no accounts ($G)", () => {
       metadata: { max_payload: "1MB", attachments_ok: "true", min_sender_trust: "any" },
     });
     perTest.push(() => svc.stop().then(() => undefined));
+    await hostNc.flush(); // the hand-registered SUBs must be at the server before discovery
     const [bad] = await agents.discover({
       timeoutMs: 800,
       filter: { agent: "t1-ref", name: "tampered" },
