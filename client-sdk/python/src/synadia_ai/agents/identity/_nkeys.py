@@ -86,7 +86,11 @@ def encode_public_key(raw: bytes, prefix_byte: int) -> str:
 
 # Decoded verify keys, small LRU: verifying a header is one ed25519 check,
 # but the base32 + CRC decode would otherwise run each time; a few hundred
-# keys cover any realistic set of senders.
+# keys cover any realistic set of senders. Process-wide and without a TTL:
+# it holds public keys only (~32 bytes each, at most 256 entries ≈ 8 KiB),
+# is untouched by connection teardown, and a key that left a NATS account
+# simply stays decoded until evicted — no security impact, since the cache
+# never decides *whether* a key is trusted, only how it is decoded.
 _key_cache: OrderedDict[str, nacl.signing.VerifyKey] = OrderedDict()
 
 

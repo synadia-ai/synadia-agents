@@ -110,10 +110,20 @@ def self_id_failure_expired(nc: NATSClient) -> bool:
     )
 
 
+def _inflight(entry: _Entry) -> asyncio.Task[AgentId | IdentityError] | None:
+    """The running lookup task, or ``None`` — a done task (including one cancelled
+    before its first step, whose body never ran) is dropped from the entry."""
+    task = entry.inflight
+    if task is not None and task.done():
+        entry.inflight = None
+        return None
+    return task
+
+
 def is_self_id_inflight(nc: NATSClient) -> bool:
     """True while a lookup is in flight on this connection."""
     entry = _memo.get(nc)
-    return entry is not None and entry.inflight is not None
+    return entry is not None and _inflight(entry) is not None
 
 
 async def self_id(
@@ -138,7 +148,7 @@ async def refresh_self_id(
 ) -> AgentId:
     """Force a new lookup, discarding any memoised answer (shares an in-flight one)."""
     entry = _entry_for(nc)
-    if entry.inflight is None:
+    if _inflight(entry) is None:
         entry.settled_id = None
         entry.settled_error = None
         entry.failed_at = 0.0
@@ -154,7 +164,7 @@ def start_self_id_lookup(
     unretrieved when no caller awaits it.
     """
     entry = _entry_for(nc)
-    if entry.inflight is not None or entry.settled_id is not None:
+    if _inflight(entry) is not None or entry.settled_id is not None:
         return
     if entry.settled_error is not None and not _failure_expired(entry, time.monotonic()):
         return
@@ -175,9 +185,12 @@ def _start_task(
 async def _await_lookup(
     nc: NATSClient, entry: _Entry, signer: SenderSigner | None, timeout_s: float
 ) -> AgentId:
-    task = (
-        entry.inflight if entry.inflight is not None else _start_task(nc, entry, signer, timeout_s)
-    )
+    # A task that was cancelled *itself* (not through a caller — callers
+    # are shielded) has settled nothing and reads as "not in flight"; start
+    # over rather than re-raising its `CancelledError` forever.
+    task = _inflight(entry)
+    if task is None:
+        task = _start_task(nc, entry, signer, timeout_s)
     # Shielded: a cancelled caller must not cancel the shared lookup.
     outcome = await asyncio.shield(task)
     if isinstance(outcome, IdentityError):
@@ -188,25 +201,35 @@ async def _await_lookup(
 async def _run_lookup(
     nc: NATSClient, entry: _Entry, signer: SenderSigner | None, timeout_s: float
 ) -> AgentId | IdentityError:
-    """The shared lookup task. Never raises: the outcome is stored and returned."""
+    """The shared lookup task. Never raises on its own: the outcome is stored and returned.
+
+    Only a cancellation of the task itself escapes; the ``finally`` clears
+    ``entry.inflight`` for that case, and :func:`_inflight` drops a done
+    task regardless (a task cancelled before its first step never runs
+    this body at all), so the next call starts a fresh lookup instead of
+    awaiting a done-but-cancelled task.
+    """
     try:
-        result: AgentId | IdentityError = await lookup_self_id(
-            nc, signer=signer, timeout_s=timeout_s
-        )
-    except IdentityError as exc:
-        result = exc
-    except Exception as exc:
-        result = IdentityUnavailableError(f"{USER_INFO_SUBJECT} request failed: {exc}")
-    if isinstance(result, IdentityError):
-        entry.settled_id = None
-        entry.settled_error = result
-        entry.failed_at = time.monotonic()
-    else:
-        entry.settled_id = result
-        entry.settled_error = None
-        entry.failed_at = 0.0
-    entry.inflight = None
-    return result
+        try:
+            result: AgentId | IdentityError = await lookup_self_id(
+                nc, signer=signer, timeout_s=timeout_s
+            )
+        except IdentityError as exc:
+            result = exc
+        except Exception as exc:
+            result = IdentityUnavailableError(f"{USER_INFO_SUBJECT} request failed: {exc}")
+        if isinstance(result, IdentityError):
+            entry.settled_id = None
+            entry.settled_error = result
+            entry.failed_at = time.monotonic()
+        else:
+            entry.settled_id = result
+            entry.settled_error = None
+            entry.failed_at = 0.0
+        return result
+    finally:
+        if entry.inflight is asyncio.current_task():
+            entry.inflight = None
 
 
 async def lookup_self_id(

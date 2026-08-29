@@ -141,8 +141,12 @@ def signer_from_seed(seed: str | bytes, jwt: str | None = None) -> NkeySigner:
     except (nkeys.NkeysError, binascii.Error, ValueError) as exc:
         raise IdentityError(f"invalid nkey seed ({type(exc).__name__})") from exc
     finally:
-        # `from_seed` keeps `buf` by reference; the public key is cached
-        # above, and signing needs only the derived key — zero the text.
+        # `from_seed` keeps `buf` by reference but derives the ed25519 signing
+        # key once, at construction (`nacl.signing.SigningKey(raw_seed)`);
+        # `sign()` never re-reads `buf`, and `public_key` is cached above —
+        # so the seed text can be zeroed here. Verified against nkeys 0.2.x;
+        # `test_signer_from_seed_derives_signs_…` signs *after* construction
+        # and would fail loudly if a future nkeys re-derived from the buffer.
         for i in range(len(buf)):
             buf[i] = 0
     if not signer.public_key.startswith("U"):

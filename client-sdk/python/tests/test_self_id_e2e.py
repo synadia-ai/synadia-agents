@@ -10,6 +10,7 @@ memoises the failure for the TTL, and never blocks ``discover()``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib
 import time
 from typing import TYPE_CHECKING, Any
@@ -32,6 +33,7 @@ from synadia_ai.agents import (
 from synadia_ai.agents.identity import (
     USER_INFO_SUBJECT,
     identity_from_user_info_reply,
+    is_self_id_inflight,
     self_id_failure_expired,
     start_self_id_lookup,
 )
@@ -39,6 +41,7 @@ from tests.harness.wait import wait_for
 from tests.test_signer_creds import fake_jwt
 
 if TYPE_CHECKING:
+    from nats.aio.client import Client as NATSClient
     from nats.aio.msg import Msg
 
     from tests.conftest import ConnectNkeyUser, DenySysClient, EvidenceFor, NkeyUser
@@ -265,3 +268,28 @@ async def test_t1_deny_creds_signer_reads_the_jwt_without_asking_the_server(
     await nc.flush()
     assert nc.last_error is before  # no `$SYS.REQ.USER.INFO` publish → no violation
     await agents.close()
+
+
+async def test_t1_a_cancelled_lookup_task_does_not_poison_the_memo(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    identity_keys: dict[str, NkeyUser],
+) -> None:
+    """Cancelling the shared task itself (not a caller) clears `inflight`; the next call retries."""
+    nc = await connect_nkey_user(nats_server_nkey, "alice")
+    start_self_id_lookup(nc)
+    assert is_self_id_inflight(nc)
+    task = _memo_task(nc)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    assert not is_self_id_inflight(nc)  # the finally cleared the pointer
+    assert peek_self_id(nc) is None
+    assert await self_id(nc) == AgentId.new("$G", identity_keys["alice"].public)
+
+
+def _memo_task(nc: NATSClient) -> asyncio.Task[object]:
+    self_id_module = importlib.import_module("synadia_ai.agents.identity.self_id")
+    entry = self_id_module._memo[nc]
+    assert entry.inflight is not None
+    return entry.inflight  # type: ignore[no-any-return]

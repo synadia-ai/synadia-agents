@@ -302,6 +302,9 @@ def parse_sender_header(value: str) -> AgentSenderHeader | None:  # noqa: PLR091
     v = o.get("v")
     if isinstance(v, bool) or not isinstance(v, int | float):
         raise MalformedSenderHeaderError("`v` must be a JSON number")
+    # JSON `1.0` is the number 1 here and in `JSON.parse` alike, so both SDKs
+    # accept it as version 1 — kept deliberately (cross-language parity;
+    # the spec forbids the string "1" and `true`, which the check above catches).
     if v != AGENT_SENDER_VERSION:
         return None
 

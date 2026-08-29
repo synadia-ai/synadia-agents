@@ -141,6 +141,10 @@ async def resolve_identity_for_request(
             raise settled
         return None
     if not require_signed and self_id_failure_expired(nc):
+        # Deliberately also for `NoIdentityError` (plan §2.1a): a poisoned or
+        # transient answer must not stick for the connection's lifetime, and
+        # the retry runs only when a request actually happens past the TTL —
+        # at most one `$SYS.REQ.USER.INFO` per 30 s per connection, never a timer.
         kickoff_self_id(identity, nc)
         return None
     try:
