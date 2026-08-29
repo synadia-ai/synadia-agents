@@ -43,7 +43,10 @@ def parse_request_info(value: str) -> RequestInfoStamp | None:
     whole user JWT, which grows with its permission lists — a cap would
     refuse legitimate stamps. The value is only ever parsed under
     operator-attested mode, where it is the server's, and the broker's
-    ``max_payload`` bounds it.
+    ``max_payload`` bounds it. Note the parse-before-reject order: a
+    non-object value (an array, a string) is fully parsed by
+    ``json.loads`` before the shape check refuses it — bounded by
+    ``max_payload``, so no cap is added here on purpose.
     """
     try:
         parsed = json.loads(value)

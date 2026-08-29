@@ -396,6 +396,12 @@ class SenderGate:
         sender = classified
         if isinstance(sender, VerifiedSender):
             header = sender.header
+            # The same CAS as in `admit_prompt`. In a single asyncio loop the
+            # `False` branch is unreachable — `classify()` is synchronous, so
+            # nothing can claim the nonce between its `has()` lookup and this
+            # `record()`; a replay is caught by that lookup (`401 … already
+            # seen`, logged above). The guard stays for a shared cache across
+            # threads or a future `await` slipped in between.
             if (
                 header.nonce is not None
                 and header.ts is not None

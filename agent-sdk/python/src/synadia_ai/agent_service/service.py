@@ -609,17 +609,22 @@ class AgentService:
         §9.3 terminator after a refusal, so a rejected request yields
         exactly an error frame and a terminator — no ack, no handler call.
         """
+        # Both error frames are best-effort: if `respond_error` itself fails
+        # (reply subject gone, broker dropped) the outer `finally` still
+        # emits the terminator and nothing escapes as an unhandled exception.
         try:
             admission = await self._gate.admit_prompt(request)
         except Exception:
             log.exception("sender classification failed on %s", request.subject)
-            await request.respond_error("500", "sender classification error")
+            with contextlib.suppress(Exception):
+                await request.respond_error("500", "sender classification error")
             return (False, None)
         if admission.rejection is not None:
-            await request.respond_error(
-                str(admission.rejection.code),
-                _sanitize_error_desc(admission.rejection.description),
-            )
+            with contextlib.suppress(Exception):
+                await request.respond_error(
+                    str(admission.rejection.code),
+                    _sanitize_error_desc(admission.rejection.description),
+                )
             return (False, None)
         log.debug("prompt request on %s from %s", request.subject, format_sender(admission.sender))
         return (True, admission.sender)

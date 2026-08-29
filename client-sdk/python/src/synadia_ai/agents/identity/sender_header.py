@@ -549,8 +549,13 @@ def verify_sender_header(
     signed ``user``; disagreement, or a stamp the server would not write,
     → ``401``. A missing stamp is compared to nothing. Agreement on
     ``acc`` — or the ``account_token_position`` cross-check — sets
-    :attr:`VerifiedSender.account_attested`. Claims are never
-    cross-checked, and ``Nats-Request-Info`` is read nowhere else.
+    :attr:`VerifiedSender.account_attested`; ``operator_attested=True``
+    alone is **not** sufficient — a verified header that arrives without
+    a stamp (and without a configured position) is verified with
+    ``account_attested=False``, which on a closed endpoint means the
+    request did not cross the import the deployment promised. Claims
+    are never cross-checked, and ``Nats-Request-Info`` is read nowhere
+    else.
 
     Raises :class:`SenderVerificationError` (``.code == 401``) on a
     failing check.
