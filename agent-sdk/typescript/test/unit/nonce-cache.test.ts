@@ -1,6 +1,7 @@
 // Nonce set semantics (plan §2.5): keyed `(user, nonce)`, expiry anchored
 // on the header `ts` (not on arrival), check-and-set, bounded by a cap
-// with oldest-first eviction logged once, and second-bucketed sweeps.
+// with oldest-first eviction logged once per overload (re-armed once normal
+// expiry has drained the set to half the cap), and second-bucketed sweeps.
 
 import { describe, expect, it } from "vitest";
 import type { Logger } from "@synadia-ai/agents";
@@ -74,5 +75,23 @@ describe("NonceCache", () => {
     expect(c.has(U1, "n0", t0)).toBe(false); // oldest evicted
     expect(c.has(U1, "n7", t0)).toBe(true); // newest kept
     expect(warnings).toHaveLength(1);
+  });
+
+  it("the cap warning is re-armed once expiry drains the set to half the cap — not by eviction rounds alone", () => {
+    const { logger, warnings } = collectingLogger();
+    const c = new NonceCache({ replayWindowMs: 1_000, maxEntries: 4, logger });
+    const t0 = 5_000_000;
+    // Sustained overload: every record past the cap evicts a bucket and
+    // leaves the set at the cap — one warning for the whole episode.
+    for (let i = 0; i < 12; i++) c.record(U1, `a${i}`, t0 + i * 1_000, t0);
+    expect(c.size).toBe(4);
+    expect(warnings).toHaveLength(1);
+    // Everything expires; the sweep re-arms the warning.
+    c.sweep(t0 + 20_000);
+    expect(c.size).toBe(0);
+    // A second overload is reported again.
+    const t1 = t0 + 20_000;
+    for (let i = 0; i < 6; i++) c.record(U2, `b${i}`, t1 + i * 1_000, t1);
+    expect(warnings).toHaveLength(2);
   });
 });

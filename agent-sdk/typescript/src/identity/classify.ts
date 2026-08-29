@@ -126,7 +126,13 @@ export class NonceCache {
     return true;
   }
 
-  /** Drop every entry whose expiry has passed. */
+  /**
+   * Drop every entry whose expiry has passed. Once normal expiry has
+   * brought the set down to half the cap, the cap warning is re-armed, so
+   * a later overload is reported again — with hysteresis, because every
+   * eviction round itself leaves the set just under the cap and a plain
+   * "below the cap" reset would log on every round.
+   */
   sweep(now: number = Date.now()): void {
     const nowBucket = Math.floor(now / 1000);
     for (const [bucket, keys] of this.#buckets) {
@@ -134,6 +140,7 @@ export class NonceCache {
       for (const key of keys) this.#expiry.delete(key);
       this.#buckets.delete(bucket);
     }
+    if (this.#capWarned && this.#expiry.size <= this.#max / 2) this.#capWarned = false;
   }
 
   #enforceCap(): void {
@@ -290,7 +297,12 @@ export class SenderGate {
       if (
         nonce !== undefined &&
         ts !== undefined &&
-        // CAS: synchronous check-and-set; one winner when concurrent requests carry the same nonce.
+        // CAS: synchronous check-and-set; one winner when concurrent requests
+        // carry the same nonce. Atomic because there is no `await` between
+        // `classify()` resolving above and this call — the event loop cannot
+        // interleave another request's `record()` in between (JS is
+        // single-threaded); the earlier `nonceSeen` lookup inside
+        // `classify()` ran across awaits and is only the cheap early exit.
         !this.#nonces.record(user, nonce, parseSenderTimestamp(ts))
       ) {
         return this.#refuse(msg, {

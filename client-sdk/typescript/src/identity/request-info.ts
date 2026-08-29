@@ -29,6 +29,12 @@ export interface RequestInfoStamp {
  * Parse a header value. `null` when it is not what the server would write:
  * not a JSON object, or `acc` / `user` present but not strings. Unknown
  * fields (`rtt`, `server`, `jwt`, `issuer_key`, …) are ignored.
+ *
+ * Deliberately no size cap (unlike `parseSenderHeader`'s 2 KiB): behind a
+ * `share: true` import the server's stamp embeds the caller's whole user
+ * JWT, which grows with its permission lists — a cap would refuse
+ * legitimate stamps. The value is only ever parsed under operator-attested
+ * mode, where it is the server's, and the broker's `max_payload` bounds it.
  */
 export function parseRequestInfo(value: string): RequestInfoStamp | null {
   let parsed: unknown;
