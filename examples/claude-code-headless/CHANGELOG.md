@@ -14,6 +14,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (fleet-wide) > `CLAUDE_CODE_HEADLESS_OWNER|NAME` (legacy, keeps working) > config /
   derived fallback.
 
+### Security
+
+- **Transitive dependency refresh in `bun.lock`** (no `package.json`
+  change; prompted by synadia-ai/synadia-agents#179). Bumped the
+  vulnerable transitive packages pulled in via
+  `@anthropic-ai/claude-agent-sdk` → `@modelcontextprotocol/sdk`:
+  `fast-uri` 3.1.2 → 3.1.6 (host confusion / IDN canonicalization,
+  CVE-2026-13676 and related advisories), `hono` 4.12.18 → 4.13.5,
+  `@hono/node-server` 1.19.14 → 1.19.17, `body-parser` 2.2.2 → 2.3.0,
+  `qs` 6.15.1 → 6.15.3, `ip-address` 10.2.0 → 10.5.0 (plus the
+  `type-is` / `content-type` / `side-channel` entries those require).
+  Every new version was checked against its upstream repository
+  (npm provenance attestation or `gitHead` ↔ release tag) before
+  pinning. Exposure was low to begin with — this example never uses
+  `@modelcontextprotocol/sdk` directly (it arrives via the Claude Agent
+  SDK) and serves no HTTP, which is what these packages back — but
+  `bun audit` is now clean.
+
 ## [0.5.4] - 2026-05-11
 
 ### Changed
