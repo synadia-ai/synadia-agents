@@ -176,19 +176,19 @@ The caller SDK's integration tests use `ReferenceAgent` as their agent counterpa
 
 ## What's in the box
 
-| API                                                                                                             | Purpose                                                                                           |
-| --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `new AgentService({ nc, agent, owner, name, ... })`                                                             | Register and run a protocol-compliant agent.                                                      |
-| `service.onPrompt(handler)`                                                                                     | Wire up the `prompt` handler. `(envelope, response) => …`.                                        |
-| `service.start()` / `service.stop()`                                                                            | Lifecycle.                                                                                        |
-| `service.subject` / `service.instanceId` / `.service`                                                           | Inspection: subject builder, service id, underlying micro service.                                |
-| `extraEndpoints` option                                                                                         | Declarative custom endpoints.                                                                     |
-| `PromptResponse.send` / `.ask` / `.sender`                                                                      | Stream chunks back; `.ask` round-trips a §7 mid-stream query; `.sender` is the classified sender. |
-| `identity`, `minSenderTrust`, `acceptSender`, `replayWindowMs`, `accountTokenPosition`, `resolveTtlMs`, `operatorAttested`, `logger` options | Sender identity — see above.                                                |
-| `SenderGate`, `NonceCache`                                                                                      | Sender classification for hand-rolled services.                                                   |
-| `ReferenceAgent` (`/testing`)                                                                                   | Spec-compliant counterparty for tests.                                                            |
-| `encodeChunk`, `splitResponseText`, `buildHeartbeatPayload`, `encodeHeartbeatPayload`                           | Wire primitives.                                                                                  |
-| `DEFAULT_ATTACHMENTS_OK`, `DEFAULT_HEARTBEAT_INTERVAL_S`, `DEFAULT_KEEPALIVE_INTERVAL_S`, `DEFAULT_MAX_PAYLOAD` | Server-side defaults.                                                                             |
+| API                                                                                                                                          | Purpose                                                                                           |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `new AgentService({ nc, agent, owner, name, ... })`                                                                                          | Register and run a protocol-compliant agent.                                                      |
+| `service.onPrompt(handler)`                                                                                                                  | Wire up the `prompt` handler. `(envelope, response) => …`.                                        |
+| `service.start()` / `service.stop()`                                                                                                         | Lifecycle.                                                                                        |
+| `service.subject` / `service.instanceId` / `.service`                                                                                        | Inspection: subject builder, service id, underlying micro service.                                |
+| `extraEndpoints` option                                                                                                                      | Declarative custom endpoints.                                                                     |
+| `PromptResponse.send` / `.ask` / `.sender`                                                                                                   | Stream chunks back; `.ask` round-trips a §7 mid-stream query; `.sender` is the classified sender. |
+| `identity`, `minSenderTrust`, `acceptSender`, `replayWindowMs`, `accountTokenPosition`, `resolveTtlMs`, `operatorAttested`, `logger` options | Sender identity — see above.                                                                      |
+| `SenderGate`, `NonceCache`                                                                                                                   | Sender classification for hand-rolled services.                                                   |
+| `ReferenceAgent` (`/testing`)                                                                                                                | Spec-compliant counterparty for tests.                                                            |
+| `encodeChunk`, `splitResponseText`, `buildHeartbeatPayload`, `encodeHeartbeatPayload`                                                        | Wire primitives.                                                                                  |
+| `DEFAULT_ATTACHMENTS_OK`, `DEFAULT_HEARTBEAT_INTERVAL_S`, `DEFAULT_KEEPALIVE_INTERVAL_S`, `DEFAULT_MAX_PAYLOAD`                              | Server-side defaults.                                                                             |
 
 Subpath exports:
 
