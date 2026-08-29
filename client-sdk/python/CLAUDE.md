@@ -78,6 +78,29 @@ v0.3 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
   the `build_heartbeat_payload` helper.
 - **Errors** (§9): `Nats-Service-Error-Code` header + optional JSON body;
   error-completed streams end with error frame THEN empty terminator.
+- **Sender identity** (extension, additive on 0.3 — spec
+  [`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
+  in `synadia-ai/synadia-agent-fabric-docs`; the implementation plan
+  with its per-PR log is `docs/plans/agent-identity-sdk-implementation-plan.md`
+  there — read its §12 before touching identity code): every `prompt`
+  / `status` request carries an `Agent-Sender` header (`v, account,
+  user, name?, sub?, ts?, nonce?, sig?`, canonical single-line JSON,
+  `AGENT-SENDER-V1` signed input); `AgentId` is `{account}.{user}`.
+  The whole codec lives in `src/synadia_ai/agents/identity/` and is
+  **shared with the host package** — it must stay byte-equal with the
+  TypeScript SDK (`test-fixtures/identity/*-vectors.json`, generated
+  by TS, verified here). Rules: (1) `AgentId.new` / `AgentId.parse`
+  are the only code that builds or splits the text form; (2) never
+  re-serialise a parsed header — the signed input is rebuilt from
+  fields; (3) `verify_sender_header` only *looks up* nonces, the
+  receiver records them after every check passed; (4) the `name` cap
+  counts UTF-16 code units (an emoji is 2) so it matches TS; (5) the
+  sync half of `prompt()` applies a *sound bound* of the header size,
+  the exact re-check happens on the first `__anext__`; (6) header
+  bytes count against `max_payload` on our side only — nats-py does
+  not count them. `_PROTOCOL_VERSION` stays `"0.3"` (it lives in the
+  agent-sdk, `agent_service/service.py`; support is advertised by
+  feature detection: `min_sender_trust` on the prompt endpoint).
 
 ## Toolchain
 
@@ -145,13 +168,23 @@ agents = Agents(nc=nc)
 `load_context_options` returns a dict ready to splat into
 `nats.connect(...)`. Supported context fields: `url` → `servers`,
 `token`, `user`/`password`, `creds` (with `~` expansion, mapped to
-`user_credentials`), `user_jwt` (mapped to `user_jwt_cb`),
-`inbox_prefix`. Auth precedence: `creds` > `user_jwt` > inline `token`
-/ `user`+`password`. Unsupported fields (`nkey`, TLS triple
+`user_credentials`), `nkey` (a seed-file path, with `~` expansion; the
+seed line is read and passed as `nkeys_seed_str` — nats-py's
+`nkeys_seed=<path>` reads the file verbatim and rejects a trailing
+newline), `user_jwt` (mapped to `user_jwt_cb`),
+`inbox_prefix`. Auth precedence: `creds` > `nkey` > `user_jwt` >
+`user`+`password` > `token`. Unsupported fields (TLS triple
 `cert`/`key`/`ca`, `nsc://...` URLs) raise `NatsContextError` with an
-actionable message — they are not silently ignored. The SDK itself
-does NOT read `NATS_URL`; that stays a convenience default inside
-`examples/`.
+actionable message — they are not silently ignored. `read_context_file`
+is the reading half (the identity module's `signer_from_context`
+reuses it to find the seed / creds path). The SDK itself does NOT
+read `NATS_URL`; that stays a convenience default inside `examples/`.
+
+Sender identity is configured separately, on `Agents(identity=Identity(
+signer=…, name=…))` — the SDK never reads the seed out of the
+connection (`nc._nkeys_seed` and friends are private API; explicit
+signer only, plan §2.1). `examples/_connect_cli.py` shows the pairing:
+`--nkey` / `--creds` feed both `nats.connect` and `Identity`.
 
 ### Examples vs scripts
 
@@ -161,7 +194,8 @@ does NOT read `NATS_URL`; that stays a convenience default inside
   sides. Every numbered example honours `--context <name>` / `--url
   <url>` / `$NATS_URL` / selected-context resolution via the shared
   `examples/_connect_cli.py` helper.
-- `scripts/` - dev diagnostics, not installed with the package.
+- `scripts/` - dev diagnostics, not installed with the package
+  (`smoke_ping.py`, `whoami.py` — the `self_id()` diagnostic).
 
 ### Canonical commands
 
@@ -172,6 +206,7 @@ uv run ruff format --check .         # formatting check (drop --check to apply)
 uv run mypy src tests examples       # strict type check
 uv run pytest -v                     # full suite; e2e auto-skip if nats-server missing
 uv run python examples/01-discover.py --url nats://127.0.0.1:4222  # user-facing demos
+uv run python scripts/whoami.py --url nats://127.0.0.1:4222 --nkey ~/alice.nk  # self_id diagnostic
 # Reference agent + demo_echo.py now live in ../../agent-sdk/python/ (sibling dist).
 uv build                             # build sdist + wheel to dist/
 ls tests/_evidence/                  # last run's per-test wire traces
@@ -323,6 +358,23 @@ either guides them to success or frustrates them.
 
 ## Alignment milestones
 
+- **2026-08-29 - sender-identity extension, caller side (PR-P1,
+  `synadia-ai-agents` 0.8.0).** The client half of the identity block:
+  `Identity` / signers, `Agents.self_id()` (JWT source first, else one
+  memoised `$SYS.REQ.USER.INFO` with a 30 s negative cache and a
+  fast-fail on nats-py's `last_error`), the `Agent-Sender` header on
+  every `prompt` / `status` (signed at publish time, header bytes
+  counted against `max_payload`), `Agent.status()`, the signed
+  wrappers, `resolve_sender`, discovery's `min_sender_trust` /
+  `identity` / `id_sig_verified`, `nkey` contexts. Wire-equal with the
+  TS SDK by the shared vectors; the interop test runs the TS reference
+  agent with `NATS_NKEY_SEED_FILE` + `REFERENCE_AGENT_MIN_SENDER_TRUST=signed`
+  and asserts the echoed `<id> (verified user, claimed account)`. The
+  receiver side (classification, nonce cache, `accept_sender`,
+  registration metadata) is PR-P2 in `synadia-ai-agent-service` 0.5.0;
+  until then the identity e2e tests hand-roll the receiver over the
+  shared `verify_sender` (`tests/harness/fake_agent.py`). Protocol
+  version stays `"0.3"`.
 - **2026-05-11 - §6.4 leading-ack compliance (agent-sdk-only).** Spec
   §6.4 was sharpened: every prompt handler MUST emit exactly one
   `{"type":"status","data":"ack"}` chunk as the **first** message on

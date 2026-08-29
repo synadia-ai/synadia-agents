@@ -8,6 +8,126 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-29
+
+The caller side of the **sender-identity extension** (PR-P1 of the
+identity plan). Every `prompt` / `status` request can now carry an
+`Agent-Sender` header that names the caller's agent ID
+(`{account}.{user}`, the connection's NKEY pair) and, with a signer, an
+ed25519 signature bound to the subject, the payload, a timestamp and a
+nonce. The wire protocol stays `0.3`; support is advertised by feature
+detection (`min_sender_trust` on the prompt endpoint ⇔ the agent
+implements the extension; `Agent-Sender` sent ⇔ the caller does). Spec:
+[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+Byte-for-byte compatible with the TypeScript SDK (`@synadia-ai/agents`
+0.6.0): the shared known-answer vectors under
+`test-fixtures/identity/` are verified by both.
+
+### Added
+
+- **`Identity`** — `Agents(nc=nc, identity=Identity(signer=…, name=…,
+  send_unsigned_claim=True))`. `signer_from_seed` / `signer_from_creds`
+  / `signer_from_creds_file` / `signer_from_context` build an
+  `NkeySigner`; custom (HSM / KMS) signers implement the `SenderSigner`
+  protocol (`sign` may be async). Without a signer the SDK sends an
+  unsigned **claim** when the connection has an NKEY identity
+  (`send_unsigned_claim=False` turns that off); without an identity it
+  sends nothing — 0.3 behaviour. `name` (≤ 64 UTF-16 code units, no
+  control characters) is validated when the option is built.
+- **`Agents.self_id()` / `Agents.refresh_self_id()`** (also the
+  module-level `self_id(nc)` / `refresh_self_id(nc)` / `peek_self_id(nc)`)
+  — the connection's own `AgentId`, from the credentials JWT when the
+  signer carries one, else from `$SYS.REQ.USER.INFO`; memoised once per
+  connection, every failure negative-cached for 30 s. Errors:
+  `NoIdentityError` (no NKEY user — the message names the fix),
+  `IdentityUnavailableError` (no answer / permission violation — nats-py
+  reports the `-ERR` as `Client.last_error`, so a denied `$SYS.>` fails at
+  once instead of after the 2 s timeout), `IdentityMismatchError`
+  (signer ≠ connection user).
+- **`Agents.sign_sender(subject, payload, sub=…)`**,
+  **`Agents.publish_signed(…)`** (sets `Nats-Msg-Id` to the nonce),
+  **`Agents.request_signed(…)`** (single reply, on the SDK inbox) —
+  signed publishes for any subject, JetStream included.
+- **`Agents.resolve_sender(id)`** / `SenderResolver` / `resolve_sender`
+  — the reverse lookup: `$SRV.INFO.agents` indexed by verified agent ID
+  (`id_sig` checked against each instance's prompt subject), cached for
+  `Agents(resolve_ttl_s=10.0)`.
+- **`Agent.status(subject=…, sub=…, timeout_s=2.0)`** — the §8.7 status
+  probe (header attached; a single request on the SDK inbox with an
+  empty payload); returns a `HeartbeatPayload`, raises `ProtocolError`
+  on an error-headered reply.
+- **`Agent.prompt(text, subject=…, sub=…)`** — overrides for callers
+  behind a remapping service import (`to:` / `local_subject`, or an
+  export that inserts the account token).
+- Discovery: `EndpointInfo.min_sender_trust` (`"any"` / `"signed"`;
+  an unknown value reads as `"signed"`), `AgentInfo.supports_sender_identity`
+  (feature detection: the key is present), `AgentInfo.identity`
+  (`user_nkey` + `account`), `AgentInfo.id_sig_verified`
+  (`AGENT-ID-V1` over the prompt subject) — mirrored on `Agent`, plus
+  `Agent.min_sender_trust`; `parse_min_sender_trust`, `MIN_SENDER_TRUST_KEY`.
+- The shared codec (`synadia_ai.agents.identity`, re-exported at the
+  package root; the host package imports it in PR-P2): `AgentId`
+  (`AgentId.new` / `AgentId.parse` / `.account` / `.user` — a validated
+  `str` subclass), `parse_sender_header` / `serialize_sender_header` /
+  `sign_sender_header` / `verify_sender_header(header, arrival_subject,
+  payload, mode="live" | "stored", account_token_position=…)` /
+  `verify_sender(msg, mode)` / `read_sender_header_value`,
+  `SenderInfo = VerifiedSender | ClaimedSender` (a claim has no `id`;
+  `str()` renders the trust class), `format_sender`, `sign_agent_id` /
+  `verify_agent_id`, `max_sender_header_bytes` /
+  `expected_sender_header_bytes` / `encoded_header_length`.
+- Errors: `IdentityError` (base, a `NatsAgentError`, not a
+  `ValidationError`), `NoIdentityError`, `IdentityUnavailableError`,
+  `IdentityMismatchError`, `InvalidAgentIdError`,
+  `MalformedSenderHeaderError`, `SenderSignatureRequiredError`,
+  `SenderVerificationError` (`.code` 401 / 403).
+- `read_context_file(selector)` / `NatsContextFile` — the reading half
+  of `load_context_options`, so a signer can be built from a `nats` CLI
+  context without building connection kwargs.
+- **`nkey` contexts are supported**: `load_context_options` reads the
+  seed line of `nkey` (a seed-file path, `~` expanded) and passes it as
+  `nkeys_seed_str` — nats-py's own `nkeys_seed=<path>` reads the file
+  verbatim and rejects the trailing newline `nk -gen user` writes; a
+  missing file or a file without a seed line raises `NatsContextError`.
+- `scripts/whoami.py` — prints the connection's `self_id()` (or why
+  there is none); `examples/_connect_cli.py` gained `--nkey` / `--creds`
+  / `--sender-name` (`$NATS_NKEY_SEED_FILE` / `$NATS_CREDS` /
+  `$NATS_SENDER_NAME`) and every numbered example passes the resulting
+  `Identity` to `Agents`.
+- New runtime dependencies: `nkeys>=0.2`, `pynacl>=1.5`.
+
+### Changed
+
+- **`prompt()` counts the `Agent-Sender` header against `max_payload`**
+  (spec: the header counts; nats-py does *not* count headers in its own
+  `MaxPayloadError` check, so the SDK is the only guard before the server
+  closes the connection with `Maximum Payload Violation`). The existing
+  synchronous envelope check stays synchronous and now adds a *sound
+  upper bound* of the header (`PayloadTooLargeError.header_bytes` is set;
+  conservative by up to ~100 bytes: 64-byte account allowance, 64-char
+  nonce); the exact size is re-checked on the first `__anext__` once the
+  identity is known.
+- **`prompt()` may now raise identity errors on the first
+  `__anext__`**: `NoIdentityError` / `IdentityUnavailableError` on a
+  `min_sender_trust: signed` endpoint and `IdentityMismatchError`
+  whenever a signer is configured. `SenderSignatureRequiredError` is
+  raised at call time when the endpoint requires `signed` and no signer
+  is configured.
+- The request headers are built — signed — at publish time inside the
+  stream, over the exact envelope bytes, so `ts` / nonce stay fresh even
+  when the caller iterates late.
+- `discover()` now also *starts* the connection's identity lookup
+  (fire-and-forget) so the first `prompt()` usually finds it memoised;
+  it never waits for it.
+- `Agent(nc, info, identity=…)` — a handle constructed by third parties
+  without it sends no header.
+- `load_context_options` auth precedence is now `creds` > `nkey` >
+  `user_jwt` > `user`+`password` > `token` (a context carrying both
+  user/password and a token previously passed all three to
+  `nats.connect`).
+- `PayloadTooLargeError(limit=…, actual=…, header_bytes=0)` gained the
+  keyword and mentions the header in its message when it counted one.
+
 ## [0.7.1] - 2026-05-12
 
 ### Changed

@@ -262,12 +262,13 @@ def test_field_mapping_creds_tilde_expansion(
     assert opts["user_credentials"] == str(creds_abs)
 
 
-def test_unsupported_nkey_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nkey_is_supported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``nkey`` (a seed-file path) maps to ``nkeys_seed``; see ``test_context_nkey.py``."""
     base = _point_env_at(tmp_path, monkeypatch)
-    _write_context(base, "nk", {"url": "nats://127.0.0.1:4222", "nkey": "SUA..."})
-    with pytest.raises(NatsContextError) as exc_info:
-        load_context_options("nk")
-    assert "nkey" in str(exc_info.value)
+    seed = tmp_path / "user.nk"
+    seed.write_text("SUASEED\n", encoding="utf-8")
+    _write_context(base, "nk", {"url": "nats://127.0.0.1:4222", "nkey": str(seed)})
+    assert load_context_options("nk")["nkeys_seed_str"] == "SUASEED"
 
 
 def test_unsupported_tls_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
