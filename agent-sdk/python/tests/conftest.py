@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import AsyncIterator, Awaitable, Iterator
 from dataclasses import dataclass, field
@@ -111,6 +112,39 @@ class ConnectNkeyUser(Protocol):
     def __call__(
         self, server: RunningServer, name: str, /, **kwargs: Any
     ) -> Awaitable[NATSClient]: ...
+
+
+class EvidenceFor(Protocol):
+    """``await evidence_for(nc)`` → a recorder spying on *that* connection."""
+
+    def __call__(self, nc: NATSClient, /) -> Awaitable[EvidenceRecorder]: ...
+
+
+@pytest_asyncio.fixture
+async def evidence_for(request: pytest.FixtureRequest) -> AsyncIterator[EvidenceFor]:
+    """Evidence recorder factory for the identity servers' *authenticated* connections.
+
+    The ``evidence`` fixture is bound to the session server's anonymous
+    ``nc``; identity tests connect as nkey users to per-topology servers,
+    so they attach the spy to their own connection instead. The
+    ``_INBOX.>`` spy captures every ``Agent-Sender``-bearing request's
+    reply stream; ``agents.>`` / ``$SRV.>`` capture the requests
+    themselves, headers included. Every recorder is detached on teardown.
+    """
+    attached: list[EvidenceRecorder] = []
+
+    async def _attach(nc: NATSClient, /) -> EvidenceRecorder:
+        recorder = EvidenceRecorder.for_test(EVIDENCE_ROOT, request.node.nodeid)
+        await recorder.attach(nc)
+        attached.append(recorder)
+        return recorder
+
+    try:
+        yield _attach
+    finally:
+        for recorder in attached:
+            with contextlib.suppress(Exception):
+                await recorder.detach()
 
 
 @pytest.fixture(scope="session")

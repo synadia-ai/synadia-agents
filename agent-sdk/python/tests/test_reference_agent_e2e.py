@@ -5,6 +5,9 @@ Exercises the example-specific behaviour that no other test covers:
 * prompt is echoed back with the configured prefix
 * inbound attachment filenames are appended to the echo text
 * attachments are written to disk under ``--save-attachments-to-dir``
+* ``--nkey`` + ``--min-sender-trust signed``: the agent prints its identity
+  after the ready marker, registers a verifying ``id_sig``, refuses
+  unsigned callers and appends the formatted sender to the echo
 
 The client-side numbered examples (01-05) are thin wrappers around
 already-tested SDK methods — subprocess-stdout scraping there is brittle
@@ -20,33 +23,57 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from synadia_ai.agents import Agents, Attachment, ResponseChunk, StatusChunk
+from synadia_ai.agents import (
+    AgentId,
+    Agents,
+    Attachment,
+    Identity,
+    ResponseChunk,
+    SenderSignatureRequiredError,
+    StatusChunk,
+    signer_from_seed,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from nats.aio.client import Client as NATSClient
 
+    from tests.conftest import ConnectNkeyUser, NkeyUser
     from tests.harness.nats_server import RunningServer
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REFERENCE_AGENT_SCRIPT = REPO_ROOT / "examples" / "_reference_agent.py"
 
-# Line the reference agent prints as soon as it's ready.
+# Line the reference agent prints as soon as it's ready; the next line names
+# the identity it registered (`identity: <id> (min_sender_trust=…)` or
+# `identity: none (…)`).
 READY_MARKER = "reference agent listening on "
+IDENTITY_MARKER = "identity: "
 STARTUP_TIMEOUT_S = 15.0
 
 
 class _PyReferenceAgent:
     """Manage the python reference-agent subprocess lifecycle."""
 
-    def __init__(self, *, nats_url: str, save_dir: Path, prefix: str) -> None:
+    def __init__(
+        self,
+        *,
+        nats_url: str,
+        save_dir: Path,
+        prefix: str,
+        session_name: str = "pyref-e2e",
+        extra_args: tuple[str, ...] = (),
+    ) -> None:
         self._nats_url = nats_url
         self._save_dir = save_dir
         self._prefix = prefix
+        self._session_name = session_name
+        self._extra_args = extra_args
         self._proc: subprocess.Popen[str] | None = None
         self.prompt_subject: str | None = None
+        self.identity_line: str | None = None
         self.stdout_tail: list[str] = []
 
     async def start(self) -> None:
@@ -66,7 +93,8 @@ class _PyReferenceAgent:
                 "--heartbeat-interval",
                 "1",
                 "--session-name",
-                "pyref-e2e",
+                self._session_name,
+                *self._extra_args,
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -87,6 +115,13 @@ class _PyReferenceAgent:
             self.stdout_tail.append(line)
             if READY_MARKER in line:
                 self.prompt_subject = line.split(READY_MARKER, 1)[1].strip()
+                # The identity line follows the marker on its own line.
+                next_line = await asyncio.get_event_loop().run_in_executor(
+                    None, self._proc.stdout.readline
+                )
+                self.stdout_tail.append(next_line)
+                if IDENTITY_MARKER in next_line:
+                    self.identity_line = next_line.split(IDENTITY_MARKER, 1)[1].strip()
                 return
         raise TimeoutError(
             f"reference agent did not signal ready within {STARTUP_TIMEOUT_S}s; "
@@ -125,6 +160,8 @@ async def test_reference_agent_echoes_prefix_and_saves_attachment(
 ) -> None:
     proc, save_dir = py_reference_agent
     assert proc.prompt_subject is not None
+    # No-auth server: no identity, the extension is still advertised.
+    assert proc.identity_line == "none (min_sender_trust=any)"
 
     agents = Agents(nc=nc)
     try:
@@ -156,3 +193,68 @@ async def test_reference_agent_echoes_prefix_and_saves_attachment(
         assert saved.read_bytes() == b"ping"
     finally:
         await agents.close()
+
+
+# --- sender identity: --nkey + --min-sender-trust signed ---------------------------
+
+
+@pytest.fixture
+async def py_reference_agent_signed(
+    nats_server_nkey: RunningServer, tmp_path: Path, identity_keys: dict[str, NkeyUser]
+) -> AsyncIterator[_PyReferenceAgent]:
+    """The Python reference agent as alice on ``nkey-noaccounts.conf``, requiring signed senders."""
+    seed_file = tmp_path / "alice.nk"
+    seed_file.write_text(identity_keys["alice"].seed + "\n", encoding="utf-8")
+    seed_file.chmod(0o600)
+    proc = _PyReferenceAgent(
+        nats_url=nats_server_nkey.url,
+        save_dir=tmp_path / "attach",
+        prefix="py-ref: ",
+        session_name="pyref-signed",
+        extra_args=("--nkey", str(seed_file), "--min-sender-trust", "signed"),
+    )
+    await proc.start()
+    try:
+        yield proc
+    finally:
+        await proc.stop()
+
+
+async def test_reference_agent_with_nkey_verifies_signed_callers(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    identity_keys: dict[str, NkeyUser],
+    py_reference_agent_signed: _PyReferenceAgent,
+) -> None:
+    proc = py_reference_agent_signed
+    alice = identity_keys["alice"]
+    alice_id = AgentId.new("$G", alice.public)
+    assert proc.identity_line == f"{alice_id} (min_sender_trust=signed)"
+
+    nc = await connect_nkey_user(nats_server_nkey, "alice")
+    signed = Agents(nc=nc, identity=Identity(signer=signer_from_seed(alice.seed), name="py"))
+    unsigned = Agents(nc=nc)
+    try:
+        found = await signed.discover(timeout=3.0)
+        discovered = next(a for a in found if a.prompt_subject == proc.prompt_subject)
+        assert discovered.identity == alice_id and discovered.id_sig_verified is True
+        assert discovered.min_sender_trust == "signed"
+        received = [m async for m in discovered.prompt("hello", timeout=10.0)]
+        responses = [c for c in received if isinstance(c, ResponseChunk)]
+        assert len(responses) == 1
+        assert responses[0].text == (
+            f"py-ref: hello sender: {alice_id} (verified user, claimed account)"
+        )
+        hb = await discovered.status()
+        assert hb.agent == "demo-agent"
+        # An unsigned caller is refused before publishing (the endpoint says `signed`).
+        plain = next(
+            a
+            for a in await unsigned.discover(timeout=3.0)
+            if a.prompt_subject == proc.prompt_subject
+        )
+        with pytest.raises(SenderSignatureRequiredError):
+            plain.prompt("hi")
+    finally:
+        await signed.close()
+        await unsigned.close()

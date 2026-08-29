@@ -371,10 +371,15 @@ either guides them to success or frustrates them.
   agent with `NATS_NKEY_SEED_FILE` + `REFERENCE_AGENT_MIN_SENDER_TRUST=signed`
   and asserts the echoed `<id> (verified user, claimed account)`. The
   receiver side (classification, nonce cache, `accept_sender`,
-  registration metadata) is PR-P2 in `synadia-ai-agent-service` 0.5.0;
-  until then the identity e2e tests hand-roll the receiver over the
-  shared `verify_sender` (`tests/harness/fake_agent.py`). Protocol
-  version stays `"0.3"`.
+  registration metadata) is PR-P2, `synadia-ai-agent-service` 0.5.0
+  (same day); the identity e2e tests *here* keep hand-rolling the
+  receiver over the shared `verify_sender` (`tests/harness/fake_agent.py`)
+  so this package's suite stays self-contained — the `AgentService`
+  rows live in `agent-sdk/python/tests/test_identity_*_e2e.py`. PR-P2
+  also added the operator-attested cross-check to the shared verifier
+  (`verify_sender_header(…, operator_attested=, headers=)`,
+  `identity/request_info.py`), under this same 0.8.0 (unreleased at
+  the time). Protocol version stays `"0.3"`.
 - **2026-05-11 - §6.4 leading-ack compliance (agent-sdk-only).** Spec
   §6.4 was sharpened: every prompt handler MUST emit exactly one
   `{"type":"status","data":"ack"}` chunk as the **first** message on

@@ -30,9 +30,11 @@ from synadia_ai.agents import Envelope
 from examples._connect_cli import (
     add_agent_identity_flags,
     add_connection_flags,
+    add_identity_flags,
     connect_from_cli,
+    signer_from_cli,
 )
-from synadia_ai.agent_service import AgentService, PromptStream
+from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
 
 async def main() -> None:
@@ -40,6 +42,7 @@ async def main() -> None:
         description="Echo agent — replies with the prompt prefixed by 'echo: '."
     )
     add_connection_flags(parser)
+    add_identity_flags(parser)
     add_agent_identity_flags(parser, agent="echo")
     args = parser.parse_args()
 
@@ -52,6 +55,10 @@ async def main() -> None:
         nc=nc,
         description="Echo agent — replies with the prompt prefixed by 'echo: '",
         heartbeat_interval_s=args.heartbeat_interval,
+        # Sender identity: --nkey / --creds ($NATS_NKEY_SEED_FILE / $NATS_CREDS)
+        # sign the registration's id_sig; without them the identity keys are
+        # registered unsigned when the connection has an NKEY identity.
+        identity=ServiceIdentity(signer=signer_from_cli(args)),
     )
 
     # The whole agent. Every incoming prompt runs this handler; whatever we

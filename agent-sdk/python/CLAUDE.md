@@ -61,13 +61,14 @@ package).
 
 ## Package shape and dependency direction
 
-- **Distribution name (PyPI):** `synadia-ai-agent-service`. *Not yet
-  published.* A pending publisher on PyPI + a parallel
-  `release-python-agent-service.yml` workflow + a distinct tag prefix
-  (proposed: `python-agent-service-v*`) are required mirrors of the
-  setup PR #28 landed for `synadia-ai-agents`. Trust-publishing
-  environment can be the same `pypi` GitHub Environment, since the
-  branch-policy gate is on the tag pattern.
+- **Distribution name (PyPI):** `synadia-ai-agent-service`, published
+  on `python-agent-service-v*` tags by
+  `release-python-agent-service.yml` (trusted publishing through the
+  same `pypi` GitHub Environment as `synadia-ai-agents`; the
+  branch-policy gate is on the tag pattern). `0.4.1` is on PyPI; `0.5.0`
+  (the sender-identity receiver side) is tagged only after
+  `python-v0.8.0` of the client is on PyPI, because the wheel's
+  `>=0.8` floor is the only published dependency.
 - **Import path:** `synadia_ai.agent_service` (top-level under the
   `synadia_ai` PEP 420 namespace, *not* a submodule of
   `synadia_ai.agents`). This is forced by Python packaging: two
@@ -85,13 +86,17 @@ package).
   `parse_nats_url`, the `SERVICE_NAME` / `PROMPT_QUEUE_GROUP` constants,
   …) keeps its `from synadia_ai.agents import …` path unchanged.
 - **Dependency direction:** `synadia-ai-agent-service` depends on
-  `synadia-ai-agents` (`>=0.6` on the current release line; `0.5.0`
-  was the first release that shipped the trimmed surface). Not the
-  other way around. The client-sdk must
+  `synadia-ai-agents` (`>=0.8` since 0.5.0 — the shared identity codec;
+  `0.5.0` of the client was the first release that shipped the trimmed
+  surface). Not the other way around. The client-sdk must
   remain installable and useful without ever pulling the agent-sdk.
+  During development `[tool.uv.sources]` resolves the client to the
+  sibling checkout, so an unreleased client change is usable here
+  before its PyPI release (but the floor must be bumped in the same
+  PR that first needs it).
 - **No code duplication.** Anything shared (envelope codec, subject
-  sanitization, `HeartbeatPayload`, `_PROTOCOL_VERSION`, validation
-  helpers, error classes, NATS-context loader) is imported from
+  sanitization, `HeartbeatPayload`, validation helpers, error classes,
+  NATS-context loader, the sender-identity codec) is imported from
   `synadia_ai.agents`. Three occurrences is the threshold for
   abstraction in greenfield code; for a *split*, zero duplication is
   the bar — every shared symbol resolves to exactly one home.
@@ -134,8 +139,15 @@ self-contained dist.
   `STATUS_ENDPOINT_NAME`, `STATUS_QUEUE_GROUP` constants — both sides
   reference these (the agent registers under them; the client filters
   on them).
-- `_PROTOCOL_VERSION` — single source of truth for the wire-version
-  string. The agent-sdk reads it but does not redefine it.
+- (Not shared: `_PROTOCOL_VERSION = "0.3"` is defined in **this**
+  package, `agent_service/service.py` — the host is the only side that
+  writes `protocol_version` on the wire; the client compares what it
+  reads. The root `CLAUDE.md` says the same.)
+- The sender-identity codec (`synadia_ai.agents.identity`: `AgentId`,
+  `verify_sender` / `verify_sender_header`, `SenderInfo`,
+  `format_sender`, `sign_agent_id`, `SenderResolver`, the
+  `signer_from_*` helpers) — this package adds only the stateful parts
+  (`agent_service/identity.py`) and never re-exports the codec.
 - `load_context_options`, `parse_nats_url` — NATS-CLI context helpers
   applicable to both sides.
 - The numbered demo scripts `01-discover.py` … `06-chat.py` — they
@@ -197,6 +209,28 @@ deferred to a follow-up. All shapes are imported from
   terminator. The "error frame, then empty terminator" rule is
   agent-side; the exception classes themselves are imported from
   `synadia_ai.agents`.
+- **Sender identity** (extension, additive on 0.3 — spec
+  [`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
+  in `synadia-ai/synadia-agent-fabric-docs`; the implementation plan
+  with its per-PR log is `docs/plans/agent-identity-sdk-implementation-plan.md`
+  there — read its §12 before touching identity code): `AgentService`
+  classifies every `prompt` request **before** the §6.4 ack through
+  `agent_service/identity.py` (`SenderGate` over the shared
+  `verify_sender`; `NonceCache` keyed `(user, nonce)`, expiry at
+  `ts + window`, synchronous check-and-set) in the order envelope
+  `400` → header `400` → checks `401` → `signed` + unsigned `401` →
+  nonce record → `accept_sender` `403`/`401`, raise `500` → ack; the
+  handler sees `stream.sender` (`VerifiedSender` / `ClaimedSender` /
+  `None`). `status` is classified and logged, never rejected.
+  `start()` registers `user_nkey` / `account` (+ `id_sig` with
+  `identity=ServiceIdentity(signer=…)`), **always** `min_sender_trust`
+  on the prompt endpoint, and `flush()`es before returning. Rules:
+  (1) no `await` between the last check and `NonceCache.record()`;
+  (2) two wire descriptions only — `signature required` / `sender
+  rejected` — the detail goes to the log, rendered through
+  `format_sender`; (3) `operator_attested` is a deployment promise
+  (closed endpoint), off by default; (4) the host never sends
+  `Agent-Sender` and never counts header bytes in its own size check.
 
 ## Toolchain
 
@@ -264,11 +298,16 @@ await service.start()
 ```
 
 `load_context_options` lives in `synadia-ai-agents` and is re-used
-verbatim — same precedence rules (`creds` > `user_jwt` > inline
-`token` / `user`+`password`), same unsupported-field surface
-(`nkey`, TLS triple, `nsc://...` URLs raise `NatsContextError`). The
-SDK itself does NOT read `NATS_URL`; that stays an `examples/`-only
-convenience.
+verbatim — same precedence rules (`creds` > `nkey` > `user_jwt` >
+`user`+`password` > `token`; `nkey` is a seed-file path whose seed
+line is passed as `nkeys_seed_str`), same unsupported-field surface
+(TLS triple, `nsc://...` URLs raise `NatsContextError`). The SDK
+itself does NOT read `NATS_URL`; that stays an `examples/`-only
+convenience. The host's own identity is configured separately, on
+`AgentService(identity=ServiceIdentity(signer=…))` — the SDK never
+reads the seed out of the connection; `examples/_connect_cli.py` shows
+the pairing: `--nkey` / `--creds` feed both `nats.connect` and the
+signer (`signer_from_cli`).
 
 ### Examples vs scripts
 
@@ -462,6 +501,17 @@ them to success or frustrates them.
 
 ## Alignment milestones
 
+- **2026-08-29 — sender-identity extension, receiver side (PR-P2,
+  `synadia-ai-agent-service` 0.5.0, floor `synadia-ai-agents>=0.8`).**
+  `AgentService` classifies every prompt before the ack (`SenderGate`
+  / `NonceCache` in `agent_service/identity.py` over the shared
+  codec), exposes `PromptStream.sender`, takes `identity` /
+  `min_sender_trust` / `replay_window_s` / `account_token_position` /
+  `accept_sender` / `resolve_ttl_s` / `operator_attested`, registers
+  `user_nkey` / `account` / `id_sig` and always `min_sender_trust`,
+  and flushes at the end of `start()`. The reverse interop test runs
+  the TS probe with `--signed`; the reference agent gained `--nkey` /
+  `--creds` / `--min-sender-trust`. Protocol version stays `"0.3"`.
 - **2026-04-30 — package carved out of `synadia-ai-agents` at the
   0.5.0 cut.** The surface (`AgentService` and friends) lived in
   `synadia-ai-agents` through 0.4.x; at 0.5.0 it was removed there

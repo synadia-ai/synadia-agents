@@ -28,10 +28,12 @@ from synadia_ai.agents import Envelope
 from examples._connect_cli import (
     add_agent_identity_flags,
     add_connection_flags,
+    add_identity_flags,
     connect_from_cli,
+    signer_from_cli,
 )
 from examples.llm import create_llm_client
-from synadia_ai.agent_service import AgentService, PromptStream
+from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
 
 async def main() -> None:
@@ -39,6 +41,7 @@ async def main() -> None:
         description="LLM agent — answers prompts via Ollama or OpenRouter (auto-selected)."
     )
     add_connection_flags(parser)
+    add_identity_flags(parser)
     add_agent_identity_flags(parser, agent="llm")
     args = parser.parse_args()
 
@@ -52,6 +55,10 @@ async def main() -> None:
         nc=nc,
         description=f"LLM agent — answers prompts via {llm.label}",
         heartbeat_interval_s=args.heartbeat_interval,
+        # Sender identity: --nkey / --creds ($NATS_NKEY_SEED_FILE / $NATS_CREDS)
+        # sign the registration's id_sig; without them the identity keys are
+        # registered unsigned when the connection has an NKEY identity.
+        identity=ServiceIdentity(signer=signer_from_cli(args)),
     )
 
     # Wrap the prompt as a single user message and stream the model's reply. A

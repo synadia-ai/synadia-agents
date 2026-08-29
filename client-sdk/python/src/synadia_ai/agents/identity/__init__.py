@@ -30,6 +30,12 @@ from .id_sig import (
     verify_agent_id,
 )
 from .options import Identity
+from .request_info import (
+    NATS_REQUEST_INFO_HEADER,
+    RequestInfoStamp,
+    parse_request_info,
+    read_request_info,
+)
 from .resolve_sender import DEFAULT_RESOLVE_TTL_S, SenderResolver, resolve_sender
 from .self_id import (
     SELF_ID_NEGATIVE_TTL_S,
@@ -106,6 +112,7 @@ __all__ = [
     "METADATA_ACCOUNT",
     "METADATA_ID_SIG",
     "METADATA_USER_NKEY",
+    "NATS_REQUEST_INFO_HEADER",
     "SELF_ID_NEGATIVE_TTL_S",
     "SELF_ID_TIMEOUT_S",
     "SENDER_HEADER_FRAMING_BYTES",
@@ -119,6 +126,7 @@ __all__ = [
     "NkeySigner",
     "NonceSeen",
     "ParsedCreds",
+    "RequestInfoStamp",
     "SenderClaim",
     "SenderInfo",
     "SenderResolver",
@@ -148,9 +156,11 @@ __all__ = [
     "max_sender_header_bytes",
     "normalize_account_token_position",
     "parse_creds",
+    "parse_request_info",
     "parse_sender_header",
     "parse_sender_timestamp",
     "peek_self_id",
+    "read_request_info",
     "read_sender_header_value",
     "refresh_self_id",
     "resolve_sender",

@@ -123,8 +123,11 @@ Two distinct version axes:
     `0.6.0`). The release flow is in `README-DEV.md`.
   - Python: `synadia-ai-agents` (`0.8.0` — the sender-identity caller
     side; `0.7.1` is the last release on PyPI until `python-v0.8.0` is
-    tagged) + `synadia-ai-agent-service` (`0.4.1`) — both published to
-    PyPI; versions diverge per package.
+    tagged) + `synadia-ai-agent-service` (`0.5.0` — the host side, floor
+    `synadia-ai-agents>=0.8`; `0.4.1` is the last release on PyPI until
+    `python-agent-service-v0.5.0` is tagged, which needs `python-v0.8.0`
+    on PyPI first) — both published to PyPI; versions diverge per
+    package.
 - **Sender-identity extension** — additive on top of `0.3`, no
   protocol bump. Spec: `docs/agent-protocol-sender-identity.md` in
   `synadia-ai/synadia-agent-fabric-docs`; the implementation plan with

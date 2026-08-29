@@ -40,6 +40,7 @@ from ..errors import (
 from ._nkeys import base64url_decode, base64url_encode, sha256_hex, verify_with_public_key
 from .agent_id import ACCOUNT_LENGTH_ALLOWANCE_BYTES, AgentId
 from .format import format_sender
+from .request_info import read_request_info
 from .signer import SenderSigner, maybe_await
 
 if TYPE_CHECKING:
@@ -117,9 +118,11 @@ class VerifiedSender:
     id: AgentId
     header: AgentSenderHeader
     name: str | None = None
-    #: ``True`` only when the deployment declared the endpoint closed
-    #: (operator-attested mode, host package) and the server stamp agreed
-    #: with the signed ``account``. Always ``False`` from this package.
+    #: ``True`` only under ``operator_attested=True`` — the deployment
+    #: declared the endpoint closed — and the server stamp (a present
+    #: ``Nats-Request-Info`` ``acc``, or the ``account_token_position``
+    #: cross-check) agreed with the signed ``account``. ``False`` otherwise:
+    #: the account is then the sender's signed word next to a verified user.
     account_attested: bool = False
     trust: Literal["verified"] = field(default="verified", init=False)
     _resolver: Callable[[], Awaitable[AgentInfo | None]] | None = field(
@@ -514,13 +517,16 @@ def verify_sender_header(
     now: float | None = None,
     nonce_seen: NonceSeen | None = None,
     resolver: Callable[[AgentId], Awaitable[AgentInfo | None]] | None = None,
+    operator_attested: bool = False,
+    headers: Mapping[str, object] | None = None,
 ) -> SenderInfo:
     """Verify a parsed header against the message it arrived with.
 
     Check order (cheap first; the wire outcome is ``401`` either way):
-    ``ts`` window (live) → ``sub`` acceptance → nonce lookup (live, via
-    ``nonce_seen``) → ed25519. The nonce lookup deliberately precedes the
-    signature so a replay — or a forgery reusing a seen nonce — costs no
+    ``ts`` window (live) → ``sub`` acceptance → operator-attested
+    cross-check (when on) → nonce lookup (live, via ``nonce_seen``) →
+    ed25519. The nonce lookup deliberately precedes the signature so a
+    replay — or a forgery reusing a seen nonce — costs no
     sha256/ed25519. An unsigned header yields a :class:`ClaimedSender`
     without any check. ``stored`` mode (JetStream consumers) skips the
     freshness checks and uses the stored subject as ``arrival_subject``:
@@ -530,7 +536,21 @@ def verify_sender_header(
     **A returned :class:`VerifiedSender` does not mean the nonce was
     recorded.** This function only *looks up* nonces; the receiver
     records the nonce (check-and-set) after every other admission step
-    passed. A caller that skips recording has no replay protection.
+    passed — see the host package's ``SenderGate.admit_prompt()``. A
+    caller that skips recording has no replay protection.
+
+    ``operator_attested`` (spec Appendix A) is **off by default** and a
+    deployment promise the SDK cannot verify: every request reaching this
+    receiver crossed a service import, so ``Nats-Request-Info`` in
+    ``headers`` (and an inserted account token) is the server's stamp,
+    never a peer's forgery. With it on, a *signed* header is cross-checked
+    against the stamp: a present ``acc`` must equal the signed
+    ``account`` and a present ``user`` (a ``share: true`` import) the
+    signed ``user``; disagreement, or a stamp the server would not write,
+    → ``401``. A missing stamp is compared to nothing. Agreement on
+    ``acc`` — or the ``account_token_position`` cross-check — sets
+    :attr:`VerifiedSender.account_attested`. Claims are never
+    cross-checked, and ``Nats-Request-Info`` is read nowhere else.
 
     Raises :class:`SenderVerificationError` (``.code == 401``) on a
     failing check.
@@ -559,6 +579,28 @@ def verify_sender_header(
     if subject_problem is not None:
         raise _reject(subject_problem)
 
+    # Operator-attested cross-check (cheap; before the nonce lookup and the
+    # signature, same 401 outcome). Only here is `Nats-Request-Info` ever read.
+    account_attested = False
+    if operator_attested:
+        present, stamp = read_request_info(headers)
+        if present and stamp is None:
+            raise _reject(
+                "Nats-Request-Info is present but is not a server stamp (operator-attested mode)"
+            )
+        if stamp is not None:
+            if stamp.account is not None and stamp.account != header.account:
+                raise _reject(
+                    f"Nats-Request-Info acc {stamp.account!r} disagrees with the signed "
+                    f"account {header.account!r}"
+                )
+            if stamp.user is not None and stamp.user != header.user:
+                raise _reject(
+                    f"Nats-Request-Info user {stamp.user!r} disagrees with the signed "
+                    f"user {header.user}"
+                )
+        account_attested = position is not None or (stamp is not None and stamp.account is not None)
+
     if mode == "live" and nonce_seen is not None and nonce_seen(header.user, header.nonce):
         raise _reject(f"nonce {header.nonce!r} already seen for {header.user}")
 
@@ -575,7 +617,13 @@ def verify_sender_header(
 
     id = AgentId.new(header.account, header.user)
     bound = (lambda: resolver(id)) if resolver is not None else None
-    return VerifiedSender(id=id, name=header.name, header=header, _resolver=bound)
+    return VerifiedSender(
+        id=id,
+        name=header.name,
+        header=header,
+        account_attested=account_attested,
+        _resolver=bound,
+    )
 
 
 class _MessageLike(Protocol):
@@ -600,13 +648,15 @@ def verify_sender(
     now: float | None = None,
     nonce_seen: NonceSeen | None = None,
     resolver: Callable[[AgentId], Awaitable[AgentInfo | None]] | None = None,
+    operator_attested: bool = False,
 ) -> SenderInfo | None:
     """The spec's ``VerifySender(msg, mode)`` over a structural message.
 
     ``msg.subject`` is the arrival subject (the stored subject for a
-    JetStream record). Returns ``None`` when the message carries no
-    ``Agent-Sender`` header or one with an unknown ``v``; otherwise
-    :func:`verify_sender_header` applies (and may raise
+    JetStream record); ``msg.headers`` supplies the ``Nats-Request-Info``
+    stamp under ``operator_attested``. Returns ``None`` when the message
+    carries no ``Agent-Sender`` header or one with an unknown ``v``;
+    otherwise :func:`verify_sender_header` applies (and may raise
     :class:`MalformedSenderHeaderError` / :class:`SenderVerificationError`).
     """
     value = read_sender_header_value(msg.headers)
@@ -625,6 +675,8 @@ def verify_sender(
         now=now,
         nonce_seen=nonce_seen,
         resolver=resolver,
+        operator_attested=operator_attested,
+        headers=msg.headers,
     )
 
 
