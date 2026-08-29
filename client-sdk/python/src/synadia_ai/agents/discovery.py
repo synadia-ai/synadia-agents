@@ -27,13 +27,16 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from nats.errors import NoRespondersError
 
 from ._bytes import InvalidSizeError, parse_human_bytes
 from ._inbox import new_inbox as _new_inbox
 from ._logging import get_logger
+from .errors import InvalidAgentIdError
+from .identity.agent_id import AgentId
+from .identity.id_sig import METADATA_ACCOUNT, METADATA_ID_SIG, METADATA_USER_NKEY, verify_agent_id
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
@@ -79,6 +82,28 @@ DEFAULT_DISCOVER_STALL_S: float = 0.75
 DEFAULT_DISCOVER_MAX_WAIT_S: float = 2.0
 
 
+# --- sender-identity extension -------------------------------------------
+
+#: The two ``min_sender_trust`` levels a caller can act on.
+MinSenderTrust: TypeAlias = Literal["any", "signed"]
+
+#: The ``prompt`` endpoint metadata key that advertises the sender-identity extension.
+MIN_SENDER_TRUST_KEY = "min_sender_trust"
+
+
+def parse_min_sender_trust(raw: str | None) -> tuple[MinSenderTrust, bool]:
+    """Parse a raw ``min_sender_trust`` value into ``(level, present)``.
+
+    Absent → ``("any", False)`` (a 0.3 agent); ``"any"`` → ``("any",
+    True)``; ``"signed"`` and any unknown value → ``("signed", True)`` —
+    the strictest level a caller can satisfy on its own. The raw string
+    stays in :attr:`EndpointInfo.metadata`.
+    """
+    if raw is None:
+        return ("any", False)
+    return ("any" if raw == "any" else "signed", True)
+
+
 # --- subject-name shapes -------------------------------------------------
 
 # `agents.prompt.{agent}.{owner}.{session_name}` — 5 dot tokens (§2 v0.3).
@@ -98,6 +123,12 @@ class EndpointInfo:
     ``prompt`` endpoint declared them (the protocol requires both per §2.1).
     Unparseable ``max_payload`` strings leave the field ``None``; the raw
     string remains in ``metadata`` per §5.6.
+
+    ``min_sender_trust`` (sender-identity extension) is parsed for the
+    ``prompt`` endpoint: ``"any"`` when absent or ``"any"``, ``"signed"``
+    for ``"signed"`` and for any unknown value. Whether the key was
+    present at all — the feature-detection rule — is
+    :attr:`AgentInfo.supports_sender_identity`.
     """
 
     name: str
@@ -106,6 +137,7 @@ class EndpointInfo:
     metadata: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
     max_payload_bytes: int | None = None
     attachments_ok: bool | None = None
+    min_sender_trust: MinSenderTrust = "any"
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +150,17 @@ class AgentInfo:
     is the addressing key for ``$SRV.INFO.agents.{id}`` direct lookup (§4.2).
     ``session_name`` is the 5th token of the prompt subject (v0.3) — the
     session this agent serves.
+
+    Sender-identity extension: ``supports_sender_identity`` is ``True``
+    iff the prompt endpoint metadata carries ``min_sender_trust`` (a 0.3
+    agent that never heard of identity reports ``False``); ``identity``
+    is the agent ID the instance registered (``user_nkey`` + ``account``
+    metadata) when both are present and well-formed — a registration
+    claim until ``id_sig_verified`` says otherwise; ``id_sig_verified``
+    is ``True`` iff ``id_sig`` is present and verifies over the
+    instance's own ``prompt`` endpoint subject (``AGENT-ID-V1``). That is
+    one ed25519 verification per discovered record that carries
+    ``id_sig`` — cheap, but it runs inside every ``discover()``.
     """
 
     instance_id: str
@@ -130,6 +173,9 @@ class AgentInfo:
     metadata: Mapping[str, str]
     endpoints: tuple[EndpointInfo, ...]
     prompt_endpoint: EndpointInfo
+    supports_sender_identity: bool = False
+    identity: AgentId | None = None
+    id_sig_verified: bool = False
 
 
 # --- $SRV.INFO parsing ---------------------------------------------------
@@ -209,7 +255,24 @@ def build_agent_info(info: dict[str, object]) -> AgentInfo | None:  # noqa: PLR0
         metadata=metadata,
         endpoints=endpoints,
         prompt_endpoint=prompt_endpoint,
+        supports_sender_identity=MIN_SENDER_TRUST_KEY in prompt_endpoint.metadata,
+        identity=_registered_identity(metadata),
+        id_sig_verified=(
+            METADATA_ID_SIG in metadata and verify_agent_id(metadata, prompt_endpoint.subject)
+        ),
     )
+
+
+def _registered_identity(metadata: Mapping[str, str]) -> AgentId | None:
+    """``user_nkey`` + ``account`` → :class:`AgentId`, or ``None`` when absent / malformed."""
+    user = metadata.get(METADATA_USER_NKEY)
+    account = metadata.get(METADATA_ACCOUNT)
+    if user is None or account is None:
+        return None
+    try:
+        return AgentId.new(account, user)
+    except InvalidAgentIdError:
+        return None
 
 
 def _build_endpoint_info(raw: Mapping[str, object]) -> EndpointInfo:
@@ -249,6 +312,8 @@ def _build_endpoint_info(raw: Mapping[str, object]) -> EndpointInfo:
     else:
         attachments_ok = None
 
+    min_sender_trust, _present = parse_min_sender_trust(metadata.get(MIN_SENDER_TRUST_KEY))
+
     return EndpointInfo(
         name=name,
         subject=subject,
@@ -256,6 +321,7 @@ def _build_endpoint_info(raw: Mapping[str, object]) -> EndpointInfo:
         metadata=metadata,
         max_payload_bytes=max_payload_bytes,
         attachments_ok=attachments_ok,
+        min_sender_trust=min_sender_trust,
     )
 
 
@@ -426,6 +492,7 @@ async def discover_agent_infos(
 __all__ = [
     "DEFAULT_DISCOVER_MAX_WAIT_S",
     "DEFAULT_DISCOVER_STALL_S",
+    "MIN_SENDER_TRUST_KEY",
     "PROMPT_ENDPOINT_NAME",
     "PROMPT_QUEUE_GROUP",
     "SERVICE_NAME",
@@ -434,9 +501,11 @@ __all__ = [
     "AgentInfo",
     "DiscoverFilter",
     "EndpointInfo",
+    "MinSenderTrust",
     "build_agent_info",
     "discover_agent_infos",
     "matches_filter",
+    "parse_min_sender_trust",
     "ping_instance",
     "request_many_stall",
 ]

@@ -30,18 +30,26 @@ NATS connections; the caller owns ``nc`` and is responsible for
 closing it.
 
 Supported context fields: ``url``, ``token``, ``user``/``password``,
-``creds`` (with ``~`` expansion), ``user_jwt``, ``inbox_prefix``.
+``creds`` (a file path, with ``~`` expansion → ``user_credentials``),
+``nkey`` (a seed file path, with ``~`` expansion; the seed line is read
+and passed as ``nkeys_seed_str`` — nats-py's own ``nkeys_seed=<path>``
+reads the file verbatim and rejects a trailing newline),
+``user_jwt``, ``inbox_prefix``.
 
-Auth precedence inside a context: ``creds`` > ``user_jwt`` > inline
-``token`` / ``user``+``password``.
+Auth precedence inside a context: ``creds`` > ``nkey`` > ``user_jwt`` >
+``user``+``password`` > ``token``.
 
 Unsupported fields raise :class:`~synadia_ai.agents.errors.NatsContextError`
-with an actionable message: ``nkey``, TLS triple (``cert`` / ``key`` /
-``ca``), ``nsc://...`` URLs.
+with an actionable message: the TLS triple (``cert`` / ``key`` / ``ca``)
+and ``nsc://...`` URLs.
 
 Ignored (present in JSON but irrelevant to the SDK): ``jetstream_*``,
-``socks_proxy``, ``color_scheme``, ``windows_*``, ``user_seed`` (only
-meaningful with ``nkey``), ``tls_first``.
+``socks_proxy``, ``color_scheme``, ``windows_*``, ``user_seed`` (the
+identity module's ``signer_from_context`` reads it), ``tls_first``.
+
+:func:`read_context_file` is the *reading* half of
+:func:`load_context_options` — the sender-identity module reuses it to
+find the seed / creds path without building connection options.
 
 Both helpers normalise each server URL by defaulting a missing port to
 ``4222`` for ``nats://`` / ``tls://`` schemes (``ws://`` / ``wss://``
@@ -62,6 +70,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -71,23 +80,27 @@ from .errors import NatsContextError
 # Fields we know about but do not yet wire into connect kwargs. Presence
 # of any of these in a loaded context raises NatsContextError — we do
 # NOT silently ignore.
-_UNSUPPORTED_FIELDS = ("nkey", "cert", "key", "ca", "nsc")
+_UNSUPPORTED_FIELDS = ("cert", "key", "ca", "nsc")
 
 
-def load_context_options(selector: str) -> dict[str, Any]:
-    """Resolve a ``nats`` CLI context into kwargs for :func:`nats.connect`.
+@dataclass(frozen=True, slots=True)
+class NatsContextFile:
+    """A ``nats`` CLI context file, read but not yet turned into connection kwargs."""
 
-    Pass ``"current"`` to honour ``$NATS_CONTEXT`` → the selection file
-    written by ``nats context select``. Any other value loads
-    ``<config-dir>/context/<selector>.json`` directly.
+    #: The resolved context name (after ``"current"`` resolution).
+    name: str
+    #: Absolute path of the context JSON file.
+    path: Path
+    #: The parsed JSON object, verbatim.
+    fields: dict[str, Any]
 
-    Returns a dict with at minimum ``servers``; auth kwargs (``token``,
-    ``user``, ``password``, ``user_credentials``, ``user_jwt_cb``) and
-    ``inbox_prefix`` are added when the context declared them.
 
-    Raises :class:`~synadia_ai.agents.errors.NatsContextError` on any failure:
-    missing file, malformed JSON, illegal name, missing ``url``,
-    unsupported field, missing ``creds`` file, no context selected.
+def read_context_file(selector: str) -> NatsContextFile:
+    """Read a ``nats`` CLI context by name (``"current"`` resolves the selected one).
+
+    The reading half of :func:`load_context_options`; raises
+    :class:`~synadia_ai.agents.errors.NatsContextError` for a missing
+    file, malformed JSON, an illegal name or no selected context.
     """
     name = _resolve_current_context_name() if selector == "current" else selector
     _assert_valid_context_name(name)
@@ -108,6 +121,28 @@ def load_context_options(selector: str) -> dict[str, Any]:
         raise NatsContextError(f"NATS context {name!r} is not valid JSON: {exc}") from exc
     if not isinstance(parsed, dict):
         raise NatsContextError(f"NATS context {name!r} must be a JSON object")
+    return NatsContextFile(name=name, path=path, fields=parsed)
+
+
+def load_context_options(selector: str) -> dict[str, Any]:
+    """Resolve a ``nats`` CLI context into kwargs for :func:`nats.connect`.
+
+    Pass ``"current"`` to honour ``$NATS_CONTEXT`` → the selection file
+    written by ``nats context select``. Any other value loads
+    ``<config-dir>/context/<selector>.json`` directly.
+
+    Returns a dict with at minimum ``servers``; auth kwargs (``token``,
+    ``user``, ``password``, ``user_credentials``, ``nkeys_seed_str``,
+    ``user_jwt_cb``) and ``inbox_prefix`` are added when the context
+    declared them.
+
+    Raises :class:`~synadia_ai.agents.errors.NatsContextError` on any failure:
+    missing file, malformed JSON, illegal name, missing ``url``,
+    unsupported field, missing ``creds`` / ``nkey`` file, no context
+    selected.
+    """
+    ctx = read_context_file(selector)
+    name, parsed = ctx.name, ctx.fields
 
     url = parsed.get("url")
     if not isinstance(url, str) or not url:
@@ -143,18 +178,32 @@ def load_context_options(selector: str) -> dict[str, Any]:
 def _build_auth_kwargs(name: str, parsed: dict[str, Any]) -> dict[str, Any]:
     """Pick the right auth kwargs given the context's auth precedence.
 
-    Precedence: ``creds`` > ``user_jwt`` > inline ``token`` /
-    ``user``+``password``. Empty strings are treated as unset so a
-    context with one slot zeroed out doesn't shadow another.
+    Precedence: ``creds`` > ``nkey`` > ``user_jwt`` > ``user``+``password``
+    > ``token``. Empty strings are treated as unset so a context with one
+    slot zeroed out doesn't shadow another.
     """
     out: dict[str, Any] = {}
 
     creds = parsed.get("creds")
     if isinstance(creds, str) and creds:
-        creds_path = _expand_user(creds)
+        creds_path = expand_user(creds)
         if not Path(creds_path).is_file():
             raise NatsContextError(f"NATS context {name!r}: creds file not found: {creds_path}")
         out["user_credentials"] = creds_path
+        return out
+
+    # `nats context add --nkey` writes `nkey` as a path to a file holding
+    # the raw seed. nats-py's own `nkeys_seed=<path>` reads that file
+    # verbatim and chokes on the trailing newline `nk -gen user` writes
+    # (`nkeys: invalid seed`), so the seed line is read here, trimmed, and
+    # handed over as `nkeys_seed_str` — nats-py signs the server nonce
+    # with it on each CONNECT.
+    nkey = parsed.get("nkey")
+    if isinstance(nkey, str) and nkey:
+        nkey_path = expand_user(nkey)
+        if not Path(nkey_path).is_file():
+            raise NatsContextError(f"NATS context {name!r}: nkey seed file not found: {nkey_path}")
+        out["nkeys_seed_str"] = _read_seed_file(name, nkey_path)
         return out
 
     user_jwt = parsed.get("user_jwt")
@@ -167,11 +216,32 @@ def _build_auth_kwargs(name: str, parsed: dict[str, Any]) -> dict[str, Any]:
         out["user_jwt_cb"] = _jwt_cb
         return out
 
-    for key in ("token", "user", "password"):
+    for key in ("user", "password"):
         value = parsed.get(key)
         if isinstance(value, str) and value:
             out[key] = value
+    if out:
+        return out
+
+    token = parsed.get("token")
+    if isinstance(token, str) and token:
+        out["token"] = token
     return out
+
+
+def _read_seed_file(name: str, path: str) -> str:
+    """The seed line of an nkey seed file (bare, or inside a ``BEGIN USER NKEY SEED`` block)."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise NatsContextError(
+            f"NATS context {name!r}: cannot read nkey seed file {path}: {exc.strerror}"
+        ) from exc
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    seed = next((ln for ln in lines if ln.startswith("S") and "-" not in ln), None)
+    if seed is None:
+        raise NatsContextError(f"NATS context {name!r}: no nkey seed line found in {path}")
+    return seed
 
 
 # --- internals ----------------------------------------------------------
@@ -185,7 +255,7 @@ def _nats_config_dir() -> Path:
     """
     override = os.environ.get("NATS_CONFIG_HOME")
     if override:
-        return Path(_expand_user(override))
+        return Path(expand_user(override))
     xdg = os.environ.get("XDG_CONFIG_HOME")
     if xdg:
         return Path(xdg) / "nats"
@@ -273,8 +343,8 @@ def _ensure_default_port(server: str) -> str:
     return f"{server}:{_DEFAULT_NATS_PORT}"
 
 
-def _expand_user(path: str) -> str:
-    """Expand a leading ``~`` using ``$HOME`` (mirrors TS ``expandTilde``)."""
+def expand_user(path: str) -> str:
+    """Expand a leading ``~`` using ``$HOME`` (mirrors TS ``expandHome``)."""
     if not path.startswith("~"):
         return path
     home = os.environ.get("HOME")
@@ -392,4 +462,10 @@ def _parse_single_nats_url(part: str, *, original: str) -> dict[str, Any]:
     return out
 
 
-__all__ = ["load_context_options", "parse_nats_url"]
+__all__ = [
+    "NatsContextFile",
+    "expand_user",
+    "load_context_options",
+    "parse_nats_url",
+    "read_context_file",
+]

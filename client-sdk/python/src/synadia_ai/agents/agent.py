@@ -3,7 +3,13 @@
 Wraps a parsed :class:`~synadia_ai.agents.discovery.AgentInfo` with the
 :class:`~nats.aio.client.Client` needed to prompt it. Mirrors the TS
 SDK's ``Agent`` class (PR #7): every field flat / read-only, ``prompt()``
-is the one method that actually does I/O.
+and ``status()`` are the methods that actually do I/O.
+
+Sender identity (extension): when constructed by an :class:`Agents`
+client the handle carries its :class:`~synadia_ai.agents.identity.Identity`,
+and ``prompt()`` / ``status()`` attach an ``Agent-Sender`` header —
+signed when a signer is configured, an unsigned claim otherwise, nothing
+when the connection has no identity.
 
 The server-side counterpart (``AgentService``) ships in the sibling
 distribution :mod:`synadia_ai.agent_service`.
@@ -17,16 +23,24 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
 
+import pydantic
+
 from ._logging import get_logger
 from ._mux import mux_for
-from .discovery import AgentInfo, EndpointInfo
+from ._request import request_one
+from .discovery import STATUS_ENDPOINT_NAME, AgentInfo, EndpointInfo, MinSenderTrust
 from .envelope import Attachment, Envelope, encode
 from .errors import (
     AgentsClosedError,
+    NatsAgentError,
     ProtocolError,
+    SenderSignatureRequiredError,
     StreamMaxWaitExceededError,
     StreamStalledError,
 )
+from .heartbeat import HeartbeatPayload
+from .identity.agent_id import AgentId
+from .identity.options import Identity, plan_sender_header, sender_header_bound
 from .messages import QueryChunk, ResponseChunk, StatusChunk, decode_chunk
 from .validation import (
     assert_attachments_allowed,
@@ -39,6 +53,13 @@ if TYPE_CHECKING:
     from nats.aio.msg import Msg
 
 log = get_logger(__name__)
+
+_SERVICE_ERROR_CODE_HEADER = "Nats-Service-Error-Code"
+_SERVICE_ERROR_HEADER = "Nats-Service-Error"
+
+# Default `Agent.status()` request timeout — 2 seconds (mirrors the TS
+# SDK's DEFAULT_STATUS_TIMEOUT_MS).
+DEFAULT_STATUS_TIMEOUT_S: float = 2.0
 
 
 # Default per-stream inactivity timeout (§6.6) — 60 seconds. Mirrors the
@@ -107,7 +128,10 @@ class Agent:
     2. **From an explicit :class:`AgentInfo`** — pass the info you got
        from a heartbeat + ``$SRV.INFO.agents.{id}`` lookup. If you also
        want close-coordination, pass the :attr:`Agents.close_event` so
-       :meth:`Agents.close` cancels in-flight streams on this handle too.
+       :meth:`Agents.close` cancels in-flight streams on this handle too;
+       pass ``identity=`` (the :class:`Agents` client's) so requests
+       carry an ``Agent-Sender`` header — a handle built without it
+       sends none.
     """
 
     def __init__(
@@ -118,6 +142,7 @@ class Agent:
         stream_inactivity_timeout: float = DEFAULT_STREAM_INACTIVITY_TIMEOUT_S,
         prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         close_event: asyncio.Event | None = None,
+        identity: Identity | None = None,
     ) -> None:
         if prompt_max_wait_s <= 0:
             raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
@@ -126,6 +151,7 @@ class Agent:
         self._default_inactivity_timeout = stream_inactivity_timeout
         self._default_max_wait_s = prompt_max_wait_s
         self._close_event = close_event
+        self._sender_identity = identity
 
     # --- flat read-only identity / capability fields -------------------
 
@@ -194,6 +220,28 @@ class Agent:
         """The underlying :class:`AgentInfo` record (frozen)."""
         return self._info
 
+    # --- sender-identity extension (mirrors AgentInfo) ------------------
+
+    @property
+    def supports_sender_identity(self) -> bool:
+        """``True`` iff the prompt endpoint advertises ``min_sender_trust``."""
+        return self._info.supports_sender_identity
+
+    @property
+    def min_sender_trust(self) -> MinSenderTrust:
+        """``min_sender_trust`` of the prompt endpoint (``"any"`` for a 0.3 agent)."""
+        return self._info.prompt_endpoint.min_sender_trust
+
+    @property
+    def identity(self) -> AgentId | None:
+        """The agent ID the instance registered, when present and well-formed."""
+        return self._info.identity
+
+    @property
+    def id_sig_verified(self) -> bool:
+        """``True`` iff the registration's ``id_sig`` verifies over the prompt subject."""
+        return self._info.id_sig_verified
+
     # --- prompt --------------------------------------------------------
 
     def prompt(
@@ -203,6 +251,8 @@ class Agent:
         attachments: list[Attachment] | None = None,
         timeout: float | None = None,
         max_wait_s: float | None = None,
+        subject: str | None = None,
+        sub: str | None = None,
     ) -> AsyncIterator[StreamMessage]:
         """Send a prompt and return an async iterator of streamed messages.
 
@@ -238,9 +288,31 @@ class Agent:
         - :class:`PromptEmptyError` — empty prompt text (§5.1).
         - :class:`AttachmentsNotSupportedError` — attachments with
           ``attachments_ok=false`` (§5.4).
-        - :class:`PayloadTooLargeError` — envelope exceeds ``max_payload``
-          (§5.4).
+        - :class:`PayloadTooLargeError` — envelope (plus the sound upper
+          bound of an ``Agent-Sender`` header, when one may be sent)
+          exceeds ``max_payload`` (§5.4).
         - :class:`ValueError` — ``max_wait_s`` is not strictly positive.
+        - :class:`SenderSignatureRequiredError` — the endpoint declares
+          ``min_sender_trust: signed`` and no ``Identity.signer`` is
+          configured.
+
+        Sender identity (extension): with an :class:`Agents`-supplied
+        identity the request carries an ``Agent-Sender`` header, signed
+        at publish time over the exact envelope bytes. Errors that need
+        the async identity lookup surface on the first ``__anext__``:
+        :class:`NoIdentityError` / :class:`IdentityUnavailableError` on a
+        ``signed`` endpoint, :class:`IdentityMismatchError` whenever a
+        signer is configured, and the exact :class:`PayloadTooLargeError`
+        re-check once the header size is known.
+
+        ``subject`` / ``sub`` are for callers behind a remapping service
+        import: ``subject`` is what to publish to (default: the
+        discovered prompt endpoint subject — behind an export that
+        inserts the caller's account token, or a ``to:`` /
+        ``local_subject`` rename by your own account, pass the local
+        name); ``sub`` is what to sign (default: ``subject``) — only for
+        a rename by **your own** account pass the exporter's subject,
+        ``agent.prompt_endpoint.subject``.
 
         The iterator yields :class:`ResponseChunk` / :class:`StatusChunk` as
         the agent emits them and :class:`Query` when the agent asks a
@@ -294,17 +366,84 @@ class Agent:
         assert_prompt_non_empty(envelope.prompt)
         ep = self._info.prompt_endpoint
         assert_attachments_allowed(bool(envelope.attachments), ep.attachments_ok)
+
+        publish_subject = subject if subject is not None else ep.subject
+        signed_subject = sub if sub is not None else publish_subject
+        require_signed = ep.min_sender_trust == "signed"
+        identity = self._sender_identity
+        if require_signed and (identity is None or identity.signer is None):
+            raise SenderSignatureRequiredError(publish_subject)
+
         # The caller's own broker may enforce a smaller `max_payload` than
         # the agent advertises (multi-cluster / per-account configs); pass
         # `nc.max_payload` so the validator picks the smaller of the two.
         # Treat 0 / missing as "not declared" — the agent's value (or
-        # nothing) governs.
+        # nothing) governs. The `Agent-Sender` header counts too: a sound
+        # upper bound is applied here, synchronously; the exact size is
+        # re-checked in `_stream_prompt` once the identity is known.
         conn_limit = getattr(self._nc, "max_payload", 0) or None
-        assert_within_max_payload(len(encoded), ep.max_payload_bytes, conn_limit)
+        header_bound = sender_header_bound(identity, self._nc, signed_subject)
+        assert_within_max_payload(len(encoded), ep.max_payload_bytes, conn_limit, header_bound)
 
         effective_timeout = timeout if timeout is not None else self._default_inactivity_timeout
         effective_max_wait = max_wait_s if max_wait_s is not None else self._default_max_wait_s
-        return self._stream_prompt(envelope, encoded, effective_timeout, effective_max_wait)
+        return self._stream_prompt(
+            encoded,
+            effective_timeout,
+            effective_max_wait,
+            subject=publish_subject,
+            sub=signed_subject,
+            require_signed=require_signed,
+        )
+
+    # --- status --------------------------------------------------------
+
+    async def status(
+        self,
+        *,
+        subject: str | None = None,
+        sub: str | None = None,
+        timeout_s: float = DEFAULT_STATUS_TIMEOUT_S,
+    ) -> HeartbeatPayload:
+        """Probe the agent's ``status`` endpoint (§8.7) and return its heartbeat payload.
+
+        Attaches an ``Agent-Sender`` header like :meth:`prompt` does (the
+        receiver classifies it, never rejects on it). A single request on
+        the SDK inbox with an empty payload (which hashes to the SHA-256
+        of zero bytes). ``subject`` / ``sub`` are the same overrides as on
+        :meth:`prompt`.
+
+        Raises :class:`NatsAgentError` when the agent declares no
+        ``status`` endpoint and no ``subject`` was given,
+        :class:`ProtocolError` on an error-headered reply or a reply that
+        is not a §8.3 heartbeat payload, :class:`TimeoutError` /
+        :class:`~nats.errors.NoRespondersError` from the transport, and
+        :class:`IdentityMismatchError` when a configured signer is not
+        the connection's user (other identity failures mean "no header").
+        """
+        endpoint = next((e for e in self.endpoints if e.name == STATUS_ENDPOINT_NAME), None)
+        publish_subject = (
+            subject if subject is not None else (endpoint.subject if endpoint is not None else None)
+        )
+        if publish_subject is None:
+            raise NatsAgentError(f"agent {self.instance_id} declares no status endpoint")
+        signed_subject = sub if sub is not None else publish_subject
+        plan = await plan_sender_header(
+            self._sender_identity, self._nc, signed_subject, require_signed=False
+        )
+        headers = await plan.build_headers(b"") if plan is not None else None
+        msg = await request_one(
+            self._nc, publish_subject, b"", timeout_s=timeout_s, headers=headers
+        )
+        reply_headers = msg.headers or {}
+        if _SERVICE_ERROR_CODE_HEADER in reply_headers:
+            code = reply_headers[_SERVICE_ERROR_CODE_HEADER]
+            desc = reply_headers.get(_SERVICE_ERROR_HEADER, "")
+            raise ProtocolError(f"service error {code}: {desc}")
+        try:
+            return HeartbeatPayload.model_validate_json(msg.data)
+        except pydantic.ValidationError as exc:
+            raise ProtocolError("status reply is not a §8.3 heartbeat payload") from exc
 
     async def _wait_for_chunk(
         self,
@@ -416,13 +555,32 @@ class Agent:
             raise ProtocolError(f"prompt stream cancelled: owning Agents is closed (reply={reply})")
 
     async def _stream_prompt(
-        self, envelope: Envelope, encoded: bytes, timeout: float, max_wait_s: float
+        self,
+        encoded: bytes,
+        timeout: float,
+        max_wait_s: float,
+        *,
+        subject: str,
+        sub: str,
+        require_signed: bool,
     ) -> AsyncIterator[StreamMessage]:
-        del envelope  # retained for readability at the call site; not needed here
         # Pre-flight: refuse outright if the owning Agents is already
         # closed. This catches the "called prompt() after close()" case
         # cleanly, before any wire I/O or mux state mutation.
         self._raise_if_closed()
+
+        # Sender identity: resolve the identity (at most one awaited lookup
+        # per connection) and re-check `max_payload` with the exact header
+        # size. The header itself is built — signed — at publish time.
+        plan = await plan_sender_header(
+            self._sender_identity, self._nc, sub, require_signed=require_signed
+        )
+        if plan is not None:
+            ep = self._info.prompt_endpoint
+            conn_limit = getattr(self._nc, "max_payload", 0) or None
+            assert_within_max_payload(
+                len(encoded), ep.max_payload_bytes, conn_limit, plan.wire_bytes
+            )
 
         # Per-nc mux singleton — shared across every Agent on the same
         # connection. See `_mux.py`'s INTERIM-NATSPY-REQUEST-MANY note.
@@ -441,14 +599,16 @@ class Agent:
         token, queue = mux.register(on_msg=on_msg)
         try:
             reply = mux.reply_subject_for(token)
-            subject = self._info.prompt_endpoint.subject
 
             # Re-check after the mux.start() await: close may have
             # fired during the SUB+flush window. Bail before publishing
             # rather than firing a request whose reply we won't consume.
             self._raise_if_closed()
 
-            await self._nc.publish(subject, encoded, reply=reply)
+            # Signed at publish time so `ts` / nonce are fresh even when the
+            # caller iterates late; the signature covers exactly `encoded`.
+            headers = await plan.build_headers(encoded) if plan is not None else None
+            await self._nc.publish(subject, encoded, reply=reply, headers=headers)
 
             while True:
                 item = await self._wait_for_chunk(
@@ -460,14 +620,14 @@ class Agent:
                 )
 
                 msg: Msg = item  # type: ignore[assignment]
-                headers = msg.headers or {}
-                if "Nats-Service-Error-Code" in headers:
-                    code = headers["Nats-Service-Error-Code"]
-                    desc = headers.get("Nats-Service-Error", "")
+                reply_headers = msg.headers or {}
+                if _SERVICE_ERROR_CODE_HEADER in reply_headers:
+                    code = reply_headers[_SERVICE_ERROR_CODE_HEADER]
+                    desc = reply_headers.get(_SERVICE_ERROR_HEADER, "")
                     log.warning("service error on %s: code=%s desc=%s", reply, code, desc)
                     raise ProtocolError(f"service error {code}: {desc}")
 
-                if msg.data == b"" and not headers:
+                if msg.data == b"" and not reply_headers:
                     # §6.5: the terminator is a zero-byte body with NO headers.
                     # An empty body that carries headers (e.g. an error frame
                     # with no JSON context — §9.1) is explicitly not the
@@ -507,6 +667,7 @@ class Agent:
 
 __all__ = [
     "DEFAULT_PROMPT_MAX_WAIT_S",
+    "DEFAULT_STATUS_TIMEOUT_S",
     "DEFAULT_STREAM_INACTIVITY_TIMEOUT_S",
     "Agent",
     "Query",

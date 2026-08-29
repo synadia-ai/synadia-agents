@@ -97,6 +97,22 @@ Every numbered example honours the same flag resolution, in order:
 3. `$NATS_URL` - convenience default for demos (the SDK itself does not read it)
 4. selected context - `$NATS_CONTEXT` or the output of `nats context select`
 
+Sender identity rides on top — every example also takes
+`--nkey <seed-file>` / `$NATS_NKEY_SEED_FILE` or `--creds <creds-file>`
+/ `$NATS_CREDS` (authenticates the connection **and** signs every
+`Agent-Sender` header) and `--sender-name` / `$NATS_SENDER_NAME` (the
+display name in the header). Without them the examples send unsigned
+claims when the connection has an NKEY identity and nothing otherwise.
+`../scripts/whoami.py` takes the same flags and prints what `self_id()`
+resolves. The seed always comes from a **file** — never put it in an
+environment value that every spawned tool process would inherit.
+
+| Variable | Flag | Meaning |
+| --- | --- | --- |
+| `NATS_NKEY_SEED_FILE` | `--nkey` | path to a user seed file (`SU…`) |
+| `NATS_CREDS` | `--creds` | path to a credentials file (JWT + seed); the identity is read from the JWT |
+| `NATS_SENDER_NAME` | `--sender-name` | display name carried in `Agent-Sender` (≤ 64 chars) |
+
 If none of those resolve, the demo exits with a pointed error. See
 [`CLAUDE.md`](../CLAUDE.md#connecting-to-nats) for the full
 `synadia_ai.agents.load_context_options()` contract (XDG paths, supported context

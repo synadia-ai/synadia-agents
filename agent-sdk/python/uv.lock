@@ -644,17 +644,21 @@ dev = [
 
 [[package]]
 name = "synadia-ai-agents"
-version = "0.7.1"
+version = "0.8.0"
 source = { editable = "../../client-sdk/python" }
 dependencies = [
     { name = "nats-py" },
+    { name = "nkeys" },
     { name = "pydantic" },
+    { name = "pynacl" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "nats-py", specifier = ">=2.7" },
+    { name = "nkeys", specifier = ">=0.2" },
     { name = "pydantic", specifier = ">=2.5" },
+    { name = "pynacl", specifier = ">=1.5" },
     { name = "rich", marker = "extra == 'examples'", specifier = ">=13" },
 ]
 provides-extras = ["examples"]
@@ -662,7 +666,6 @@ provides-extras = ["examples"]
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=1.10" },
-    { name = "nkeys", specifier = ">=0.2" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "rich", specifier = ">=13" },

@@ -108,6 +108,40 @@ async def evidence(
         await recorder.detach()
 
 
+class EvidenceFor(Protocol):
+    """``await evidence_for(nc)`` → a recorder spying on *that* connection."""
+
+    def __call__(self, nc: NATSClient, /) -> Awaitable[EvidenceRecorder]: ...
+
+
+@pytest_asyncio.fixture
+async def evidence_for(request: pytest.FixtureRequest) -> AsyncIterator[EvidenceFor]:
+    """Evidence recorder factory for the identity servers' *authenticated* connections.
+
+    The ``evidence`` fixture is bound to the session server's anonymous
+    ``nc``; identity tests connect as nkey users to per-topology servers,
+    so they attach the spy to their own connection instead. The
+    ``_INBOX.>`` spy captures the ``$SYS.REQ.USER.INFO`` reply and every
+    ``Agent-Sender``-bearing request's reply stream; ``agents.>`` /
+    ``$SRV.>`` capture the requests themselves, headers included. Every
+    recorder is detached on teardown.
+    """
+    attached: list[EvidenceRecorder] = []
+
+    async def _attach(nc: NATSClient, /) -> EvidenceRecorder:
+        recorder = EvidenceRecorder.for_test(EVIDENCE_ROOT, request.node.nodeid)
+        await recorder.attach(nc)
+        attached.append(recorder)
+        return recorder
+
+    try:
+        yield _attach
+    finally:
+        for recorder in attached:
+            with contextlib.suppress(Exception):
+                await recorder.detach()
+
+
 # --- sender-identity test infrastructure -----------------------------------
 #
 # Per-topology nats-server fixtures over the repo-level configs in

@@ -6,6 +6,12 @@ session's ``nats-server`` via ``NATS_URL``, and verifies the Python client
 can discover it, read its spec-compliant metadata + endpoint caps, and
 round-trip a prompt.
 
+The sender-identity leg (T1 of the plan's matrix) runs the same runner on
+``nkey-noaccounts.conf`` with ``NATS_NKEY_SEED_FILE`` and
+``REFERENCE_AGENT_MIN_SENDER_TRUST=signed``: the Python caller signs
+``Agent-Sender``, the TS host verifies it and echoes the formatted
+sender; discovery sees the identity metadata the TS host registered.
+
 The TS SDK lives in the same monorepo as a sibling subdir
 (``../typescript/`` from this package's root). The test skips cleanly —
 NOT fails — when:
@@ -34,13 +40,22 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from synadia_ai.agents import Agents, ResponseChunk, StatusChunk
+from synadia_ai.agents import (
+    AgentId,
+    Agents,
+    Identity,
+    ResponseChunk,
+    SenderSignatureRequiredError,
+    StatusChunk,
+    signer_from_seed,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from nats.aio.client import Client as NATSClient
 
+    from tests.conftest import ConnectNkeyUser, NkeyUser
     from tests.harness.nats_server import RunningServer
 
 
@@ -50,8 +65,10 @@ TSSDK_DIR = Path(__file__).resolve().parent.parent.parent / "typescript"
 REFERENCE_AGENT_SCRIPT = TSSDK_DIR / "examples" / "_run-reference-agent.ts"
 
 # The reference agent prints this line on startup; we wait for it rather
-# than guessing a sleep duration.
+# than guessing a sleep duration. The line after it names the identity
+# it resolved (`identity: <id> (min_sender_trust=…)` or `identity: none (…)`).
 READY_MARKER = "reference agent listening on "
+IDENTITY_MARKER = "identity: "
 
 STARTUP_TIMEOUT_S = 20.0  # `bun run` cold start + nats connect
 
@@ -85,14 +102,16 @@ class _ReferenceAgentProcess:
     it's listening on.
     """
 
-    def __init__(self, nats_url: str) -> None:
+    def __init__(self, nats_url: str, env: dict[str, str] | None = None) -> None:
         self._nats_url = nats_url
+        self._env = env or {}
         self._proc: subprocess.Popen[str] | None = None
         self.prompt_subject: str | None = None
+        self.identity_line: str | None = None
         self.stdout_tail: list[str] = []
 
     async def start(self) -> None:
-        env = {**os.environ, "NATS_URL": self._nats_url}
+        env = {**os.environ, "NATS_URL": self._nats_url, **self._env}
         self._proc = subprocess.Popen(
             ["bun", "run", str(REFERENCE_AGENT_SCRIPT)],
             stdout=subprocess.PIPE,
@@ -117,6 +136,14 @@ class _ReferenceAgentProcess:
             self.stdout_tail.append(line)
             if READY_MARKER in line:
                 self.prompt_subject = line.split(READY_MARKER, 1)[1].strip()
+                # The identity line follows the marker (its own line, so the
+                # marker scrape above stays verbatim).
+                next_line = await asyncio.get_event_loop().run_in_executor(
+                    None, self._proc.stdout.readline
+                )
+                self.stdout_tail.append(next_line)
+                if IDENTITY_MARKER in next_line:
+                    self.identity_line = next_line.split(IDENTITY_MARKER, 1)[1].strip()
                 return
         raise TimeoutError(
             f"reference agent did not print READY_MARKER within {STARTUP_TIMEOUT_S}s; "
@@ -267,3 +294,96 @@ async def test_python_client_uses_one_mux_sub_for_n_prompts_against_ts_agent(
         f"expected 1 mux inbox SUB across 5 prompts to TS agent; opened {len(opened)}: {opened!r}"
     )
     assert opened[0].startswith("_INBOX.agents.")
+
+
+# --- sender identity: the T1 interop leg ------------------------------------------
+
+
+@pytest.fixture
+async def ts_reference_agent_signed(
+    nats_server_nkey: RunningServer,
+    interop_skip_reason: str | None,
+    identity_keys: dict[str, NkeyUser],
+    tmp_path: Path,
+) -> AsyncIterator[_ReferenceAgentProcess]:
+    """The TS runner as alice on ``nkey-noaccounts.conf``, requiring signed senders.
+
+    The seed goes through a file (``NATS_NKEY_SEED_FILE``, mode 0600) — never
+    an environment value every spawned tool process would inherit.
+    """
+    if interop_skip_reason is not None:
+        pytest.skip(interop_skip_reason)
+    seed_file = tmp_path / "alice.nk"
+    seed_file.write_text(identity_keys["alice"].seed + "\n", encoding="utf-8")
+    seed_file.chmod(0o600)
+    proc = _ReferenceAgentProcess(
+        nats_server_nkey.url,
+        env={"NATS_NKEY_SEED_FILE": str(seed_file), "REFERENCE_AGENT_MIN_SENDER_TRUST": "signed"},
+    )
+    await proc.start()
+    try:
+        yield proc
+    finally:
+        await proc.stop()
+
+
+@pytest.mark.asyncio
+async def test_python_signed_caller_against_ts_signed_reference_agent(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    identity_keys: dict[str, NkeyUser],
+    ts_reference_agent_signed: _ReferenceAgentProcess,
+) -> None:
+    """Discovery sees the TS host's identity metadata; a signed prompt is verified and echoed."""
+    alice = identity_keys["alice"]
+    alice_id = AgentId.new("$G", alice.public)
+    assert ts_reference_agent_signed.identity_line == f"{alice_id} (min_sender_trust=signed)"
+
+    nc = await connect_nkey_user(nats_server_nkey, "alice")
+    agents = Agents(nc=nc, identity=Identity(signer=signer_from_seed(alice.seed), name="py"))
+    try:
+        found = await agents.discover(timeout=3.0)
+        subject = ts_reference_agent_signed.prompt_subject
+        discovered = next(a for a in found if a.prompt_subject == subject)
+        assert discovered.supports_sender_identity is True
+        assert discovered.min_sender_trust == "signed"
+        assert discovered.identity == alice_id == await agents.self_id()
+        assert discovered.id_sig_verified is True
+
+        received = [m async for m in discovered.prompt("hello from python", timeout=10.0)]
+        assert all(isinstance(m, ResponseChunk | StatusChunk) for m in received)
+        responses = [c for c in received if isinstance(c, ResponseChunk)]
+        assert len(responses) == 1
+        assert responses[0].text == (
+            f"demo agent received your prompt. sender: {alice_id} (verified user, claimed account)"
+        )
+        assert responses[0].text.endswith(f"{alice_id} (verified user, claimed account)")
+
+        hb = await discovered.status()
+        assert hb.agent == "demo-agent"
+    finally:
+        await agents.close()
+
+
+@pytest.mark.asyncio
+async def test_python_unsigned_caller_is_refused_by_ts_signed_reference_agent(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    ts_reference_agent_signed: _ReferenceAgentProcess,
+) -> None:
+    """No signer → `SenderSignatureRequiredError` at call time; a raw request → 401 on the wire."""
+    nc = await connect_nkey_user(nats_server_nkey, "alice")
+    agents = Agents(nc=nc)  # unsigned claims only
+    try:
+        found = await agents.discover(timeout=3.0)
+        subject = ts_reference_agent_signed.prompt_subject
+        discovered = next(a for a in found if a.prompt_subject == subject)
+        with pytest.raises(SenderSignatureRequiredError):
+            discovered.prompt("hi")
+        assert subject is not None
+        reply = await nc.request(subject, b'{"prompt":"hi"}', timeout=3.0)
+        assert reply.headers is not None
+        assert reply.headers["Nats-Service-Error-Code"] == "401"
+        assert reply.headers["Nats-Service-Error"] == "signature required"
+    finally:
+        await agents.close()

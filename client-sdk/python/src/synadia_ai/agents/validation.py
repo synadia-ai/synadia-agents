@@ -47,8 +47,9 @@ def assert_within_max_payload(
     payload_size: int,
     max_payload_bytes: int | None,
     connection_max_payload: int | None = None,
+    header_bytes: int = 0,
 ) -> None:
-    """Fail if the encoded payload is larger than the effective limit.
+    """Fail if the encoded payload (plus header bytes) is larger than the effective limit.
 
     Two caps bind a publish:
 
@@ -66,10 +67,18 @@ def assert_within_max_payload(
     either means "not declared / not known" — when both are ``None`` we
     don't enforce locally and let the server decide (§5.4 last
     paragraph).
+
+    ``header_bytes`` is the framed wire size of the ``Agent-Sender``
+    header the request will carry (sender-identity extension): the server
+    applies ``max_payload`` to headers and payload together, so the check
+    counts both. nats-py does **not** count headers in its own
+    ``MaxPayloadError`` check, so this is the only guard before the
+    server closes the connection with ``Maximum Payload Violation``.
+    Zero when no header is sent.
     """
     limits = [lim for lim in (max_payload_bytes, connection_max_payload) if lim is not None]
     if not limits:
         return
     effective = min(limits)
-    if payload_size > effective:
-        raise PayloadTooLargeError(limit=effective, actual=payload_size)
+    if payload_size + header_bytes > effective:
+        raise PayloadTooLargeError(limit=effective, actual=payload_size, header_bytes=header_bytes)

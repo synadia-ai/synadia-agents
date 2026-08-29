@@ -19,7 +19,12 @@ from types import FrameType
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from examples._connect_cli import add_connection_flags, connect_from_cli
+from examples._connect_cli import (
+    add_connection_flags,
+    add_identity_flags,
+    connect_from_cli,
+    identity_from_cli,
+)
 from synadia_ai.agents import Agents, HeartbeatPayload
 
 
@@ -33,10 +38,11 @@ def _make_listener(identity: str) -> Callable[[HeartbeatPayload], None]:
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Watch heartbeats for every reachable agent.")
     add_connection_flags(parser)
+    add_identity_flags(parser)
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)
-    agents = Agents(nc=nc)
+    agents = Agents(nc=nc, identity=identity_from_cli(args))
     stop = asyncio.Event()
 
     def _on_signal(_sig: int, _frame: FrameType | None) -> None:

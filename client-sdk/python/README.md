@@ -92,7 +92,87 @@ asyncio.run(main())
 | `AgentInfo` | [`discovery.py`](src/synadia_ai/agents/discovery.py) | Pure-data record (parsed `$SRV.INFO` per §4.3). What `build_agent_info()` returns. |
 | `Liveness` | [`heartbeat.py`](src/synadia_ai/agents/heartbeat.py) | Frozen snapshot from `Agents.liveness(instance_id)`. |
 | `load_context_options` | [`context.py`](src/synadia_ai/agents/context.py) | Resolve a `nats` CLI context into kwargs for `nats.connect(...)`. |
+| `Identity`, `signer_from_seed` / `signer_from_creds_file` / `signer_from_context` | [`identity/`](src/synadia_ai/agents/identity/) | Sender identity: sign every `prompt` / `status` with the connection's NKEY — see below. |
+| `Agents.self_id()`, `Agents.sign_sender` / `publish_signed` / `request_signed`, `Agents.resolve_sender` | [`agents.py`](src/synadia_ai/agents/agents.py) | The connection's own agent ID; signed publishes for any subject; the reverse lookup. |
+| `Agent.status()` | [`agent.py`](src/synadia_ai/agents/agent.py) | The §8.7 status probe (header attached) → `HeartbeatPayload`. |
+| `AgentId`, `verify_sender_header`, `parse_sender_header`, `format_sender` | [`identity/`](src/synadia_ai/agents/identity/) | The shared identity codec (also used by the host package). |
 | `AgentService` | [`synadia-ai-agent-service`](../../agent-sdk/python/) | Server-side; ships in a separate distribution. Import from `synadia_ai.agent_service`. |
+
+## Sender identity
+
+The [sender-identity extension](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
+lets a receiving agent know *who* prompted it, verified per message:
+the caller attaches an `Agent-Sender` header that names its agent ID —
+the `(account, user)` NKEY pair the connection already has — and, with
+a signer, an ed25519 signature bound to the subject, the payload, a
+timestamp and a nonce. Nothing in it changes protocol `0.3`: an agent
+that implements the extension says so with `min_sender_trust` on its
+prompt endpoint (`agent.supports_sender_identity`), and a caller that
+has no identity simply sends no header.
+
+```python
+import nats
+from synadia_ai.agents import Agents, Identity, signer_from_creds_file
+
+nc = await nats.connect(servers="tls://connect.ngs.global", user_credentials="~/.config/nats/user.creds")
+agents = Agents(
+    nc=nc,
+    identity=Identity(signer=signer_from_creds_file("~/.config/nats/user.creds"), name="claude-code"),
+)
+print(await agents.self_id())   # "AABY….UAWW…" — 113 chars on NGS, "$G.U…" / "ACME.U…" on a config-file server
+async for msg in agent.prompt("hello"):
+    ...                         # the receiver sees a VerifiedSender
+```
+
+What to know:
+
+- **The seed is handed in explicitly.** The SDK never reads credentials
+  out of the connection. `signer_from_seed` (an `SU…` seed, or a seed
+  file's contents), `signer_from_creds` / `signer_from_creds_file` (a
+  `.creds` file — the identity is then read from its JWT, without asking
+  the server) and `signer_from_context` (a `nats` CLI context) cover the
+  common cases; an HSM / KMS signer implements the `SenderSigner`
+  protocol (`sign` may be async). Runners should take the seed from a
+  **file** (`NATS_NKEY_SEED_FILE`, as the examples do), not from an
+  environment value every spawned tool process inherits.
+- **Without a signer** the SDK sends an unsigned *claim* when the
+  connection has an NKEY identity (`Identity(send_unsigned_claim=False)`
+  turns that off — a claim discloses your user NKEY to every receiver),
+  and nothing when it has none (no auth, password or token users →
+  `NoIdentityError`, whose message names the fix). An endpoint that
+  declares `min_sender_trust: signed` fails early with
+  `SenderSignatureRequiredError` at call time when no signer is
+  configured, and with the `self_id()` error on the first iteration when
+  the identity is unavailable.
+- **Cost.** One `$SYS.REQ.USER.INFO` round trip per connection (2 s
+  timeout at most, a permission violation fails at once), awaited by the
+  first request only; failures are memoised for 30 s and retried in the
+  background. A signed header is ~400 bytes and counts against
+  `max_payload` (header framing included — `PayloadTooLargeError.header_bytes`).
+  nats-py does **not** count headers in its own check, so the SDK's is
+  the only guard before the server closes the connection with
+  `Maximum Payload Violation`.
+- **Behind a service import that remaps the subject** — an export that
+  inserts the caller's account token (`account_token_position`), or a
+  `to:` / `local_subject` rename by your own account — discovery reports
+  the exporter's subject, which you cannot publish to. Pass
+  `prompt(text, subject=…)` / `status(subject=…)` with the local name;
+  the receiver strips an inserted token by itself. Only for a rename by
+  **your own** account also pass `sub=agent.prompt_endpoint.subject`
+  (sign the exporter's subject). `sign_sender` / `publish_signed` /
+  `request_signed` take the same `sub=` keyword.
+- **A trusted server over TLS is a precondition.** The NATS handshake
+  signs a server-chosen nonce with the same seed that signs
+  `Agent-Sender`; a server you should not have trusted could obtain a
+  signature valid for 30 s. Identity is meaningful only over TLS to a
+  server whose certificate you verify.
+- The verified identity is the **user** key; `account` is the sender's
+  signed claim (`format_sender` / `str(sender)` renders
+  `… (verified user, claimed account)`). Which verified senders a
+  receiver accepts is the receiver's business — see the host package's
+  `accept_sender` (from `synadia-ai-agent-service` 0.5.0).
+- `scripts/whoami.py` prints what `self_id()` resolves for a connection
+  (or why it resolves nothing).
 
 ## Mid-stream queries
 
@@ -146,8 +226,8 @@ agents = Agents(nc=nc)
 ```
 
 `load_context_options(...)` reads
-`~/.config/nats/context/<name>.json` — URL, creds file, token,
-user/password, inbox prefix are all honored. See
+`~/.config/nats/context/<name>.json` — URL, creds file, nkey seed
+file, token, user/password, inbox prefix are all honored. See
 [`CLAUDE.md`](CLAUDE.md#connecting-to-nats) for the full field-by-field
 table (including which NATS-context fields are not yet supported and
 fail fast rather than silently).

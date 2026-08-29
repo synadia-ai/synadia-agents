@@ -1,6 +1,6 @@
 [project]
 name = "synadia-ai-agents"
-version = "0.7.1"
+version = "0.8.0"
 description = "Python client SDK for the Synadia Agent Protocol for NATS — discover and prompt spec-compliant agents over NATS"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,6 +23,10 @@ classifiers = [
 dependencies = [
     "nats-py>=2.7",
     "pydantic>=2.5",
+    # Sender-identity extension: seed decoding + ed25519 signing (nkeys)
+    # and verification (PyNaCl, which nkeys builds on).
+    "nkeys>=0.2",
+    "pynacl>=1.5",
 ]
 
 [project.optional-dependencies]
@@ -49,7 +53,6 @@ dev = [
     # default dev set means `uv sync` (no extras) gets a clean `pytest` run
     # instead of 16 ERROR rows.
     "rich>=13",
-    "nkeys>=0.2",
 ]
 
 [build-system]
@@ -90,8 +93,8 @@ ignore_missing_imports = true
 implicit_reexport = true
 
 [[tool.mypy.overrides]]
-# nkeys ships no py.typed marker; the tests (and, later, the identity
-# module) import it directly.
+# nkeys ships no py.typed marker; the identity module and the tests
+# import it directly.
 module = "nkeys"
 ignore_missing_imports = true
 

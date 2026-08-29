@@ -13,7 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from examples._connect_cli import add_connection_flags, connect_from_cli
+from examples._connect_cli import (
+    add_connection_flags,
+    add_identity_flags,
+    connect_from_cli,
+    identity_from_cli,
+)
 from synadia_ai.agents import Agents, DiscoverFilter, ResponseChunk, StatusChunk
 
 
@@ -33,10 +38,11 @@ async def main() -> None:
         ),
     )
     add_connection_flags(parser)
+    add_identity_flags(parser)
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)
-    agents = Agents(nc=nc)
+    agents = Agents(nc=nc, identity=identity_from_cli(args))
     try:
         filt = DiscoverFilter(session_name=args.session) if args.session else None
         found = await agents.discover(filter=filt)

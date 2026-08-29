@@ -102,14 +102,28 @@ class AttachmentsNotSupportedError(ValidationError):
 
 
 class PayloadTooLargeError(ValidationError):
-    """Serialized envelope exceeds the endpoint's declared ``max_payload`` (§5.4)."""
+    """Serialized envelope exceeds the endpoint's declared ``max_payload`` (§5.4).
 
-    def __init__(self, *, limit: int, actual: int) -> None:
-        super().__init__(
-            f"payload size {actual} bytes exceeds endpoint max_payload of {limit} bytes (§5.4)"
-        )
+    ``header_bytes`` is the framed wire size of the ``Agent-Sender`` header
+    the request would have carried (sender-identity extension) — the
+    server applies ``max_payload`` to headers and payload together, so the
+    check counts both. Zero when no header is sent.
+    """
+
+    def __init__(self, *, limit: int, actual: int, header_bytes: int = 0) -> None:
+        if header_bytes > 0:
+            message = (
+                f"payload size {actual} bytes plus Agent-Sender header {header_bytes} bytes "
+                f"exceeds endpoint max_payload of {limit} bytes (§5.4)"
+            )
+        else:
+            message = (
+                f"payload size {actual} bytes exceeds endpoint max_payload of {limit} bytes (§5.4)"
+            )
+        super().__init__(message)
         self.limit = limit
         self.actual = actual
+        self.header_bytes = header_bytes
 
 
 class NatsContextError(NatsAgentError):
@@ -121,3 +135,94 @@ class NatsContextError(NatsAgentError):
     message carries actionable detail; callers branch on the class, not
     on a more specific type.
     """
+
+
+# --- sender-identity extension ------------------------------------------
+
+
+class IdentityError(NatsAgentError):
+    """Base for every sender-identity error (not a :class:`ValidationError`)."""
+
+
+class NoIdentityError(IdentityError):
+    """The server answered ``$SYS.REQ.USER.INFO`` but the connection has no NKEY user.
+
+    No authentication, a password or token user, or a config-mode account
+    name the canonical agent-ID form cannot carry. The message names the
+    fix.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(
+            f"this connection has no NKEY identity ({reason}); configure an nkey user on "
+            "the server and connect with its seed, or connect with a credentials file"
+        )
+        self.reason = reason
+
+
+class IdentityUnavailableError(IdentityError):
+    """The SDK does not know the connection's identity.
+
+    ``$SYS.REQ.USER.INFO`` did not answer within the timeout, a permission
+    blocks it, or the two identity sources (credentials JWT, server)
+    disagree.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"identity unavailable: {message}")
+
+
+class IdentityMismatchError(IdentityError):
+    """The configured signer's public key is not the connection's user NKEY."""
+
+    def __init__(self, signer_public_key: str, identity_user: str) -> None:
+        super().__init__(
+            f"identity mismatch: the configured signer holds {signer_public_key} but the "
+            f"connection's user NKEY is {identity_user}"
+        )
+        self.signer_public_key = signer_public_key
+        self.identity_user = identity_user
+
+
+class InvalidAgentIdError(IdentityError):
+    """``AgentId.parse`` / ``AgentId.new`` rejected the input (also for empty tokens)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"invalid agent id: {message}")
+
+
+class MalformedSenderHeaderError(IdentityError):
+    """The ``Agent-Sender`` header failed the parser (spec: ``400``)."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"malformed Agent-Sender header: {message}")
+
+
+class SenderSignatureRequiredError(IdentityError):
+    """The endpoint declares ``min_sender_trust: signed`` and no signer is configured."""
+
+    def __init__(self, subject: str) -> None:
+        super().__init__(
+            f"{subject} requires a signed Agent-Sender header (min_sender_trust=signed) but no "
+            "identity.signer is configured"
+        )
+        self.subject = subject
+
+
+class SenderVerificationError(IdentityError):
+    """Host-internal: a classified request is refused.
+
+    ``code`` is the wire status — ``401`` for a required-but-absent
+    signature, a failing check (signature, ``sub``, stale ``ts``, replayed
+    nonce, operator-attested disagreement) or a claimed / absent sender
+    the acceptance hook refused; ``403`` for a verified sender the hook
+    refused. ``description`` is the generic wire text (``"signature
+    required"`` or ``"sender rejected"``); ``detail`` is receiver-side
+    only and never sent on the wire.
+    """
+
+    def __init__(self, code: int, description: str, detail: str) -> None:
+        super().__init__(f"sender verification failed ({code}): {detail}")
+        self.code = code
+        self.description = description
+        self.detail = detail
