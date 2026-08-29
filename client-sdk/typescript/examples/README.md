@@ -7,15 +7,16 @@ Counterpart to the host-side examples in
 the TypeScript mirror of
 [`client-sdk/python/examples/`](../../../client-sdk/python/examples/).
 
-| Script                                               | What it does                                                                                                                      |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| [`01-discover.ts`](01-discover.ts)                   | Enumerate every reachable agent via `$SRV.INFO.agents` and print identity + capabilities.                                         |
-| [`02-prompt-text.ts`](02-prompt-text.ts)             | Send a text prompt to the first discovered agent and stream the response. Prompt is the first CLI arg (default `"hello"`).        |
-| [`03-prompt-attachment.ts`](03-prompt-attachment.ts) | Prompt with a file attached; shows §5.4 pre-publish validation (`max_payload`, `attachments_ok`). First CLI arg is the file path. |
-| [`04-query-reply.ts`](04-query-reply.ts)             | Answer an agent's mid-stream queries (clarifications, permission prompts). Prompt is the first CLI arg.                           |
-| [`05-liveness.ts`](05-liveness.ts)                   | Per-instance heartbeat listener + periodic liveness snapshot.                                                                     |
-| [`06-chat.ts`](06-chat.ts)                           | Interactive multi-turn chat REPL against the first discovered agent (built-in `readline`, no UI deps).                            |
-| [`_run-reference-agent.ts`](_run-reference-agent.ts) | (not a demo) spins up the spec-compliant `ReferenceAgent` for the others to discover and prompt.                                  |
+| Script                                               | What it does                                                                                                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`01-discover.ts`](01-discover.ts)                   | Enumerate every reachable agent via `$SRV.INFO.agents` and print identity + capabilities.                                                              |
+| [`02-prompt-text.ts`](02-prompt-text.ts)             | Send a text prompt to the first discovered agent and stream the response. Prompt is the first CLI arg (default `"hello"`).                             |
+| [`03-prompt-attachment.ts`](03-prompt-attachment.ts) | Prompt with a file attached; shows §5.4 pre-publish validation (`max_payload`, `attachments_ok`). First CLI arg is the file path.                      |
+| [`04-query-reply.ts`](04-query-reply.ts)             | Answer an agent's mid-stream queries (clarifications, permission prompts). Prompt is the first CLI arg.                                                |
+| [`05-liveness.ts`](05-liveness.ts)                   | Per-instance heartbeat listener + periodic liveness snapshot.                                                                                          |
+| [`06-chat.ts`](06-chat.ts)                           | Interactive multi-turn chat REPL against the first discovered agent (built-in `readline`, no UI deps).                                                 |
+| [`_run-reference-agent.ts`](_run-reference-agent.ts) | (not a demo) spins up the spec-compliant `ReferenceAgent` for the others to discover and prompt.                                                       |
+| [`_run-client-probe.ts`](_run-client-probe.ts)       | (not a demo) one-shot caller probe for the cross-SDK interop tests: `--agent` / `--owner` / `--prompt`, NDJSON out, exit 0 iff the terminator arrived. |
 
 ## Environment variables
 
@@ -55,6 +56,13 @@ NATS_CONTEXT=my-context bun examples/02-prompt-text.ts "hello"
   question (`PromptStream.ask`). The bundled reference agent's echo handler does
   not emit queries, so `04` against it just streams the echo back without hitting
   the interactive path.
+- **`_run-client-probe.ts`** is the TypeScript leg of the _reverse_ cross-SDK
+  interop test (`agent-sdk/python/tests/test_interop_reverse_e2e.py`): the
+  Python host SDK serves an agent, `bun` runs this probe against it, and the
+  test asserts on the NDJSON lines (one per decoded chunk, then
+  `{"type":"done","chunks":N}`). It honours `NATS_URL` only — never
+  `NATS_CONTEXT` — so a test run cannot pick up your selected context.
+  Unsigned for now.
 - **`06-chat.ts`** reads as a real conversation only against a _stateful_ agent —
   under v0.3 one chat = one session = one subject. The bundled reference agent is
   stateless, so it replies to each turn independently; it's still the simplest

@@ -6,16 +6,23 @@ on:
     paths:
       - "agent-sdk/typescript/**"
       - "client-sdk/typescript/**"
+      - "test-fixtures/**"
       - ".github/workflows/agent-sdk-typescript.yml"
   pull_request:
     paths:
       - "agent-sdk/typescript/**"
       - "client-sdk/typescript/**"
+      - "test-fixtures/**"
       - ".github/workflows/agent-sdk-typescript.yml"
 
 concurrency:
   group: ci-ts-host-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # One pin for every job that installs nats-server; the tarball name below
+  # derives from it for Linux and macOS alike.
+  NATS_SERVER_VERSION: "2.12.7"
 
 defaults:
   run:
@@ -57,16 +64,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Install nats-server (Linux)
-        if: runner.os == 'Linux'
+      - name: Install nats-server
+        # Extract in the runner's temp dir so the unpacked tarball never lands
+        # inside the package directory. One tarball per platform — there is no
+        # versioned brew formula, so macOS uses the darwin-arm64 build too.
+        working-directory: ${{ runner.temp }}
         run: |
-          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
-          tar -xzf nats-server.tar.gz --strip-components=1
-          sudo mv nats-server /usr/local/bin/
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)   platform=linux-amd64 ;;
+            macOS-ARM64) platform=darwin-arm64 ;;
+            *) echo "no nats-server download mapping for ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${NATS_SERVER_VERSION}/nats-server-v${NATS_SERVER_VERSION}-${platform}.tar.gz" | tar xz
+          sudo mkdir -p /usr/local/bin
+          sudo install -m 0755 "nats-server-v${NATS_SERVER_VERSION}-${platform}/nats-server" /usr/local/bin/nats-server
           nats-server --version
-      - name: Install nats-server (macOS)
-        if: runner.os == 'macOS'
-        run: brew install nats-server
+      - name: Lint identity fixtures (nats-server -t)
+        working-directory: ${{ github.workspace }}
+        run: |
+          shopt -s nullglob
+          confs=(test-fixtures/identity/*.conf)
+          if [ "${#confs[@]}" -eq 0 ]; then
+            echo "no fixture configs found under test-fixtures/identity/" >&2
+            exit 1
+          fi
+          for f in "${confs[@]}"; do
+            nats-server -t -c "$f"
+          done
       - name: Install caller deps
         working-directory: client-sdk/typescript
         run: npm install
@@ -87,11 +111,32 @@ jobs:
         with:
           bun-version: ${{ matrix.bun }}
       - name: Install nats-server
+        # Extract in the runner's temp dir so the unpacked tarball never lands
+        # inside the package directory. One tarball per platform — there is no
+        # versioned brew formula, so macOS uses the darwin-arm64 build too.
+        working-directory: ${{ runner.temp }}
         run: |
-          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
-          tar -xzf nats-server.tar.gz --strip-components=1
-          sudo mv nats-server /usr/local/bin/
+          case "${{ runner.os }}-${{ runner.arch }}" in
+            Linux-X64)   platform=linux-amd64 ;;
+            macOS-ARM64) platform=darwin-arm64 ;;
+            *) echo "no nats-server download mapping for ${{ runner.os }}-${{ runner.arch }}" >&2; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${NATS_SERVER_VERSION}/nats-server-v${NATS_SERVER_VERSION}-${platform}.tar.gz" | tar xz
+          sudo mkdir -p /usr/local/bin
+          sudo install -m 0755 "nats-server-v${NATS_SERVER_VERSION}-${platform}/nats-server" /usr/local/bin/nats-server
           nats-server --version
+      - name: Lint identity fixtures (nats-server -t)
+        working-directory: ${{ github.workspace }}
+        run: |
+          shopt -s nullglob
+          confs=(test-fixtures/identity/*.conf)
+          if [ "${#confs[@]}" -eq 0 ]; then
+            echo "no fixture configs found under test-fixtures/identity/" >&2
+            exit 1
+          fi
+          for f in "${confs[@]}"; do
+            nats-server -t -c "$f"
+          done
       - name: Install caller deps
         working-directory: client-sdk/typescript
         run: bun install

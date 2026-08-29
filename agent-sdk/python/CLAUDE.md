@@ -220,11 +220,13 @@ lockstep on Python version floor, dep manager, lint/type/test stack.
   client-sdk); unit tests don't need it. The fixture `pytest.skip`s
   cleanly if the binary is absent.
 - **`bun`** + the monorepo's `../../client-sdk/typescript/` sibling —
-  required for the cross-SDK interop test, which spawns the TS
-  reference *client* (or, post-split, whatever package ships it) and
+  required for the reverse cross-SDK interop test
+  (`tests/test_interop_reverse_e2e.py`), which spawns the TS client
+  probe `client-sdk/typescript/examples/_run-client-probe.ts` and
   asserts the Python `AgentService` here can be discovered + prompted
-  on the wire. Until the TS sibling exposes a runnable client harness
-  the test skips.
+  on the wire. One-time setup: `cd ../../client-sdk/typescript && bun
+  install`. The test skips (never fails) when `bun` or that
+  `node_modules/` is missing.
 - **`nats` CLI** (optional, for manual poking).
 
 ### Connecting to NATS
@@ -326,11 +328,12 @@ shifts:
   with a timeout+condition).
 - Diagnostic scripts that exercise a live agent against a live NATS
   are first-class — keep them in `scripts/`, not one-off shells.
-- **Cross-SDK interop**: `tests/test_interop_e2e.py` runs the Python
-  reference agent and asserts the TS client can discover + prompt it.
-  When the TS SDK splits, swap the test target if the client harness
-  moves; until then it talks to `@synadia-ai/agents`. A change that
-  passes the Python suite but fails TS interop is a bug.
+- **Cross-SDK interop**: `tests/test_interop_reverse_e2e.py` serves an
+  in-process `AgentService` and runs the TS client probe
+  (`client-sdk/typescript/examples/_run-client-probe.ts`) against it via
+  `bun`, asserting on the NDJSON the TS side decoded — one line per
+  chunk, then `{"type":"done","chunks":N}`. A change that passes the
+  Python suite but fails TS interop is a bug.
 
 ## Critical operational rules
 

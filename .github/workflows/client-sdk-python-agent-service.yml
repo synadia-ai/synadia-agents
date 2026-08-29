@@ -10,12 +10,24 @@ on:
     paths:
       - "agent-sdk/python/**"
       - "client-sdk/python/**"
+      # The identity fixtures and the TS SDK (reference agent / client probe)
+      # are exercised by this suite's cross-SDK tests — a TS-only change must
+      # trigger it too.
+      - "test-fixtures/**"
+      - "client-sdk/typescript/**"
+      - "agent-sdk/typescript/**"
       - ".github/workflows/client-sdk-python-agent-service.yml"
   pull_request:
     branches: [main]
     paths:
       - "agent-sdk/python/**"
       - "client-sdk/python/**"
+      # The identity fixtures and the TS SDK (reference agent / client probe)
+      # are exercised by this suite's cross-SDK tests — a TS-only change must
+      # trigger it too.
+      - "test-fixtures/**"
+      - "client-sdk/typescript/**"
+      - "agent-sdk/typescript/**"
       - ".github/workflows/client-sdk-python-agent-service.yml"
 
 concurrency:
@@ -51,6 +63,30 @@ jobs:
           curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${NATS_SERVER_VERSION}/nats-server-v${NATS_SERVER_VERSION}-linux-amd64.tar.gz" | tar xz
           sudo mv "nats-server-v${NATS_SERVER_VERSION}-linux-amd64/nats-server" /usr/local/bin/
           nats-server --version
+
+      - name: Lint identity fixtures (nats-server -t)
+        working-directory: ${{ github.workspace }}
+        run: |
+          shopt -s nullglob
+          confs=(test-fixtures/identity/*.conf)
+          if [ "${#confs[@]}" -eq 0 ]; then
+            echo "no fixture configs found under test-fixtures/identity/" >&2
+            exit 1
+          fi
+          for f in "${confs[@]}"; do
+            nats-server -t -c "$f"
+          done
+
+      # The cross-SDK interop tests spawn the TS SDK under `bun` (the TS
+      # reference agent here, the TS client probe in the agent-sdk workflow);
+      # without `node_modules/` in client-sdk/typescript they skip silently.
+      # Bun is pinned: 1.4.0 broke nested `file:` installs (#175).
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install TS SDK deps (cross-SDK interop)
+        working-directory: client-sdk/typescript
+        run: bun install --frozen-lockfile
 
       - uses: astral-sh/setup-uv@v4
         with:
