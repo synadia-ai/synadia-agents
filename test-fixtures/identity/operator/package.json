@@ -1,0 +1,14 @@
+{
+  "name": "@synadia-ai/identity-operator-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Generator for the operator-mode (T5) sender-identity test fixture — not published.",
+  "scripts": {
+    "generate": "bun generate.ts",
+    "check": "bun generate.ts --check"
+  },
+  "dependencies": {
+    "@nats-io/jwt": "0.0.10-5"
+  }
+}

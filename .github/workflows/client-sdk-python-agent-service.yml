@@ -68,7 +68,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           shopt -s nullglob
-          confs=(test-fixtures/identity/*.conf)
+          confs=(test-fixtures/identity/*.conf test-fixtures/identity/operator/*.conf)
           if [ "${#confs[@]}" -eq 0 ]; then
             echo "no fixture configs found under test-fixtures/identity/" >&2
             exit 1
