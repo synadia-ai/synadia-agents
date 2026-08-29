@@ -72,14 +72,26 @@ async def alice_js(
         await nc.close()
 
 
-async def _read_all(nc: NATSClient, stream: str, subject: str) -> list[Msg]:
+async def _read_all(nc: NATSClient, stream: str, subject: str, *, expected: int) -> list[Msg]:
+    """Read every record of ``stream`` once it holds at least ``expected`` of them.
+
+    A core publish into a stream is stored *after* the server processed
+    the PUB, so the publisher's ``flush()`` does not prove the record is
+    in the stream yet — wait on the stream's own count (CI caught the
+    cross-account variant reading one record of two).
+    """
     js = nc.jetstream()
-    info = await js.stream_info(stream)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 5.0
+    while (count := int((await js.stream_info(stream)).state.messages)) < expected:
+        if loop.time() >= deadline:
+            raise AssertionError(f"stream {stream} holds {count} records, expected {expected}")
+        await asyncio.sleep(0.02)
     sub = await js.pull_subscribe(subject, stream=stream)
     out: list[Msg] = []
     try:
-        while len(out) < info.state.messages:
-            for msg in await sub.fetch(info.state.messages - len(out), timeout=2.0):
+        while len(out) < count:
+            for msg in await sub.fetch(count - len(out), timeout=2.0):
                 out.append(msg)
                 await msg.ack()
     finally:
@@ -103,7 +115,7 @@ async def test_publish_signed_stores_a_verifiable_record(
     await agents.publish_signed("js.identity.a", payload)
     await alice_js.flush()
 
-    stored = await _read_all(alice_js, "IDENT", "js.identity.>")
+    stored = await _read_all(alice_js, "IDENT", "js.identity.>", expected=1)
     assert len(stored) == 1
     first = stored[0]
     sender = verify_sender(first, "stored")
@@ -124,7 +136,7 @@ async def test_publish_signed_stores_a_verifiable_record(
     await asyncio.sleep(DUPE_WINDOW_S + 0.3)
     await alice_js.publish("js.identity.a", payload, headers=dupe)
     await alice_js.flush()
-    stored = await _read_all(alice_js, "IDENT", "js.identity.>")
+    stored = await _read_all(alice_js, "IDENT", "js.identity.>", expected=2)
     assert len(stored) == 2
     second = verify_sender(stored[1], "stored")
     assert isinstance(second, VerifiedSender) and second.header.nonce == sender.header.nonce
@@ -140,7 +152,7 @@ async def test_publish_signed_stores_a_verifiable_record(
     value_c = await agents.sign_sender("js.identity.c", b"original")
     await alice_js.publish("js.identity.c", b"tampered", headers={"Agent-Sender": value_c})
     await alice_js.flush()
-    stored = await _read_all(alice_js, "IDENT", "js.identity.>")
+    stored = await _read_all(alice_js, "IDENT", "js.identity.>", expected=4)
     b = next(m for m in stored if m.subject == "js.identity.b")
     assert b.headers is not None and "Nats-Request-Info" not in b.headers
     assert isinstance(verify_sender(b, "stored"), VerifiedSender)
@@ -212,7 +224,7 @@ async def test_renamed_import_signs_the_exporters_subject(
         await agents.publish_signed("local.js.identity.b", payload, sub="js.identity.b")
         await agents.publish_signed("local.js.identity.naive", payload)
         await bob.flush()
-        stored = await _read_all(alice, "RENAMED", "js.identity.>")
+        stored = await _read_all(alice, "RENAMED", "js.identity.>", expected=2)
         assert [m.subject for m in stored] == ["js.identity.b", "js.identity.naive"]
         good = verify_sender(stored[0], "stored")
         assert isinstance(good, VerifiedSender)
