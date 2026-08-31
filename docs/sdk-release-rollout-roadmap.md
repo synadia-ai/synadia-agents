@@ -99,7 +99,8 @@ The SDK release versions must include the separately developed optional trace-ex
 Keep its public wording product-neutral. This gate is complete only when the implementation has
 landed on the rollout branch and the combined identity/tracing behavior is verified.
 
-Owner/PR: _not yet recorded_
+- Owner: Francesco (`@cozis`)
+- PR: _not yet opened_
 
 - [ ] Open an SDK feature PR targeting `sdk-release-rollout`; do not bypass review with a
       direct shared-branch push.
