@@ -85,6 +85,9 @@ merging shared-branch feature work; complete the remaining operational items bef
       workflows are path-filtered, use an always-running evaluator rather than a naive pending
       fan-in over skipped jobs.
 - Setup implementation and green component/aggregate evidence: [PR #186](https://github.com/synadia-ai/synadia-agents/pull/186).
+- Every rollout PR uses a closed review loop: wait for Claude's review on the current head,
+  address every finding in a follow-up commit, comment `@claude please review my fixes`, and wait
+  for the follow-up review. Repeat until the latest head has no remaining findings; only then merge.
 - These workflow changes live on the rollout branch. Once it is pushed, PRs targeting it use its
   base-branch workflows and pushes use the workflow files in the pushed commit; `main` need not
   receive them first.

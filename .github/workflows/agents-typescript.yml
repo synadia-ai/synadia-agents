@@ -491,6 +491,9 @@ jobs:
       - name: Typecheck
         working-directory: agents/open-agent
         run: bun run typecheck
+      # The bridge integration suite's NatsServerProcess harness starts and
+      # stops the nats-server binary installed above; no shared broker is
+      # started by this job.
       - name: Unit and integration tests
         working-directory: agents/open-agent
         run: bun test test/

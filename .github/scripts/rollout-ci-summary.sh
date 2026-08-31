@@ -28,10 +28,14 @@ else
     # rollout suite is conservative and gives the branch its first baseline.
     changed_paths=("__all_rollout_components__")
   else
-    paths_output="$(
-      gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE_SHA...$TARGET_SHA" \
-        --jq '.files[].filename'
-    )"
+    # The GitHub compare API silently caps its file list at 300. Diff the
+    # commits locally instead so a large push cannot hide an affected
+    # component from the evaluator. A force-push may leave BEFORE_SHA outside
+    # the checked-out history, so fetch that exact commit when necessary.
+    if ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+      git fetch --no-tags --depth=1 origin "$BEFORE_SHA"
+    fi
+    paths_output="$(git diff --name-only "$BEFORE_SHA" "$TARGET_SHA")"
     if [[ -n "$paths_output" ]]; then
       while IFS= read -r path; do
         changed_paths+=("$path")
