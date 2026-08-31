@@ -1,6 +1,6 @@
 # SDK identity and tracing release roadmap
 
-- Status: active; release blocked pending the Phase 0 gates below
+- Status: active; implementation contracts resolved, release prerequisites tracked below
 - Last updated: 2026-08-31
 - Integration branch: `sdk-release-rollout`
 - Scope: TypeScript and Python caller/host SDKs, sender identity, optional tracing, provided
@@ -32,8 +32,8 @@ The rollout has five non-negotiable outcomes:
   an SDK release. It does not authorize publication.
 - **Integration PR:** optional-identity/tracing compatibility and dependency changes for a provided
   integration or example.
-- **Rollout PR:** the final integration-branch pull request to `main`, after the chosen registry
-  strategy and aging requirements are complete.
+- **Rollout PR:** the final integration-branch pull request to `main`, after the recorded registry
+  contract and aging requirements are complete.
 - **Release record:** the tracking issue or other durable record containing approvals, exact source
   SHAs, artifact hashes, registry times, CI runs, exceptions, promotions, and rollback actions.
 
@@ -45,7 +45,7 @@ The rollout has five non-negotiable outcomes:
 - [x] Two independent read-only roadmap audits were completed and reconciled into these gates.
 - [ ] The signer/live-connection correctness blockers in this roadmap are fixed.
 - [ ] The optional tracing feature is merged and its release gate is complete.
-- [ ] All intended SDK and integration artifacts are published through an approved strategy.
+- [ ] All intended SDK and integration artifacts are published through the recorded registry contract.
 - [ ] Every provided integration and release-consuming example is assessed.
 - [ ] Public repository and packed-artifact terminology audits pass.
 - [ ] Every released artifact satisfies the normal dependency cooldown with no exception active.
@@ -67,9 +67,10 @@ The rollout has five non-negotiable outcomes:
   package mechanism.
 - Registry publication always requires separate human approval; this roadmap does not authorize it.
 
-## Phase 0: gates before feature merges or publication
+## Immediate rollout setup
 
-These are blockers, not later cleanup.
+There are no deferred product decisions in this section. Complete the branch and CI items before
+merging shared-branch feature work; complete the remaining operational items before publication.
 
 - [ ] Publish and protect `sdk-release-rollout`; require review and disallow unreviewed direct pushes.
 - [ ] Make every relevant TypeScript **and Python** workflow run for PRs targeting the integration
@@ -77,13 +78,14 @@ These are blockers, not later cleanup.
       not yet representative.
 - [ ] Add one aggregate required check covering caller SDKs, AgentService SDKs, cross-language
       tests, the identity workbook, DeerFlow, and every non-deferred integration.
-- [ ] Choose the release-source topology. Repository guidance currently says SDK releases land on
-      `main` before publishing; either approve and document an integration-branch exception or land
-      immutable release commits on `main` before publication.
+- [x] Confirm the release-source topology against the live repository: Python workflows publish the
+      tagged commit and the `pypi` environment permits the existing tag prefixes without requiring
+      `main`; npm publication is manual and has no branch restriction.
+- [x] Adopt the rollout exception: reviewed, clean release commits on the protected integration
+      branch may be tagged/published, then the exact commits are reconciled into `main` after aging.
 - [ ] Locate the real cooldown policy and record its owner, exact duration, covered ecosystems,
       enforcement points, and package-specific exception syntax. Do not proceed based on the
       assumed seven-day value.
-- [ ] Choose the npm and PyPI candidate strategy in the registry decision gate below.
 - [ ] Complete the package/release DAG, including internal `file:` edges, published headless
       examples, external integrations, and private examples used as release evidence.
 - [ ] Replace dirty-tree or rebuild-on-publish flows with the clean, build-once artifact process in
@@ -92,34 +94,37 @@ These are blockers, not later cleanup.
       npm, PyPI, public docs, each integration class, go/no-go, and incident/rollback.
 - [ ] Record an explicit defer/ship decision and issue for anything that will not gate this rollout.
 
-## Blocking decisions
+## Resolved implementation contracts
 
 ### Caller identity default
 
-TypeScript and Python currently behave differently when the identity option is omitted. Adopt or
-amend this proposed common contract before release:
+TypeScript and Python currently differ when identity is omitted. Implement this common contract:
 
 | Configuration | Discovery and request behavior |
 | --- | --- |
 | No identity option | No identity lookup and no `Agent-Sender` header |
-| Explicit empty/disabled identity | Behavior is documented and tested separately from omission |
-| Explicit identity without signer | Unsigned claim, unless disabled by option |
+| Explicitly disabled identity | No identity lookup and no `Agent-Sender` header |
+| Explicit identity without signer, unsigned claim enabled | Lookup and unsigned claim |
+| Explicit identity without signer, unsigned claim disabled | No prompt-time lookup or header |
 | Explicit identity with signer | Signed sender header after live-connection binding succeeds |
 
-- [ ] Approve the contract and make both languages identical.
+- [ ] Make both languages implement the contract exactly.
 - [ ] At wire level, prove omission produces no `$SYS.REQ.USER.INFO`, no header, and no background
       identity work.
 - [ ] Test omission separately from an empty option and `sendUnsignedClaim=false`.
-- [ ] Update API documentation and changelogs to match the decision.
+- [ ] Update API documentation and changelogs to match the contract.
 
 ### AgentService identity default and privacy
 
-Today, omitting host identity can still perform self-discovery, advertise trust metadata, and
-publish unsigned user/account registration metadata. Decide what “identity off” means for hosts.
+Today, omitting host identity can still perform self-discovery and publish unsigned user/account
+registration metadata. The release contract is:
 
-- [ ] Choose whether omission is fully identity-free or intentionally discovery-enabled.
-- [ ] Document the startup latency, permission requirements, logging, and public-key disclosure of
-      the chosen default.
+- no host identity option means no self lookup and no own user/account/`id_sig` registration fields;
+- optional incoming sender headers are still classified and exposed;
+- default trust remains `any`, so headerless prompts remain accepted; and
+- explicit host identity enables connection binding and identity registration.
+
+- [ ] Implement this contract in both languages.
 - [ ] Prove the identity-free/default startup path at wire level and without `$SYS` permission.
 - [ ] Keep inbound signed-only policy a separate, explicit opt-in.
 
@@ -143,36 +148,37 @@ context.
       identity, if ever designed, is a separate protocol feature outside this rollout.
 - [ ] Test coordinated credential rotation without retaining or logging old credential material.
 
-### Registry candidate strategy
+### Registry release contract
 
-There is no registry-independent “dark release” mechanism:
+There is no registry-independent “dark release” mechanism. This rollout uses the following fixed
+contract:
 
-- An npm dist-tag such as `next` controls the named tag, but a normal version may still satisfy and
-  be selected by an existing semver range.
-- PyPI has no dist-tag or byte-preserving promotion. A final version uploaded early is public and
-  can be selected by broad constraints; publishing a later final version creates a new artifact
-  with a new age.
+- npm final versions are published under `next`. Our rollout manifests use exact versions and
+  frozen locks. A dist-tag is not treated as external semver quarantine.
+- PyPI final versions are published early, publicly, and without announcement. Our rollout
+  manifests use exact versions and frozen locks. We accept that unrelated external consumers with
+  broad constraints are outside this rollout's control.
+- The final upload time starts each artifact's cooldown clock. No package is rebuilt or republished
+  at cutover.
+- npm cutover moves the already-aged version's dist-tag. Python cutover adopts the already-public
+  versions in normal locks and announces them; there is no PyPI promotion operation.
 
-- [ ] For npm, use a prerelease or a stable version outside every existing stable range, plus a
-      non-default tag, and prove existing released ranges cannot resolve it.
-- [ ] For PyPI, choose and approve one model:
-  - publish the final public version only at go-live;
-  - use a staging index/prerelease and accept that the later final artifact starts a new age; or
-  - upload the final version early as an intentionally public staged release and document exposure,
-    selection, announcement, and yank consequences.
-- [ ] Remove “dark” and “promotion” claims from operational instructions unless a registry action
-      genuinely has those semantics.
-- [ ] Record the decision, approver, and resolver-test evidence before publishing anything.
+- [ ] Make every rollout manifest and lock select exact new internal versions while aging.
+- [ ] Adapt Python tag workflows so early publication does not automatically create a public GitHub
+      Release or generated announcement; create the release entry at cutover from the same tag and
+      artifact digests.
+- [ ] Use explicit `npm publish --tag next` commands and record pre/post dist-tags and digests.
+- [ ] Remove inaccurate “dark” and PyPI “promotion” claims from release instructions.
 
 ### Replay and high-availability guarantee
 
 Nonce caches are process-local, reset on restart, and can evict under pressure. Queue-group replicas
-do not share replay state.
+do not share replay state. For this release, replay protection is explicitly per-process and
+best-effort. Shared HA replay storage is outside scope and strict sender policy does not imply
+cross-replica or restart-persistent replay protection.
 
-- [ ] Decide whether the supported guarantee is per-process/best-effort or whether strict/HA hosts
-      require shared replay storage.
 - [ ] Document restart, eviction, and replica boundaries without overstating replay protection.
-- [ ] Test and observe the chosen cache behavior under concurrency and pressure.
+- [ ] Test and observe the per-process cache behavior under concurrency and pressure.
 
 ## Workstream A: identity correctness and SDK behavior
 
@@ -206,8 +212,8 @@ connection.
 - [ ] Signed payload sizing includes all NATS header framing and remains under broker limits.
 - [ ] Unknown and duplicate identity headers fail according to the documented policy.
 - [ ] Intended public identity types and helpers are exported from documented package paths.
-- [ ] An identity-free import/start path works in every supported runtime. Decide and document
-      whether identity crypto libraries are mandatory package dependencies or optional extras.
+- [ ] Identity crypto libraries remain normal SDK dependencies for this release; prove that an
+      identity-free import/start path works in every supported runtime without configuration.
 
 ### AgentService SDKs
 
@@ -219,7 +225,7 @@ connection.
       acknowledgement or handler execution.
 - [ ] Status/liveness requests remain compatible and classify identity without being rejected for
       malformed, stale, or replayed identity.
-- [ ] Registration without a usable connection identity follows the approved host-default contract.
+- [ ] Registration without a usable connection identity follows the recorded host-default contract.
 - [ ] A configured host signer registers a verifiable `id_sig` only after connection binding.
 - [ ] Raw nonces, seeds, credentials, signatures, JWTs, and authentication headers never appear in
       structured or rendered logs, rejection details, or exceptions. Add explicit redaction tests.
@@ -314,16 +320,16 @@ Every shipped integration must support both modes from the same released version
 | --- | --- | --- | --- | --- |
 | ACP | `AgentService` | npm | signer/trust plumbing; exact SDK; lock/artifact smoke | [ ] |
 | Grok Build | ACP front door | npm | inherit ACP; include Grok-to-ACP dependency edge | [ ] |
-| Codex | `AgentService`, manager | npm | signer/trust; shared-connection session decision | [ ] |
+| Codex | `AgentService`, manager | npm | signer/trust; document shared connection identity | [ ] |
 | OpenCode | `AgentService` | npm | signer/trust; installed-plugin path | [ ] |
 | Eve | `AgentService` | npm | signer/trust; lock/artifact smoke | [ ] |
 | Flue | `AgentService` | npm | signer/trust; add missing CI coverage | [ ] |
 | DeerFlow | Python `AgentService` | PyPI | signer/trust; SDK-triggered CI; lock/artifact smoke | [ ] |
 | OpenClaw | hand-rolled service | npm | full admission/registration/status migration; lock | [ ] |
 | PI | hand-rolled service | npm | full admission/registration/status migration; lock | [ ] |
-| Claude Code | hand-rolled service | confirm channel | full migration; remove mutable runtime install | [ ] |
-| PI headless controller | multi-session host | confirm published npm artifact | session model; exact dependencies; artifact smoke | [ ] |
-| Claude Code headless controller | multi-session host | confirm published npm artifact | session model; remove `latest`; artifact smoke | [ ] |
+| Claude Code | hand-rolled service | npm | full migration; remove mutable runtime install | [ ] |
+| PI headless controller | multi-session host | npm | shared identity docs; exact dependencies; artifact smoke | [ ] |
+| Claude Code headless controller | multi-session host | npm | shared identity docs; remove `latest`; artifact smoke | [ ] |
 | External Python host integration | external repository | external gate | record canonical repo/SHA; signer plumbing; artifact evidence | [ ] |
 
 ### Private/source release consumers
@@ -360,16 +366,20 @@ status classification, replay behavior, sender exposure, logging/redaction, and 
 Adding only a signature gate is not sufficient. Where `AgentService` supports the needed extension
 endpoints, prefer migration over duplicating protocol security behavior.
 
-### Multi-session identity decision
+### Multi-session identity contract
 
 One NATS connection has one cryptographic user identity. Logical sessions sharing a connection
-therefore share that identity, and reverse lookup cannot prove which session acted.
+therefore share that identity, and reverse lookup cannot prove which session acted. For this
+rollout, Codex and the PI/Claude headless controllers keep their shared connection: their sessions
+are logical agent instances under one connection identity, not independent cryptographic agents.
+No per-session credential or connection setting is added.
 
 - [ ] Inventory Codex, PI/Claude headless controllers, and all other shared-connection managers.
-- [ ] Decide whether sessions are instances of one identity or independent identities.
-- [ ] If independent, provision one NATS user and connection per identity.
-- [ ] Document the model without treating names, subjects, trace IDs, or first-match reverse lookup
-      as cryptographic session identity.
+- [ ] Document the shared-identity model without treating names, subjects, trace IDs, or first-match
+      reverse lookup as cryptographic session identity.
+- [ ] Correct descriptions that call each logical session an independently identified agent.
+- [ ] Treat independently credentialed per-session identities as a future explicit architecture,
+      not part of this release.
 
 ### Two-stage SDK consumption by integrations
 
@@ -389,7 +399,7 @@ Integration development and registry aging are separate stages:
 
 At cutover, do not rebuild or republish. After every final artifact has aged, remove the cooldown
 exception, repeat immutable registry installs, reconcile the exact release commits into `main`,
-move only the approved npm dist-tags, and perform the approved Python selection/announcement step.
+move the recorded npm dist-tags, and perform the recorded Python adoption/announcement step.
 Any artifact-byte change requires a new version and age clock.
 
 - [ ] Branch-development CI proves all integrations compile and run against the coordinated SDK
@@ -472,8 +482,8 @@ Fallback, only if a scoped mechanism is unavailable:
 - [ ] Bump every changed, already-published package and update its public changelog/release notes.
 - [ ] Define the per-language topological publish order, canary, stop point, and reverse rollback
       order. Include integration-to-integration edges, not only SDK edges.
-- [ ] Prove old stable ranges cannot select npm candidates and that Python constraints behave as
-      the approved registry strategy intends.
+- [ ] Prove rollout-owned manifests and locks select only the recorded exact internal versions in
+      both npm and Python environments.
 - [ ] Any artifact-affecting fix after publication gets a new version and restarts its age clock.
       Define the narrow docs/metadata-only exception, if any.
 - [ ] Freeze each published artifact's source SHA; merging a conflicting `main` change requires
@@ -512,16 +522,16 @@ stream cancellation, and mixed TypeScript/Python clients and hosts.
 
 ### Before publication
 
-- [ ] Every blocking decision and Phase 0 gate is complete.
+- [ ] Every resolved implementation contract and rollout prerequisite is complete.
 - [ ] Identity correctness fixes and tracing have merged with all required checks.
 - [ ] Ship/defer scope, owners, release DAG, versions, constraints, artifact hashes, and rollback
       baseline are approved.
 - [ ] Full-repository and exact-artifact terminology/content audits pass.
 - [ ] Cooldown baseline and temporary exception mechanics are proven in CI.
-- [ ] Existing stable-range resolver tests prove candidates cannot leak unintentionally.
+- [ ] Every rollout-owned consumer selects the intended exact internal versions and frozen locks.
 - [ ] A human gives the separately required publication approval for each registry/ecosystem.
 
-### Publish candidates according to the approved registry strategy
+### Publish final versions according to the recorded registry contract
 
 - [ ] Publish in the recorded dependency order from the approved, already-tested bytes.
 - [ ] Record package/version, source SHA, artifact digest, registry digest, tag/index, publisher,
@@ -547,16 +557,17 @@ stream cancellation, and mixed TypeScript/Python clients and hosts.
 - [ ] Remove temporary exceptions **before** unfreezing dependency updates.
 - [ ] Run clean registry installs under normal cooldown and immutable-install flags.
 - [ ] Re-run the release acceptance subset and verify no external graph drift.
-- [ ] Merge/reconcile the rollout branch according to the approved release-source topology.
-- [ ] Move npm dist-tags only after verifying exact digests; apply the approved Python selection step
-      without pretending it is registry promotion.
+- [ ] Reconcile the exact tagged release commits from the rollout branch into `main`; any
+      artifact-affecting difference requires a new version and age clock.
+- [ ] Move npm dist-tags only after verifying exact digests; adopt and announce the already-public
+      Python versions without pretending it is registry promotion.
 - [ ] Resume dependency automation only after normal enforcement is verified active.
 - [ ] Announce availability and archive the complete release record.
 
 ## Rollback and incident response
 
 Triggers include identity-free regression, signer/connection-binding failure, secret disclosure,
-unexpected dependency change, provenance mismatch, partial publish/promotion, trace data leak, or a
+unexpected dependency change, provenance mismatch, partial publish/tag movement, trace data leak, or a
 material integration failure.
 
 - [ ] Stop publication, tag movement, deployment, and announcements; record the incident owner.

@@ -187,6 +187,14 @@ description.
 
 ## Release ladder for SDK changes that examples need
 
+The normal sequence below releases from `main`. The coordinated rollout tracked in
+`docs/sdk-release-rollout-roadmap.md` has an explicit exception: reviewed, clean commits on the
+protected `sdk-release-rollout` branch may be version-tagged and published so their cooldown clocks
+start before final cutover. Integrations first use local/packed artifacts from that branch, then
+exact registry versions. After aging, the exact tagged release commits are reconciled into `main`;
+artifact-affecting differences require a new version. Every publication still requires the normal
+explicit approval.
+
 The trap: consumers that pin the SDK from npm (`agents/acp`, `codex`,
 `opencode` at `^0.5.2`, `agents/claude-code` at `^0.5.0`) do not see an
 unpublished change; the in-repo examples and the `file:`-linked harnesses
