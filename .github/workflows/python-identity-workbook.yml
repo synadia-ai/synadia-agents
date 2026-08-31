@@ -4,14 +4,14 @@ on:
   push:
     branches: [main]
     paths:
-      - "examples/python-identity-workbook/**"
+      - "examples/identity-workbook/python/**"
       - "client-sdk/python/**"
       - "agent-sdk/python/**"
       - ".github/workflows/python-identity-workbook.yml"
   pull_request:
     branches: [main]
     paths:
-      - "examples/python-identity-workbook/**"
+      - "examples/identity-workbook/python/**"
       - "client-sdk/python/**"
       - "agent-sdk/python/**"
       - ".github/workflows/python-identity-workbook.yml"
@@ -22,7 +22,7 @@ concurrency:
 
 defaults:
   run:
-    working-directory: examples/python-identity-workbook
+    working-directory: examples/identity-workbook/python
 
 jobs:
   test:
@@ -47,7 +47,7 @@ jobs:
       - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
-          cache-dependency-glob: "examples/python-identity-workbook/uv.lock"
+          cache-dependency-glob: "examples/identity-workbook/python/uv.lock"
           python-version: ${{ matrix.python-version }}
 
       - run: uv sync --frozen

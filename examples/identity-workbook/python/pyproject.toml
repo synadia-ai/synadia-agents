@@ -13,8 +13,8 @@ dependencies = [
 [tool.uv.sources]
 # Sender identity has landed in this monorepo but is not on PyPI yet. Keep the
 # workbook on the exact local caller + host sources it is demonstrating.
-synadia-ai-agents = { path = "../../client-sdk/python", editable = true }
-synadia-ai-agent-service = { path = "../../agent-sdk/python", editable = true }
+synadia-ai-agents = { path = "../../../client-sdk/python", editable = true }
+synadia-ai-agent-service = { path = "../../../agent-sdk/python", editable = true }
 
 [dependency-groups]
 dev = [

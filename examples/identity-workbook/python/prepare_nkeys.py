@@ -47,7 +47,7 @@ def provision(output_dir: Path) -> ProvisionedNkeys:
         users.append(ProvisionedUser(role=role, public_key=public_key, seed_path=seed_path))
 
     lines = [
-        "# Generated throwaway users for examples/python-identity-workbook.",
+        "# Generated throwaway users for examples/identity-workbook/python.",
         "# The private seed files stay next to this config and are gitignored.",
         "authorization {",
         "  users: [",

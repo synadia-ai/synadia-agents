@@ -21,7 +21,7 @@ project therefore resolves both SDK distributions from the local monorepo as edi
 do not replace those sources with PyPI pins until the identity-bearing releases are published.
 
 ```console
-cd examples/python-identity-workbook
+cd examples/identity-workbook/python
 uv sync --frozen
 uv run python prepare_nkeys.py
 ```
@@ -32,14 +32,14 @@ prints a seed. Keep `.local/` if you want stable identities while repeating the 
 ## Terminal 1 — NATS
 
 ```console
-cd examples/python-identity-workbook
+cd examples/identity-workbook/python
 nats-server -c .local/nats-server.conf
 ```
 
 ## Terminal 2 — signed Echo
 
 ```console
-cd examples/python-identity-workbook
+cd examples/identity-workbook/python
 uv run python echo_agent.py
 ```
 
@@ -64,7 +64,7 @@ server: the user signature is verified, while operator-level account attestation
 Leave Echo running, then run:
 
 ```console
-cd examples/python-identity-workbook
+cd examples/identity-workbook/python
 uv run python hello_agent.py
 ```
 
@@ -84,7 +84,7 @@ public identity and the `verified user` trust label.
 ## Terminal 4 — signed client-SDK CLI
 
 ```console
-cd examples/python-identity-workbook
+cd examples/identity-workbook/python
 uv run python call_echo.py "hello from CLI"
 ```
 
@@ -105,7 +105,7 @@ The NATS connection still authenticates with the CLI NKEY, but `--without-identi
 constructs `Agents(identity=None)`, so the request carries no `Agent-Sender` header:
 
 ```console
-cd examples/python-identity-workbook
+cd examples/identity-workbook/python
 uv run python call_echo.py --without-identity "hello without identity"
 ```
 
