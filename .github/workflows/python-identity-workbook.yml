@@ -1,0 +1,57 @@
+name: CI — Python identity workbook
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "examples/python-identity-workbook/**"
+      - "client-sdk/python/**"
+      - "agent-sdk/python/**"
+      - ".github/workflows/python-identity-workbook.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "examples/python-identity-workbook/**"
+      - "client-sdk/python/**"
+      - "agent-sdk/python/**"
+      - ".github/workflows/python-identity-workbook.yml"
+
+concurrency:
+  group: ci-python-identity-workbook-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: examples/python-identity-workbook
+
+jobs:
+  test:
+    name: Test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      NATS_SERVER_VERSION: "2.12.7"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install nats-server
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${NATS_SERVER_VERSION}/nats-server-v${NATS_SERVER_VERSION}-linux-amd64.tar.gz" | tar xz
+          sudo mv "nats-server-v${NATS_SERVER_VERSION}-linux-amd64/nats-server" /usr/local/bin/
+          nats-server --version
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "examples/python-identity-workbook/uv.lock"
+          python-version: ${{ matrix.python-version }}
+
+      - run: uv sync --frozen
+      - run: uv run ruff format --check .
+      - run: uv run ruff check --no-cache .
+      - run: uv run mypy --no-incremental
+      - run: uv run pytest -v

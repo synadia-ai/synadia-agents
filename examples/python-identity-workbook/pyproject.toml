@@ -1,0 +1,57 @@
+[project]
+name = "synadia-python-identity-workbook"
+version = "0.1.0"
+description = "End-to-end Python sender identity workbook for the Synadia Agent Protocol"
+requires-python = ">=3.11"
+dependencies = [
+    "nats-py>=2.7",
+    "nkeys>=0.2",
+    "synadia-ai-agent-service",
+    "synadia-ai-agents",
+]
+
+[tool.uv.sources]
+# Sender identity has landed in this monorepo but is not on PyPI yet. Keep the
+# workbook on the exact local caller + host sources it is demonstrating.
+synadia-ai-agents = { path = "../../client-sdk/python", editable = true }
+synadia-ai-agent-service = { path = "../../agent-sdk/python", editable = true }
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PL", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+files = ["*.py", "tests"]
+namespace_packages = true
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = "nats.*"
+ignore_missing_imports = true
+implicit_reexport = true
+
+[[tool.mypy.overrides]]
+module = "nkeys"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-ra"
+testpaths = ["tests"]
+pythonpath = ["."]
