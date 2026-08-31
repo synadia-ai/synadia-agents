@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..errors import SenderSignatureRequiredError
+from ..errors import IdentityError, SenderSignatureRequiredError
 from .agent_id import AgentId
 from .self_id import (
     lookup_self_id,
@@ -134,7 +134,7 @@ async def resolve_identity_for_request(
         return await lookup_self_id(nc, signer=identity.signer)
     try:
         return await lookup_self_id(nc)
-    except Exception:
+    except IdentityError:
         if require_signed:
             raise
         return None

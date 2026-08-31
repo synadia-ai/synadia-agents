@@ -248,6 +248,7 @@ export async function lookupSelfId(nc: NatsConnection, opts: SelfIdOptions = {})
         agentIdUser(signerId),
       );
     }
+    // User equality was confirmed above; this catches an account mismatch.
     if (signerId !== liveId) {
       throw new IdentityMismatchError(
         signer.publicKey,

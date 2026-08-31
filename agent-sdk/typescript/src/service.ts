@@ -607,6 +607,10 @@ export class AgentService {
     let identity: AgentId | undefined;
     if (this.#options.identity !== undefined) {
       try {
+        // TypeScript can safely share this memoised/in-flight lookup because
+        // its connection status iterator clears every source on reconnect.
+        // Python deliberately uses an uncached lookup because nats-py exposes
+        // no equivalent reconnect generation.
         identity = await selfId(this.#options.nc, signer ? { signer } : {});
       } catch (err) {
         if (signer) throw err;

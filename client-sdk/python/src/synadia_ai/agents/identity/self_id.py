@@ -169,7 +169,9 @@ def start_self_id_lookup(
 
     Signer-less diagnostic lookups capture their outcome into the memo.
     A signer starts an uncached one-off binding check and never consumes or
-    populates the signer-less memo.
+    populates the signer-less memo. Call this from a running async SDK path;
+    like the rest of the client, its background task requires an active event
+    loop.
     """
     if signer is not None:
         task = asyncio.create_task(
