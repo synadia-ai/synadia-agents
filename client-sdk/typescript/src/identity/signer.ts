@@ -83,6 +83,34 @@ class NkeySigner implements SenderSigner {
  * is not retained; the message of a rejection never includes it.
  */
 export function signerFromSeed(seed: string | Uint8Array, jwt?: string): SenderSigner {
+  const canonicalSeed = normalizeUserSeed(seed);
+  return signerFromCanonicalSeed(canonicalSeed, jwt);
+}
+
+/** Use an already-normalized user-seed snapshot without copying it. @internal */
+export function signerFromCanonicalSeed(canonicalSeed: Uint8Array, jwt?: string): SenderSigner {
+  // `fromSeed` keeps this buffer by reference and decodes it lazily on
+  // every `sign()` / `getPublicKey()`. Ownership transfers to the key pair;
+  // `wipe()` -> `kp.clear()` is what zeroes it.
+  try {
+    return new NkeySigner(fromSeed(canonicalSeed), jwt);
+  } catch (err) {
+    canonicalSeed.fill(0);
+    throw new IdentityError(
+      `invalid nkey seed (${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
+}
+
+/**
+ * Normalize a raw seed file / seed block to canonical `SU...` bytes, and
+ * validate both its checksum and user-key prefix. Internal connection-bundle
+ * seam so the NATS authenticator and sender signer can share one exact byte
+ * snapshot.
+ *
+ * @internal
+ */
+export function normalizeUserSeed(seed: string | Uint8Array): Uint8Array {
   const text = typeof seed === "string" ? seed : utf8.decode(seed);
   const line = text.includes("BEGIN")
     ? extractBlock(text, BEGIN_SEED_REGEX, "USER NKEY SEED")
@@ -90,26 +118,35 @@ export function signerFromSeed(seed: string | Uint8Array, jwt?: string): SenderS
   if (!USER_SEED_REGEX.test(line)) {
     throw new IdentityError("invalid nkey seed: expected a user seed (SU + 56 base32 characters)");
   }
-  // `fromSeed` keeps this buffer by reference and decodes it lazily on
-  // every `sign()` / `getPublicKey()` — so it must be a private copy
-  // (`utf8.encode` allocates one) and must NOT be zeroed here; `wipe()`
-  // → `kp.clear()` is what zeroes it.
-  let kp: KeyPair;
+  const canonicalSeed = utf8.encode(line);
+  // `KeyPair.clear()` zeroes the input buffer retained by `fromSeed`, so use
+  // a throwaway copy for validation and return a separate canonical snapshot.
+  const validationSeed = canonicalSeed.slice();
+  let kp: KeyPair | undefined;
+  let valid = false;
   try {
-    kp = fromSeed(utf8.encode(line));
+    kp = fromSeed(validationSeed);
+    // nkeys decodes lazily, so validation includes getPublicKey(), not only
+    // fromSeed(). This is where a syntactically valid seed with a bad CRC
+    // fails.
+    const publicKey = kp.getPublicKey();
+    if (!publicKey.startsWith("U")) {
+      throw new IdentityError(
+        `seed is not a user seed (derives ${publicKey.slice(0, 1)}… public key)`,
+      );
+    }
+    valid = true;
+    return canonicalSeed;
   } catch (err) {
+    if (err instanceof IdentityError) throw err;
     throw new IdentityError(
       `invalid nkey seed (${err instanceof Error ? err.message : String(err)})`,
     );
+  } finally {
+    kp?.clear();
+    validationSeed.fill(0);
+    if (!valid) canonicalSeed.fill(0);
   }
-  const publicKey = kp.getPublicKey();
-  if (!publicKey.startsWith("U")) {
-    kp.clear();
-    throw new IdentityError(
-      `seed is not a user seed (derives ${publicKey.slice(0, 1)}… public key)`,
-    );
-  }
-  return new NkeySigner(kp, jwt);
 }
 
 /** The two blocks of a credentials file. */
@@ -199,10 +236,29 @@ export function identityFromJwt(jwt: string): AgentId {
  */
 export function signerFromCreds(credsText: string): SenderSigner {
   const { jwt, seed } = parseCreds(credsText);
-  const signer = signerFromSeed(seed, jwt);
-  const jwtUser = agentIdUser(identityFromJwt(jwt));
-  if (jwtUser !== signer.publicKey) {
-    signer.wipe?.();
+  return signerFromSeedAndJwt(seed, jwt);
+}
+
+/**
+ * Build a signer from one seed/JWT snapshot and verify that the JWT names
+ * the derived user. Internal connection-bundle seam; intentionally not
+ * exported from the package root.
+ *
+ * @internal
+ */
+export function signerFromSeedAndJwt(seed: string | Uint8Array, jwt: string): SenderSigner {
+  return signerFromCanonicalSeedAndJwt(normalizeUserSeed(seed), jwt);
+}
+
+/** Verify a JWT against an already-normalized seed snapshot. @internal */
+export function signerFromCanonicalSeedAndJwt(
+  canonicalSeed: Uint8Array,
+  jwt: string,
+): SenderSigner {
+  const signer = signerFromCanonicalSeed(canonicalSeed, jwt);
+  try {
+    const jwtUser = agentIdUser(identityFromJwt(jwt));
+    if (jwtUser === signer.publicKey) return signer;
     throw new IdentityMismatchError(
       signer.publicKey,
       signer.publicKey,
@@ -210,8 +266,10 @@ export function signerFromCreds(credsText: string): SenderSigner {
       undefined,
       jwtUser,
     );
+  } catch (error) {
+    signer.wipe?.();
+    throw error;
   }
-  return signer;
 }
 
 /** {@link signerFromCreds} over a file path (`~/` expanded). */
@@ -244,21 +302,9 @@ export async function signerFromContext(selector: string): Promise<SenderSigner>
     return signerFromSeed(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   }
   if (userSeed !== undefined) {
-    const signer = signerFromSeed(userSeed, userJwt);
-    if (userJwt !== undefined) {
-      const jwtUser = agentIdUser(identityFromJwt(userJwt));
-      if (jwtUser !== signer.publicKey) {
-        signer.wipe?.();
-        throw new IdentityMismatchError(
-          signer.publicKey,
-          signer.publicKey,
-          undefined,
-          undefined,
-          jwtUser,
-        );
-      }
-    }
-    return signer;
+    return userJwt === undefined
+      ? signerFromSeed(userSeed)
+      : signerFromSeedAndJwt(userSeed, userJwt);
   }
   throw new IdentityError(
     `NATS context "${name}" has no creds, nkey, or user_seed — nothing to sign Agent-Sender with`,

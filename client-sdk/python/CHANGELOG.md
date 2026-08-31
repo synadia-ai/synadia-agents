@@ -8,6 +8,20 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Added
+
+- `resolve_nats_connection_bundle(...)` snapshots a selected `nats` CLI
+  context or direct URL plus `.creds` / nkey connection source exactly once.
+  `identity="off"` is the default and exposes no signer;
+  `identity="signed"` derives the signer from that same authentication
+  snapshot and fails clearly when the connection uses token, user/password,
+  JWT-without-seed, or anonymous authentication. The returned connection
+  options use captured JWT/signature callbacks for `.creds` reconnects, not
+  a mutable path; nkey files are normalized once before both connection auth
+  and signing. `wipe()` is idempotent and must run after the NATS connection
+  closes. Bundle representations are redacted; callers must still never log
+  the necessarily sensitive `connection_options` mapping.
+
 ### Changed
 
 - Sender identity is now opt-in: omitting `identity` performs no lookup and
@@ -19,6 +33,9 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   account must match that live connection; any failure is fatal and never
   downgrades to unsigned or headerless delivery. Explicit diagnostic
   `self_id()` calls remain memoised.
+- NATS URL errors redact token and user/password userinfo. URL and context
+  bundle resolution preserve WebSocket paths and query strings. The existing
+  `load_context_options` API and auth precedence remain compatible.
 
 ## [0.8.0] - 2026-08-29
 
