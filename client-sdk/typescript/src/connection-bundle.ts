@@ -59,7 +59,10 @@ export interface NatsConnectionBundle {
   /**
    * Clear retained auth/signing bytes and remove auth-bearing option fields.
    * Idempotent. Call only after the NATS connection has closed, because
-   * reconnect authentication still needs them.
+   * reconnect authentication still needs them. Calling this while the
+   * connection is open zeroes the shared authenticator snapshot, so the
+   * next reconnect will fail authentication with a lower-level signing
+   * error rather than a bundle-specific error.
    */
   wipe(): void;
 }
@@ -204,7 +207,7 @@ function makeBundle(
       try {
         wipeSnapshot();
       } finally {
-        clearAuthOptions(connectionOptions);
+        clearSensitiveOptions(connectionOptions);
       }
     }
   };
@@ -233,7 +236,8 @@ function makeBundle(
   return Object.freeze(bundle) as unknown as NatsConnectionBundle | SignedNatsConnectionBundle;
 }
 
-function clearAuthOptions(connectionOptions: NodeConnectionOptions): void {
+/** Drop auth fields and TLS material, which may contain a client private key. */
+function clearSensitiveOptions(connectionOptions: NodeConnectionOptions): void {
   delete connectionOptions.authenticator;
   delete connectionOptions.token;
   delete connectionOptions.user;

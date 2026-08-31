@@ -71,7 +71,9 @@ describe("signerFromSeed", () => {
 
   it("rejects a non-user seed, garbage, a public key — without echoing the input", () => {
     const accountSeed = new TextDecoder().decode(account.getSeed());
-    const badCrc = `${seed.slice(0, -1)}${seed.endsWith("A") ? "B" : "A"}`;
+    // Do not mutate the final base32 character: it contains padding bits, so
+    // some textual changes decode to the same bytes on different runtimes.
+    const badCrc = `${seed.slice(0, 10)}${seed[10] === "A" ? "B" : "A"}${seed.slice(11)}`;
     for (const bad of [accountSeed, "garbage", user.getPublicKey(), badCrc]) {
       let caught: unknown;
       try {

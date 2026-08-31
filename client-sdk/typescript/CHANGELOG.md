@@ -109,8 +109,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- NATS URL errors redact token and user/password userinfo. URL and context
-  resolution preserve WebSocket paths and query strings.
+- `loadContextOptions` now parses context URLs through `parseNatsUrl`: it
+  validates the supported scheme and host, extracts URL userinfo into auth
+  options, rejects mixed credentials across server entries, and preserves
+  WebSocket paths and query strings. This may reject unusual context URL
+  strings that the previous implementation passed through unchanged. NATS
+  URL errors now redact token and user/password userinfo.
 - **`prompt()` counts the `Agent-Sender` header against `max_payload`**
   (spec: the header counts). The synchronous throw contract holds: a
   _sound upper bound_ of the header is applied synchronously (thrown

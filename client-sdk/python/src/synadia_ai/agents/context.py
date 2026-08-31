@@ -475,7 +475,9 @@ def _parse_single_nats_url(part: str, *, original: str) -> dict[str, Any]:
     # TCP NATS/tls URLs do not, so retain the existing host-only shape there.
     websocket_suffix = ""
     if parsed.scheme in ("ws", "wss"):
-        websocket_suffix = parsed.path
+        # Match WHATWG URL canonicalisation used by the TypeScript SDK: a
+        # query on a bare authority receives the implicit root path.
+        websocket_suffix = parsed.path or ("/" if parsed.query else "")
         if parsed.params:
             websocket_suffix += f";{parsed.params}"
         if parsed.query:

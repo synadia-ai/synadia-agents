@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 import nats
 import pytest
-from nats.aio.client import Client
 
 from synadia_ai.agents import (
     Agents,
@@ -276,32 +275,57 @@ def test_context_token_and_jwt_without_seed_reject_signed_mode(
     assert "user" not in jwt_off.connection_options
     assert isinstance(jwt_off.connection_options["password"], str)
 
-    # nats-py only enters its JWT callback branch when it considers auth
-    # configured. The password-only sentinel activates that branch without
-    # becoming a fallback wire credential when INFO has no nonce.
-    client = Client()
-    client._signature_cb = signature_cb
-    client._user_jwt_cb = jwt_cb
-    client._auth_configured = bool(jwt_off.connection_options["password"])
-    client.options.update(
-        {
-            "name": None,
-            "no_echo": None,
-            "password": jwt_off.connection_options["password"],
-            "pedantic": False,
-            "token": None,
-            "user": None,
-            "verbose": False,
-        }
-    )
-    connect_payload = json.loads(client._connect_command().removeprefix(b"CONNECT ").strip())
-    for field in ("auth_token", "jwt", "pass", "sig", "user"):
-        assert field not in connect_payload
-
     assert token_off.signer is None and jwt_off.signer is None
     token_off.wipe()
     jwt_off.wipe()
     assert "password" not in jwt_off.connection_options
+
+
+async def test_jwt_callback_sentinel_is_never_sent_without_a_server_nonce() -> None:
+    connect_line: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
+
+    async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writer.write(
+            b'INFO {"server_id":"test","server_name":"test","version":"2.12.7",'
+            b'"proto":1,"host":"127.0.0.1","port":4222,"headers":true,'
+            b'"max_payload":1048576}\r\n'
+        )
+        await writer.drain()
+        try:
+            while line := await reader.readline():
+                if line.startswith(b"CONNECT ") and not connect_line.done():
+                    connect_line.set_result(line)
+                elif line == b"PING\r\n":
+                    writer.write(b"PONG\r\n")
+                    await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
+    socket = server.sockets[0]
+    port = socket.getsockname()[1]
+    bundle = resolve_nats_connection_bundle(
+        url=f"nats://127.0.0.1:{port}",
+        creds=identity_fixture("operator/alice.creds"),
+    )
+    nc = None
+    try:
+        nc = await nats.connect(
+            **bundle.connection_options,
+            allow_reconnect=False,
+            connect_timeout=1,
+        )
+        wire = await asyncio.wait_for(connect_line, timeout=1)
+        payload = json.loads(wire.removeprefix(b"CONNECT ").strip())
+        for field in ("auth_token", "jwt", "pass", "sig", "user"):
+            assert field not in payload
+    finally:
+        if nc is not None:
+            await nc.close()
+        server.close()
+        await server.wait_closed()
+        bundle.wipe()
 
 
 def test_context_inline_jwt_and_seed_share_one_snapshot(

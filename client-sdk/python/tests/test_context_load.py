@@ -459,6 +459,9 @@ def test_parse_url_ws_and_wss_schemes() -> None:
         "token": "tok",
     }
 
+    bare_query = parse_nats_url("ws://host:9222?route=one")
+    assert bare_query == {"servers": ["ws://host:9222/?route=one"]}
+
 
 def test_parse_url_defaults_port_for_bare_nats_host() -> None:
     opts = parse_nats_url("nats://host")

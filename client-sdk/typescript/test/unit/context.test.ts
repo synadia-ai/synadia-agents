@@ -447,5 +447,8 @@ describe("parseNatsUrl", () => {
       servers: ["wss://host:9222/nats/connect?tenant=acme"],
       token: "tok",
     });
+
+    const bareQuery = parseNatsUrl("ws://host:9222?route=one");
+    expect(bareQuery).toEqual({ servers: ["ws://host:9222/?route=one"] });
   });
 });

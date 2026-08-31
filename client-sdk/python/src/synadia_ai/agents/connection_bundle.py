@@ -163,7 +163,8 @@ def _resolve_context(selector: str, *, signed: bool) -> NatsConnectionBundle[Nke
     options = _build_context_base_options(ctx)
     fields = ctx.fields
     context_url = _nonempty_str(fields.get("url"))
-    assert context_url is not None  # validated by _build_context_base_options
+    if context_url is None:  # defensive: already validated by _build_context_base_options
+        raise NatsContextError(f"NATS context {selector!r} is missing `url`")
     parsed_url = parse_nats_url(context_url)
     options["servers"] = parsed_url["servers"]
     for key in ("token", "user", "password"):
@@ -281,7 +282,8 @@ def _creds_connection_options(signer: NkeySigner) -> dict[str, Any]:
     # callback branch wins, while without a nonce nats-py sends neither `user`
     # nor `pass` because no user is configured. Do not use a token sentinel:
     # that would become a real fallback credential on a no-nonce server.
-    # This remains compatible with the declared minimum nats-py 2.7.0.
+    # Verified against the declared minimum nats-py 2.7.0 and current 2.x;
+    # the no-nonce CONNECT-shape regression test locks this assumption.
     return {
         "password": _JWT_CALLBACK_AUTH_PASSWORD_SENTINEL,
         "signature_cb": signature_cb,
