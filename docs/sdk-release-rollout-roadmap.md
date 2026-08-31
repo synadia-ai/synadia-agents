@@ -1,13 +1,14 @@
-# Sender identity rollout roadmap
+# SDK identity and tracing release roadmap
 
 - Status: active
 - Last updated: 2026-08-31
-- Scope: TypeScript and Python caller/host SDKs, provided agent integrations, and release operations
+- Scope: TypeScript and Python caller/host SDKs, sender identity, optional trace export, provided
+  agent integrations, and release operations
 
-This document is the persistent source of truth for taking sender identity from the merged SDK
-implementation to a safe, backwards-compatible release. Check an item only when its evidence is
-linked here or in the relevant pull request. A separate tracking issue may mirror operational
-status, but it does not replace this roadmap.
+This document is the persistent source of truth for taking the coordinated sender-identity and
+optional trace-export SDK work to a safe, backwards-compatible release. Check an item only when
+its evidence is linked here or in the relevant pull request. A separate tracking issue may mirror
+operational status, but it does not replace this roadmap.
 
 The rollout has four non-negotiable outcomes:
 
@@ -17,18 +18,22 @@ The rollout has four non-negotiable outcomes:
    release.
 4. Public SDK documentation teaches sender identity without unreleased product names, private
    roadmap language, or links to non-public specifications.
+5. Optional trace export does not change normal SDK behavior when it is unconfigured or
+   unavailable.
 
 ## Workflow terminology
 
-- **Rollout branch:** `sender-identity-rollout`, the integration branch on which this roadmap and
+- **Rollout branch:** `sdk-release-rollout`, the integration branch on which this roadmap and
   the coordinated SDK/integration changes are assembled and exercised.
+- **SDK feature PR:** a reviewed implementation change targeting the rollout branch. Feature PRs
+  must land and pass their own tests before the SDK release PR finalizes package versions.
 - **SDK release PR:** a reviewed change that finalizes versions, dependency constraints,
   changelogs, and package contents for one or both SDK halves. Merging it prepares a release; it
   does not by itself authorize or perform an npm publication.
 - **Integration PR:** a reviewed change for one or more provided agents, normally targeting the
   rollout branch during this effort. It adds optional identity configuration, compatibility tests,
   and registry dependency/lock updates for those agents.
-- **Rollout PR:** the final pull request from `sender-identity-rollout` to `main`, opened after the
+- **Rollout PR:** the final pull request from `sdk-release-rollout` to `main`, opened after the
   dark artifacts have passed the required checks and aging window.
 - **Rollout tracking issue:** an optional GitHub issue or project item for facts that do not live
   naturally in Git, such as publication approvals, artifact upload times, exception expiry, and
@@ -40,6 +45,8 @@ The rollout has four non-negotiable outcomes:
 - [x] Sender-identity implementation is merged into both SDK pairs.
 - [x] The Python [identity workbook](../examples/identity-workbook/python/README.md) demonstrates
       signed Echo, signed Hello-to-Echo forwarding, and identity-free calls.
+- [ ] The optional trace-export SDK feature PR is merged into the rollout branch and its release
+      gate is complete.
 - [ ] SDK packages containing sender identity are published to npm and PyPI.
 - [ ] Every provided integration has been assessed and adapted where necessary.
 - [ ] Public SDK documentation has passed the terminology/link audit.
@@ -57,6 +64,8 @@ The rollout has four non-negotiable outcomes:
   it must not silently downgrade.
 - The signer/credential source is explicit. Seeds, credentials, nonces, and raw signatures are
   never logged.
+- The SDK releases in this rollout depend on the optional trace-export work landing first. The
+  trace feature must preserve normal SDK behavior when it is not configured.
 - Work proceeds on a dedicated rollout branch. Registry artifacts are published dark so their age
   clocks run while the branch is exercised.
 - External dependencies are frozen. Prefer package-specific cooldown exceptions for newly released
@@ -83,6 +92,36 @@ Proposed common contract:
 - [ ] Make TypeScript and Python behavior identical.
 - [ ] Test that the identity-free path does not perform `$SYS.REQ.USER.INFO` work.
 - [ ] Update API documentation and changelogs to match the chosen behavior.
+
+## Release gate: optional trace export
+
+The SDK release versions must include the separately developed optional trace-export capability.
+Keep its public wording product-neutral. This gate is complete only when the implementation has
+landed on the rollout branch and the combined identity/tracing behavior is verified.
+
+Owner/PR: _not yet recorded_
+
+- [ ] Open an SDK feature PR targeting `sdk-release-rollout`; do not bypass review with a
+      direct shared-branch push.
+- [ ] Record the reviewed merge commit here after it lands.
+- [ ] Confirm that no trace configuration preserves the existing caller and host behavior.
+- [ ] Confirm that trace-export setup is optional and does not become a prerequisite for NATS
+      connection, discovery, prompting, hosting, or identity.
+- [ ] Define and test exporter failure behavior, retry/backpressure bounds, and shutdown flushing;
+      trace delivery must not silently break the prompt stream.
+- [ ] Define redaction rules for prompts, attachments, credentials, signatures, and other sensitive
+      fields before enabling export in an integration.
+- [ ] Test the four combinations: identity off/tracing off, identity on/tracing off, identity
+      off/tracing on, and identity on/tracing on.
+- [ ] When identity is absent, exported traces remain valid without inventing a verified identity.
+- [ ] When identity is verified, test the intended trace correlation without exposing secret
+      signing material.
+- [ ] Review every new external dependency. It must already satisfy the normal cooldown or receive
+      an explicit exception and lock-diff review; an incidental dependency refresh is not allowed.
+- [ ] Add public-safe SDK usage documentation and changelog entries without unreleased product
+      names or private specification links.
+- [ ] Run the complete caller, AgentService, cross-language, and package-content suites after the
+      feature PR merges.
 
 ## Workstream A: SDK release readiness
 
@@ -203,13 +242,15 @@ logical agents on a shared connection therefore advertise the same identity for 
 - [ ] Inventory every deployable integration lockfile and every target OS/architecture represented
       by it.
 - [ ] Generate the pre-release dependency inventory/SBOM.
-- [ ] Commit the approved external dependency graph before resolving new internal packages.
+- [ ] Snapshot and freeze the current approved external dependency graph now.
+- [ ] After the trace feature lands, review any intentional dependency additions and record the
+      final release graph without accepting unrelated upgrades.
 - [ ] Pause automated dependency-update merges for the rollout window.
 - [ ] Preserve the old manifests, locks, and deployable artifacts as the rollback baseline.
 
 ### Prepare the rollout branch
 
-- [x] Create the local `sender-identity-rollout` branch and move the roadmap work onto it.
+- [x] Create the local `sdk-release-rollout` branch and move the roadmap work onto it.
 - [ ] Publish the rollout branch and apply the agreed remote review/protection rules.
 - [ ] Require all normal CI and review checks on the branch.
 - [ ] Keep it current with `main` so the eventual merge is low risk.
@@ -267,6 +308,7 @@ All applicable SDK pairs and integrations must demonstrate these outcomes:
 ### Before publishing
 
 - [ ] All SDK decision gates and release-readiness checks above are complete.
+- [ ] The optional trace-export feature PR is merged and its release gate is complete.
 - [ ] Integration candidates are complete on the rollout branch.
 - [ ] Package versions and inter-package constraints are final.
 - [ ] TypeScript integrations no longer rely on a previous `^0.x` range to cross an SDK minor

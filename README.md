@@ -48,8 +48,9 @@ Two halves per language. The **caller** SDK (`client-sdk/`) discovers and prompt
 
 Both languages stay in lockstep on the wire format, validated by a cross-SDK interop test ([`tests/test_interop_e2e.py`](client-sdk/python/tests/test_interop_e2e.py)) that runs the TS reference agent against the Python client.
 
-The active [sender identity rollout roadmap](docs/sender-identity-rollout-roadmap.md) tracks SDK
-compatibility, integration adoption, documentation, dependency controls, and release promotion.
+The active [SDK release rollout roadmap](docs/sdk-release-rollout-roadmap.md) tracks sender
+identity, optional tracing, compatibility, integration adoption, dependency controls, and release
+promotion.
 
 ## Examples
 
