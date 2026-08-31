@@ -371,6 +371,35 @@ therefore share that identity, and reverse lookup cannot prove which session act
 - [ ] Document the model without treating names, subjects, trace IDs, or first-match reverse lookup
       as cryptographic session identity.
 
+### Two-stage SDK consumption by integrations
+
+Integration development and registry aging are separate stages:
+
+1. **Branch-development stage:** integrations in this repository consume the SDKs from the
+   integration-branch workspace/local sources. External repositories consume exact SDK tarballs or
+   wheels produced by CI from a recorded branch commit. This enables implementation before registry
+   packages exist, but it is not release proof and must not leak local-source dependencies into a
+   published manifest.
+2. **Registry-aging stage:** after the SDK APIs and package contents are frozen, build the SDK
+   artifacts once from a clean protected-branch commit and test those exact tarballs/wheels. Publish
+   the approved candidate bytes in dependency order. Then replace local SDK references in
+   integration release manifests and locks with exact registry versions, using the scoped cooldown
+   mechanism only for the fresh internal packages. Build, test, and publish integration candidates
+   against those registry SDKs.
+
+At cutover, do not rebuild or republish. After every final artifact has aged, remove the cooldown
+exception, repeat immutable registry installs, reconcile the exact release commits into `main`,
+move only the approved npm dist-tags, and perform the approved Python selection/announcement step.
+Any artifact-byte change requires a new version and age clock.
+
+- [ ] Branch-development CI proves all integrations compile and run against the coordinated SDK
+      source commit before candidates exist.
+- [ ] Artifact-rehearsal CI proves the same integrations against the exact locally packed SDK bytes.
+- [ ] Registry-aging CI proves integrations against exact registry SDK versions with no local,
+      workspace, Git, or editable-source fallback.
+- [ ] The release record links the source commit, local artifact digests, registry digests, and
+      integration locks so equivalence across all three stages is auditable.
+
 ## Workstream E: dependency freeze and cooldown
 
 ### Freeze the complete graph
