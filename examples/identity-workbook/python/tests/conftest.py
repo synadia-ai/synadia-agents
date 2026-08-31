@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import shutil
-import socket
 import subprocess
 import time
 from collections.abc import Iterator
-from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,25 +23,22 @@ class WorkbookServer:
     identities: ProvisionedNkeys
 
 
-def _free_port() -> int:
-    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
-def _wait_for_server(port: int, process: subprocess.Popen[bytes]) -> bool:
+def _wait_for_server_url(ports_dir: Path, process: subprocess.Popen[bytes]) -> str | None:
+    """Read the server-selected ephemeral port after it starts listening."""
     deadline = time.monotonic() + STARTUP_TIMEOUT_S
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            return False
-        with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
-            sock.settimeout(0.25)
+            return None
+        for ports_file in ports_dir.glob("nats-server_*.ports"):
             try:
-                sock.connect(("127.0.0.1", port))
-                return True
-            except OSError:
-                time.sleep(0.05)
-    return False
+                payload = json.loads(ports_file.read_text(encoding="utf-8"))
+                urls = payload["nats"]
+                if isinstance(urls, list) and urls and isinstance(urls[0], str):
+                    return urls[0]
+            except (json.JSONDecodeError, KeyError, OSError, TypeError):
+                pass
+        time.sleep(0.05)
+    return None
 
 
 @pytest.fixture
@@ -52,7 +48,8 @@ def workbook_server(tmp_path: Path) -> Iterator[WorkbookServer]:
         pytest.skip("nats-server not on PATH — install it to run the workbook e2e test")
 
     identities = provision(tmp_path / "identity")
-    port = _free_port()
+    ports_dir = tmp_path / "ports"
+    ports_dir.mkdir()
     log_path = tmp_path / "nats-server.log"
     with log_path.open("wb") as log_file:
         process = subprocess.Popen(
@@ -61,7 +58,9 @@ def workbook_server(tmp_path: Path) -> Iterator[WorkbookServer]:
                 "-a",
                 "127.0.0.1",
                 "-p",
-                str(port),
+                "-1",
+                "--ports_file_dir",
+                str(ports_dir),
                 "-c",
                 str(identities.config_path),
             ],
@@ -69,14 +68,15 @@ def workbook_server(tmp_path: Path) -> Iterator[WorkbookServer]:
             stderr=subprocess.STDOUT,
         )
 
-    if not _wait_for_server(port, process):
+    url = _wait_for_server_url(ports_dir, process)
+    if url is None:
         process.terminate()
         process.wait(timeout=2)
         details = log_path.read_text(encoding="utf-8", errors="replace")
         raise RuntimeError(f"nats-server failed to start:\n{details}")
 
     try:
-        yield WorkbookServer(url=f"nats://127.0.0.1:{port}", identities=identities)
+        yield WorkbookServer(url=url, identities=identities)
     finally:
         if process.poll() is None:
             process.terminate()

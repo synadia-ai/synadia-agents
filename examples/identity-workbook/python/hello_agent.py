@@ -67,6 +67,9 @@ async def start_hello(
             seen_senders.append(sender)
         log.info("incoming sender=%s", describe_sender(sender))
 
+        # Per-request discovery keeps the workbook's registration verification
+        # visible on every call. A production service would normally cache this
+        # Agent reference and refresh it only after a failure or topology change.
         echo = await discover_verified_echo(agents)
         assert echo.identity is not None  # established by discover_verified_echo
         forwarded_prompt = f"Hello! {envelope.prompt}"

@@ -54,11 +54,18 @@ async def connect_user(url: str, seed_path: Path) -> ConnectedUser:
     The seed is never logged. ``signer_from_seed`` also guarantees that its
     validation errors do not include the supplied key material.
     """
-    seed = seed_path.expanduser().read_bytes()
-    signer = signer_from_seed(seed)
-    seed_line = seed.decode("ascii").strip()
+    expanded_seed_path = seed_path.expanduser()
+    # Python's immutable bytes cannot be zeroed. Keep this unavoidable copy
+    # scoped to signer construction; signer_from_seed wipes its mutable
+    # internal seed buffer. nats-py receives the file path rather than another
+    # immutable seed string and reads it only when authenticating.
+    seed = expanded_seed_path.read_bytes()
     try:
-        nc = await nats.connect(servers=url, nkeys_seed_str=seed_line)
+        signer = signer_from_seed(seed)
+    finally:
+        del seed
+    try:
+        nc = await nats.connect(servers=url, nkeys_seed=str(expanded_seed_path))
     except Exception:
         signer.wipe()
         raise

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Protocol
+from contextlib import AsyncExitStack
+from typing import Protocol
 
 import pytest
 from synadia_ai.agents import (
@@ -18,11 +19,8 @@ from synadia_ai.agents import (
 from _common import OWNER, SESSION_NAME, connect_user
 from call_echo import call_agent
 from echo_agent import start_echo
-from hello_agent import RunningHello, start_hello
+from hello_agent import start_hello
 from prepare_nkeys import ProvisionedNkeys
-
-if TYPE_CHECKING:
-    from synadia_ai.agent_service import AgentService
 
 
 class WorkbookServer(Protocol):
@@ -35,26 +33,30 @@ async def test_python_sender_identity_end_to_end(  # noqa: PLR0915 — one topol
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.INFO)
-    echo_user = await connect_user(
-        workbook_server.url, workbook_server.identities.user("echo").seed_path
-    )
-    hello_user = await connect_user(
-        workbook_server.url, workbook_server.identities.user("hello").seed_path
-    )
-    cli_user = await connect_user(
-        workbook_server.url, workbook_server.identities.user("cli").seed_path
-    )
-    echo: AgentService | None = None
-    hello: RunningHello | None = None
-    echo_senders: list[SenderInfo | None] = []
-    hello_senders: list[SenderInfo | None] = []
-    try:
+    async with AsyncExitStack() as stack:
+        echo_user = await connect_user(
+            workbook_server.url, workbook_server.identities.user("echo").seed_path
+        )
+        stack.push_async_callback(echo_user.close)
+        hello_user = await connect_user(
+            workbook_server.url, workbook_server.identities.user("hello").seed_path
+        )
+        stack.push_async_callback(hello_user.close)
+        cli_user = await connect_user(
+            workbook_server.url, workbook_server.identities.user("cli").seed_path
+        )
+        stack.push_async_callback(cli_user.close)
+
+        echo_senders: list[SenderInfo | None] = []
+        hello_senders: list[SenderInfo | None] = []
         echo = await start_echo(echo_user.nc, echo_user.signer, seen_senders=echo_senders)
+        stack.push_async_callback(echo.stop)
         hello = await start_hello(
             hello_user.nc,
             hello_user.signer,
             seen_senders=hello_senders,
         )
+        stack.push_async_callback(hello.stop)
 
         echo_id = AgentId.new("$G", echo_user.signer.public_key)
         hello_id = AgentId.new("$G", hello_user.signer.public_key)
@@ -182,11 +184,3 @@ async def test_python_sender_identity_end_to_end(  # noqa: PLR0915 — one topol
         )
         assert "Echo replied='Hello! identity workbook'" in hello_logs
         assert "Echo replied='Hello! anonymous'" in hello_logs
-    finally:
-        if hello is not None:
-            await hello.stop()
-        if echo is not None:
-            await echo.stop()
-        await cli_user.close()
-        await hello_user.close()
-        await echo_user.close()
