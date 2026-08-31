@@ -82,7 +82,7 @@ merging shared-branch feature work; complete the remaining operational items bef
       workflows so the merged branch result is revalidated.
 - [ ] Add CI and path-trigger coverage for Flue, Claude Code, and open-agent.
 - [ ] Add one aggregate required check covering caller SDKs, AgentService SDKs, cross-language
-      tests, the identity workbook, DeerFlow, and every non-deferred integration. Because component
+      tests, the identity workbook, DeerFlow, and every in-scope integration. Because component
       workflows are path-filtered, use an always-running evaluator rather than a naive pending
       fan-in over skipped jobs.
 - Recorded release-source fact: the
@@ -107,7 +107,8 @@ merging shared-branch feature work; complete the remaining operational items bef
       this roadmap.
 - [ ] Assign an accountable owner and backup for release coordination, branch/CI, cooldown policy,
       npm, PyPI, public docs, each integration class, go/no-go, and incident/rollback.
-- [ ] Record an explicit defer/ship decision and issue for anything that will not gate this rollout.
+- No in-scope SDK, integration, example, or external gate may be omitted by an implementer. A scope
+  change requires explicit user approval and a roadmap update.
 
 ## Resolved implementation contracts
 
@@ -390,8 +391,7 @@ For every applicable inventory row:
 - [ ] Test real runtime behavior and clean artifact-only installation.
 - [ ] Declare exact compatible internal versions; no monorepo `file:` or editable source counts as
       release proof.
-- [ ] Record artifact SHA, environment, CI run, time, and reviewer—or explicitly defer with owner,
-      reason, risk, and issue.
+- [ ] Record artifact SHA, environment, CI run, time, and reviewer for every applicable row.
 
 Hand-rolled hosts require full service registration, prompt admission before acknowledgement,
 status classification, replay behavior, sender exposure, logging/redaction, and error semantics.
@@ -579,8 +579,8 @@ stream cancellation, and mixed TypeScript/Python clients and hosts.
 
 - [ ] Every resolved implementation contract and rollout prerequisite is complete.
 - [ ] Identity correctness fixes and tracing have merged with all required checks.
-- [ ] Ship/defer scope, owners, release DAG, versions, constraints, artifact hashes, and rollback
-      baseline are approved.
+- [ ] Full inventory scope, owners, release DAG, versions, constraints, artifact hashes, and
+      rollback baseline are approved.
 - [ ] Full-repository and exact-artifact terminology/content audits pass.
 - [ ] Cooldown baseline and temporary exception mechanics are proven in CI.
 - [ ] Every rollout-owned consumer selects the intended exact internal versions and frozen locks.
@@ -651,7 +651,7 @@ The release record must assign a primary and backup for:
 - PyPI publication and rollback;
 - identity/security review and trace/privacy review;
 - public documentation/content audit;
-- each shipped or deferred integration; and
+- each in-scope integration; and
 - incident response and release communications.
 
 Every checked release gate must point to evidence containing, as applicable: source commit, package
@@ -678,7 +678,7 @@ The rollout is complete only when:
 - all intended SDK and integration artifacts are available through their normal channels;
 - the normal dependency cooldown is active with no rollout exception;
 - all applicable compatibility rows have durable artifact-based evidence;
-- every integration and release consumer is complete or explicitly deferred with an owner and issue;
+- every in-scope integration and release consumer is complete;
 - public caller and AgentService docs teach identity-free and signed operation using approved terms;
 - tracing is optional, privacy-reviewed, and wire-neutral when absent;
 - registry/source/provenance records and tested rollback paths are archived; and
