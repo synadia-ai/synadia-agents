@@ -2,7 +2,7 @@ name: CI — client-sdk/typescript
 
 on:
   push:
-    branches: [main]
+    branches: [main, sdk-release-rollout]
     paths:
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"

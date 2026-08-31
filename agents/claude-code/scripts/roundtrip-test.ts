@@ -14,7 +14,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { connect } from '@nats-io/transport-node'
 import { readFileSync, rmSync, existsSync } from 'fs'
 
-const SUBJECT = 'agents.prompt.cc.m64.rt-test'
+const OWNER = 'roundtrip'
+const SUBJECT = `agents.prompt.cc.${OWNER}.rt-test`
 const STATE_DIR = '/tmp/rt-test-state'
 const MAX_PAYLOAD = 1024 * 1024
 
@@ -31,6 +32,7 @@ const transport = new StdioClientTransport({
     CLAUDE_CWD: '/tmp/rt-test',
     NATS_SESSION_NAME: 'rt-test',
     NATS_STATE_DIR: STATE_DIR,
+    SYNADIA_CLAUDE_CODE_OWNER: OWNER,
   },
 })
 

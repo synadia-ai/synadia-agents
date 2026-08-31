@@ -5,7 +5,7 @@ name: CI — agents (TypeScript)
 # use local file links, so SDK changes trigger this workflow too.
 on:
   push:
-    branches: [main]
+    branches: [main, sdk-release-rollout]
     paths:
       - "agents/pi/**"
       - "agents/openclaw/**"
@@ -14,6 +14,10 @@ on:
       - "agents/acp/**"
       - "agents/grok/**"
       - "agents/eve/**"
+      - "agents/flue/**"
+      - "agents/claude-code/**"
+      - "agents/open-agent/**"
+      - ".claude-plugin/**"
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
       - ".github/workflows/agents-typescript.yml"
@@ -26,6 +30,10 @@ on:
       - "agents/acp/**"
       - "agents/grok/**"
       - "agents/eve/**"
+      - "agents/flue/**"
+      - "agents/claude-code/**"
+      - "agents/open-agent/**"
+      - ".claude-plugin/**"
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
       - ".github/workflows/agents-typescript.yml"
@@ -348,3 +356,141 @@ jobs:
       - name: Grok wrapper unit tests
         working-directory: agents/grok
         run: bun test
+
+  flue:
+    name: agents/flue (typecheck + tests + protocol smoke)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Build current client-sdk artifact
+        working-directory: client-sdk/typescript
+        run: |
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk artifact
+        working-directory: agent-sdk/typescript
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Package contents
+        working-directory: agents/flue
+        run: npm pack --dry-run --json
+      # Install from the packed branch SDKs. Resolving both development
+      # `file:` links directly can deadlock Bun on the SDK dependency cycle.
+      - name: Install packed SDKs and dependencies
+        working-directory: agents/flue
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm pkg set "dependencies.@synadia-ai/agent-service=file:$AGENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+      - name: Typecheck
+        working-directory: agents/flue
+        run: bun run typecheck
+      - name: Unit tests
+        working-directory: agents/flue
+        run: bun test
+      - name: Protocol smoke
+        working-directory: agents/flue
+        run: |
+          nats-server > "$RUNNER_TEMP/flue-nats.log" 2>&1 &
+          nats_pid=$!
+          trap 'kill "$nats_pid" 2>/dev/null || true' EXIT
+          bun run smoke:protocol
+
+  claude-code:
+    name: agents/claude-code (roundtrip + package shape)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      # Claude Code installs the published SDKs at server start today. The
+      # coordinated artifact install is added with its identity adaptation;
+      # this bootstrap job still protects the existing roundtrip behavior.
+      - name: Install dependencies
+        working-directory: agents/claude-code
+        run: bun install --frozen-lockfile
+      - name: Validate plugin descriptors
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json', 'utf8'))"
+          node -e "JSON.parse(require('fs').readFileSync('agents/claude-code/.claude-plugin/plugin.json', 'utf8'))"
+      - name: Roundtrip smoke
+        working-directory: agents/claude-code
+        env:
+          # Override the developer's configured context with the disposable
+          # broker; an empty context selects NATS_URL by design.
+          NATS_CONTEXT: ""
+          NATS_URL: nats://localhost:4222
+        run: |
+          nats-server > "$RUNNER_TEMP/claude-code-nats.log" 2>&1 &
+          nats_pid=$!
+          trap 'kill "$nats_pid" 2>/dev/null || true' EXIT
+          bun scripts/roundtrip-test.ts
+      - name: Package contents
+        working-directory: agents/claude-code
+        run: npm pack --dry-run --json
+
+  open-agent:
+    name: agents/open-agent (typecheck + tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Build current client-sdk artifact
+        working-directory: client-sdk/typescript
+        run: |
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk artifact
+        working-directory: agent-sdk/typescript
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          bun install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      # As with Flue, avoid Bun's cyclic local-link resolver and install the
+      # exact packed branch SDK artifacts instead.
+      - name: Install packed SDKs and dependencies
+        working-directory: agents/open-agent
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm pkg set "dependencies.@synadia-ai/agent-service=file:$AGENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+      - name: Typecheck
+        working-directory: agents/open-agent
+        run: bun run typecheck
+      - name: Unit and integration tests
+        working-directory: agents/open-agent
+        run: bun test test/
