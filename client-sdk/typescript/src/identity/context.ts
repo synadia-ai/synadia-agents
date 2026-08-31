@@ -1,13 +1,13 @@
 // Internal: the identity state an `Agents` client owns and threads into
 // every `Agent` it hands out — signer, display name, the unsigned-claim
-// policy, and the per-connection `selfId()` memo.
+// policy, and the per-connection-and-identity-source `selfId()` memo.
 //
 // The cost rule (plan §2.1a): a request awaits the identity lookup at most
-// once per connection. Afterwards a memoised answer is used; a failure
-// inside its 30 s TTL means "no header" (or the memoised error on a
-// `signed` endpoint); an expired failure retries in the background while
-// the request proceeds without a header — except on a `signed` endpoint,
-// where the request would fail for certain, so it awaits the retry.
+// once per connection and identity source. Afterwards a memoised answer is
+// used. An unsigned configuration may proceed without a header after a
+// lookup failure and retry an expired failure in the background. A signer
+// configuration always propagates the failure and awaits retries; it never
+// silently downgrades.
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import { IdentityMismatchError, NoIdentityError, SenderSignatureRequiredError } from "../errors.js";
@@ -79,11 +79,12 @@ export class IdentityContext {
   }
 
   peek(): SelfIdSettled | undefined {
-    return peekSelfId(this.nc);
+    return peekSelfId(this.nc, this.#selfIdOptions());
   }
 
   /** Start the lookup without waiting (`discover()` calls this). */
   kickoff(): void {
+    if (!this.signer && !this.sendUnsignedClaim) return;
     startSelfIdLookup(this.nc, this.#selfIdOptions());
   }
 
@@ -106,25 +107,29 @@ export class IdentityContext {
 
   /**
    * The identity for one request per the cost rule, or `undefined` when
-   * the request goes out without a header. `IdentityMismatchError`
-   * always propagates; other identity errors propagate only when
-   * `requireSigned`.
+   * the request goes out without a header. `IdentityMismatchError` always
+   * propagates; all identity errors propagate when `requireSigned` or a
+   * signer is configured.
    */
   async resolveForRequest(requireSigned: boolean): Promise<AgentId | undefined> {
+    // A configured signer is an explicit request for signed identity. Any
+    // failure to bind it to the live connection is fatal even when the
+    // target is permissive; never silently downgrade to no header.
+    const identityRequired = requireSigned || this.signer !== undefined;
     const settled = this.peek();
     if (settled !== undefined) {
       if ("id" in settled) return settled.id;
-      if (settled.error instanceof IdentityMismatchError || requireSigned) throw settled.error;
+      if (settled.error instanceof IdentityMismatchError || identityRequired) throw settled.error;
       return undefined;
     }
-    if (!requireSigned && selfIdFailureExpired(this.nc)) {
+    if (!identityRequired && selfIdFailureExpired(this.nc, this.#selfIdOptions())) {
       this.kickoff();
       return undefined;
     }
     try {
       return await this.selfId();
     } catch (err) {
-      if (err instanceof IdentityMismatchError || requireSigned) throw err;
+      if (err instanceof IdentityMismatchError || identityRequired) throw err;
       return undefined;
     }
   }

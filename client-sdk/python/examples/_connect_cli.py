@@ -14,8 +14,9 @@ authenticate the connection **and** build the ``Identity(signer=…)`` the
 examples hand to ``Agents`` (``identity_from_cli``); ``--sender-name`` /
 ``$NATS_SENDER_NAME`` sets the display name. A file, not an environment
 value holding the seed, so spawned tool processes do not inherit it.
-Without either flag the examples send unsigned claims when the
-connection has an NKEY identity and nothing otherwise — 0.3 behaviour.
+Without an identity flag the examples perform no identity lookup and send
+no ``Agent-Sender`` header. ``--sender-name`` alone explicitly opts into an
+unsigned claim.
 
 Mirrors what the TS ``examples/`` do with their inline loader. The SDK
 does not open NATS connections — every example builds its own
@@ -92,9 +93,8 @@ def add_identity_flags(parser: argparse.ArgumentParser) -> None:
 def identity_from_cli(args: argparse.Namespace) -> Identity | None:
     """``Identity(signer=…, name=…)`` from ``--nkey`` / ``--creds`` / ``--sender-name``.
 
-    ``None`` when no identity flag is set, so ``Agents(nc=nc, identity=None)``
-    keeps the SDK's default (unsigned claims when the connection has an
-    NKEY identity).
+    ``None`` when no identity flag is set, so the caller performs no
+    identity lookup and sends no ``Agent-Sender`` header.
     """
     nkey = getattr(args, "nkey", None)
     creds = getattr(args, "creds", None)

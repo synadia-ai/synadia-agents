@@ -158,9 +158,8 @@ async function main(): Promise<number> {
   const nc = await natsConnect(opts);
   const agents = new Agents({
     nc,
-    // `--signed`: sign every request. Otherwise send no header at all —
-    // the SDK's default unsigned claim would blur "absent" vs "claimed"
-    // for the test on the other side.
+    // `--signed`: sign every request. Otherwise explicitly keep identity
+    // disabled so this probe continues to exercise the headerless path.
     identity: args.signed && signer ? { signer } : { sendUnsignedClaim: false },
   });
   try {

@@ -14,9 +14,8 @@ authenticate the connection **and** build the signer the agents hand to
 ``AgentService(identity=ServiceIdentity(signer=…))`` (``signer_from_cli``)
 so the registration carries a verifiable ``id_sig``. A file, not an
 environment value holding the seed, so spawned tool processes do not
-inherit it. Without either flag the agents register ``user_nkey`` /
-``account`` unsigned when the connection has an NKEY identity and
-nothing otherwise — 0.3 behaviour. (The host never sends
+inherit it. Without either flag the agents perform no own-identity lookup
+and register no identity metadata. (The host never sends
 ``Agent-Sender``, so there is no ``--sender-name`` here.)
 
 Mirrors what the TS ``examples/`` do with their inline loader. The SDK
@@ -87,8 +86,8 @@ def add_identity_flags(parser: argparse.ArgumentParser) -> None:
 def signer_from_cli(args: argparse.Namespace) -> SenderSigner | None:
     """The signer for ``ServiceIdentity(signer=…)`` from ``--nkey`` / ``--creds``, else ``None``.
 
-    ``None`` keeps the SDK's default: the identity keys are registered
-    unsigned when the connection has an NKEY identity.
+    Callers pass ``identity=None`` when this returns ``None`` so the host
+    performs no own-identity lookup or registration disclosure.
     """
     nkey = getattr(args, "nkey", None)
     creds = getattr(args, "creds", None)

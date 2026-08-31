@@ -25,7 +25,7 @@ The rollout has five non-negotiable outcomes:
 ## Workflow terminology
 
 - **Integration branch:** `sdk-release-rollout`, where the coordinated feature, compatibility,
-  documentation, and release work is assembled. It is currently local only.
+  documentation, and release work is assembled. It is pushed and retained through final cutover.
 - **SDK feature PR:** an implementation change targeting the integration branch, such as tracing
   or an identity correctness fix.
 - **SDK release PR:** the reviewed version, dependency, changelog, and package-content changes for
@@ -114,39 +114,38 @@ merging shared-branch feature work; complete the remaining operational items bef
 
 ### Caller identity default
 
-Both callers currently start self-identity lookup during discovery when identity is omitted. They
-differ only in header attachment: TypeScript may attach an unsigned claim while Python attaches no
-header. Implement this common contract in both languages:
+Before this milestone, callers could start self-identity lookup during discovery when identity was
+omitted, and their default header behavior differed. The common contract is:
 
-| Configuration | Discovery and request behavior |
-| --- | --- |
-| No identity option | No identity lookup and no `Agent-Sender` header |
-| Explicit identity without signer, unsigned claim enabled | Lookup and unsigned claim |
-| Explicit identity without signer, unsigned claim disabled | No identity lookup or header |
-| Explicit identity with signer | Signed sender header after live-connection binding succeeds |
+| Configuration                                             | Discovery and request behavior                              |
+| --------------------------------------------------------- | ----------------------------------------------------------- |
+| No identity option                                        | No identity lookup and no `Agent-Sender` header             |
+| Explicit identity without signer, unsigned claim enabled  | Lookup and unsigned claim                                   |
+| Explicit identity without signer, unsigned claim disabled | No identity lookup or header                                |
+| Explicit identity with signer                             | Signed sender header after live-connection binding succeeds |
 
-- [ ] Make both languages implement the contract exactly.
-- [ ] At wire level, prove omission produces no `$SYS.REQ.USER.INFO`, no header, and no background
+- [x] Make both languages implement the contract exactly.
+- [x] At wire level, prove omission produces no `$SYS.REQ.USER.INFO`, no header, and no background
       identity work.
-- [ ] Test omission separately from an explicit empty identity option and
+- [x] Test omission separately from an explicit empty identity option and
       `sendUnsignedClaim=false`; do not invent a second public “disabled identity” API.
-- [ ] Sweep TypeScript tests and examples that currently rely on the unreleased default unsigned
+- [x] Sweep TypeScript tests and examples that currently rely on the unreleased default unsigned
       claim and update them in the same change.
-- [ ] Update API documentation and changelogs to match the contract.
+- [x] Update API documentation and changelogs to match the contract.
 
 ### AgentService identity default and privacy
 
-Today, omitting host identity can still perform self-discovery and publish unsigned user/account
-registration metadata. The release contract is:
+Before this milestone, omitting host identity could still perform self-discovery and publish
+unsigned user/account registration metadata. The release contract is:
 
 - no host identity option means no self lookup and no own user/account/`id_sig` registration fields;
 - optional incoming sender headers are still classified and exposed;
 - default trust remains `any`, so headerless prompts remain accepted; and
 - explicit host identity enables connection binding and identity registration.
 
-- [ ] Implement this contract in both languages.
-- [ ] Prove the identity-free/default startup path at wire level and without `$SYS` permission.
-- [ ] Keep inbound signed-only policy a separate, explicit opt-in.
+- [x] Implement this contract in both languages.
+- [x] Prove the identity-free/default startup path at wire level and without `$SYS` permission.
+- [x] Keep inbound signed-only policy a separate, explicit opt-in.
 
 ### Connection-identity invariant and credential topology
 
@@ -161,10 +160,10 @@ context.
 
 - [ ] Remove or reject independently selectable connection and identity credentials in integration
       CLIs, environment variables, config files, and plugin settings.
-- [ ] Require live-connection binding before every signed send or registration path can become
+- [x] Require live-connection binding before every signed send or registration path can become
       usable. If equality cannot be established, fail signed identity without affecting an
       explicitly identity-free path.
-- [ ] Never interpret an Alice-authenticated connection plus a Bob signer as Bob identity. Delegated
+- [x] Never interpret an Alice-authenticated connection plus a Bob signer as Bob identity. Delegated
       identity, if ever designed, is a separate protocol feature outside this rollout.
 - [ ] Test coordinated credential rotation without retaining or logging old credential material.
 
@@ -202,8 +201,8 @@ do not share replay state. For this release, replay protection is explicitly per
 best-effort. Shared HA replay storage is outside scope and strict sender policy does not imply
 cross-replica or restart-persistent replay protection.
 
-- [ ] Document restart, eviction, and replica boundaries without overstating replay protection.
-- [ ] Test and observe the per-process cache behavior under concurrency and pressure.
+- [x] Document restart, eviction, and replica boundaries without overstating replay protection.
+- [x] Test and observe the per-process cache behavior under concurrency and pressure.
 
 ## Workstream A: identity correctness and SDK behavior
 
@@ -213,11 +212,11 @@ A configured credentials signer must not be trusted merely because its own JWT m
 key. The SDK must establish that the signer represents the user authenticated on the live
 connection.
 
-- [ ] Fix credentials-based signer validation in TypeScript and Python; an Alice connection with
+- [x] Fix credentials-based signer validation in TypeScript and Python; an Alice connection with
       Bob credentials must fail before sending or registering a signed identity.
-- [ ] Fix TypeScript identity caching so a prior lookup cannot bypass a later signer's validation;
+- [x] Fix TypeScript identity caching so a prior lookup cannot bypass a later signer's validation;
       key it by connection plus identity-source fingerprint and retain reconnect invalidation.
-- [ ] Do not retain Python identity results across identity-bearing operations: an externally
+- [x] Do not retain Python identity results across identity-bearing operations: an externally
       supplied nats-py connection exposes no reconnect epoch to the SDK. Revalidate the live
       connection/signer binding for each signed send or registration until reliable invalidation is
       available.
@@ -225,36 +224,36 @@ connection.
       redact all credential material.
 - [ ] Test seed, credentials, context, same-user/different-account JWTs, mismatched credentials,
       multiple clients/services sharing one connection, reconnect, and credential rotation.
-- [ ] A configured signer mismatch is a typed/actionable error in both languages and never silently
+- [x] A configured signer mismatch is a typed/actionable error in both languages and never silently
       downgrades to unsigned or headerless operation.
 
 ### Caller SDKs
 
-- [ ] TypeScript and Python caller unit and integration identity suites pass.
+- [x] TypeScript and Python caller unit and integration identity suites pass.
 - [ ] Direct TypeScript-caller to Python-host and Python-caller to TypeScript-host tests cover
       signed, unsigned, and headerless prompts.
-- [ ] Discovery treats a service without `min_sender_trust` as legacy-compatible.
-- [ ] A permissive target remains callable when identity discovery is unavailable.
+- [x] Discovery treats a service without `min_sender_trust` as legacy-compatible.
+- [x] A permissive target remains callable when identity discovery is unavailable.
 - [ ] A strict target without a configured signer fails with an inspectable error code and
       description in both languages, not only a parsed message string.
-- [ ] Signed payload sizing includes all NATS header framing and remains under broker limits.
-- [ ] Unknown and duplicate identity headers fail according to the documented policy.
-- [ ] Intended public identity types and helpers are exported from documented package paths.
+- [x] Signed payload sizing includes all NATS header framing and remains under broker limits.
+- [x] Unknown and duplicate identity headers fail according to the documented policy.
+- [x] Intended public identity types and helpers are exported from documented package paths.
 - [ ] Identity crypto libraries remain normal SDK dependencies for this release; prove that an
       identity-free import/start path works in every supported runtime without configuration.
 
 ### AgentService SDKs
 
-- [ ] TypeScript and Python AgentService identity suites pass.
-- [ ] Default trust remains `any` in code, tests, examples, and docs.
-- [ ] Headerless prompts are accepted by default; valid signed prompts expose a signature-valid
+- [x] TypeScript and Python AgentService identity suites pass.
+- [x] Default trust remains `any` in code, tests, examples, and docs.
+- [x] Headerless prompts are accepted by default; valid signed prompts expose a signature-valid
       sender to the handler.
-- [ ] Invalid signature, timestamp, subject, and replay checks apply to prompt admission before
+- [x] Invalid signature, timestamp, subject, and replay checks apply to prompt admission before
       acknowledgement or handler execution.
-- [ ] Status/liveness requests remain compatible and classify identity without being rejected for
+- [x] Status/liveness requests remain compatible and classify identity without being rejected for
       malformed, stale, or replayed identity.
-- [ ] Registration without a usable connection identity follows the recorded host-default contract.
-- [ ] A configured host signer registers a verifiable `id_sig` only after connection binding.
+- [x] Registration without a usable connection identity follows the recorded host-default contract.
+- [x] A configured host signer registers a verifiable `id_sig` only after connection binding.
 - [ ] Raw nonces, seeds, credentials, signatures, JWTs, and authentication headers never appear in
       structured or rendered logs, rejection details, or exceptions. Add explicit redaction tests.
 - [ ] Service imports, account-token placement, `sub` overrides, renamed/closed exports, request-info
@@ -262,14 +261,14 @@ connection.
 
 ### Security vocabulary and protocol boundaries
 
-- [ ] Use **signature-valid sender** for proof of key possession. Treat `account` as claimed unless
+- [x] Use **signature-valid sender** for proof of key possession. Treat `account` as claimed unless
       `accountAttested`/the equivalent operator-backed result is true.
-- [ ] Do not imply that an `id_sig` alone proves account membership.
-- [ ] Document that only the initial prompt is signed: prompt responses and midstream query replies
+- [x] Do not imply that an `id_sig` alone proves account membership.
+- [x] Document that only the initial prompt is signed: prompt responses and midstream query replies
       are not independently authenticated.
-- [ ] Never infer a query respondent, approval actor, or logical session from the original prompt
+- [x] Never infer a query respondent, approval actor, or logical session from the original prompt
       sender or a trace context.
-- [ ] Reverse identity lookup that returns one of several sessions sharing a key is not an
+- [x] Reverse identity lookup that returns one of several sessions sharing a key is not an
       authorization primitive and must not be used to attribute a specific session.
 
 ## Workstream B: optional tracing release gate
@@ -317,13 +316,13 @@ public wording must remain product-neutral.
 Teach neutral concepts such as **sender identity**, **signed sender**, `Agent-Sender`,
 **signature-valid**, and **account-attested**.
 
-- [ ] Teach the identity-free caller first in both caller READMEs.
-- [ ] Teach explicit unsigned and signed caller setup in both caller READMEs.
-- [ ] Explain strict targets, signer/connection binding, and safe credential handling.
-- [ ] Teach optional `stream.sender` / `response.sender` handling in both AgentService READMEs.
-- [ ] Explain permissive defaults, explicit signed-only mode, replay scope, unsigned
+- [x] Teach the identity-free caller first in both caller READMEs.
+- [x] Teach explicit unsigned and signed caller setup in both caller READMEs.
+- [x] Explain strict targets, signer/connection binding, and safe credential handling.
+- [x] Teach optional `stream.sender` / `response.sender` handling in both AgentService READMEs.
+- [x] Explain permissive defaults, explicit signed-only mode, replay scope, unsigned
       response/query boundaries, and account-attestation semantics.
-- [ ] Ensure protocol-mapping documents are self-contained or link only to approved public specs.
+- [x] Ensure protocol-mapping documents are self-contained or link only to approved public specs.
 - [ ] Audit the **entire public repository**, generated docs, source maps, changelogs, release notes,
       package metadata, fixtures, and source docstrings for private terminology and links.
 - [ ] Reconcile stale integration documentation with the capabilities actually shipped by

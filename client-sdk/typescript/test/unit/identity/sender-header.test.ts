@@ -443,6 +443,8 @@ describe("verifySenderHeader", () => {
       }),
     );
     expect(err.detail).toMatch(/already seen/);
+    expect(err.detail).not.toContain(h.nonce!);
+    expect(err.message).not.toContain(h.nonce!);
     expect(asked).toBe(1);
   });
 

@@ -47,6 +47,7 @@ async def main() -> None:
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)
+    signer = signer_from_cli(args)
 
     service = AgentService(
         agent="echo",
@@ -56,9 +57,8 @@ async def main() -> None:
         description="Echo agent — replies with the prompt prefixed by 'echo: '",
         heartbeat_interval_s=args.heartbeat_interval,
         # Sender identity: --nkey / --creds ($NATS_NKEY_SEED_FILE / $NATS_CREDS)
-        # sign the registration's id_sig; without them the identity keys are
-        # registered unsigned when the connection has an NKEY identity.
-        identity=ServiceIdentity(signer=signer_from_cli(args)),
+        # sign the registration's id_sig; without them identity stays off.
+        identity=ServiceIdentity(signer=signer) if signer is not None else None,
     )
 
     # The whole agent. Every incoming prompt runs this handler; whatever we

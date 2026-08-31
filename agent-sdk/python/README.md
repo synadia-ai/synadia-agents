@@ -69,13 +69,12 @@ to run them.
 
 ## Sender identity
 
-`AgentService` implements the receiver side of the
-[sender-identity extension](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md):
-every `prompt` request is classified **before** the §6.4 ack, and the
-handler sees the result as `stream.sender`.
+`AgentService` implements the receiver side of the optional sender-identity
+extension: every `prompt` request is classified **before** the §6.4 ack,
+and the handler sees the result as `stream.sender`.
 
 ```python
-from synadia_ai.agents import format_sender, signer_from_seed
+from synadia_ai.agents import format_sender
 from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
 service = AgentService(
@@ -83,7 +82,8 @@ service = AgentService(
     owner="demo",
     session_name="main",
     nc=nc,
-    identity=ServiceIdentity(signer=signer_from_seed(Path(os.environ["NATS_NKEY_SEED_FILE"]).read_bytes())),
+    # host_signer must come from the same credential snapshot that authenticated `nc`.
+    identity=ServiceIdentity(signer=host_signer),
     min_sender_trust="signed",  # default "any"
     accept_sender=lambda sender: sender is not None
     and sender.trust == "verified"
@@ -107,22 +107,23 @@ async def handler(envelope: Envelope, stream: PromptStream) -> None:
 
 What to know:
 
-- **Registration.** When the connection has an NKEY identity the service
-  registers `user_nkey` and `account`; with `identity=ServiceIdentity(signer=…)`
-  it also registers `id_sig` (`AGENT-ID-V1` over the prompt subject) so
-  callers can verify the claim (`AgentInfo.id_sig_verified`).
+- **Registration is opt-in.** Omit `identity` for no host-identity lookup
+  and no `user_nkey`, `account`, or `id_sig` metadata; incoming senders
+  are still classified. Pass `ServiceIdentity()` explicitly for
+  best-effort unsigned registration, or provide a signer to register
+  `id_sig` (`AGENT-ID-V1` over the prompt subject).
   `min_sender_trust` is **always** emitted on the prompt endpoint — its
-  presence is what advertises the extension — and never on `status`. A
-  signer that is not the connection's user makes `start()` raise
-  `IdentityMismatchError`; a connection without an identity starts
-  without the keys (logged) — verifying *senders* needs no host identity.
+  presence is what advertises the extension — and never on `status`; it
+  defaults to `"any"` independently of host identity. A signer is checked
+  against the live connection's user and account; mismatch or unavailable
+  binding makes `start()` fail and never downgrades.
   `start()` returns only once the endpoints are registered at the server
   (`flush()`).
 - **The verified identity is `user`.** `account` is the sender's signed
   claim; `format_sender` / `str(sender)` renders
   `… (verified user, claimed account)`. Which verified senders to accept
   is authorization — the `accept_sender` hook is where a harness
-  consults a list it provisions or, later, the fabric's agent registry.
+  consults its provisioned policy.
   The hook runs for every classified prompt (never for `status`), may be
   sync or async; per-request network I/O in it delays the ack and is an
   amplification vector on `any` endpoints. A refused claimed / absent
@@ -135,6 +136,9 @@ What to know:
 - **`status`** is classified and logged (its verified nonce enters the
   shared set), never rejected — a liveness probe must not depend on the
   prober's credentials.
+- **Only the incoming request is signed.** Prompt responses and mid-stream
+  query replies are not independently authenticated; do not attribute a
+  query reply to the original prompt sender.
 - **`account_token_position`** is for a service behind an export that
   inserts the caller's account token (`account_token_position`, the
   ScratchPad shape): the receiver checks the token against the header's

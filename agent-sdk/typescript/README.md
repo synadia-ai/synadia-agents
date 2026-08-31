@@ -105,12 +105,12 @@ The `agents/openclaw`, `agents/pi`, and `agents/claude-code` harnesses in this m
 
 ## Sender identity
 
-`AgentService` implements the receiver side of the
-[sender-identity extension](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md):
-every `prompt` request is classified **before** the §6.4 ack, and the handler sees the result as `response.sender`.
+`AgentService` implements the receiver side of the optional sender-identity
+extension: every `prompt` request is classified **before** the §6.4 ack,
+and the handler sees the result as `response.sender`.
 
 ```ts
-import { formatSender, signerFromSeed } from "@synadia-ai/agents";
+import { formatSender } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
 
 const service = new AgentService({
@@ -118,7 +118,8 @@ const service = new AgentService({
   agent: "echo",
   owner: "demo",
   name: "main",
-  identity: { signer: signerFromSeed(await readFile(process.env.NATS_NKEY_SEED_FILE!, "utf8")) },
+  // hostSigner must come from the same credential snapshot that authenticated `nc`.
+  identity: { signer: hostSigner },
   minSenderTrust: "signed", // default "any"
   acceptSender: (sender) => sender?.trust === "verified" && allowlist.has(sender.id),
   logger,
@@ -141,10 +142,11 @@ service.onPrompt(async (envelope, response) => {
 
 What to know:
 
-- **Registration.** When the connection has an NKEY identity the service registers `user_nkey` and `account`; with `identity.signer` it also registers `id_sig` (`AGENT-ID-V1` over the prompt subject) so callers can verify the claim (`agent.idSigVerified`). `min_sender_trust` is **always** emitted on the prompt endpoint — its presence is what advertises the extension — and never on `status`. A signer that is not the connection's user makes `start()` throw `IdentityMismatchError`; a connection without an identity starts without the keys (logged) — verifying _senders_ needs no host identity.
-- **The verified identity is `user`.** `account` is the sender's signed claim; `formatSender` renders `… (verified user, claimed account)`. Which verified senders to accept is authorization — the `acceptSender` hook is where a harness consults a list it provisions or, later, the fabric's agent registry. The hook runs for every classified prompt (never for `status`); per-request network I/O in it delays the ack and is an amplification vector on `any` endpoints.
+- **Registration is opt-in.** Omit `identity` for no host-identity lookup and no `user_nkey`, `account`, or `id_sig` metadata. Incoming senders are still classified. Pass `identity: {}` explicitly for best-effort unsigned registration, or provide a signer to register `id_sig` (`AGENT-ID-V1` over the prompt subject). A signer is checked against the live connection's user and account; mismatch or unavailable binding makes `start()` fail and never downgrades. `min_sender_trust` is always emitted on the prompt endpoint and defaults to `"any"` independently of host identity.
+- **The verified identity is `user`.** `account` is the sender's signed claim; `formatSender` renders `… (verified user, claimed account)`. Which verified senders to accept is authorization — the `acceptSender` hook is where a harness consults its provisioned policy. The hook runs for every classified prompt (never for `status`); per-request network I/O in it delays the ack and is an amplification vector on `any` endpoints.
 - **Replay protection** is a per-instance nonce set (`replayWindowMs`, default 30 s; entries expire at `ts + window`, bounded by a hard cap). Instances behind the `agents` queue group do not share it and a restart empties it; the `ts` window bounds both.
 - **`status`** is classified and logged, never rejected — a liveness probe must not depend on the prober's credentials.
+- **Only the incoming request is signed.** Prompt responses and mid-stream query replies are not independently authenticated; do not attribute a query reply to the original prompt sender.
 - **`accountTokenPosition`** is for a service behind an export that inserts the caller's account token (`account_token_position`, the ScratchPad shape): the receiver checks the token against the header's `account` and accepts `sub` with the token removed. The inserted token is a server stamp only on a **closed** endpoint. Note that `AgentService` hosts five-token `agents.{verb}.a.o.n` subjects, which such an export turns into six-token arrivals its subscription never sees — the option is validated and honoured by the classifier, but hosting _behind_ such an export today means a hand-rolled service on the wildcard subject calling `verifySenderHeader(…, { accountTokenPosition })` (see `test/integration/identity-accounts.test.ts` in the caller package).
 - **Cross-account callers** need the deployment's help: export the prompt subject with `response_type: stream` (a response is many messages — without it every reply after the first is dropped silently), export `$SRV.>` for discovery, and export the inbox prefix if the agent asks mid-stream queries. Callers behind a renaming import (`to:` / `local_subject`) publish the local name and sign the exporter's subject (`prompt(text, { subject, sub })`); nothing to configure on this side.
 - **Reverse lookup.** `response.sender.resolve()` on a verified sender returns the `AgentInfo` of the agent that registered that ID with a verifying `id_sig` (enumerated through `$SRV.INFO.agents` on this connection, so account-local; `undefined` when no verified instance claims the key — a human user, a plain service, an agent that is offline). The index is cached for `resolveTtlMs` (default 10 s). It identifies; whether to accept is still `acceptSender`'s call.

@@ -182,6 +182,7 @@ async def main() -> None:
     args = parser.parse_args()
 
     nc = await connect_from_cli(args)
+    signer = signer_from_cli(args)
 
     # Start the microservice the agent's tool will call. In production this is a
     # separate process somewhere on the network — here it just shares `nc`.
@@ -195,9 +196,8 @@ async def main() -> None:
         description="LLM agent with a read_sensor tool backed by a NATS microservice",
         heartbeat_interval_s=args.heartbeat_interval,
         # Sender identity: --nkey / --creds ($NATS_NKEY_SEED_FILE / $NATS_CREDS)
-        # sign the registration's id_sig; without them the identity keys are
-        # registered unsigned when the connection has an NKEY identity.
-        identity=ServiceIdentity(signer=signer_from_cli(args)),
+        # sign the registration's id_sig; without them identity stays off.
+        identity=ServiceIdentity(signer=signer) if signer is not None else None,
     )
 
     async def handler(envelope: Envelope, stream: PromptStream) -> None:

@@ -18,11 +18,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   never served. The classified sender reaches the handler as
   `PromptResponse.sender` (`VerifiedSender` with `id`, `ClaimedSender`
   without — never authorize on a claim — or `undefined`). `status` is
-  classified and logged, never rejected. Spec:
-  [`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
-  - Registration: `user_nkey` / `account` when the connection has an
-    identity, `id_sig` (`AGENT-ID-V1` over the prompt subject) when
-    `identity.signer` is set; identity keys override `extraMetadata`.
+  classified and logged, never rejected. The extension is additive to
+  protocol `0.3`.
+  - Registration is opt-in: omitted `identity` performs no self lookup and
+    emits no identity metadata; explicit `{}` requests unsigned
+    `user_nkey` / `account`; a live-bound signer also adds `id_sig`
+    (`AGENT-ID-V1` over the prompt subject). Identity keys override
+    `extraMetadata` and are removed when identity is omitted.
     `min_sender_trust` is **always** emitted on the prompt endpoint
     (default `"any"`) — that key is what advertises the extension.
   - New `AgentServiceOptions`: `identity: { signer? }`, `minSenderTrust`,
@@ -46,9 +48,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - `SenderGateOptions.operatorAttested` / `.resolver`,
     `SenderGate.operatorAttested`; `SenderGate.classify` now runs the
     caller package's `verifySender(msg, "live", …)`.
-  - `start()` throws `IdentityMismatchError` when the signer's key is not
-    the connection's user; on `NoIdentityError` / `IdentityUnavailableError`
-    it logs and starts without identity metadata.
+  - With a signer, `start()` requires the live connection's user and account
+    to match and propagates every binding failure; it never starts with
+    downgraded unsigned or absent identity metadata. Explicit unsigned
+    registration remains best-effort.
   - `AgentService.identity` / `.minSenderTrust` getters.
   - `SenderGate` and `NonceCache` (`@synadia-ai/agent-service`) for
     hand-rolled services that want the same classification (the shared
@@ -76,6 +79,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   subscriptions are registered at the server — a caller on another
   connection that discovers or prompts right away no longer races them
   (no responders).
+- Replay rejection details omit raw nonces, and `acceptSender` hook failures
+  log only a fixed safe marker rather than application-controlled exception
+  names or messages.
 
 ### Changed (pre-identity)
 

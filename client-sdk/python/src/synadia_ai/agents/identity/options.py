@@ -1,11 +1,8 @@
-"""``Identity`` — the caller-side identity options — and the per-request header planning (internal).
+"""Caller identity options and per-request ``Agent-Sender`` planning.
 
-The cost rule (plan §2.1a): a request awaits the identity lookup at most
-once per connection. Afterwards a memoised answer is used; a failure
-inside its 30 s TTL means "no header" (or the memoised error on a
-``signed`` endpoint); an expired failure retries in the background while
-the request proceeds without a header — except on a ``signed`` endpoint,
-where the request would fail for certain, so it awaits the retry.
+Identity-bearing requests resolve the live connection identity every time.
+This is deliberate: nats-py exposes no reconnect generation with which a
+cached answer could be invalidated safely.
 """
 
 from __future__ import annotations
@@ -13,13 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..errors import IdentityMismatchError, NoIdentityError, SenderSignatureRequiredError
+from ..errors import IdentityError, SenderSignatureRequiredError
 from .agent_id import AgentId
 from .self_id import (
-    peek_self_id,
+    lookup_self_id,
     refresh_self_id,
     self_id,
-    self_id_failure_expired,
     start_self_id_lookup,
 )
 from .sender_header import (
@@ -87,7 +83,7 @@ class SenderHeaderPlan:
 
 
 async def self_id_for(identity: Identity | None, nc: NATSClient) -> AgentId:
-    """``self_id()`` with the identity's signer (JWT source + mismatch check)."""
+    """``self_id()`` with live signer-to-connection binding when configured."""
     return await self_id(nc, signer=identity.signer if identity is not None else None)
 
 
@@ -97,24 +93,24 @@ async def refresh_self_id_for(identity: Identity | None, nc: NATSClient) -> Agen
 
 
 def kickoff_self_id(identity: Identity | None, nc: NATSClient) -> None:
-    """Start the lookup without waiting (``discover()`` calls this)."""
-    start_self_id_lookup(nc, signer=identity.signer if identity is not None else None)
+    """Explicitly start an enabled identity lookup without waiting."""
+    if identity is None or (identity.signer is None and not identity.send_unsigned_claim):
+        return
+    start_self_id_lookup(nc, signer=identity.signer)
 
 
 def may_attach_header(identity: Identity | None, nc: NATSClient) -> bool:
     """Synchronous: could the next request carry a header?
 
     Governs the size bound applied before any async work. ``True`` with a
-    signer, or with unsigned claims enabled unless the memo already holds
-    a :class:`NoIdentityError`.
+    signer, or with unsigned claims enabled. The answer cannot depend on a
+    cached lookup because a reconnect may have changed the live identity.
     """
     if identity is None:
         return False
     if identity.signer is not None:
         return True
-    if not identity.send_unsigned_claim:
-        return False
-    return not isinstance(peek_self_id(nc), NoIdentityError)
+    return identity.send_unsigned_claim
 
 
 def sender_header_bound(identity: Identity | None, nc: NATSClient, sub: str) -> int:
@@ -128,30 +124,17 @@ def sender_header_bound(identity: Identity | None, nc: NATSClient, sub: str) -> 
 async def resolve_identity_for_request(
     identity: Identity, nc: NATSClient, *, require_signed: bool
 ) -> AgentId | None:
-    """The identity for one request per the cost rule, or ``None`` for a header-less request.
+    """Resolve one request against the live connection, without a persistent cache.
 
-    :class:`IdentityMismatchError` always propagates; other identity
-    errors propagate only when ``require_signed``.
+    Any failure with a configured signer propagates: signed identity never
+    downgrades to an unsigned or header-less request. Signer-less unsigned
+    claims remain opportunistic on permissive endpoints.
     """
-    settled = peek_self_id(nc)
-    if isinstance(settled, AgentId):
-        return settled
-    if settled is not None:
-        if isinstance(settled, IdentityMismatchError) or require_signed:
-            raise settled
-        return None
-    if not require_signed and self_id_failure_expired(nc):
-        # Deliberately also for `NoIdentityError` (plan §2.1a): a poisoned or
-        # transient answer must not stick for the connection's lifetime, and
-        # the retry runs only when a request actually happens past the TTL —
-        # at most one `$SYS.REQ.USER.INFO` per 30 s per connection, never a timer.
-        kickoff_self_id(identity, nc)
-        return None
+    if identity.signer is not None:
+        return await lookup_self_id(nc, signer=identity.signer)
     try:
-        return await self_id(nc, signer=identity.signer)
-    except IdentityMismatchError:
-        raise
-    except Exception:
+        return await lookup_self_id(nc)
+    except IdentityError:
         if require_signed:
             raise
         return None

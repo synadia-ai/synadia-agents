@@ -175,15 +175,24 @@ export class IdentityUnavailableError extends IdentityError {
   }
 }
 
-/** The configured signer's public key is not the connection's user NKEY. */
+/** The configured signer's user/account identity does not match the live connection. */
 export class IdentityMismatchError extends IdentityError {
   constructor(
     public readonly signerPublicKey: string,
     public readonly identityUser: string,
+    public readonly signerAccount?: string,
+    public readonly identityAccount?: string,
+    public readonly credentialUser?: string,
   ) {
     super(
-      `identity mismatch: the configured signer holds ${signerPublicKey} but the ` +
-        `connection's user NKEY is ${identityUser}`,
+      credentialUser !== undefined
+        ? `identity mismatch: the configured signer holds ${signerPublicKey} but its ` +
+            `credentials JWT names user ${credentialUser}`
+        : signerAccount !== undefined && identityAccount !== undefined
+          ? `identity mismatch: the configured signer represents ${signerAccount}.${signerPublicKey} ` +
+            `but the live connection is ${identityAccount}.${identityUser}`
+          : `identity mismatch: the configured signer holds ${signerPublicKey} but the ` +
+            `connection's user NKEY is ${identityUser}`,
     );
     this.name = "IdentityMismatchError";
   }

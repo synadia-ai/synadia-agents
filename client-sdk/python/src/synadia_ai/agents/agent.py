@@ -5,11 +5,11 @@ Wraps a parsed :class:`~synadia_ai.agents.discovery.AgentInfo` with the
 SDK's ``Agent`` class (PR #7): every field flat / read-only, ``prompt()``
 and ``status()`` are the methods that actually do I/O.
 
-Sender identity (extension): when constructed by an :class:`Agents`
-client the handle carries its :class:`~synadia_ai.agents.identity.Identity`,
-and ``prompt()`` / ``status()`` attach an ``Agent-Sender`` header —
-signed when a signer is configured, an unsigned claim otherwise, nothing
-when the connection has no identity.
+Sender identity (extension): a handle carries an
+:class:`~synadia_ai.agents.identity.Identity` only when its
+:class:`Agents` client explicitly enables one. ``prompt()`` / ``status()``
+then attach a live-bound signed header or an explicitly requested unsigned
+claim; omission attaches nothing and performs no identity lookup.
 
 The server-side counterpart (``AgentService``) ships in the sibling
 distribution :mod:`synadia_ai.agent_service`.
@@ -418,8 +418,9 @@ class Agent:
         :class:`ProtocolError` on an error-headered reply or a reply that
         is not a §8.3 heartbeat payload, :class:`TimeoutError` /
         :class:`~nats.errors.NoRespondersError` from the transport, and
-        :class:`IdentityMismatchError` when a configured signer is not
-        the connection's user (other identity failures mean "no header").
+        configured-signer identity errors when its live connection binding
+        cannot be established. Without a signer, an unavailable optional
+        unsigned identity means "no header".
         """
         endpoint = next((e for e in self.endpoints if e.name == STATUS_ENDPOINT_NAME), None)
         publish_subject = (
@@ -569,9 +570,19 @@ class Agent:
         # cleanly, before any wire I/O or mux state mutation.
         self._raise_if_closed()
 
-        # Sender identity: resolve the identity (at most one awaited lookup
-        # per connection) and re-check `max_payload` with the exact header
-        # size. The header itself is built — signed — at publish time.
+        # Establish the reply mux before resolving identity. Its first start
+        # pays a SUB+flush await; putting that one-time transport setup first
+        # prevents a reconnect during the flush from leaving a pre-flush
+        # identity plan ready to publish.
+        mux = mux_for(self._nc)
+        await mux.start()
+        self._raise_if_closed()
+
+        # Resolve the live identity as late as nats-py allows and re-check
+        # `max_payload` with the exact header size. nats-py exposes no
+        # reconnect generation, so a reconnect after this lookup and before
+        # publish cannot yet be detected; adopting one when available is the
+        # remaining target. The header is signed at publish time.
         plan = await plan_sender_header(
             self._sender_identity, self._nc, sub, require_signed=require_signed
         )
@@ -582,10 +593,6 @@ class Agent:
                 len(encoded), ep.max_payload_bytes, conn_limit, plan.wire_bytes
             )
 
-        # Per-nc mux singleton — shared across every Agent on the same
-        # connection. See `_mux.py`'s INTERIM-NATSPY-REQUEST-MANY note.
-        mux = mux_for(self._nc)
-        await mux.start()  # idempotent; pays SUB+flush on the first prompt
         # `max_wait_s > 0` is enforced at the public boundary (Agent.prompt
         # and the constructors), so we treat it as an invariant here.
         loop = asyncio.get_running_loop()
@@ -600,8 +607,8 @@ class Agent:
         try:
             reply = mux.reply_subject_for(token)
 
-            # Re-check after the mux.start() await: close may have
-            # fired during the SUB+flush window. Bail before publishing
+            # Re-check after identity lookup: close may have fired while the
+            # live binding request was in flight. Bail before publishing
             # rather than firing a request whose reply we won't consume.
             self._raise_if_closed()
 

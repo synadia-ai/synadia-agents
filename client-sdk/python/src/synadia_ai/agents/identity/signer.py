@@ -52,8 +52,8 @@ class SenderSigner(Protocol):
 
     ``sign`` may return the signature directly or an awaitable of it
     (HSM / KMS signers). ``jwt`` is the user JWT when the signer came from
-    a credentials file — ``self_id()`` reads the agent ID from it (no
-    network, not spoofable by peers); ``None`` otherwise.
+    a credentials file — live connection binding compares its user and
+    account with ``$SYS.REQ.USER.INFO``; ``None`` otherwise.
     """
 
     @property
@@ -233,17 +233,21 @@ def identity_from_jwt(jwt: str) -> AgentId:
 def signer_from_creds(creds_text: str) -> NkeySigner:
     """Build a signer from credentials-file text.
 
-    The signer carries the user JWT so ``self_id()`` can read the identity
-    without asking the server. A seed that does not belong to the JWT's
-    ``sub`` is rejected with :class:`IdentityMismatchError` (public keys
-    only in the message).
+    The signer carries the user JWT so live connection binding can compare
+    both account and user. A seed that does not belong to the JWT's ``sub``
+    is rejected with :class:`IdentityMismatchError` (public keys only in the
+    message).
     """
     parsed = parse_creds(creds_text)
     signer = signer_from_seed(parsed.seed, parsed.jwt)
     jwt_user = identity_from_jwt(parsed.jwt).user
     if jwt_user != signer.public_key:
         signer.wipe()
-        raise IdentityMismatchError(signer.public_key, jwt_user)
+        raise IdentityMismatchError(
+            signer.public_key,
+            signer.public_key,
+            credential_user=jwt_user,
+        )
     return signer
 
 
@@ -285,7 +289,11 @@ def signer_from_context(selector: str) -> NkeySigner:
             jwt_user = identity_from_jwt(user_jwt).user
             if jwt_user != signer.public_key:
                 signer.wipe()
-                raise IdentityMismatchError(signer.public_key, jwt_user)
+                raise IdentityMismatchError(
+                    signer.public_key,
+                    signer.public_key,
+                    credential_user=jwt_user,
+                )
         return signer
     raise IdentityError(
         f"NATS context {ctx.name!r} has no creds, nkey, or user_seed — nothing to sign "

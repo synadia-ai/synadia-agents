@@ -72,8 +72,8 @@ silent localhost fallback — pass one of these (the examples below use `--url`)
 
 **Sender identity** (extension): with `--nkey` / `--creds` the agent registers
 `user_nkey` / `account` / `id_sig`, so callers can verify who is behind the
-prompt subject; without them the keys are registered unsigned when the
-connection has an NKEY identity, and not at all otherwise (a no-auth server).
+prompt subject; without them host identity is off and no own-identity lookup or
+registration metadata is produced.
 Every incoming prompt is classified before the ack and the handler sees
 `stream.sender`; the reference agent echoes it as ` sender: <id> (<trust
 class>)` and prints its own identity on the line after the ready marker:

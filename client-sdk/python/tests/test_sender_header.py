@@ -529,7 +529,9 @@ async def test_verify_live_outcomes(alice: NkeySigner, bob: NkeySigner, alice_id
     assert "window" in rejected(stale)
     future = await _signed(alice, alice_id, ts=format_sender_timestamp(time.time() + 29))
     assert isinstance(verify_sender_header(future, SUBJECT, PAYLOAD, mode="live"), VerifiedSender)
-    assert "already seen" in rejected(h, nonce_seen=lambda _u, _n: True)
+    replay_detail = rejected(h, nonce_seen=lambda _u, _n: True)
+    assert "already seen" in replay_detail
+    assert h.nonce is not None and h.nonce not in replay_detail
     # Rewritten fields: the parsed header still verifies the *signature* against its own fields,
     # so a rewritten `account`/`user` fails the ed25519 check.
     parsed = parse_sender_header(_with(h, account="ACME"))

@@ -27,8 +27,8 @@ export interface SenderSigner {
   /** The user public NKEY (`U…`) this signer signs for. */
   readonly publicKey: string;
   /**
-   * The user JWT, when the signer came from a credentials file. `selfId()`
-   * reads the agent ID from it (no network, not spoofable by peers).
+   * The user JWT, when the signer came from a credentials file. Live
+   * connection binding compares its user and account with `$SYS.REQ.USER.INFO`.
    */
   readonly jwt?: string;
   /** ed25519 signature over `data`. May be async (HSM / KMS signers). */
@@ -192,7 +192,8 @@ export function identityFromJwt(jwt: string): AgentId {
 
 /**
  * Build a signer from credentials-file text. The signer carries the user
- * JWT so `selfId()` can read the identity without asking the server. A
+ * JWT so live connection binding can compare its user and account with
+ * `$SYS.REQ.USER.INFO`. A
  * seed that does not belong to the JWT's `sub` is rejected with
  * `IdentityMismatchError` (public keys only in the message).
  */
@@ -202,7 +203,13 @@ export function signerFromCreds(credsText: string): SenderSigner {
   const jwtUser = agentIdUser(identityFromJwt(jwt));
   if (jwtUser !== signer.publicKey) {
     signer.wipe?.();
-    throw new IdentityMismatchError(signer.publicKey, jwtUser);
+    throw new IdentityMismatchError(
+      signer.publicKey,
+      signer.publicKey,
+      undefined,
+      undefined,
+      jwtUser,
+    );
   }
   return signer;
 }
@@ -242,7 +249,13 @@ export async function signerFromContext(selector: string): Promise<SenderSigner>
       const jwtUser = agentIdUser(identityFromJwt(userJwt));
       if (jwtUser !== signer.publicKey) {
         signer.wipe?.();
-        throw new IdentityMismatchError(signer.publicKey, jwtUser);
+        throw new IdentityMismatchError(
+          signer.publicKey,
+          signer.publicKey,
+          undefined,
+          undefined,
+          jwtUser,
+        );
       }
     }
     return signer;
