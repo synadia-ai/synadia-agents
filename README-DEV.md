@@ -209,8 +209,12 @@ npm whoami                                       # the @synadia-ai publish ident
 (cd agent-sdk/typescript  && npm publish --dry-run && npm publish)
 
 # 5. Publish each consumer that needs to ship.
-#    Bundled (agents/openclaw, agents/pi) — `bun install` first so
-#    bundleDependencies can copy the SDKs into the tarball.
+#    OpenClaw and PI do not declare bundleDependencies; their SDKs remain
+#    normal package dependencies. `bun install` does not embed SDK bytes in
+#    these tarballs. Do not re-add bundleDependencies without a real vendoring
+#    step: npm would skip fetching the SDK and the installed plugin would fail
+#    at runtime. Release validation must reject any remaining `file:` ref and
+#    prove imports from a clean packed/registry install.
 (cd agents/openclaw && bun install && npm publish --dry-run && npm publish)
 (cd agents/pi       && bun install && npm publish --dry-run && npm publish)
 #    Plain plugin packages with Bun TypeScript entrypoints.

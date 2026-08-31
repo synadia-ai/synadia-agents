@@ -3,6 +3,7 @@
 - Status: active; implementation contracts resolved, release prerequisites tracked below
 - Last updated: 2026-08-31
 - Integration branch: `sdk-release-rollout`
+- Release record: _not yet created_
 - Scope: TypeScript and Python caller/host SDKs, sender identity, optional tracing, provided
   integrations, examples, and release operations
 
@@ -35,14 +36,16 @@ The rollout has five non-negotiable outcomes:
 - **Rollout PR:** the final integration-branch pull request to `main`, after the recorded registry
   contract and aging requirements are complete.
 - **Release record:** the tracking issue or other durable record containing approvals, exact source
-  SHAs, artifact hashes, registry times, CI runs, exceptions, promotions, and rollback actions.
+  SHAs, artifact hashes, registry times, CI runs, exceptions, tag movements, and rollback actions.
 
 ## Current state
 
-- [x] Sender-identity implementations exist in both SDK pairs.
+- [x] Sender-identity implementations exist in both SDK pairs
+      ([TypeScript](../client-sdk/typescript/src/identity/),
+      [Python](../client-sdk/python/src/synadia_ai/agents/identity/)).
 - [x] The Python [identity workbook](../examples/identity-workbook/python/README.md) demonstrates
       signed Echo, signed Hello-to-Echo forwarding, and identity-free calls.
-- [x] Two independent read-only roadmap audits were completed and reconciled into these gates.
+- Review status: independent read-only audits were completed and reconciled into these gates.
 - [ ] The signer/live-connection correctness blockers in this roadmap are fixed.
 - [ ] The optional tracing feature is merged and its release gate is complete.
 - [ ] All intended SDK and integration artifacts are published through the recorded registry contract.
@@ -73,16 +76,28 @@ There are no deferred product decisions in this section. Complete the branch and
 merging shared-branch feature work; complete the remaining operational items before publication.
 
 - [ ] Publish and protect `sdk-release-rollout`; require review and disallow unreviewed direct pushes.
-- [ ] Make every relevant TypeScript **and Python** workflow run for PRs targeting the integration
-      branch. The current Python workflows generally select only `main`, so a green feature PR is
-      not yet representative.
+- [ ] Add `sdk-release-rollout` to the `pull_request` base filters of all four Python CI workflows;
+      the TypeScript PR workflows already cover every target branch.
+- [ ] Add `sdk-release-rollout` to the `push` filters of all relevant TypeScript and Python
+      workflows so the merged branch result is revalidated.
+- [ ] Add CI and path-trigger coverage for Flue, Claude Code, and open-agent.
 - [ ] Add one aggregate required check covering caller SDKs, AgentService SDKs, cross-language
-      tests, the identity workbook, DeerFlow, and every non-deferred integration.
-- [x] Confirm the release-source topology against the live repository: Python workflows publish the
-      tagged commit and the `pypi` environment permits the existing tag prefixes without requiring
-      `main`; npm publication is manual and has no branch restriction.
-- [x] Adopt the rollout exception: reviewed, clean release commits on the protected integration
-      branch may be tagged/published, then the exact commits are reconciled into `main` after aging.
+      tests, the identity workbook, DeerFlow, and every non-deferred integration. Because component
+      workflows are path-filtered, use an always-running evaluator rather than a naive pending
+      fan-in over skipped jobs.
+- Recorded release-source fact: the
+  [Python caller](../.github/workflows/release-python.yml),
+  [Python AgentService](../.github/workflows/release-python-agent-service.yml), and
+  [DeerFlow](../.github/workflows/release-python-deerflow.yml) workflows publish the tagged commit;
+  the live `pypi` environment permits those tag prefixes without requiring `main`; npm publication
+  is manual and has no branch restriction.
+- [x] Adopt the documented [rollout exception](../CLAUDE.md#release-ladder-for-sdk-changes-that-examples-need):
+      reviewed, clean release commits on the protected integration branch may be tagged/published,
+      then the exact commits are reconciled into `main` after aging.
+- [ ] Add at least one required reviewer to the live `pypi` GitHub environment. Its current only
+      protection is the tag-prefix rule, so a tag push otherwise publishes immediately.
+- [ ] Create the rollout tracking issue/release record and replace the placeholder at the top of
+      this file with its link.
 - [ ] Locate the real cooldown policy and record its owner, exact duration, covered ecosystems,
       enforcement points, and package-specific exception syntax. Do not proceed based on the
       assumed seven-day value.
@@ -98,20 +113,24 @@ merging shared-branch feature work; complete the remaining operational items bef
 
 ### Caller identity default
 
-TypeScript and Python currently differ when identity is omitted. Implement this common contract:
+Both callers currently start self-identity lookup during discovery when identity is omitted. They
+differ only in header attachment: TypeScript may attach an unsigned claim while Python attaches no
+header. Implement this common contract in both languages:
 
 | Configuration | Discovery and request behavior |
 | --- | --- |
 | No identity option | No identity lookup and no `Agent-Sender` header |
-| Explicitly disabled identity | No identity lookup and no `Agent-Sender` header |
 | Explicit identity without signer, unsigned claim enabled | Lookup and unsigned claim |
-| Explicit identity without signer, unsigned claim disabled | No prompt-time lookup or header |
+| Explicit identity without signer, unsigned claim disabled | No identity lookup or header |
 | Explicit identity with signer | Signed sender header after live-connection binding succeeds |
 
 - [ ] Make both languages implement the contract exactly.
 - [ ] At wire level, prove omission produces no `$SYS.REQ.USER.INFO`, no header, and no background
       identity work.
-- [ ] Test omission separately from an empty option and `sendUnsignedClaim=false`.
+- [ ] Test omission separately from an explicit empty identity option and
+      `sendUnsignedClaim=false`; do not invent a second public “disabled identity” API.
+- [ ] Sweep TypeScript tests and examples that currently rely on the unreleased default unsigned
+      claim and update them in the same change.
 - [ ] Update API documentation and changelogs to match the contract.
 
 ### AgentService identity default and privacy
@@ -162,13 +181,18 @@ contract:
   at cutover.
 - npm cutover moves the already-aged version's dist-tag. Python cutover adopts the already-public
   versions in normal locks and announces them; there is no PyPI promotion operation.
+- ACP, Grok Build, Codex, OpenCode, Eve, and Flue are first npm publishes. Publishing them under
+  `next` intentionally leaves no `latest`; bare installs fail until cutover. Existing npm packages
+  keep their prior `latest` throughout aging. Claude Code ships through its marketplace instead of
+  npm.
 
 - [ ] Make every rollout manifest and lock select exact new internal versions while aging.
 - [ ] If a quieter aging window is desired, manually delete only the generated GitHub Release entry
       after verifying PyPI publication. Keep the version tag and PyPI artifacts intact, and recreate
       the release entry from the same tag/digests at cutover if wanted.
 - [ ] Use explicit `npm publish --tag next` commands and record pre/post dist-tags and digests.
-- [ ] Remove inaccurate “dark” and PyPI “promotion” claims from release instructions.
+- [ ] At cutover, add `latest` for first-publish packages and move it for existing packages; verify
+      the exact digest in both cases.
 
 ### Replay and high-availability guarantee
 
@@ -190,9 +214,12 @@ connection.
 
 - [ ] Fix credentials-based signer validation in TypeScript and Python; an Alice connection with
       Bob credentials must fail before sending or registering a signed identity.
-- [ ] Fix per-connection identity caching so a prior lookup cannot bypass a later signer's
-      validation. Key the cache by connection plus identity-source fingerprint or revalidate every
-      configured signer.
+- [ ] Fix TypeScript identity caching so a prior lookup cannot bypass a later signer's validation;
+      key it by connection plus identity-source fingerprint and retain reconnect invalidation.
+- [ ] Do not retain Python identity results across identity-bearing operations: an externally
+      supplied nats-py connection exposes no reconnect epoch to the SDK. Revalidate the live
+      connection/signer binding for each signed send or registration until reliable invalidation is
+      available.
 - [ ] Derive connection and signer inputs from one immutable credential snapshot in integrations;
       redact all credential material.
 - [ ] Test seed, credentials, context, same-user/different-account JWTs, mismatched credentials,
@@ -249,8 +276,9 @@ connection.
 The SDK versions in this rollout depend on the separately developed optional tracing change. Its
 public wording must remain product-neutral.
 
-- Implementation owner: Francesco (`@cozis`)
+- Implementation owner: trace SDK owner (`@cozis`)
 - PR and reviewed merge SHA: _not yet recorded_
+- Fallback: none for this release. If tracing is delayed, the coordinated SDK release waits.
 
 - [ ] Open a reviewed feature PR targeting `sdk-release-rollout`; do not push the implementation
       directly to the shared branch.
@@ -258,8 +286,8 @@ public wording must remain product-neutral.
       format, and exporters are in scope.
 - [ ] Keep exporter libraries optional: no eager mandatory import, network connection, background
       worker, or global provider mutation when tracing is unconfigured.
-- [ ] Prove no configuration is byte-for-byte wire-neutral, including no ambient global-context
-      propagation.
+- [ ] Prove that the unconfigured state is byte-for-byte wire-neutral, including no ambient
+      global-context propagation.
 - [ ] Budget `Agent-Sender`, trace headers, baggage, and NATS framing together before publish.
 - [ ] Never add headers to the protocol's mandatory empty, headerless terminator.
 - [ ] Test the leading acknowledgement, every response/error path, early iterator abandonment,
@@ -318,19 +346,23 @@ Every shipped integration must support both modes from the same released version
 
 | Integration/artifact | Shape | Release classification | Required work | Status |
 | --- | --- | --- | --- | --- |
-| ACP | `AgentService` | npm | signer/trust plumbing; exact SDK; lock/artifact smoke | [ ] |
-| Grok Build | ACP front door | npm | inherit ACP; include Grok-to-ACP dependency edge | [ ] |
-| Codex | `AgentService`, manager | npm | signer/trust; document shared connection identity | [ ] |
-| OpenCode | `AgentService` | npm | signer/trust; installed-plugin path | [ ] |
-| Eve | `AgentService` | npm | signer/trust; lock/artifact smoke | [ ] |
-| Flue | `AgentService` | npm | signer/trust; add missing CI coverage | [ ] |
-| DeerFlow | Python `AgentService` | PyPI | signer/trust; SDK-triggered CI; lock/artifact smoke | [ ] |
-| OpenClaw | hand-rolled service | npm | full admission/registration/status migration; lock | [ ] |
-| PI | hand-rolled service | npm | full admission/registration/status migration; lock | [ ] |
-| Claude Code | hand-rolled service | npm | full migration; remove mutable runtime install | [ ] |
-| PI headless controller | multi-session host | npm | shared identity docs; exact dependencies; artifact smoke | [ ] |
-| Claude Code headless controller | multi-session host | npm | shared identity docs; remove `latest`; artifact smoke | [ ] |
-| External Python host integration | external repository | external gate | record canonical repo/SHA; signer plumbing; artifact evidence | [ ] |
+| ACP | `AgentService` | npm, first publish | signer/trust plumbing; exact SDK; lock/artifact smoke | [ ] |
+| Grok Build | ACP front door | npm, first publish | inherit ACP; include Grok-to-ACP dependency edge | [ ] |
+| Codex | `AgentService`, manager | npm, first publish | signer/trust; document shared connection identity | [ ] |
+| OpenCode | `AgentService` | npm, first publish | signer/trust; installed-plugin path | [ ] |
+| Eve | `AgentService` | npm, first publish | signer/trust; lock/artifact smoke | [ ] |
+| Flue | `AgentService` | npm, first publish | signer/trust; add missing CI coverage | [ ] |
+| DeerFlow | Python `AgentService` | PyPI, existing | signer/trust; SDK-triggered CI; lock/artifact smoke | [ ] |
+| OpenClaw | hand-rolled service | npm, existing | full migration; add lock; constrain peer and SDK refs | [ ] |
+| PI | hand-rolled service | npm, existing | full migration; add lock; constrain peer and SDK refs | [ ] |
+| Claude Code channel | hand-rolled service | marketplace package manifest | full migration; remove mutable runtime install | [ ] |
+| Claude Code plugin descriptor | marketplace metadata | versioned marketplace | sync `plugin.json` with package manifest; smoke marketplace install | [ ] |
+| PI headless controller | multi-session host | npm, existing | shared identity docs; exact dependencies; artifact smoke | [ ] |
+| Claude Code headless controller | multi-session host | npm, existing | shared identity docs; remove `latest`; artifact smoke | [ ] |
+| Hermes (`synadia-ai/hermes-nats-gateway`) | external Python host | external gate | pin canonical repo/SHA; signer plumbing; artifact evidence | [ ] |
+
+The Claude Code marketplace descriptor is currently version `0.4.0` while its package manifest is
+`0.5.1`; the release must select one coordinated version and validate both installation channels.
 
 ### Private/source release consumers
 
@@ -341,8 +373,8 @@ not monorepo source shortcuts.
 | --- | --- | --- |
 | open-agent | AgentService integration | [ ] |
 | open-agent-vercel | host/example | [ ] |
-| DSPy | Python host/example | [ ] |
-| DSPy research agent | Python host/example | [ ] |
+| DSPy | TypeScript/Bun host/example | [ ] |
+| DSPy research agent | TypeScript/Bun host/example | [ ] |
 | Durable agents | host/example | [ ] |
 | Agent web UI | caller-facing application | [ ] |
 | Python identity workbook | cross-agent/caller acceptance | [ ] |
@@ -365,6 +397,13 @@ Hand-rolled hosts require full service registration, prompt admission before ack
 status classification, replay behavior, sender exposure, logging/redaction, and error semantics.
 Adding only a signature gate is not sufficient. Where `AgentService` supports the needed extension
 endpoints, prefer migration over duplicating protocol security behavior.
+
+OpenClaw and PI do **not** currently declare `bundleDependencies`; their npm tarballs do not embed
+SDK `node_modules` bytes. Treat them as ordinary SDK dependencies, correct the stale bundled-package
+release comment, add immutable locks, and verify that no `file:` reference reaches either tarball.
+Their clean-install smoke must import and execute both SDK dependencies; local-link tests previously
+failed to catch a published missing-module regression caused by an invalid bundling declaration.
+If bundling is introduced later, it requires an explicit artifact and age-clock review.
 
 ### Multi-session identity contract
 
@@ -427,6 +466,9 @@ Any artifact-byte change requires a new version and age clock.
 - [ ] Pause dependency-update merges and preserve old locks/artifacts as rollback baseline.
 - [ ] Record dependency-bot ownership/configuration and ensure it cannot bypass the rollout freeze
       through a workflow or configuration outside the expected directory.
+- [ ] Relocate or delete `client-sdk/python/.github/dependabot.yml` and `CODEOWNERS`; GitHub ignores
+      nested `.github` policy files, so there is currently no active dependency bot or ownership
+      gate from those files.
 - [ ] Define whether the freeze includes downstream deployment repositories and record their SHAs.
 
 ### Cooldown exception
@@ -456,6 +498,15 @@ Fallback, only if a scoped mechanism is unavailable:
 
 ### Build and validate once
 
+- [ ] Replace `devtools/devmode.sh off` with a deterministic staging-directory release transform
+      that covers every TypeScript internal edge, emits exact versions, and never mutates the source
+      tree. The current tree is already mixed between local and registry specifications.
+- [ ] Add the equivalent Python staging flow: remove `[tool.uv.sources]`/editable overrides only in
+      staged release inputs, resolve exact registry SDK versions, and produce immutable locks for
+      DeerFlow, the identity workbook, and every other Python consumer.
+- [ ] Make one graph validator cover both ecosystems and fail on any release artifact containing a
+      `file:`, workspace, Git, path, editable, missing-lock, `latest`, empty, or wildcard internal
+      dependency that is not explicitly allowed.
 - [ ] Create the release/version changes as a clean, reviewed commit. Do not publish from manifests
       transiently rewritten by a developer helper.
 - [ ] Validate the complete package graph so no runtime `file:`, workspace-only, editable, or stale
@@ -508,7 +559,11 @@ Run applicable rows in both language directions and against exact release artifa
 | NKEY without discovery permission -> default agent | approved identity-free behavior | [ ] |
 | Explicit mismatched seed/credentials signer | clear failure; no signed send/register or downgrade | [ ] |
 | Second signer/client on cached shared connection | independently validated; no cached bypass | [ ] |
-| Reconnect/credential rotation | cache and signer binding refreshed correctly | [ ] |
+| TypeScript reconnect/credential rotation | signer-keyed cache invalidates and rebinds | [ ] |
+| Python reconnect/credential rotation | no stale settled identity; next identity-bearing operation revalidates | [ ] |
+| Signature-valid sender without operator attestation | user valid; account remains claimed/unattested | [ ] |
+| Matching operator-attested sender | user valid and `accountAttested=true` | [ ] |
+| Operator-attested user/account mismatch | prompt rejected before ack/handler | [ ] |
 | New caller -> old extension-ignoring agent | prompt/stream compatibility | [ ] |
 | Midstream query/reply | documented as unsigned; no inherited sender authorization | [ ] |
 | Trace context plus identity | trace is untrusted; combined headers bounded; auth unchanged | [ ] |
@@ -560,7 +615,7 @@ stream cancellation, and mixed TypeScript/Python clients and hosts.
 - [ ] Reconcile the exact tagged release commits from the rollout branch into `main`; any
       artifact-affecting difference requires a new version and age clock.
 - [ ] Move npm dist-tags only after verifying exact digests; adopt and announce the already-public
-      Python versions without pretending it is registry promotion.
+      Python versions with no additional PyPI registry operation.
 - [ ] Resume dependency automation only after normal enforcement is verified active.
 - [ ] Announce availability and archive the complete release record.
 
@@ -573,6 +628,8 @@ material integration failure.
 - [ ] Stop publication, tag movement, deployment, and announcements; record the incident owner.
 - [ ] Restore prior npm dist-tags by recorded digest and previous manifests/locks in reverse
       dependency order.
+- [ ] For a failed first-publish npm package, remove or redirect only its `next` tag and deprecate the
+      bad version as appropriate; there is no prior `latest` or artifact to restore.
 - [ ] For Python, apply the pre-approved yank/constraint/rollback plan, recognizing that yanks do
       not remove files and exact pins may still install them.
 - [ ] Correct or mark affected repository releases and disable compromised publisher credentials or
@@ -601,6 +658,18 @@ Every checked release gate must point to evidence containing, as applicable: sou
 and version, artifact and registry digests, dependency/SBOM digest, command or CI run, clean
 environment/platform, UTC timestamp, reviewer/approver, policy exception and expiry, and rollback
 baseline. A green test against local workspace sources is not registry-artifact evidence.
+
+## Post-rollout steady state
+
+- The source tree keeps local development links/uv sources where useful.
+- Release tooling creates clean staging directories with exact internal versions; it does not flip
+  the working tree between modes.
+- Published integrations keep exact SDK dependencies until a deliberate integration release
+  upgrades them. Returning to broad ranges is not part of cutover.
+- The same cross-ecosystem graph validator, artifact-only tests, locks, and normal cooldown remain
+  required for later releases.
+- After completion, the roadmap and release record remain on `main` as the durable history; the
+  integration branch may then be deleted.
 
 ## Completion definition
 
