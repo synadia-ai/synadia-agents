@@ -73,17 +73,18 @@ The rollout has five non-negotiable outcomes:
 There are no deferred product decisions in this section. Complete the branch and CI items before
 merging shared-branch feature work; complete the remaining operational items before publication.
 
-- [ ] Push `sdk-release-rollout` to GitHub and keep it until the final rollout merge. Branch
+- [x] Push `sdk-release-rollout` to GitHub and keep it until the final rollout merge. Branch
       protection is optional.
-- [ ] Add `sdk-release-rollout` to the `pull_request` base filters of all four Python CI workflows;
+- [x] Add `sdk-release-rollout` to the `pull_request` base filters of all four Python CI workflows;
       the TypeScript PR workflows already cover every target branch.
-- [ ] Add `sdk-release-rollout` to the `push` filters of all relevant TypeScript and Python
+- [x] Add `sdk-release-rollout` to the `push` filters of all relevant TypeScript and Python
       workflows so the merged branch result is revalidated.
-- [ ] Add CI and path-trigger coverage for Flue, Claude Code, and open-agent.
-- [ ] Add one aggregate CI summary covering caller SDKs, AgentService SDKs, cross-language
+- [x] Add CI and path-trigger coverage for Flue, Claude Code, and open-agent.
+- [x] Add one aggregate CI summary covering caller SDKs, AgentService SDKs, cross-language
       tests, the identity workbook, DeerFlow, and every in-scope integration. Because component
       workflows are path-filtered, use an always-running evaluator rather than a naive pending
       fan-in over skipped jobs.
+- Setup implementation and green component/aggregate evidence: [PR #186](https://github.com/synadia-ai/synadia-agents/pull/186).
 - These workflow changes live on the rollout branch. Once it is pushed, PRs targeting it use its
   base-branch workflows and pushes use the workflow files in the pushed commit; `main` need not
   receive them first.
