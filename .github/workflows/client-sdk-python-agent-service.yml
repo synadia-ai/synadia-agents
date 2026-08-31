@@ -2,7 +2,7 @@ name: CI — agent-sdk/python
 
 on:
   push:
-    branches: [main]
+    branches: [main, sdk-release-rollout]
     # The agent-sdk's tests resolve `synadia-ai-agents` to the local
     # client-sdk checkout via `[tool.uv.sources]` — a client-sdk change
     # can break agent-sdk CI, so the path filter spans both subtrees
@@ -18,7 +18,7 @@ on:
       - "agent-sdk/typescript/**"
       - ".github/workflows/client-sdk-python-agent-service.yml"
   pull_request:
-    branches: [main]
+    branches: [main, sdk-release-rollout]
     paths:
       - "agent-sdk/python/**"
       - "client-sdk/python/**"

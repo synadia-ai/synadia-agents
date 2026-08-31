@@ -14,7 +14,7 @@ name: CI — examples (TypeScript)
 
 on:
   push:
-    branches: [main]
+    branches: [main, sdk-release-rollout]
     paths:
       - "examples/**"
       - "client-sdk/typescript/**"
