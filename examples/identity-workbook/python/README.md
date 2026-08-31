@@ -2,9 +2,10 @@
 
 This workbook runs sender identity end to end with the monorepo's Python SDKs:
 
-- Echo registers a signed identity and advertises `min_sender_trust="any"`.
-- Hello registers its own signed `AgentService` with `min_sender_trust="any"`, then calls Echo as
-  the same NKEY identity.
+- Echo runs an `AgentService` under its signed NKEY identity. It accepts prompts at
+  `min_sender_trust="any"`, logs each sender, and echoes the prompt.
+- Hello runs a second `AgentService` under a different signed NKEY identity. It then uses the
+  `Agents` client with that same identity to discover and call Echo.
 - A separate CLI user discovers and verifies Echo, then demonstrates calls with and without a
   sender identity.
 
