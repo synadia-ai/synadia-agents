@@ -53,8 +53,8 @@ The rollout has five non-negotiable outcomes:
 ## Recorded invariants
 
 - Sender identity is optional. Identity-free callers and permissive hosts remain fully supported.
-- The sender identity is the NATS user authenticated on the connection; a separate application
-  identity is not introduced by this rollout.
+- The sender identity is the NATS user and account context authenticated on the connection; a
+  separate application identity is not introduced by this rollout.
 - Hosts remain permissive by default (`min_sender_trust=any` / `minSenderTrust: "any"`). Merely
   configuring a signer never enables signed-only admission.
 - A configured signer mismatch fails loudly before signed send or registration and never silently
@@ -125,13 +125,14 @@ publish unsigned user/account registration metadata. Decide what “identity off
 
 ### Connection-identity invariant and credential topology
 
-**The sender identity is the NATS user authenticated on that connection.** An identity signer is
-not an independently selectable application identity.
+**The sender identity is the NATS user and account context authenticated on that connection.** An
+identity signer is not an independently selectable application identity.
 
 Provided integrations expose one credential source, read once into an immutable snapshot that
 supplies both the NATS authenticator and the identity signer. A low-level SDK caller may have to
 supply signer material alongside an already-created `NatsConnection`, because the connection does
-not expose its private seed; those two inputs must still represent the same NATS user.
+not expose its private seed; those two inputs must still represent the same NATS user and account
+context.
 
 - [ ] Remove or reject independently selectable connection and identity credentials in integration
       CLIs, environment variables, config files, and plugin settings.
