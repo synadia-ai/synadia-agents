@@ -189,7 +189,7 @@ description.
 
 The normal sequence below releases from `main`. The coordinated rollout tracked in
 `docs/sdk-release-rollout-roadmap.md` has an explicit exception: reviewed, clean commits on the
-protected `sdk-release-rollout` branch may be version-tagged and published so their cooldown clocks
+`sdk-release-rollout` branch may be version-tagged and published so their cooldown clocks
 start before final cutover. Integrations first use local/packed artifacts from that branch, then
 exact registry versions. After aging, the exact tagged release commits are reconciled into `main`;
 artifact-affecting differences require a new version. Every publication still requires the normal

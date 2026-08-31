@@ -3,7 +3,6 @@
 - Status: active; implementation contracts resolved, release prerequisites tracked below
 - Last updated: 2026-08-31
 - Integration branch: `sdk-release-rollout`
-- Release record: _not yet created_
 - Scope: TypeScript and Python caller/host SDKs, sender identity, optional tracing, provided
   integrations, examples, and release operations
 
@@ -35,8 +34,6 @@ The rollout has five non-negotiable outcomes:
   integration or example.
 - **Rollout PR:** the final integration-branch pull request to `main`, after the recorded registry
   contract and aging requirements are complete.
-- **Release record:** the tracking issue or other durable record containing approvals, exact source
-  SHAs, artifact hashes, registry times, CI runs, exceptions, tag movements, and rollback actions.
 
 ## Current state
 
@@ -68,23 +65,28 @@ The rollout has five non-negotiable outcomes:
   absent.
 - The external dependency cooldown remains active except for a reviewed, scoped, expiring internal
   package mechanism.
-- Registry publication always requires separate human approval; this roadmap does not authorize it.
+- npm publication still requires the existing explicit per-command approval. For Python, deliberately
+  pushing the version tag is the publication approval; no second approval screen is required.
 
 ## Immediate rollout setup
 
 There are no deferred product decisions in this section. Complete the branch and CI items before
 merging shared-branch feature work; complete the remaining operational items before publication.
 
-- [ ] Publish and protect `sdk-release-rollout`; require review and disallow unreviewed direct pushes.
+- [ ] Push `sdk-release-rollout` to GitHub and keep it until the final rollout merge. Branch
+      protection is optional.
 - [ ] Add `sdk-release-rollout` to the `pull_request` base filters of all four Python CI workflows;
       the TypeScript PR workflows already cover every target branch.
 - [ ] Add `sdk-release-rollout` to the `push` filters of all relevant TypeScript and Python
       workflows so the merged branch result is revalidated.
 - [ ] Add CI and path-trigger coverage for Flue, Claude Code, and open-agent.
-- [ ] Add one aggregate required check covering caller SDKs, AgentService SDKs, cross-language
+- [ ] Add one aggregate CI summary covering caller SDKs, AgentService SDKs, cross-language
       tests, the identity workbook, DeerFlow, and every in-scope integration. Because component
       workflows are path-filtered, use an always-running evaluator rather than a naive pending
       fan-in over skipped jobs.
+- These workflow changes live on the rollout branch. Once it is pushed, PRs targeting it use its
+  base-branch workflows and pushes use the workflow files in the pushed commit; `main` need not
+  receive them first.
 - Recorded release-source fact: the
   [Python caller](../.github/workflows/release-python.yml),
   [Python AgentService](../.github/workflows/release-python-agent-service.yml), and
@@ -92,21 +94,15 @@ merging shared-branch feature work; complete the remaining operational items bef
   the live `pypi` environment permits those tag prefixes without requiring `main`; npm publication
   is manual and has no branch restriction.
 - [x] Adopt the documented [rollout exception](../CLAUDE.md#release-ladder-for-sdk-changes-that-examples-need):
-      reviewed, clean release commits on the protected integration branch may be tagged/published,
+      reviewed, clean release commits on the integration branch may be tagged/published,
       then the exact commits are reconciled into `main` after aging.
-- [ ] Add at least one required reviewer to the live `pypi` GitHub environment. Its current only
-      protection is the tag-prefix rule, so a tag push otherwise publishes immediately.
-- [ ] Create the rollout tracking issue/release record and replace the placeholder at the top of
-      this file with its link.
-- [ ] Locate the real cooldown policy and record its owner, exact duration, covered ecosystems,
+- [ ] Locate the real cooldown policy and record its exact duration, covered ecosystems,
       enforcement points, and package-specific exception syntax. Do not proceed based on the
       assumed seven-day value.
 - [ ] Complete the package/release DAG, including internal `file:` edges, published headless
       examples, external integrations, and private examples used as release evidence.
 - [ ] Replace dirty-tree or rebuild-on-publish flows with the clean, build-once artifact process in
       this roadmap.
-- [ ] Assign an accountable owner and backup for release coordination, branch/CI, cooldown policy,
-      npm, PyPI, public docs, each integration class, go/no-go, and incident/rollback.
 - No in-scope SDK, integration, example, or external gate may be omitted by an implementer. A scope
   change requires explicit user approval and a roadmap update.
 
@@ -331,7 +327,8 @@ Teach neutral concepts such as **sender identity**, **signed sender**, `Agent-Se
 - [ ] Inspect npm tarballs and both Python wheels **and sdists**, not only the source tree.
 - [ ] Fail closed with package-content allowlists and scan artifacts for credentials, seeds, tokens,
       private links, source paths, and unintended files.
-- [ ] Record a zero-hit terminology result and reviewed artifact manifests in the release record.
+- [ ] Record a zero-hit terminology result and reviewed artifact manifests here or in the relevant
+      pull request.
 
 ## Workstream D: integration compatibility and inventory
 
@@ -430,7 +427,7 @@ Integration development and registry aging are separate stages:
    packages exist, but it is not release proof and must not leak local-source dependencies into a
    published manifest.
 2. **Registry-aging stage:** after the SDK APIs and package contents are frozen, build the SDK
-   artifacts once from a clean protected-branch commit and test those exact tarballs/wheels. Publish
+   artifacts once from a clean reviewed branch commit and test those exact tarballs/wheels. Publish
    the approved candidate bytes in dependency order. Then replace local SDK references in
    integration release manifests and locks with exact registry versions, using the scoped cooldown
    mechanism only for the fresh internal packages. Build, test, and publish integration candidates
@@ -446,8 +443,8 @@ Any artifact-byte change requires a new version and age clock.
 - [ ] Artifact-rehearsal CI proves the same integrations against the exact locally packed SDK bytes.
 - [ ] Registry-aging CI proves integrations against exact registry SDK versions with no local,
       workspace, Git, or editable-source fallback.
-- [ ] The release record links the source commit, local artifact digests, registry digests, and
-      integration locks so equivalence across all three stages is auditable.
+- [ ] Link the source commit, local artifact digests, registry digests, and integration locks here or
+      in the relevant pull request so equivalence across all three stages is auditable.
 
 ## Workstream E: dependency freeze and cooldown
 
@@ -464,7 +461,7 @@ Any artifact-byte change requires a new version and age clock.
 - [ ] After tracing lands, review only intentional additions and record the final graph; reject
       unrelated updates.
 - [ ] Pause dependency-update merges and preserve old locks/artifacts as rollback baseline.
-- [ ] Record dependency-bot ownership/configuration and ensure it cannot bypass the rollout freeze
+- [ ] Record dependency-bot configuration and ensure it cannot bypass the rollout freeze
       through a workflow or configuration outside the expected directory.
 - [ ] Relocate or delete `client-sdk/python/.github/dependabot.yml` and `CODEOWNERS`; GitHub ignores
       nested `.github` policy files, so there is currently no active dependency bot or ownership
@@ -477,7 +474,7 @@ Preferred approach:
 
 - [ ] Keep the cooldown active for external packages.
 - [ ] Exclude only the exact new internal packages using the enforcing tool's scoped mechanism.
-- [ ] Record owner, start, expiry, removal change, and CI proof that external versions are unchanged.
+- [ ] Record start, expiry, removal change, and CI proof that external versions are unchanged.
 
 Fallback, only if a scoped mechanism is unavailable:
 
@@ -579,7 +576,7 @@ stream cancellation, and mixed TypeScript/Python clients and hosts.
 
 - [ ] Every resolved implementation contract and rollout prerequisite is complete.
 - [ ] Identity correctness fixes and tracing have merged with all required checks.
-- [ ] Full inventory scope, owners, release DAG, versions, constraints, artifact hashes, and
+- [ ] Full inventory scope, release DAG, versions, constraints, artifact hashes, and
       rollback baseline are approved.
 - [ ] Full-repository and exact-artifact terminology/content audits pass.
 - [ ] Cooldown baseline and temporary exception mechanics are proven in CI.
@@ -617,7 +614,7 @@ stream cancellation, and mixed TypeScript/Python clients and hosts.
 - [ ] Move npm dist-tags only after verifying exact digests; adopt and announce the already-public
       Python versions with no additional PyPI registry operation.
 - [ ] Resume dependency automation only after normal enforcement is verified active.
-- [ ] Announce availability and archive the complete release record.
+- [ ] Announce availability and leave the completed roadmap and linked PR evidence on `main`.
 
 ## Rollback and incident response
 
@@ -625,7 +622,7 @@ Triggers include identity-free regression, signer/connection-binding failure, se
 unexpected dependency change, provenance mismatch, partial publish/tag movement, trace data leak, or a
 material integration failure.
 
-- [ ] Stop publication, tag movement, deployment, and announcements; record the incident owner.
+- [ ] Stop publication, tag movement, deployment, and announcements; record the incident.
 - [ ] Restore prior npm dist-tags by recorded digest and previous manifests/locks in reverse
       dependency order.
 - [ ] For a failed first-publish npm package, remove or redirect only its `next` tag and deprecate the
@@ -636,28 +633,15 @@ material integration failure.
       environments when applicable.
 - [ ] Redeploy preserved previous artifacts and remove rollout cooldown exceptions if abandoned.
 - [ ] Never overwrite or republish a version; fix forward with a new version and age clock.
-- [ ] Communicate affected versions, exposure, mitigation, and safe versions through the assigned
-      release/incident owner.
+- [ ] Communicate affected versions, exposure, mitigation, and safe versions.
 - [ ] Retain failure evidence, artifact hashes, logs with secrets removed, and required retests.
 
-## Ownership and evidence
+## Evidence
 
-The release record must assign a primary and backup for:
-
-- release coordination and final go/no-go;
-- integration branch and aggregate CI;
-- dependency freeze/cooldown exception;
-- npm publication and rollback;
-- PyPI publication and rollback;
-- identity/security review and trace/privacy review;
-- public documentation/content audit;
-- each in-scope integration; and
-- incident response and release communications.
-
-Every checked release gate must point to evidence containing, as applicable: source commit, package
-and version, artifact and registry digests, dependency/SBOM digest, command or CI run, clean
-environment/platform, UTC timestamp, reviewer/approver, policy exception and expiry, and rollback
-baseline. A green test against local workspace sources is not registry-artifact evidence.
+The roadmap itself is the persistent record; no separate release ticket is required. Checkboxes may
+link to the relevant PR or CI run instead of duplicating details here. For publication-sensitive
+steps, retain the source commit, package/version, artifact digest, registry time, dependency diff,
+and rollback baseline. A green test against local workspace sources is not registry-artifact proof.
 
 ## Post-rollout steady state
 
@@ -668,7 +652,7 @@ baseline. A green test against local workspace sources is not registry-artifact 
   upgrades them. Returning to broad ranges is not part of cutover.
 - The same cross-ecosystem graph validator, artifact-only tests, locks, and normal cooldown remain
   required for later releases.
-- After completion, the roadmap and release record remain on `main` as the durable history; the
+- After completion, the roadmap and linked PR evidence remain on `main` as the durable history; the
   integration branch may then be deleted.
 
 ## Completion definition
@@ -682,4 +666,4 @@ The rollout is complete only when:
 - public caller and AgentService docs teach identity-free and signed operation using approved terms;
 - tracing is optional, privacy-reviewed, and wire-neutral when absent;
 - registry/source/provenance records and tested rollback paths are archived; and
-- no unresolved release blocker remains in this roadmap or its linked release record.
+- no unresolved release blocker remains in this roadmap or its linked pull requests.
