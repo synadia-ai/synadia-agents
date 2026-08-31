@@ -155,18 +155,18 @@ contract:
 
 - npm final versions are published under `next`. Our rollout manifests use exact versions and
   frozen locks. A dist-tag is not treated as external semver quarantine.
-- PyPI final versions are published early, publicly, and without announcement. Our rollout
-  manifests use exact versions and frozen locks. We accept that unrelated external consumers with
-  broad constraints are outside this rollout's control.
+- PyPI final versions are published early and publicly through the normal tag workflows, which also
+  create GitHub Releases. Our rollout manifests use exact versions and frozen locks. We accept that
+  unrelated external consumers with broad constraints are outside this rollout's control.
 - The final upload time starts each artifact's cooldown clock. No package is rebuilt or republished
   at cutover.
 - npm cutover moves the already-aged version's dist-tag. Python cutover adopts the already-public
   versions in normal locks and announces them; there is no PyPI promotion operation.
 
 - [ ] Make every rollout manifest and lock select exact new internal versions while aging.
-- [ ] Adapt Python tag workflows so early publication does not automatically create a public GitHub
-      Release or generated announcement; create the release entry at cutover from the same tag and
-      artifact digests.
+- [ ] If a quieter aging window is desired, manually delete only the generated GitHub Release entry
+      after verifying PyPI publication. Keep the version tag and PyPI artifacts intact, and recreate
+      the release entry from the same tag/digests at cutover if wanted.
 - [ ] Use explicit `npm publish --tag next` commands and record pre/post dist-tags and digests.
 - [ ] Remove inaccurate “dark” and PyPI “promotion” claims from release instructions.
 
@@ -471,8 +471,8 @@ Fallback, only if a scoped mechanism is unavailable:
 - [ ] Verify npm publisher identity, 2FA/automation policy, access level, provenance support, and
       the explicit non-default publish tag.
 - [ ] Verify PyPI trusted-publisher environment/tag rules and require publication approval.
-- [ ] Ensure staged publication does not automatically create a public repository release,
-      generated announcement, or default-channel install instruction before the approved point.
+- [ ] Record whether each Python GitHub Release remains visible during aging or is manually deleted;
+      never delete the source tag as part of quieting the release.
 
 ### Version and dependency DAG
 
