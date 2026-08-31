@@ -453,6 +453,12 @@ def test_parse_url_ws_and_wss_schemes() -> None:
     ws_bare = parse_nats_url("ws://host:9222")
     assert ws_bare == {"servers": ["ws://host:9222"]}
 
+    path = parse_nats_url("wss://tok@host:9222/nats/connect?tenant=acme")
+    assert path == {
+        "servers": ["wss://host:9222/nats/connect?tenant=acme"],
+        "token": "tok",
+    }
+
 
 def test_parse_url_defaults_port_for_bare_nats_host() -> None:
     opts = parse_nats_url("nats://host")

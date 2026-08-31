@@ -240,15 +240,18 @@ def signer_from_creds(creds_text: str) -> NkeySigner:
     """
     parsed = parse_creds(creds_text)
     signer = signer_from_seed(parsed.seed, parsed.jwt)
-    jwt_user = identity_from_jwt(parsed.jwt).user
-    if jwt_user != signer.public_key:
-        signer.wipe()
+    try:
+        jwt_user = identity_from_jwt(parsed.jwt).user
+        if jwt_user == signer.public_key:
+            return signer
         raise IdentityMismatchError(
             signer.public_key,
             signer.public_key,
             credential_user=jwt_user,
         )
-    return signer
+    except Exception:
+        signer.wipe()
+        raise
 
 
 def signer_from_creds_file(path: str | Path) -> NkeySigner:
@@ -284,17 +287,21 @@ def signer_from_context(selector: str) -> NkeySigner:
                 f"failed to read nkey seed file {seed_path}: {exc.strerror}"
             ) from exc
     if user_seed is not None:
+        if user_jwt is None:
+            return signer_from_seed(user_seed)
         signer = signer_from_seed(user_seed, user_jwt)
-        if user_jwt is not None:
+        try:
             jwt_user = identity_from_jwt(user_jwt).user
-            if jwt_user != signer.public_key:
-                signer.wipe()
-                raise IdentityMismatchError(
-                    signer.public_key,
-                    signer.public_key,
-                    credential_user=jwt_user,
-                )
-        return signer
+            if jwt_user == signer.public_key:
+                return signer
+            raise IdentityMismatchError(
+                signer.public_key,
+                signer.public_key,
+                credential_user=jwt_user,
+            )
+        except Exception:
+            signer.wipe()
+            raise
     raise IdentityError(
         f"NATS context {ctx.name!r} has no creds, nkey, or user_seed — nothing to sign "
         "Agent-Sender with"

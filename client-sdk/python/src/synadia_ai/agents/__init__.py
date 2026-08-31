@@ -13,6 +13,8 @@ Public API entry points:
   kwargs for :func:`nats.connect`.
 * :func:`parse_nats_url` — parse a NATS URL (with optional userinfo
   for token / user:password) into kwargs for :func:`nats.connect`.
+* :func:`resolve_nats_connection_bundle` — snapshot connection auth once
+  and optionally derive a sender signer from that same source.
 * :class:`Identity` + the ``signer_from_*`` helpers — the sender-identity
   extension (optional ``Agent-Sender`` on ``prompt`` / ``status`` requests,
   ``Agents.self_id()``, the signed wrappers); the shared codec lives in
@@ -41,6 +43,12 @@ from .agent import (
     StreamMessage,
 )
 from .agents import DEFAULT_REQUEST_SIGNED_TIMEOUT_S, NATS_MSG_ID_HEADER, Agents
+from .connection_bundle import (
+    CredentialSource,
+    IdentityMode,
+    NatsConnectionBundle,
+    resolve_nats_connection_bundle,
+)
 from .context import NatsContextFile, load_context_options, parse_nats_url, read_context_file
 from .discovery import (
     DEFAULT_DISCOVER_MAX_WAIT_S,
@@ -182,6 +190,7 @@ __all__ = [
     "AttachmentsNotSupportedError",
     "Chunk",
     "ClaimedSender",
+    "CredentialSource",
     "DiscoverFilter",
     "EndpointInfo",
     "Envelope",
@@ -189,6 +198,7 @@ __all__ = [
     "Identity",
     "IdentityError",
     "IdentityMismatchError",
+    "IdentityMode",
     "IdentityUnavailableError",
     "InvalidAgentIdError",
     "InvalidSubjectToken",
@@ -196,6 +206,7 @@ __all__ = [
     "MalformedSenderHeaderError",
     "MinSenderTrust",
     "NatsAgentError",
+    "NatsConnectionBundle",
     "NatsContextError",
     "NatsContextFile",
     "NkeySigner",
@@ -241,6 +252,7 @@ __all__ = [
     "read_context_file",
     "read_sender_header_value",
     "refresh_self_id",
+    "resolve_nats_connection_bundle",
     "resolve_sender",
     "self_id",
     "serialize_sender_header",

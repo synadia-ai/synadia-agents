@@ -38,6 +38,15 @@ describe("loadContextOptions", () => {
     expect(opts.servers).toEqual(["nats://a:4222", "nats://b:4222", "nats://c:4222"]);
   });
 
+  it("preserves a WebSocket path and query from a context URL", async () => {
+    await writeContext("websocket", {
+      url: "wss://token@ws.example.test/nats/connect?tenant=acme",
+    });
+    const opts = await loadContextOptions("websocket");
+    expect(opts.servers).toEqual(["wss://ws.example.test/nats/connect?tenant=acme"]);
+    expect(opts.token).toBe("token");
+  });
+
   it("maps user/password/token/inbox_prefix", async () => {
     await writeContext("creds-basic", {
       url: "nats://localhost:4222",
@@ -51,6 +60,25 @@ describe("loadContextOptions", () => {
     expect(opts.pass).toBe("s3cret");
     expect(opts.token).toBe("tok");
     expect(opts.inboxPrefix).toBe("_INBOX.alice");
+  });
+
+  it("parses URL userinfo and lets explicit context auth replace it", async () => {
+    await writeContext("url-token", {
+      url: "nats://url-secret@example.test:4222",
+    });
+    const urlOnly = await loadContextOptions("url-token");
+    expect(urlOnly.servers).toEqual(["nats://example.test:4222"]);
+    expect(urlOnly.token).toBe("url-secret");
+
+    await writeContext("explicit-token", {
+      url: "nats://url-secret@example.test:4222",
+      token: "field-secret",
+    });
+    const explicit = await loadContextOptions("explicit-token");
+    expect(explicit.servers).toEqual(["nats://example.test:4222"]);
+    expect(explicit.token).toBe("field-secret");
+    expect(explicit.user).toBeUndefined();
+    expect(explicit.pass).toBeUndefined();
   });
 
   it("prefers user_jwt over user/password/token", async () => {
@@ -336,6 +364,47 @@ describe("parseNatsUrl", () => {
     expect(() => parseNatsUrl("nats://tok1@a:4222,nats://tok2@b:4222")).toThrow(NatsContextError);
   });
 
+  it("redacts URL userinfo in parse errors while retaining actionable host/scheme details", () => {
+    const token = "parse-error-token-sentinel";
+    let mixed: unknown;
+    try {
+      parseNatsUrl(`nats://${token}@a.example:4222,nats://different@b.example:4222`);
+    } catch (error) {
+      mixed = error;
+    }
+    expect((mixed as Error).message).toContain("a.example:4222");
+    expect((mixed as Error).message).not.toContain(token);
+    expect((mixed as Error).message).not.toContain("different");
+
+    let schemeLess: unknown;
+    try {
+      parseNatsUrl(`${token}@a.example:4222,different@b.example:4222`);
+    } catch (error) {
+      schemeLess = error;
+    }
+    expect((schemeLess as Error).message).toContain("a.example:4222");
+    expect((schemeLess as Error).message).not.toContain(token);
+    expect((schemeLess as Error).message).not.toContain("different");
+
+    let scheme: unknown;
+    try {
+      parseNatsUrl(`http://alice:${token}@nats.example:4222`);
+    } catch (error) {
+      scheme = error;
+    }
+    expect((scheme as Error).message).toContain('unsupported scheme "http:"');
+    expect((scheme as Error).message).toContain("nats.example:4222");
+    expect((scheme as Error).message).not.toContain(token);
+
+    let malformed: unknown;
+    try {
+      parseNatsUrl(`nats://alice:${token}/broken@nats.example:4222`);
+    } catch (error) {
+      malformed = error;
+    }
+    expect((malformed as Error).message).not.toContain(token);
+  });
+
   it("throws on empty / blank input", () => {
     expect(() => parseNatsUrl("")).toThrow(NatsContextError);
     expect(() => parseNatsUrl("   ,  ")).toThrow(NatsContextError);
@@ -372,5 +441,11 @@ describe("parseNatsUrl", () => {
     // bare ws/wss without userinfo
     const wsBare = parseNatsUrl("ws://host:9222");
     expect(wsBare).toEqual({ servers: ["ws://host:9222"] });
+
+    const path = parseNatsUrl("wss://tok@host:9222/nats/connect?tenant=acme");
+    expect(path).toEqual({
+      servers: ["wss://host:9222/nats/connect?tenant=acme"],
+      token: "tok",
+    });
   });
 });

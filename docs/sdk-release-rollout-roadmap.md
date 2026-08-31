@@ -43,7 +43,8 @@ The rollout has five non-negotiable outcomes:
 - [x] The Python [identity workbook](../examples/identity-workbook/python/README.md) demonstrates
       signed Echo, signed Hello-to-Echo forwarding, and identity-free calls.
 - Review status: independent read-only audits were completed and reconciled into these gates.
-- [ ] The signer/live-connection correctness blockers in this roadmap are fixed.
+- [x] The signer/live-connection correctness blockers in this roadmap are fixed
+      ([PR #188](https://github.com/synadia-ai/synadia-agents/pull/188)).
 - [ ] The optional tracing feature is merged and its release gate is complete.
 - [ ] All intended SDK and integration artifacts are published through the recorded registry contract.
 - [ ] Every provided integration and release-consuming example is assessed.
@@ -85,9 +86,10 @@ merging shared-branch feature work; complete the remaining operational items bef
       workflows are path-filtered, use an always-running evaluator rather than a naive pending
       fan-in over skipped jobs.
 - Setup implementation and green component/aggregate evidence: [PR #186](https://github.com/synadia-ai/synadia-agents/pull/186).
-- Every rollout PR uses a closed review loop: wait for Claude's review on the current head,
-  address every finding in a follow-up commit, comment `@claude please review my fixes`, and wait
-  for the follow-up review. Repeat until the latest head has no remaining findings; only then merge.
+- Every rollout PR uses a closed review loop: wait for Claude's review on the current head before
+  making a follow-up commit, address every finding in that commit, comment
+  `@claude please review my fixes`, and wait for the follow-up review before making another commit.
+  Repeat until the latest head has no remaining findings; only then merge.
 - These workflow changes live on the rollout branch. Once it is pushed, PRs targeting it use its
   base-branch workflows and pushes use the workflow files in the pushed commit; `main` need not
   receive them first.
@@ -158,6 +160,12 @@ supply signer material alongside an already-created `NatsConnection`, because th
 not expose its private seed; those two inputs must still represent the same NATS user and account
 context.
 
+- [x] Add shared TypeScript and Python connection-bundle helpers that resolve context or URL plus
+      credentials once and return connection options plus an optional signer from the same
+      snapshot. Identity-free mode remains the default; signed mode fails if the selected
+      connection credentials cannot sign. The bundle owns cleanup after the connection closes.
+- [ ] Require every provided integration and release-consuming example to use those helpers; do not
+      copy context, credentials, seed, authenticator, or signer resolution into integrations.
 - [ ] Remove or reject independently selectable connection and identity credentials in integration
       CLIs, environment variables, config files, and plugin settings.
 - [x] Require live-connection binding before every signed send or registration path can become

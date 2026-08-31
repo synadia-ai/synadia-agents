@@ -17,7 +17,9 @@ import { base64UrlEncode } from "../../../src/identity/crypto.js";
 import {
   decodeJwtPayload,
   identityFromJwt,
+  normalizeUserSeed,
   parseCreds,
+  signerFromCanonicalSeedAndJwt,
   signerFromContext,
   signerFromCreds,
   signerFromCredsFile,
@@ -69,7 +71,8 @@ describe("signerFromSeed", () => {
 
   it("rejects a non-user seed, garbage, a public key — without echoing the input", () => {
     const accountSeed = new TextDecoder().decode(account.getSeed());
-    for (const bad of [accountSeed, "garbage", user.getPublicKey(), seed.slice(0, 40) + "AAAA"]) {
+    const badCrc = `${seed.slice(0, -1)}${seed.endsWith("A") ? "B" : "A"}`;
+    for (const bad of [accountSeed, "garbage", user.getPublicKey(), badCrc]) {
       let caught: unknown;
       try {
         signerFromSeed(bad);
@@ -87,6 +90,14 @@ describe("signerFromSeed", () => {
     expect(inspect(s)).toBe(`SenderSigner(${s.publicKey})`);
     s.wipe?.();
     expect(() => s.sign(enc.encode("x"))).toThrow(/wiped/);
+  });
+
+  it("wipes an owned canonical seed when JWT validation fails", () => {
+    const canonicalSeed = normalizeUserSeed(seed);
+    expect(() => signerFromCanonicalSeedAndJwt(canonicalSeed, "malformed-jwt")).toThrow(
+      IdentityError,
+    );
+    expect(canonicalSeed.every((byte) => byte === 0)).toBe(true);
   });
 });
 

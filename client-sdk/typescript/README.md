@@ -82,6 +82,7 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 | `agent.status({ subject?, sub?, timeoutMs? })`                                                                     | §8.7 status probe; returns the agent's heartbeat payload.                                |
 | `agents.close()`                                                                                                   | Tear down SDK state; aborts all in-flight streams.                                       |
 | `loadContextOptions(name)` / `parseNatsUrl(url)`                                                                   | Bridge `nats` CLI context files / URLs into `NodeConnectionOptions` for `connect()`.     |
+| `resolveNatsConnectionBundle(source, { identity })`                                                                | Resolve connection auth and an optional signer from one immutable credential snapshot.   |
 | `withAgentReconnectDefaults(opts?)`                                                                                | Opt-in resilient reconnect defaults for agent runtimes — see below. Pure transform.      |
 | `new Agents({ nc, identity: { signer, name } })`                                                                   | Sender identity: sign every `prompt` / `status` with the connection's NKEY — see below.  |
 | `agents.selfId()` / `refreshSelfId()`                                                                              | Resolve the connection's own agent ID (`{account}.{user}`).                              |
@@ -109,23 +110,60 @@ When you adopt these defaults, also handle the terminal `close` status event in 
 
 The optional sender-identity extension lets a receiving agent know _who_ prompted it, verified per message: the caller attaches an `Agent-Sender` header that names its agent ID — the `(account, user)` NKEY pair authenticated on that connection — and, with a signer, an ed25519 signature bound to the subject, payload, timestamp, and nonce. Nothing in it changes protocol `0.3`: support is advertised by `min_sender_trust` on the prompt endpoint (`agent.supportsSenderIdentity`). Identity is off when the `identity` option is omitted.
 
-```ts
-import { Agents, signerFromCredsFile } from "@synadia-ai/agents";
+Use `resolveNatsConnectionBundle` when this process owns the connection. It
+reads a NATS CLI context or direct credential file once and derives connection
+authentication and the optional signer from that same immutable snapshot:
 
-const agents = new Agents({
-  nc,
-  identity: { signer: await signerFromCredsFile("~/.config/nats/user.creds"), name: "claude-code" },
-});
-console.log(await agents.selfId()); // "AABY….UAWW…" — 113 chars on NGS, "$G.U…" / "ACME.U…" on a config-file server
-for await (const msg of await agent.prompt("hello")) {
-  /* the receiver sees a VerifiedSender */
+```ts
+import { connect } from "@nats-io/transport-node";
+import {
+  Agents,
+  resolveNatsConnectionBundle,
+  withAgentReconnectDefaults,
+} from "@synadia-ai/agents";
+
+const bundle = await resolveNatsConnectionBundle(
+  { context: "current" }, // or { url, creds }, { url, nkey }, or { url }
+  { identity: "signed" },
+);
+let nc: Awaited<ReturnType<typeof connect>> | undefined;
+let agents: Agents | undefined;
+try {
+  nc = await connect(withAgentReconnectDefaults(bundle.connectionOptions));
+  agents = new Agents({ nc, identity: { signer: bundle.signer, name: "my-client" } });
+  console.log(await agents.selfId());
+  const [agent] = await agents.discover();
+  if (agent === undefined) throw new Error("no agents discovered");
+  for await (const msg of await agent.prompt("hello")) {
+    /* the receiver sees a VerifiedSender */
+  }
+} finally {
+  await agents?.close();
+  await nc?.close();
+  bundle.wipe(); // after close: reconnect authentication no longer needs the snapshot
 }
 ```
+
+Omit the second argument or pass `{ identity: "off" }` to get connection
+options without constructing or returning a signer. This makes one dynamic
+`"off" | "signed"` configuration usable without branching. Signed mode
+requires the selected connection source itself to contain a user seed: a
+`creds` file, an `nkey` seed file, or a context selecting one of those (an
+inline context `user_jwt` + `user_seed` is supported too). Token,
+username/password, and seedless JWT connections work in off mode and fail
+clearly in signed mode. There is deliberately no second identity-only
+credential path.
+
+The bundle's JSON and Node inspection views are redacted, but the explicitly
+accessed `bundle.connectionOptions` necessarily contains live authentication
+configuration. Never log or serialize those options. Keep the bundle alive
+for reconnects, then call the idempotent `wipe()` only after closing NATS; it
+zeros retained credential bytes and removes auth/TLS fields from the options.
 
 What to know:
 
 - **Identity is opt-in.** Omit `identity` for no lookup and no header. Pass `identity: {}` explicitly for an unsigned claim, or set `sendUnsignedClaim: false` to perform no automatic identity work. An unsigned claim discloses your user NKEY to the receiver.
-- **Use the connection's credentials.** The SDK cannot extract a private seed from an already-open connection, so the signer is supplied explicitly. Build the NATS authenticator and `signerFromCreds` from the same credentials snapshot (or otherwise ensure `signerFromSeed` / `signerFromContext` represents that connection). Before a signed send, the SDK compares the signer's user and account with live `$SYS.REQ.USER.INFO`; a mismatch or unavailable binding fails and never downgrades to unsigned or headerless delivery.
+- **Use the connection's credentials.** The SDK cannot extract a private seed from an already-open connection. Prefer `resolveNatsConnectionBundle` to bind connection authentication and signing to one read. The lower-level `signerFromSeed` / `signerFromCreds` helpers remain available for externally managed connections and HSM/KMS adapters, where the caller must guarantee the signer represents that exact connection. Before a signed send, the SDK compares the signer's user and account with live `$SYS.REQ.USER.INFO`; a mismatch or unavailable binding fails and never downgrades to unsigned or headerless delivery.
 - **Cost.** Identity lookup has a 2 s timeout. TypeScript memoises by connection and public identity-source fingerprint, clears all entries on reconnect, negative-caches failures for 30 s, and never lets an unsigned lookup satisfy a signer's validation. A signed header is ~400 bytes and counts against `max_payload` (header framing included — `PayloadTooLargeError.headerBytes`).
 - **Behind a service import that remaps the subject** — an export that inserts the caller's account token (`account_token_position`), or a `to:` / `local_subject` rename by your own account — discovery reports the exporter's subject, which you cannot publish to. Pass `prompt(text, { subject })` / `status({ subject })` with the local name; the receiver strips an inserted token by itself. Only for a rename by **your own** account also pass `sub: agent.promptEndpoint.subject` (sign the exporter's subject). `signSender` / `publishSigned` / `requestSigned` take the same `sub` option.
 - **A trusted server over TLS is a precondition.** The NATS handshake signs a server-chosen nonce with the same seed that signs `Agent-Sender`; a server you should not have trusted could obtain a signature valid for 30 s. Identity is meaningful only over TLS to a server whose certificate you verify.

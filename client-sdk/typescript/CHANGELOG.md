@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `resolveNatsConnectionBundle(source, { identity: "off" | "signed" })`
+  resolves a NATS CLI context, direct `creds` file, direct `nkey` seed file,
+  or bare URL into connection options and, only in signed mode, a
+  `SenderSigner` derived from the exact same immutable credential snapshot.
+  The returned idempotent `wipe()` clears retained auth/signing bytes and
+  removes auth-bearing option fields after the NATS connection closes. Bundle
+  JSON / Node inspection is redacted; direct `connectionOptions` access is
+  intentionally live and must not be logged.
 - **Sender identity (the sender-identity extension).** Every `prompt` /
   `status` request can now carry an `Agent-Sender` header that names the
   caller's agent ID (`{account}.{user}`, the connection's NKEY pair) and,
@@ -101,6 +109,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- NATS URL errors redact token and user/password userinfo. URL and context
+  resolution preserve WebSocket paths and query strings.
 - **`prompt()` counts the `Agent-Sender` header against `max_payload`**
   (spec: the header counts). The synchronous throw contract holds: a
   _sound upper bound_ of the header is applied synchronously (thrown
