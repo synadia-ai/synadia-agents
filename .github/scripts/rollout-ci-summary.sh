@@ -12,12 +12,15 @@ declare -a changed_paths=()
 
 if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
   : "${PR_NUMBER:?PR_NUMBER must be set for pull_request runs}"
-  while IFS= read -r path; do
-    changed_paths+=("$path")
-  done < <(
+  paths_output="$(
     gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
       --paginate --jq '.[].filename'
-  )
+  )"
+  if [[ -n "$paths_output" ]]; then
+    while IFS= read -r path; do
+      changed_paths+=("$path")
+    done <<<"$paths_output"
+  fi
 else
   : "${BEFORE_SHA:?BEFORE_SHA must be set for push runs}"
   if [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
@@ -25,12 +28,15 @@ else
     # rollout suite is conservative and gives the branch its first baseline.
     changed_paths=("__all_rollout_components__")
   else
-    while IFS= read -r path; do
-      changed_paths+=("$path")
-    done < <(
+    paths_output="$(
       gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE_SHA...$TARGET_SHA" \
         --jq '.files[].filename'
-    )
+    )"
+    if [[ -n "$paths_output" ]]; then
+      while IFS= read -r path; do
+        changed_paths+=("$path")
+      done <<<"$paths_output"
+    fi
   fi
 fi
 
