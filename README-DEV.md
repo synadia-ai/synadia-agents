@@ -224,8 +224,11 @@ npm whoami                                       # the @synadia-ai publish ident
 #    bundleDependencies without a real vendoring step — declaring it makes
 #    npm skip fetching the SDKs, and the installed plugin fails at runtime.
 (cd agents/openclaw && bun install && npm publish --dry-run && npm publish)
-#    PI — plain extension sources, no build step; nothing to install.
-(cd agents/pi       && npm publish --dry-run && npm publish)
+#    PI — plain extension sources, no build step, but install after the
+#    flip to prove the registry SDK versions resolve. PI currently has no
+#    committed bun.lock; create and review it as release preparation rather
+#    than ignoring the untracked lock produced here.
+(cd agents/pi       && bun install && npm publish --dry-run && npm publish)
 #    Plain plugin packages with Bun TypeScript entrypoints — no build
 #    step; nothing from node_modules ships. Their `bun install` proves
 #    the flipped ^semver deps resolve from the registry and refreshes
@@ -238,8 +241,14 @@ npm whoami                                       # the @synadia-ai publish ident
 #    Grok — its only dependency is `@synadia-ai/acp-nats-channel:
 #    file:../acp`, which devmode.sh does NOT flip (it tracks only the
 #    two SDK deps). Point it at the published ACP ^semver by hand
-#    before publishing, and back to file:../acp after.
-(cd agents/grok     && npm publish --dry-run && npm publish)
+#    before publishing. The jq guard fails if the manual flip was missed;
+#    bun install proves ACP resolves and refreshes bun.lock. After publish,
+#    restore file:../acp and run bun install again before step 6.
+(cd agents/grok \
+  && jq -e '(.dependencies["@synadia-ai/acp-nats-channel"] // "") | startswith("file:") | not' package.json >/dev/null \
+  && bun install \
+  && npm publish --dry-run \
+  && npm publish)
 #    Plain (examples/pi-headless, examples/claude-code-headless) — the
 #    `prepack` hook builds dist/ on its own.
 (cd examples/pi-headless           && npm publish --dry-run && npm publish)
