@@ -12,11 +12,14 @@ lockstep:
 | `client-sdk/typescript/` | `@synadia-ai/agents` | Caller side — discover, prompt, stream. Most consumers want only this. |
 | `agent-sdk/typescript/` | `@synadia-ai/agent-service` | Host side — `AgentService`, `ReferenceAgent`, server-side wire helpers. Depends on the caller package. |
 
-Inside the monorepo every consumer (`agents/*`, `examples/*`) refers to
-both packages via `file:` links in its `package.json`. Bun **copies**
-those links at install time rather than symlinking, so an edit to
-either SDK is invisible to a consumer until that consumer's install is
-refreshed against a freshly built `dist/`.
+Inside the monorepo most consumers (`agents/*`, `examples/*`) refer to
+both packages via `file:` links in their `package.json`. The exceptions
+pin the published npm `^semver` instead: `agents/acp`, `agents/codex`,
+and `agents/opencode`, plus `agents/claude-code`, which must stay
+pinned (see `devtools/.devmodeignore`). For the `file:`-linked
+consumers Bun **copies** those links at install time rather than
+symlinking, so an edit to either SDK is invisible to a consumer until
+that consumer's install is refreshed against a freshly built `dist/`.
 
 The same applies inside `agent-sdk/typescript/` itself: it depends on
 `@synadia-ai/agents` via `file:`, so its own `node_modules` carries a
@@ -85,10 +88,13 @@ bun agent-sdk/typescript/examples/01-echo.ts
 
 `agents/pi/`, `agents/openclaw/`, and `agents/claude-code/` are
 extension/plugin packages that get loaded by their host application
-(`pi`, `openclaw`, the Claude Code MCP runtime). When the host loads
-the extension it follows the `file:` link in the extension's
-`package.json` back to the SDK source — so both SDKs need a current
-`dist/` when the extension is installed.
+(`pi`, `openclaw`, the Claude Code MCP runtime). When `pi` or
+`openclaw` loads its extension it follows the `file:` link in the
+extension's `package.json` back to the SDK source — so both SDKs need
+a current `dist/` when the extension is installed. `agents/claude-code`
+is the exception: it pins the published `^semver` SDKs (its `start`
+script runs `bun install` at server launch), so local SDK edits never
+reach it — exercise them through pi/openclaw or the examples instead.
 
 Other agent packages in `agents/`, including `agents/flue/`,
 `agents/eve/`, `agents/opencode/`, and `agents/codex/`, run as
@@ -161,9 +167,10 @@ and [`.github/workflows/agent-sdk-typescript.yml`](.github/workflows/agent-sdk-t
 
 ## Releasing the SDKs
 
-`main` keeps `file:` links between consumers and the SDK packages so
-contributors editing the SDK see their changes live in the
-agents/examples without any flip step. That's also why a fresh `npm
+`main` keeps `file:` links for most consumers so contributors editing
+the SDK see their changes live in the agents/examples without any flip
+step (the npm-pinned consumers — acp, codex, opencode, claude-code —
+track published versions instead). That's also why a fresh `npm
 publish` of any consumer would ship `file:` refs that break for npm
 users — published tarballs need `^semver` instead. The
 [`devtools/devmode.sh`](devtools/devmode.sh) script bridges the two
@@ -179,16 +186,18 @@ states.
 The script discovers consumers automatically — every `package.json`
 under `examples/`, `agents/`, `client-sdk/`, and `agent-sdk/` that
 depends on a tracked SDK gets flipped. Names listed in
-`devtools/.devmodeignore` are skipped (currently just `dspy`, which
-lives on `file:` permanently).
+`devtools/.devmodeignore` are skipped (currently `dspy`, which lives on
+`file:` permanently, and `claude-code`, which must stay on `^semver`
+pins because the plugin marketplace ships only its subtree, where
+`file:` cannot resolve).
 
 ### The release ladder (one cycle)
 
 Order matters: caller `@synadia-ai/agents` first because the host SDK
-declares `^0.4.x` against it; agent harnesses and headless examples
-follow once both SDKs are on npm. Each `npm publish` is a separate
-user-approval gate — read the dry-run output before pulling the
-trigger.
+depends on it (the flip pins it to the caller's current `^semver`);
+agent harnesses and headless examples follow once both SDKs are on
+npm. Each `npm publish` is a separate user-approval gate — read the
+dry-run output before pulling the trigger.
 
 ```sh
 # 1. Pre-flight: confirm versions, identity, and tarball shape.
@@ -209,18 +218,28 @@ npm whoami                                       # the @synadia-ai publish ident
 (cd agent-sdk/typescript  && npm publish --dry-run && npm publish)
 
 # 5. Publish each consumer that needs to ship.
-#    OpenClaw and PI do not declare bundleDependencies; their SDKs remain
-#    normal package dependencies. `bun install` does not embed SDK bytes in
-#    these tarballs. Do not re-add bundleDependencies without a real vendoring
-#    step: npm would skip fetching the SDK and the installed plugin would fail
-#    at runtime. Release validation must reject any remaining `file:` ref and
-#    prove imports from a clean packed/registry install.
+#    OpenClaw — `prepublishOnly` builds dist/ with tsup, so install its
+#    devDeps first. The tarball ships dist/ + sources, never node_modules;
+#    the SDKs are normal registry dependencies. Don't re-add
+#    bundleDependencies without a real vendoring step — declaring it makes
+#    npm skip fetching the SDKs, and the installed plugin fails at runtime.
 (cd agents/openclaw && bun install && npm publish --dry-run && npm publish)
-(cd agents/pi       && bun install && npm publish --dry-run && npm publish)
-#    Plain plugin packages with Bun TypeScript entrypoints.
+#    PI — plain extension sources, no build step; nothing to install.
+(cd agents/pi       && npm publish --dry-run && npm publish)
+#    Plain plugin packages with Bun TypeScript entrypoints — no build
+#    step; nothing from node_modules ships. Their `bun install` proves
+#    the flipped ^semver deps resolve from the registry and refreshes
+#    each committed bun.lock.
 (cd agents/opencode && bun install && npm publish --dry-run && npm publish)
 (cd agents/codex    && bun install && npm publish --dry-run && npm publish)
 (cd agents/eve      && bun install && npm publish --dry-run && npm publish)
+(cd agents/acp      && bun install && npm publish --dry-run && npm publish)
+(cd agents/flue     && bun install && npm publish --dry-run && npm publish)
+#    Grok — its only dependency is `@synadia-ai/acp-nats-channel:
+#    file:../acp`, which devmode.sh does NOT flip (it tracks only the
+#    two SDK deps). Point it at the published ACP ^semver by hand
+#    before publishing, and back to file:../acp after.
+(cd agents/grok     && npm publish --dry-run && npm publish)
 #    Plain (examples/pi-headless, examples/claude-code-headless) — the
 #    `prepack` hook builds dist/ on its own.
 (cd examples/pi-headless           && npm publish --dry-run && npm publish)
@@ -242,11 +261,12 @@ git status
   into a 100%-CPU walk. Each per-consumer `bun install` is wrapped in
   `timeout 60` (override with `BUN_INSTALL_TIMEOUT=…`); the script
   prints a `⏱ timed out` line and continues.
-- **`^semver` `bun install` failures pre-publish are normal.** Before
-  the SDK pair is on npm, `devmode.sh off` flips the deps but the
-  follow-on `bun install` can't resolve `^0.4.0` against an empty
-  registry. The script treats those as best-effort; the package.json
-  flips themselves succeed and that's what `npm publish` reads.
+- **`^semver` `bun install` failures pre-publish are normal.** Until
+  the freshly bumped SDK versions are on npm, `devmode.sh off` flips
+  the deps but the follow-on `bun install` can't resolve the new
+  `^x.y.z` from the registry. The script treats those as best-effort;
+  the package.json flips themselves succeed and that's what
+  `npm publish` reads.
 
 ## Troubleshooting
 
