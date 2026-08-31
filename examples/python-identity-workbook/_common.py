@@ -76,8 +76,8 @@ async def discover_verified_echo(agents: Agents) -> Agent:
         raise RuntimeError("Echo did not register an identity")
     if not echo.id_sig_verified:
         raise RuntimeError("Echo's registration identity signature did not verify")
-    if not echo.supports_sender_identity or echo.min_sender_trust != "signed":
-        raise RuntimeError("Echo does not advertise min_sender_trust=signed")
+    if not echo.supports_sender_identity or echo.min_sender_trust != "any":
+        raise RuntimeError("Echo does not advertise min_sender_trust=any")
     return echo
 
 

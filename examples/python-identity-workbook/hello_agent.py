@@ -45,7 +45,7 @@ async def start_hello(nc: NATSClient, signer: NkeySigner) -> AgentService:
         nc=nc,
         description="Python sender-identity workbook Hello",
         identity=ServiceIdentity(signer=signer),
-        min_sender_trust="signed",
+        min_sender_trust="any",
     )
 
     async def hello(envelope: Envelope, stream: PromptStream) -> None:
@@ -71,7 +71,7 @@ async def call_echo_as_hello(nc: NATSClient, signer: NkeySigner) -> HelloCall:
             echo.id_sig_verified,
         )
         log.info(
-            "outgoing signed prompt sender=%s recipient=%s prompt='hello'",
+            "outgoing prompt identity=%s mode=signed recipient=%s prompt='hello'",
             hello_identity,
             echo.identity,
         )

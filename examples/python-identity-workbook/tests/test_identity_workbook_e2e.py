@@ -10,11 +10,9 @@ from synadia_ai.agents import (
     AgentId,
     Agents,
     DiscoverFilter,
-    Envelope,
     Identity,
     SenderInfo,
     VerifiedSender,
-    encode,
 )
 
 from _common import OWNER, SESSION_NAME, connect_user
@@ -24,29 +22,12 @@ from hello_agent import call_echo_as_hello, start_hello
 from prepare_nkeys import ProvisionedNkeys
 
 if TYPE_CHECKING:
-    from nats.aio.client import Client as NATSClient
-    from nats.aio.msg import Msg
     from synadia_ai.agent_service import AgentService
 
 
 class WorkbookServer(Protocol):
     url: str
     identities: ProvisionedNkeys
-
-
-async def _unsigned_prompt(nc: NATSClient, subject: str) -> list[Msg]:
-    """Send a prompt with no Agent-Sender header and collect through the terminator."""
-    inbox = nc.new_inbox()
-    subscription = await nc.subscribe(inbox)
-    await nc.publish(subject, encode(Envelope(prompt="unsigned")), reply=inbox)
-    replies: list[Msg] = []
-    while True:
-        reply = await subscription.next_msg(timeout=3.0)
-        replies.append(reply)
-        if reply.data == b"" and not reply.headers:
-            break
-    await subscription.unsubscribe()
-    return replies
 
 
 async def test_python_sender_identity_end_to_end(  # noqa: PLR0915 — one topology, one walk
@@ -76,7 +57,8 @@ async def test_python_sender_identity_end_to_end(  # noqa: PLR0915 — one topol
         assert len({echo_id, hello_id, cli_id}) == 3
         assert echo.identity == echo_id
         assert hello.identity == hello_id
-        assert echo.min_sender_trust == "signed"
+        assert echo.min_sender_trust == "any"
+        assert hello.min_sender_trust == "any"
 
         # Hello is not merely a caller: its own AgentService registration is
         # independently discoverable, identity-bearing, and signature-verified.
@@ -90,6 +72,7 @@ async def test_python_sender_identity_end_to_end(  # noqa: PLR0915 — one topol
             assert len(found_hello) == 1
             assert found_hello[0].identity == hello_id
             assert found_hello[0].id_sig_verified is True
+            assert found_hello[0].min_sender_trust == "any"
         finally:
             await inspector.close()
 
@@ -103,24 +86,21 @@ async def test_python_sender_identity_end_to_end(  # noqa: PLR0915 — one topol
         assert isinstance(hello_sender, VerifiedSender)
         assert hello_sender.id == hello_id
 
-        # Bypass the client SDK's local min_sender_trust check to prove the
-        # host rejects a real header-less wire request before its handler.
-        before_unsigned = len(seen_senders)
-        rejection = await _unsigned_prompt(cli_user.nc, echo.subject.prompt)
-        assert len(rejection) == 2
-        headers = rejection[0].headers or {}
-        assert headers.get("Nats-Service-Error-Code") == "401"
-        assert headers.get("Nats-Service-Error") == "signature required"
-        assert rejection[-1].data == b"" and not rejection[-1].headers
-        assert len(seen_senders) == before_unsigned
+        no_identity_call = await call_echo(cli_user.nc, None, "hello without identity")
+        assert no_identity_call.caller_identity is None
+        assert no_identity_call.echo_identity == echo_id
+        assert no_identity_call.echo_id_sig_verified is True
+        assert no_identity_call.response == "hello without identity"
+        assert len(seen_senders) == 2
+        assert seen_senders[1] is None
 
         cli_call = await call_echo(cli_user.nc, cli_user.signer, "hello from CLI")
         assert cli_call.caller_identity == cli_id
         assert cli_call.echo_identity == echo_id
         assert cli_call.echo_id_sig_verified is True
         assert cli_call.response == "hello from CLI"
-        assert len(seen_senders) == 2
-        cli_sender = seen_senders[1]
+        assert len(seen_senders) == 3
+        cli_sender = seen_senders[2]
         assert isinstance(cli_sender, VerifiedSender)
         assert cli_sender.id == cli_id
 
@@ -131,10 +111,12 @@ async def test_python_sender_identity_end_to_end(  # noqa: PLR0915 — one topol
         ]
         assert any(f"Echo identity={echo_id}" in message for message in echo_logs)
         incoming_logs = [message for message in echo_logs if message.startswith("incoming sender=")]
-        assert len(incoming_logs) == 2
+        assert len(incoming_logs) == 3
         assert str(hello_id) in incoming_logs[0]
-        assert str(cli_id) in incoming_logs[1]
-        assert all("verified user" in message for message in incoming_logs)
+        assert incoming_logs[1] == "incoming sender=(no sender)"
+        assert str(cli_id) in incoming_logs[2]
+        assert "verified user" in incoming_logs[0]
+        assert "verified user" in incoming_logs[2]
     finally:
         if hello is not None:
             await hello.stop()

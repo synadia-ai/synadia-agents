@@ -1,4 +1,4 @@
-"""Signed Echo AgentService that accepts only verified senders."""
+"""Signed Echo AgentService that reports every sender's achieved trust."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ async def start_echo(
         nc=nc,
         description="Python sender-identity workbook Echo",
         identity=ServiceIdentity(signer=signer),
-        min_sender_trust="signed",
+        min_sender_trust="any",
     )
 
     async def echo(envelope: Envelope, stream: PromptStream) -> None:

@@ -1,4 +1,4 @@
-"""Discover the signed Echo agent and call it with a signed CLI identity."""
+"""Discover signed Echo and call it with or without a sender identity."""
 
 from __future__ import annotations
 
@@ -27,32 +27,40 @@ log = logging.getLogger("identity_workbook.cli")
 
 @dataclass(frozen=True, slots=True)
 class EchoCall:
-    caller_identity: AgentId
+    caller_identity: AgentId | None
     echo_identity: AgentId
     echo_id_sig_verified: bool
     response: str
 
 
-async def call_echo(nc: NATSClient, signer: NkeySigner, prompt: str) -> EchoCall:
-    """Call Echo through the client SDK, using the connection's matching signer."""
-    agents = Agents(nc=nc, identity=Identity(signer=signer, name="CLI"))
+async def call_echo(nc: NATSClient, signer: NkeySigner | None, prompt: str) -> EchoCall:
+    """Call Echo with a signed identity, or no Agent-Sender when signer is ``None``."""
+    identity = Identity(signer=signer, name="CLI") if signer is not None else None
+    agents = Agents(nc=nc, identity=identity)
     try:
         echo = await discover_verified_echo(agents)
         assert echo.identity is not None  # established by discover_verified_echo
-        caller_identity = await agents.self_id()
+        caller_identity = await agents.self_id() if signer is not None else None
         log.info(
             "discovered Echo identity=%s id_sig_verified=%s",
             echo.identity,
             echo.id_sig_verified,
         )
-        # The SDK signs at publish time. Log the intent and identities, never the
-        # generated nonce or raw Agent-Sender signature.
-        log.info(
-            "outgoing signed prompt sender=%s recipient=%s prompt=%r",
-            caller_identity,
-            echo.identity,
-            prompt,
-        )
+        if caller_identity is not None:
+            # The SDK signs at publish time. Log the intent and identities, never
+            # the generated nonce or raw Agent-Sender signature.
+            log.info(
+                "outgoing prompt identity=%s mode=signed recipient=%s prompt=%r",
+                caller_identity,
+                echo.identity,
+                prompt,
+            )
+        else:
+            log.info(
+                "outgoing prompt identity=(none) mode=without-identity recipient=%s prompt=%r",
+                echo.identity,
+                prompt,
+            )
         response = await response_text(echo.prompt(prompt))
         return EchoCall(
             caller_identity=caller_identity,
@@ -74,12 +82,18 @@ async def main() -> None:
         default=default_seed_path("cli"),
         help="CLI user seed file (default: .local/cli.nkey)",
     )
+    parser.add_argument(
+        "--without-identity",
+        action="store_true",
+        help="omit Agent-Sender (the NATS connection is still authenticated as the CLI user)",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 
     user = await connect_user(args.url, args.nkey)
     try:
-        result = await call_echo(user.nc, user.signer, args.prompt)
+        signer = None if args.without_identity else user.signer
+        result = await call_echo(user.nc, signer, args.prompt)
         print(result.response)
     finally:
         await user.close()

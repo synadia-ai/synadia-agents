@@ -2,9 +2,11 @@
 
 This workbook runs sender identity end to end with the monorepo's Python SDKs:
 
-- Echo registers a signed identity and requires `min_sender_trust="signed"`.
-- Hello registers its own signed `AgentService`, then calls Echo as the same NKEY identity.
-- A separate CLI user discovers and verifies Echo before sending a signed prompt.
+- Echo registers a signed identity and advertises `min_sender_trust="any"`.
+- Hello registers its own signed `AgentService` with `min_sender_trust="any"`, then calls Echo as
+  the same NKEY identity.
+- A separate CLI user discovers and verifies Echo, then demonstrates calls with and without a
+  sender identity.
 
 The three generated users are throwaway local NKEY users in the global `$G` account. Private
 seeds live under the gitignored `.local/` directory with mode `0600`; none of the programs logs
@@ -44,7 +46,7 @@ uv run python echo_agent.py
 Expected startup shape (the actual public NKEY differs):
 
 ```text
-identity_workbook.echo INFO Echo identity=$G.U… min_sender_trust=signed subject=agents.prompt.echo.identity-workbook.main
+identity_workbook.echo INFO Echo identity=$G.U… min_sender_trust=any subject=agents.prompt.echo.identity-workbook.main
 Echo is ready; press Ctrl+C to stop
 ```
 
@@ -71,7 +73,7 @@ Expected log shape:
 ```text
 identity_workbook.hello INFO Hello identity=$G.U… subject=agents.prompt.hello.identity-workbook.main
 identity_workbook.hello INFO discovered Echo identity=$G.U… id_sig_verified=True
-identity_workbook.hello INFO outgoing signed prompt sender=$G.U… recipient=$G.U… prompt='hello'
+identity_workbook.hello INFO outgoing prompt identity=$G.U… mode=signed recipient=$G.U… prompt='hello'
 hello
 ```
 
@@ -90,19 +92,44 @@ Expected log shape:
 
 ```text
 identity_workbook.cli INFO discovered Echo identity=$G.U… id_sig_verified=True
-identity_workbook.cli INFO outgoing signed prompt sender=$G.U… recipient=$G.U… prompt='hello from CLI'
+identity_workbook.cli INFO outgoing prompt identity=$G.U… mode=signed recipient=$G.U… prompt='hello from CLI'
 hello from CLI
 ```
 
 Echo should log a second verified sender, this time matching the CLI public identity printed by
 `prepare_nkeys.py`.
 
+## Terminal 5 — client-SDK CLI without sender identity
+
+The NATS connection still authenticates with the CLI NKEY, but `--without-identity` deliberately
+constructs `Agents(identity=None)`, so the request carries no `Agent-Sender` header:
+
+```console
+cd examples/python-identity-workbook
+uv run python call_echo.py --without-identity "hello without identity"
+```
+
+Expected log shape:
+
+```text
+identity_workbook.cli INFO discovered Echo identity=$G.U… id_sig_verified=True
+identity_workbook.cli INFO outgoing prompt identity=(none) mode=without-identity recipient=$G.U… prompt='hello without identity'
+hello without identity
+```
+
+Echo accepts the request because it advertises `min_sender_trust=any`, and makes the achieved
+identity state explicit:
+
+```text
+identity_workbook.echo INFO incoming sender=(no sender)
+```
+
 ## Automated proof
 
 The end-to-end test starts a real `nats-server`, generates fresh Echo/Hello/CLI users, and asserts
 the three distinct identities, both signed service registrations, Echo's verified discovery
-identity and `id_sig_verified`, verified Hello and CLI senders, exact echo responses, and a `401`
-rejection for a header-less CLI request.
+identity and `id_sig_verified`, verified Hello and CLI senders, an accepted identity-free call,
+the `(no sender)` classification, and exact echo responses.
 
 ```console
 uv run ruff format --check .
@@ -111,6 +138,7 @@ uv run mypy --no-incremental
 uv run pytest -v
 ```
 
-Requests are signed; responses are not yet. A verified `Agent-Sender` proves who sent a request to
-Echo, but response chunks currently carry no equivalent responder signature. The client verifies
-Echo's signed service registration during discovery, not each response payload.
+Requests may be signed; responses are not yet. A verified `Agent-Sender` proves who sent a signed
+request to Echo, while an identity-free request makes no sender assertion. Response chunks
+currently carry no equivalent responder signature. The client verifies Echo's signed service
+registration during discovery, not each response payload.
