@@ -14,7 +14,9 @@ from synadia_ai.agents import (
     DiscoverFilter,
     NkeySigner,
     ResponseChunk,
+    SenderInfo,
     StreamMessage,
+    format_sender,
     signer_from_seed,
 )
 
@@ -63,22 +65,32 @@ async def connect_user(url: str, seed_path: Path) -> ConnectedUser:
     return ConnectedUser(nc=nc, signer=signer)
 
 
-async def discover_verified_echo(agents: Agents) -> Agent:
-    """Discover exactly one Echo instance and verify its signed registration."""
+def describe_sender(sender: SenderInfo | None) -> str:
+    """Describe achieved trust without exposing signature material."""
+    return "(unknown sender)" if sender is None else format_sender(sender)
+
+
+async def discover_verified_agent(agents: Agents, agent_name: str) -> Agent:
+    """Discover one agent instance and verify its signed registration."""
     found = await agents.discover(
         timeout=1.0,
-        filter=DiscoverFilter(agent="echo", owner=OWNER, session_name=SESSION_NAME),
+        filter=DiscoverFilter(agent=agent_name, owner=OWNER, session_name=SESSION_NAME),
     )
     if len(found) != 1:
-        raise RuntimeError(f"expected one Echo agent, discovered {len(found)}")
-    echo = found[0]
-    if echo.identity is None:
-        raise RuntimeError("Echo did not register an identity")
-    if not echo.id_sig_verified:
-        raise RuntimeError("Echo's registration identity signature did not verify")
-    if not echo.supports_sender_identity or echo.min_sender_trust != "any":
-        raise RuntimeError("Echo does not advertise min_sender_trust=any")
-    return echo
+        raise RuntimeError(f"expected one {agent_name} agent, discovered {len(found)}")
+    agent = found[0]
+    if agent.identity is None:
+        raise RuntimeError(f"{agent_name} did not register an identity")
+    if not agent.id_sig_verified:
+        raise RuntimeError(f"{agent_name}'s registration identity signature did not verify")
+    if not agent.supports_sender_identity or agent.min_sender_trust != "any":
+        raise RuntimeError(f"{agent_name} does not advertise min_sender_trust=any")
+    return agent
+
+
+async def discover_verified_echo(agents: Agents) -> Agent:
+    """Discover exactly one Echo instance and verify its signed registration."""
+    return await discover_verified_agent(agents, "echo")
 
 
 async def response_text(stream: AsyncIterator[StreamMessage]) -> str:

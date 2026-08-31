@@ -1,16 +1,17 @@
-"""Register signed Hello, then call Echo as that same connection identity."""
+"""Run signed Hello, forwarding each received prompt to signed Echo."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
+import signal
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
-from synadia_ai.agents import AgentId, Agents, Envelope, Identity, NkeySigner, format_sender
+from synadia_ai.agents import Agents, Envelope, Identity, NkeySigner, SenderInfo
 
 from _common import (
     DEFAULT_NATS_URL,
@@ -18,6 +19,7 @@ from _common import (
     SESSION_NAME,
     connect_user,
     default_seed_path,
+    describe_sender,
     discover_verified_echo,
     response_text,
 )
@@ -29,15 +31,26 @@ log = logging.getLogger("identity_workbook.hello")
 
 
 @dataclass(frozen=True, slots=True)
-class HelloCall:
-    hello_identity: AgentId
-    echo_identity: AgentId
-    echo_id_sig_verified: bool
-    response: str
+class RunningHello:
+    """Hello's service and caller-side SDK share one connection and signer."""
+
+    service: AgentService
+    agents: Agents
+
+    async def stop(self) -> None:
+        """Stop serving, then release the caller-side SDK state."""
+        await self.service.stop()
+        await self.agents.close()
 
 
-async def start_hello(nc: NATSClient, signer: NkeySigner) -> AgentService:
-    """Register Hello as its own signed, sender-identity-aware service."""
+async def start_hello(
+    nc: NATSClient,
+    signer: NkeySigner,
+    *,
+    seen_senders: list[SenderInfo | None] | None = None,
+) -> RunningHello:
+    """Register Hello and forward each incoming prompt to verified Echo."""
+    agents = Agents(nc=nc, identity=Identity(signer=signer, name="Hello"))
     service = AgentService(
         agent="hello",
         owner=OWNER,
@@ -49,41 +62,42 @@ async def start_hello(nc: NATSClient, signer: NkeySigner) -> AgentService:
     )
 
     async def hello(envelope: Envelope, stream: PromptStream) -> None:
-        log.info("incoming sender=%s", format_sender(stream.sender))
-        await stream.send(envelope.prompt)
+        sender = stream.sender
+        if seen_senders is not None:
+            seen_senders.append(sender)
+        log.info("incoming sender=%s", describe_sender(sender))
 
-    service.on_prompt(hello)
-    await service.start()
-    log.info("Hello identity=%s subject=%s", service.identity, service.subject.prompt)
-    return service
-
-
-async def call_echo_as_hello(nc: NATSClient, signer: NkeySigner) -> HelloCall:
-    """Use Hello's signer and connection identity to send the literal prompt ``hello``."""
-    agents = Agents(nc=nc, identity=Identity(signer=signer, name="Hello"))
-    try:
         echo = await discover_verified_echo(agents)
         assert echo.identity is not None  # established by discover_verified_echo
-        hello_identity = await agents.self_id()
+        forwarded_prompt = f"Hello! {envelope.prompt}"
         log.info(
             "discovered Echo identity=%s id_sig_verified=%s",
             echo.identity,
             echo.id_sig_verified,
         )
         log.info(
-            "outgoing prompt identity=%s mode=signed recipient=%s prompt='hello'",
-            hello_identity,
+            "outgoing prompt identity=%s mode=signed recipient=%s prompt=%r",
+            service.identity,
             echo.identity,
+            forwarded_prompt,
         )
-        response = await response_text(echo.prompt("hello"))
-        return HelloCall(
-            hello_identity=hello_identity,
-            echo_identity=echo.identity,
-            echo_id_sig_verified=echo.id_sig_verified,
-            response=response,
-        )
-    finally:
+        response = await response_text(echo.prompt(forwarded_prompt))
+        log.info("Echo replied=%r", response)
+        await stream.send(response)
+
+    service.on_prompt(hello)
+    try:
+        await service.start()
+    except BaseException:
         await agents.close()
+        raise
+    log.info(
+        "Hello identity=%s min_sender_trust=%s subject=%s",
+        service.identity,
+        service.min_sender_trust,
+        service.subject.prompt,
+    )
+    return RunningHello(service=service, agents=agents)
 
 
 async def main() -> None:
@@ -99,16 +113,18 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 
     user = await connect_user(args.url, args.nkey)
-    service: AgentService | None = None
+    hello: RunningHello | None = None
     try:
-        service = await start_hello(user.nc, user.signer)
-        result = await call_echo_as_hello(user.nc, user.signer)
-        if service.identity != result.hello_identity:
-            raise RuntimeError("Hello's service and caller identities do not match")
-        print(result.response)
+        hello = await start_hello(user.nc, user.signer)
+        print("Hello is ready; press Ctrl+C to stop")
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop.set)
+        await stop.wait()
     finally:
-        if service is not None:
-            await service.stop()
+        if hello is not None:
+            await hello.stop()
         await user.close()
 
 

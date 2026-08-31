@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
-from synadia_ai.agents import Envelope, NkeySigner, SenderInfo, format_sender
+from synadia_ai.agents import Envelope, NkeySigner, SenderInfo
 
 from _common import (
     DEFAULT_NATS_URL,
@@ -18,6 +18,7 @@ from _common import (
     SESSION_NAME,
     connect_user,
     default_seed_path,
+    describe_sender,
 )
 
 if TYPE_CHECKING:
@@ -47,8 +48,8 @@ async def start_echo(
         sender = stream.sender
         if seen_senders is not None:
             seen_senders.append(sender)
-        # format_sender includes the trust class, but never the nonce or signature.
-        log.info("incoming sender=%s", format_sender(sender))
+        # describe_sender includes the trust class, but never the nonce or signature.
+        log.info("incoming sender=%s", describe_sender(sender))
         await stream.send(envelope.prompt)
 
     service.on_prompt(echo)
