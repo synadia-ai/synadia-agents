@@ -8,6 +8,19 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Changed
+
+- Host identity registration is now opt-in: omitting `identity` performs no
+  self lookup and emits no `user_nkey`, `account`, or `id_sig` metadata;
+  incoming sender classification and the default `min_sender_trust="any"`
+  behavior are unchanged. Explicit `ServiceIdentity()` remains a
+  best-effort unsigned registration request.
+- A configured host signer is bound to the live connection's user and
+  account with an uncached lookup. Every binding failure aborts `start()` and
+  never downgrades the registration.
+- Replay rejection details omit raw nonces. Acceptance-hook failures log only
+  the exception type, not an application-controlled message or traceback.
+
 ## [0.5.0] - 2026-08-29
 
 The receiver side of the **sender-identity extension** (PR-P2 of the
@@ -17,8 +30,7 @@ and the handler sees the result as `stream.sender`; the registration
 carries the agent's own identity; `min_sender_trust` is always
 advertised. The wire protocol stays `0.3` — support is advertised by
 feature detection (`min_sender_trust` on the prompt endpoint ⇔ the agent
-implements the extension). Spec:
-[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+implements the extension). The extension is additive to protocol `0.3`.
 Behaviour-equal with `@synadia-ai/agent-service` 0.6.0 (same dispatch
 order, wire descriptions, nonce-cache semantics); the reverse interop
 test runs the TS client probe signed against this host.

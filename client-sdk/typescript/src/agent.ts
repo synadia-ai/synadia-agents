@@ -4,9 +4,8 @@
 // done inline by the caller via native `Array` / `Map.groupBy` / `filter`.
 //
 // Sender identity (extension): when constructed by an `Agents` client the
-// handle carries its `IdentityContext`, and `prompt()` / `status()` attach
-// an `Agent-Sender` header — signed when a signer is configured, an
-// unsigned claim otherwise, nothing when the connection has no identity.
+// handle carries its optional `IdentityContext`, and `prompt()` / `status()`
+// attach an `Agent-Sender` header only when identity was explicitly enabled.
 
 import { Empty, headers, type MsgHdrs, type NatsConnection } from "@nats-io/nats-core";
 import type { AgentInfo } from "./discovery/agent-info.js";
@@ -122,11 +121,13 @@ export class Agent {
    *   - {@link SenderSignatureRequiredError} — the endpoint declares
    *     `min_sender_trust: signed` and no `identity.signer` is configured.
    *
-   * Errors rejecting the returned promise (they need the async identity
-   * lookup): {@link NoIdentityError} / {@link IdentityUnavailableError}
-   * on a `signed` endpoint, {@link IdentityMismatchError} whenever a
-   * signer is configured, and the exact {@link PayloadTooLargeError}
-   * re-check once the header size is known.
+   * Errors from asynchronous identity resolution can reject the returned
+   * promise during preflight. Because identity is resolved again immediately
+   * before publish (to account for reconnects), they can also be thrown by
+   * the first iterator step. These include {@link NoIdentityError} /
+   * {@link IdentityUnavailableError} on a `signed` endpoint,
+   * {@link IdentityMismatchError} whenever a signer is configured, and the
+   * exact {@link PayloadTooLargeError} re-check once the header size is known.
    *
    * Wire errors thrown from the iterator:
    *   - {@link ServiceError}              — `Nats-Service-Error-Code` header (§9.1);
@@ -200,22 +201,29 @@ export class Agent {
   ): Promise<PromptStream> {
     // Encode once; the header (when signed) covers exactly these bytes.
     const payload = encodeEnvelope(envelope);
-    const plan = await this.#planHeader(sub, requireSigned);
-    if (plan) {
+    const initialPlan = await this.#planHeader(sub, requireSigned);
+    if (initialPlan) {
       // Exact re-check with the real header size (§2.4 step 2).
       assertWithinMaxPayload(
         payload.length,
         this.promptEndpoint,
         this.#nc.info?.max_payload,
-        plan.wireBytes,
+        initialPlan.wireBytes,
       );
     }
+    const identity = this.#identity;
+    const identityEnabled =
+      identity !== undefined && (identity.signer !== undefined || identity.sendUnsignedClaim);
     const signal = combineAbortSignals([opts.signal, this.#closeSignal]);
     return new PromptStream({
       nc: this.#nc,
       subject,
       payload,
-      ...(plan ? { buildHeaders: () => this.#headersFor(plan, payload) } : {}),
+      // Re-plan at publish time. A reconnect after `prompt()` may invalidate
+      // the initial identity; a captured plan must never survive it.
+      ...(identityEnabled
+        ? { buildHeaders: () => this.#headersAtPublish(sub, requireSigned, payload) }
+        : {}),
       inactivityTimeoutMs: opts.inactivityTimeoutMs ?? this.#defaultInactivityTimeoutMs,
       maxWaitMs: opts.maxWaitMs ?? DEFAULT_PROMPT_MAX_WAIT_MS,
       signal,
@@ -265,5 +273,21 @@ export class Agent {
     const h = headers();
     h.set(AGENT_SENDER_HEADER, serializeSenderHeader(await plan.build(payload)));
     return h;
+  }
+
+  async #headersAtPublish(
+    sub: string,
+    requireSigned: boolean,
+    payload: Uint8Array,
+  ): Promise<MsgHdrs | undefined> {
+    const plan = await this.#planHeader(sub, requireSigned);
+    if (!plan) return undefined;
+    assertWithinMaxPayload(
+      payload.length,
+      this.promptEndpoint,
+      this.#nc.info?.max_payload,
+      plan.wireBytes,
+    );
+    return this.#headersFor(plan, payload);
   }
 }

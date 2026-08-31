@@ -21,12 +21,14 @@ sender the ``accept_sender`` hook refuses → ``403`` (verified) / ``401``
 :attr:`PromptStream.sender` (a ``VerifiedSender.resolve()`` is bound to a
 TTL-cached ``$SRV.INFO`` reverse lookup, ``resolve_ttl_s``). ``status``
 is classified and logged, never rejected. :meth:`AgentService.start`
-registers ``user_nkey`` / ``account`` (and ``id_sig`` with a signer) when
-the connection has an identity and **always** advertises
-``min_sender_trust`` on the prompt endpoint. ``operator_attested`` (off
-by default) adds the ``Nats-Request-Info`` cross-check of a closed
-endpoint. The codec itself lives in :mod:`synadia_ai.agents.identity`;
-the stateful parts are in :mod:`synadia_ai.agent_service.identity`.
+registers ``user_nkey`` / ``account`` (and ``id_sig`` with a signer) only
+when host identity is explicitly configured and its live lookup succeeds;
+omission performs no host-identity lookup or registration disclosure. It
+**always** advertises ``min_sender_trust`` on the prompt endpoint.
+``operator_attested`` (off by default) adds the ``Nats-Request-Info``
+cross-check of a closed endpoint. The codec itself lives in
+:mod:`synadia_ai.agents.identity`; the stateful parts are in
+:mod:`synadia_ai.agent_service.identity`.
 """
 
 from __future__ import annotations
@@ -53,7 +55,6 @@ from synadia_ai.agents import (
     Chunk,
     Envelope,
     IdentityError,
-    IdentityMismatchError,
     ProtocolError,
     QueryChunk,
     QueryTimeout,
@@ -62,13 +63,13 @@ from synadia_ai.agents import (
     StatusChunk,
     decode,
     format_sender,
-    self_id,
 )
 from synadia_ai.agents.identity import (
     DEFAULT_RESOLVE_TTL_S,
     METADATA_ACCOUNT,
     METADATA_ID_SIG,
     METADATA_USER_NKEY,
+    lookup_self_id,
     sign_agent_id,
 )
 from synadia_ai.agents.messages import encode_chunk
@@ -279,14 +280,14 @@ class AgentService:
 
     Sender identity (extension) — all optional, all additive:
 
-    - ``identity=ServiceIdentity(signer=…)``: the host's own signer. With
-      it :meth:`start` registers ``id_sig`` next to ``user_nkey`` /
-      ``account``; without it the identity keys are registered unsigned
-      (when the connection has an identity). A signer that is not the
-      connection's user makes :meth:`start` raise
-      :class:`~synadia_ai.agents.IdentityMismatchError`; a connection
-      without an identity starts without the keys (logged) — verifying
-      *senders* needs no host identity.
+    - omitted ``identity``: no own-identity lookup and no ``user_nkey`` /
+      ``account`` / ``id_sig`` registration metadata. Incoming senders are
+      still classified.
+    - ``identity=ServiceIdentity()``: explicit unsigned ``user_nkey`` /
+      ``account`` registration when the live connection has an identity.
+    - ``identity=ServiceIdentity(signer=…)``: adds ``id_sig`` after an
+      uncached live user-and-account binding. A mismatch or unavailable live
+      binding makes :meth:`start` fail.
     - ``min_sender_trust``: ``"any"`` (default) or ``"signed"`` —
       **always** advertised on the prompt endpoint (its presence is what
       advertises the extension), never on ``status``.
@@ -360,7 +361,9 @@ class AgentService:
         # `replay_window_s`, `account_token_position` and `operator_attested`
         # eagerly; the resolver behind `sender.resolve()` enumerates
         # `$SRV.INFO.agents` on this connection (account-local).
-        self._service_identity = identity if identity is not None else ServiceIdentity()
+        # Preserve omission: inbound sender classification remains active, but
+        # the host performs no own-identity lookup or registration disclosure.
+        self._service_identity = identity
         self._agent_id: AgentId | None = None
         self._resolver = SenderResolver(nc, ttl_s=resolve_ttl_s)
         self._gate = SenderGate(
@@ -376,8 +379,8 @@ class AgentService:
     def identity(self) -> AgentId | None:
         """The agent ID this instance registered (``user_nkey`` + ``account``).
 
-        ``None`` before :meth:`start` and when the connection has no
-        identity.
+        ``None`` before :meth:`start`, when host identity was omitted, or
+        when an optional unsigned lookup could not establish an identity.
         """
         return self._agent_id
 
@@ -446,19 +449,19 @@ class AgentService:
         max_payload_str = self._effective_max_payload()
         self._effective_max_payload_value = max_payload_str
 
-        # Sender identity: learn the connection's own agent ID once (awaited
-        # here, never again per request). A signer that does not match the
-        # connection's user is a configuration error (raise); a connection
-        # without an identity starts without the metadata keys — verifying
-        # *senders* needs no host identity.
-        signer = self._service_identity.signer
+        # Host identity is explicit. Omission performs no `$SYS` lookup and
+        # publishes no own identity metadata; sender classification is separate
+        # and remains active. Explicit registration uses an uncached live answer.
+        service_identity = self._service_identity
+        signer = service_identity.signer if service_identity is not None else None
         agent_id: AgentId | None = None
-        try:
-            agent_id = await self_id(self._nc, signer=signer)
-        except IdentityMismatchError:
-            raise
-        except IdentityError as exc:
-            log.warning("starting %s without identity metadata: %s", self.subject.prompt, exc)
+        if service_identity is not None:
+            try:
+                agent_id = await lookup_self_id(self._nc, signer=signer)
+            except IdentityError as exc:
+                if signer is not None:
+                    raise
+                log.warning("starting %s without identity metadata: %s", self.subject.prompt, exc)
         self._agent_id = agent_id
 
         # §3.2: metadata.session matches the 5th subject token. For session-

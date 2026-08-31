@@ -100,15 +100,15 @@ asyncio.run(main())
 
 ## Sender identity
 
-The [sender-identity extension](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
-lets a receiving agent know *who* prompted it, verified per message:
+The optional sender-identity extension lets a receiving agent know *who*
+prompted it, verified per message:
 the caller attaches an `Agent-Sender` header that names its agent ID —
-the `(account, user)` NKEY pair the connection already has — and, with
+the `(account, user)` NKEY pair authenticated on that connection — and, with
 a signer, an ed25519 signature bound to the subject, the payload, a
 timestamp and a nonce. Nothing in it changes protocol `0.3`: an agent
 that implements the extension says so with `min_sender_trust` on its
-prompt endpoint (`agent.supports_sender_identity`), and a caller that
-has no identity simply sends no header.
+prompt endpoint (`agent.supports_sender_identity`). Identity is off when
+the `identity` argument is omitted.
 
 ```python
 import nats
@@ -126,28 +126,29 @@ async for msg in agent.prompt("hello"):
 
 What to know:
 
-- **The seed is handed in explicitly.** The SDK never reads credentials
-  out of the connection. `signer_from_seed` (an `SU…` seed, or a seed
-  file's contents), `signer_from_creds` / `signer_from_creds_file` (a
-  `.creds` file — the identity is then read from its JWT, without asking
-  the server) and `signer_from_context` (a `nats` CLI context) cover the
-  common cases; an HSM / KMS signer implements the `SenderSigner`
-  protocol (`sign` may be async). Runners should take the seed from a
-  **file** (`NATS_NKEY_SEED_FILE`, as the examples do), not from an
-  environment value every spawned tool process inherits.
-- **Without a signer** the SDK sends an unsigned *claim* when the
-  connection has an NKEY identity (`Identity(send_unsigned_claim=False)`
-  turns that off — a claim discloses your user NKEY to every receiver),
-  and nothing when it has none (no auth, password or token users →
-  `NoIdentityError`, whose message names the fix). An endpoint that
+- **Identity is opt-in.** Omit `identity` for no lookup and no header.
+  Pass `Identity()` explicitly for an unsigned claim, or use
+  `Identity(send_unsigned_claim=False)` for no automatic identity work.
+  An unsigned claim discloses your user NKEY to the receiver.
+- **Use the connection's credentials.** The SDK cannot extract a private
+  seed from an already-open connection, so the signer is supplied
+  explicitly. Derive the NATS authenticator and `signer_from_creds` from
+  the same credentials snapshot (or otherwise ensure
+  `signer_from_seed` / `signer_from_context` represents that connection).
+  Before every signed send, the SDK compares the signer's user and account
+  with live `$SYS.REQ.USER.INFO`; a mismatch or unavailable binding fails
+  and never downgrades to unsigned or headerless delivery. An HSM / KMS
+  signer can implement `SenderSigner` (`sign` may be async).
+- An endpoint that
   declares `min_sender_trust: signed` fails early with
   `SenderSignatureRequiredError` at call time when no signer is
   configured, and with the `self_id()` error on the first iteration when
   the identity is unavailable.
-- **Cost.** One `$SYS.REQ.USER.INFO` round trip per connection (2 s
-  timeout at most, a permission violation fails at once), awaited by the
-  first request only; failures are memoised for 30 s and retried in the
-  background. A signed header is ~400 bytes and counts against
+- **Cost.** Each identity-bearing request performs a live
+  `$SYS.REQ.USER.INFO` lookup (2 s timeout at most; a permission violation
+  fails at once), because nats-py exposes no reconnect generation that
+  could safely invalidate a cached identity. Explicit diagnostic calls to
+  `self_id()` are memoised. A signed header is ~400 bytes and counts against
   `max_payload` (header framing included — `PayloadTooLargeError.header_bytes`).
   nats-py does **not** count headers in its own check, so the SDK's is
   the only guard before the server closes the connection with
@@ -173,6 +174,9 @@ What to know:
   `accept_sender` (`synadia-ai-agent-service` 0.5.0, whose `AgentService`
   classifies every prompt before the ack and hands the handler
   `stream.sender`).
+- **Only the request is signed.** Prompt response chunks and mid-stream
+  query replies are not independently authenticated; do not infer the
+  actor answering a query from the original prompt sender.
 - `scripts/whoami.py` prints what `self_id()` resolves for a connection
   (or why it resolves nothing).
 

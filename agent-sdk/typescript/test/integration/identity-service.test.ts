@@ -29,6 +29,7 @@ import {
   type ServiceError,
   signerFromSeed,
   signSenderHeader,
+  USER_INFO_SUBJECT,
   verifyAgentId,
   type AgentInfo,
   type Logger,
@@ -197,6 +198,55 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
     expect(status.metadata[MIN_SENDER_TRUST_KEY]).toBeUndefined();
   });
 
+  it("omitted host identity does no lookup, strips spoofed metadata, and still classifies inbound senders", async () => {
+    const nc = await connectAs(server.url, ALICE.seed);
+    perTest.push(() => nc.close());
+    const probes: Msg[] = [];
+    const probeSub = nc.subscribe(USER_INFO_SUBJECT, {
+      callback: (_err, msg) => {
+        probes.push(msg);
+      },
+    });
+    perTest.push(() => {
+      probeSub.unsubscribe();
+      return Promise.resolve();
+    });
+    await nc.flush();
+
+    let received: SenderInfo | undefined;
+    const service = new AgentService({
+      nc,
+      agent: "id-svc",
+      owner: "testers",
+      name: "identity-off",
+      heartbeatIntervalS: 1,
+      keepaliveIntervalS: null,
+      extraMetadata: {
+        [IDENTITY_METADATA_KEYS.userNkey]: BOB.public,
+        [IDENTITY_METADATA_KEYS.account]: "FORGED",
+        [IDENTITY_METADATA_KEYS.idSig]: "FORGED",
+      },
+    });
+    service.onPrompt(async (_env, response) => {
+      received = response.sender;
+      await response.send("ok");
+    });
+    await service.start();
+    perTest.push(() => service.stop());
+    await nc.flush();
+    expect(probes).toHaveLength(0);
+    expect(service.identity).toBeUndefined();
+    probeSub.unsubscribe();
+
+    const signed = client({ signer: aliceSigner });
+    const agent = await discover(signed, service);
+    expect(agent.metadata[IDENTITY_METADATA_KEYS.userNkey]).toBeUndefined();
+    expect(agent.metadata[IDENTITY_METADATA_KEYS.account]).toBeUndefined();
+    expect(agent.metadata[IDENTITY_METADATA_KEYS.idSig]).toBeUndefined();
+    await drain(await agent.prompt("hi"));
+    expect(received?.trust).toBe("verified");
+  });
+
   it("start() throws IdentityMismatchError for a foreign signer", async () => {
     const nc = await connectAs(server.url, ALICE.seed);
     perTest.push(() => nc.close());
@@ -227,7 +277,7 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
       accountAttested: false,
     });
 
-    await drain(await (await discover(client(), service)).prompt("hi"));
+    await drain(await (await discover(client({}), service)).prompt("hi"));
     expect(senders[1]?.trust).toBe("claimed");
     expect(senders[1] && "id" in senders[1]).toBe(false);
 
@@ -286,7 +336,9 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
       (e: unknown) => e,
     );
     expect((e403 as ServiceError).code).toBe(403);
-    const e401 = await drain(await (await discover(client(), refusing.service)).prompt("hi")).then(
+    const e401 = await drain(
+      await (await discover(client({}), refusing.service)).prompt("hi"),
+    ).then(
       () => null,
       (e: unknown) => e,
     );
@@ -298,8 +350,14 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
     expect(refusing.senders).toHaveLength(0);
     expect(refusing.lines.filter((l) => l.level === "warn")).toHaveLength(3);
 
+    let secretFromHeader = "";
     const throwing = await startService({
-      acceptSender: () => Promise.reject(new Error("registry down")),
+      acceptSender: (sender) => {
+        secretFromHeader = sender?.trust === "verified" ? sender.header.nonce! : "unexpected";
+        const error = new Error(secretFromHeader);
+        error.name = secretFromHeader;
+        return Promise.reject(error);
+      },
     });
     const e500 = await drain(await (await discover(signed, throwing.service)).prompt("hi")).then(
       () => null,
@@ -310,6 +368,8 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
     expect(throwing.lines.some((l) => l.level === "error" && /acceptSender/.test(l.msg))).toBe(
       true,
     );
+    expect(secretFromHeader).not.toBe("");
+    expect(JSON.stringify(throwing.lines)).not.toContain(secretFromHeader);
   });
 
   it("status: classified and logged, never rejected — a failing classification is a warning", async () => {
@@ -537,7 +597,7 @@ describe.skipIf(!bin)("AgentService — sender identity on a no-auth server (T0)
     await server.stop();
   });
 
-  it("starts without identity metadata (logged), still advertises min_sender_trust, serves header-less requests", async () => {
+  it("omitted host identity performs no self lookup or warning, still advertises min_sender_trust, and serves header-less requests", async () => {
     const { logger, lines } = capturingLogger();
     const service = new AgentService({
       nc,
@@ -556,9 +616,7 @@ describe.skipIf(!bin)("AgentService — sender identity on a no-auth server (T0)
     await service.start();
     try {
       expect(service.identity).toBeUndefined();
-      expect(lines.some((l) => l.level === "warn" && /without identity metadata/.test(l.msg))).toBe(
-        true,
-      );
+      expect(lines.some((l) => /without identity metadata/.test(l.msg))).toBe(false);
       const agents = new Agents({ nc });
       const [agent] = await agents.discover({ timeoutMs: 800, filter: { agent: "t0" } });
       expect(agent?.supportsSenderIdentity).toBe(true);

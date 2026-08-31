@@ -11,6 +11,7 @@ import {
   type MsgHdrs,
   type NatsConnection,
 } from "@nats-io/nats-core";
+import { createAccount } from "@nats-io/nkeys";
 import { Svcm } from "@nats-io/services";
 import { connect } from "@nats-io/transport-node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -19,6 +20,7 @@ import { ReferenceAgent, type ReferenceAgentOptions } from "@synadia-ai/agent-se
 import {
   AGENT_SENDER_HEADER,
   Agents,
+  base64UrlEncode,
   buildClaimHeader,
   encodedHeaderLength,
   formatSenderTimestamp,
@@ -34,6 +36,7 @@ import {
   ServiceError,
   signerFromSeed,
   signSenderHeader,
+  USER_INFO_SUBJECT,
   type AgentSenderHeader,
   type Logger,
   type SenderInfo,
@@ -59,6 +62,11 @@ const bobSigner = signerFromSeed(BOB.seed);
 const ALICE_ID = newAgentId("$G", ALICE.public);
 const BOB_ID = newAgentId("$G", BOB.public);
 const PAYLOAD = enc.encode('{"prompt":"hi"}');
+
+function fakeJwt(payload: Record<string, unknown>): string {
+  const b64 = (o: unknown): string => base64UrlEncode(enc.encode(JSON.stringify(o)));
+  return `${b64({ typ: "JWT", alg: "ed25519-nkey" })}.${b64(payload)}.${base64UrlEncode(new Uint8Array(64))}`;
+}
 
 interface Seen {
   readonly sender: SenderInfo | undefined;
@@ -205,6 +213,41 @@ describe.skipIf(!bin)("identity T1 — nkey user, no accounts ($G)", () => {
     expect(await agents.refreshSelfId()).toBe(ALICE_ID);
   });
 
+  it("omission and explicit disabled identity do no lookup; explicit empty identity sends a claim", async () => {
+    const { ref, seen } = await startRef();
+    const nc = await connectAlice(server.url);
+    perTest.push(() => nc.close());
+    const probes: Msg[] = [];
+    const probeSub = nc.subscribe(USER_INFO_SUBJECT, {
+      callback: (_err, msg) => {
+        probes.push(msg);
+      },
+    });
+    perTest.push(() => {
+      probeSub.unsubscribe();
+      return Promise.resolve();
+    });
+    await nc.flush();
+
+    const omitted = new Agents({ nc });
+    const disabled = new Agents({ nc, identity: { sendUnsignedClaim: false } });
+    const unsigned = new Agents({ nc, identity: {} });
+    perTest.push(() => omitted.close());
+    perTest.push(() => disabled.close());
+    perTest.push(() => unsigned.close());
+
+    await drain(await (await discover(omitted, ref)).prompt("omitted"));
+    await drain(await (await discover(disabled, ref)).prompt("disabled"));
+    await nc.flush();
+    expect(probes).toHaveLength(0);
+    expect(seen.slice(-2).every((row) => row.header === undefined)).toBe(true);
+
+    await drain(await (await discover(unsigned, ref)).prompt("unsigned"));
+    await nc.flush();
+    expect(probes).toHaveLength(1);
+    expect(seen.at(-1)?.sender?.trust).toBe("claimed");
+  });
+
   it("a signer that is not the connection's user → IdentityMismatchError at start() / selfId() / first prompt", async () => {
     // Dedicated connections: the mismatch is negative-cached per connection.
     const nc1 = await connectAlice(server.url);
@@ -228,6 +271,58 @@ describe.skipIf(!bin)("identity T1 — nkey user, no accounts ($G)", () => {
     await expect(agents.selfId()).rejects.toBeInstanceOf(IdentityMismatchError);
     const agent = await discover(agents, ref);
     await expect(agent.prompt("hi")).rejects.toBeInstanceOf(IdentityMismatchError);
+  });
+
+  it("a prior unsigned lookup cannot bypass a later signer's live binding", async () => {
+    const nc = await connectAlice(server.url);
+    perTest.push(() => nc.close());
+    const unsigned = new Agents({ nc, identity: {} });
+    const mismatched = new Agents({ nc, identity: { signer: bobSigner } });
+    perTest.push(() => unsigned.close());
+    perTest.push(() => mismatched.close());
+
+    expect(await unsigned.selfId()).toBe(ALICE_ID);
+    await expect(mismatched.selfId()).rejects.toBeInstanceOf(IdentityMismatchError);
+  });
+
+  it("a credentials JWT with the live user but another account fails binding", async () => {
+    const otherAccount = createAccount().getPublicKey();
+    const jwt = fakeJwt({ sub: ALICE.public, iss: otherAccount, nats: { type: "user" } });
+    const agents = client({ signer: signerFromSeed(ALICE.seed, jwt) });
+    const err = await agents.selfId().then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(err).toBeInstanceOf(IdentityMismatchError);
+    expect((err as IdentityMismatchError).signerAccount).toBe(otherAccount);
+    expect((err as IdentityMismatchError).identityAccount).toBe("$G");
+  });
+
+  it("a credentials JWT user must match the signer key", async () => {
+    const jwt = fakeJwt({ sub: BOB.public, iss: "$G", nats: { type: "user" } });
+    const agents = client({ signer: signerFromSeed(ALICE.seed, jwt) });
+    const err = await agents.selfId().then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(err).toBeInstanceOf(IdentityMismatchError);
+    expect((err as IdentityMismatchError).credentialUser).toBe(BOB.public);
+    expect((err as Error).message).toContain("credentials JWT");
+  });
+
+  it("a malformed signer JWT cannot break discovery and rejects selfId and signed prompt", async () => {
+    const { ref } = await startRef();
+    const signer = signerFromSeed(ALICE.seed, "not-a-jwt");
+    perTest.push(() => {
+      signer.wipe?.();
+      return Promise.resolve();
+    });
+    const agents = client({ signer });
+
+    // Discovery's fire-and-forget warm-up contains the JWT failure.
+    const agent = await discover(agents, ref);
+    await expect(agents.selfId()).rejects.toBeInstanceOf(IdentityError);
+    await expect(agent.prompt("hi")).rejects.toBeInstanceOf(IdentityError);
   });
 
   it("signed prompts verify (correct pair, accountAttested=false, name); consecutive prompts use fresh nonces", async () => {
@@ -302,7 +397,7 @@ describe.skipIf(!bin)("identity T1 — nkey user, no accounts ($G)", () => {
   });
 
   it("replay of a captured header → 401; the same nonce from another user is accepted", async () => {
-    const { ref, seen } = await startRef();
+    const { ref, seen, lines } = await startRef();
     const agents = client({ signer: aliceSigner });
     const agent = await discover(agents, ref);
     await drain(await agent.prompt("hi"));
@@ -318,6 +413,7 @@ describe.skipIf(!bin)("identity T1 — nkey user, no accounts ($G)", () => {
     expect(errorCode(replay)).toBe("401");
     expect(replay[0]?.headers?.get("Nats-Service-Error")).toBe("sender rejected");
     expect(replay.at(-1)?.data.length).toBe(0); // terminator follows the error frame
+    expect(JSON.stringify(lines)).not.toContain(first.sender!.header.nonce!);
 
     const nonce = first.sender!.header.nonce!;
     const other = await signSenderHeader({
@@ -639,13 +735,14 @@ describe.skipIf(!bin)("identity T1 — nkey user, no accounts ($G)", () => {
     expect(bad?.idSigVerified).toBe(false);
   });
 
-  it("host without a signer registers user_nkey/account but no id_sig", async () => {
+  it("explicit host identity without a signer registers user_nkey/account but no id_sig", async () => {
     const svc = new AgentService({
       nc: hostNc,
       agent: "t1-svc",
       owner: "testers",
       name: "nosigner",
       heartbeatIntervalS: 1,
+      identity: {},
     });
     svc.onPrompt(async (_e, r) => {
       await r.send("ok");

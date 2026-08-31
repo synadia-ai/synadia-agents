@@ -1,7 +1,7 @@
 // Identity T5 — operator mode, local (`test-fixtures/identity/operator/`):
 // 113-char agent IDs whose `account` is the account public NKEY, the
-// credentials-JWT source of `selfId()` (no server round trip) agreeing with
-// `$SYS.REQ.USER.INFO`, registration in that form, and the NGS shape of
+// live `$SYS.REQ.USER.INFO` binding agreeing with the credentials JWT,
+// registration in that form, and the NGS shape of
 // operator-attested mode — a `share: true` import stamps `Nats-Request-Info`
 // with the 56-char `acc`, which the cross-check attests.
 

@@ -94,6 +94,7 @@ async def main() -> None:
         sys.exit(1)
 
     nc = await connect_from_cli(args)
+    signer = signer_from_cli(args)
 
     service = AgentService(
         agent="openrouter",
@@ -103,9 +104,8 @@ async def main() -> None:
         description=f"LLM agent — answers prompts with OpenRouter '{MODEL}'",
         heartbeat_interval_s=args.heartbeat_interval,
         # Sender identity: --nkey / --creds ($NATS_NKEY_SEED_FILE / $NATS_CREDS)
-        # sign the registration's id_sig; without them the identity keys are
-        # registered unsigned when the connection has an NKEY identity.
-        identity=ServiceIdentity(signer=signer_from_cli(args)),
+        # sign the registration's id_sig; without them identity stays off.
+        identity=ServiceIdentity(signer=signer) if signer is not None else None,
     )
 
     async def handler(envelope: Envelope, stream: PromptStream) -> None:

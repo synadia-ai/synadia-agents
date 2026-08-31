@@ -47,6 +47,7 @@ async def main() -> None:
 
     llm = create_llm_client()
     nc = await connect_from_cli(args)
+    signer = signer_from_cli(args)
 
     service = AgentService(
         agent="llm",
@@ -56,9 +57,8 @@ async def main() -> None:
         description=f"LLM agent — answers prompts via {llm.label}",
         heartbeat_interval_s=args.heartbeat_interval,
         # Sender identity: --nkey / --creds ($NATS_NKEY_SEED_FILE / $NATS_CREDS)
-        # sign the registration's id_sig; without them the identity keys are
-        # registered unsigned when the connection has an NKEY identity.
-        identity=ServiceIdentity(signer=signer_from_cli(args)),
+        # sign the registration's id_sig; without them identity stays off.
+        identity=ServiceIdentity(signer=signer) if signer is not None else None,
     )
 
     # Wrap the prompt as a single user message and stream the model's reply. A

@@ -23,6 +23,7 @@ from synadia_ai.agents import (
     DiscoverFilter,
     Envelope,
     IdentityMismatchError,
+    IdentityUnavailableError,
     signer_from_seed,
     verify_agent_id,
 )
@@ -33,7 +34,7 @@ from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
 
-    from tests.conftest import ConnectNkeyUser, EvidenceFor, NkeyUser
+    from tests.conftest import ConnectNkeyUser, DenySysClient, EvidenceFor, NkeyUser
     from tests.harness.nats_server import RunningServer
 
 AGENT = "reg-id"
@@ -149,7 +150,12 @@ async def test_without_a_signer_the_keys_are_registered_unsigned(
     host = await connect_nkey_user(nats_server_nkey, "alice")
     caller = await connect_nkey_user(nats_server_nkey, "alice")
     service = AgentService(
-        agent=AGENT, owner=OWNER, session_name="unsigned", nc=host, heartbeat_interval_s=1
+        agent=AGENT,
+        owner=OWNER,
+        session_name="unsigned",
+        nc=host,
+        heartbeat_interval_s=1,
+        identity=ServiceIdentity(),
     )
     service.on_prompt(_echo)
     await service.start()
@@ -182,8 +188,8 @@ async def test_a_foreign_signer_makes_start_raise_identity_mismatch(
     connect_nkey_user: ConnectNkeyUser,
     identity_keys: dict[str, NkeyUser],
 ) -> None:
-    # A fresh connection: the self_id memo is per connection and a mismatch
-    # is negative-cached for 30 s (PR-T1 decision).
+    # Signed host startup binds against the live connection on every attempt;
+    # it never reuses the signer-less diagnostic memo.
     host = await connect_nkey_user(nats_server_nkey, "alice")
     service = AgentService(
         agent=AGENT,
@@ -199,7 +205,7 @@ async def test_a_foreign_signer_makes_start_raise_identity_mismatch(
     assert service.identity is None
 
 
-async def test_t0_no_auth_starts_without_identity_keys_but_advertises_the_extension(
+async def test_t0_omitted_identity_starts_without_lookup_or_identity_metadata(
     nats_server: RunningServer, caplog: pytest.LogCaptureFixture
 ) -> None:
     host = await nats.connect(nats_server.url)
@@ -218,7 +224,7 @@ async def test_t0_no_auth_starts_without_identity_keys_but_advertises_the_extens
         with caplog.at_level(logging.WARNING, logger=SERVICE_LOGGER):
             await service.start()
         assert service.identity is None
-        assert any("without identity metadata" in r.getMessage() for r in caplog.records)
+        assert not any("without identity metadata" in r.getMessage() for r in caplog.records)
         record = await _srv_info(caller, service.subject.prompt)
         metadata = record["metadata"]
         assert isinstance(metadata, dict)
@@ -242,3 +248,43 @@ async def test_t0_no_auth_starts_without_identity_keys_but_advertises_the_extens
         await service.stop()
         await host.close()
         await caller.close()
+
+
+async def test_omitted_identity_works_without_sys_permission_but_signed_host_fails(
+    nc_alice_deny_sys: DenySysClient,
+    identity_keys: dict[str, NkeyUser],
+) -> None:
+    host = nc_alice_deny_sys.nc
+    before = host.last_error
+    service = AgentService(
+        agent=AGENT,
+        owner=OWNER,
+        session_name="omitted-deny",
+        nc=host,
+        heartbeat_interval_s=1,
+    )
+    service.on_prompt(_echo)
+    await service.start()
+    try:
+        await host.flush()
+        assert host.last_error is before
+        assert nc_alice_deny_sys.errors == []
+        record = await _srv_info(host, service.subject.prompt)
+        metadata = record["metadata"]
+        assert isinstance(metadata, dict)
+        assert not (set(metadata) & IDENTITY_METADATA_KEYS)
+        assert service.identity is None
+    finally:
+        await service.stop()
+
+    signed = AgentService(
+        agent=AGENT,
+        owner=OWNER,
+        session_name="signed-deny",
+        nc=host,
+        heartbeat_interval_s=1,
+        identity=ServiceIdentity(signer=signer_from_seed(identity_keys["alice"].seed)),
+    )
+    signed.on_prompt(_echo)
+    with pytest.raises(IdentityUnavailableError, match="permissions violation"):
+        await signed.start()

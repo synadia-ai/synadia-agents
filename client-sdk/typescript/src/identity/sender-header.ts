@@ -601,7 +601,7 @@ export async function verifySenderHeader(
   }
 
   if (opts.mode === "live" && opts.nonceSeen?.(header.user, header.nonce)) {
-    reject(`nonce ${JSON.stringify(header.nonce)} already seen for ${header.user}`);
+    reject(`nonce already seen for ${header.user}`);
   }
 
   const input = buildSignedInput({

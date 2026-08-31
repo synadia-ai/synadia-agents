@@ -191,7 +191,7 @@ async def main() -> None:
         nc=nc,
         description=args.description,
         heartbeat_interval_s=args.heartbeat_interval,
-        identity=ServiceIdentity(signer=signer),
+        identity=ServiceIdentity(signer=signer) if signer is not None else None,
         min_sender_trust=args.min_sender_trust,
     )
     agent.on_prompt(handler)

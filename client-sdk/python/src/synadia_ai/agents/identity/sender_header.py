@@ -607,7 +607,7 @@ def verify_sender_header(
         account_attested = position is not None or (stamp is not None and stamp.account is not None)
 
     if mode == "live" and nonce_seen is not None and nonce_seen(header.user, header.nonce):
-        raise _reject(f"nonce {header.nonce!r} already seen for {header.user}")
+        raise _reject(f"nonce already seen for {header.user}")
 
     data = build_signed_input(
         account=header.account,

@@ -34,9 +34,10 @@
 //     (claimed / absent) — and hands the classified sender to the handler
 //     as `PromptResponse.sender` (a `VerifiedSender.resolve()` is bound to
 //     a TTL-cached `$SRV.INFO` reverse lookup, `resolveTtlMs`). `status`
-//     is classified and logged, never rejected. Registers `user_nkey` /
-//     `account` / `id_sig` when the connection has an identity (and a
-//     signer), and **always** advertises `min_sender_trust` on the prompt
+//     is classified and logged, never rejected. When host identity is
+//     explicitly configured it registers `user_nkey` / `account` and, with
+//     a live-bound signer, `id_sig`; omission performs no self lookup and
+//     registers none of those keys. It **always** advertises `min_sender_trust` on the prompt
 //     endpoint. `operatorAttested` (off by default) adds the
 //     `Nats-Request-Info` cross-check of a closed endpoint.
 //
@@ -55,7 +56,6 @@ import {
   formatHumanBytes,
   formatSender,
   IDENTITY_METADATA_KEYS,
-  IdentityMismatchError,
   MIN_SENDER_TRUST_KEY,
   newInbox,
   normalizeAccountTokenPosition,
@@ -120,7 +120,11 @@ const DEFAULT_VERSION = "0.0.1";
 
 /** Sender-identity options of the host: the signer for `id_sig`. The host never sends `Agent-Sender`. */
 export interface AgentServiceIdentityOptions {
-  /** Signs `id_sig` (`AGENT-ID-V1`) over the prompt subject. Must hold the connection's user NKEY. */
+  /**
+   * Signs `id_sig` (`AGENT-ID-V1`) over the prompt subject. Must hold the
+   * live connection's user NKEY; a credentials JWT must also carry that
+   * connection's user and account.
+   */
   readonly signer?: SenderSigner;
 }
 
@@ -205,13 +209,12 @@ export interface AgentServiceOptions {
    */
   readonly logger?: Logger;
   /**
-   * Sender-identity: the host's own signer. With it, `start()` registers
-   * `id_sig` next to `user_nkey` / `account`; without it the identity
-   * keys are a display-grade claim (still registered when the connection
-   * has an identity). `start()` throws `IdentityMismatchError` when the
-   * signer's key is not the connection's user; on `NoIdentityError` /
-   * `IdentityUnavailableError` it logs and starts without identity
-   * metadata (verification of *senders* needs no host identity).
+   * Sender-identity registration. Omit this option for no self lookup and
+   * no `user_nkey` / `account` / `id_sig` metadata. An explicit empty
+   * object requests unsigned registration metadata. With a signer,
+   * `start()` registers `id_sig` only after the signer's user and account
+   * match the live connection; any binding failure is fatal. Verification
+   * of incoming senders does not require host identity.
    */
   readonly identity?: AgentServiceIdentityOptions;
   /**
@@ -479,8 +482,9 @@ export class AgentService {
   }
 
   /**
-   * The agent ID this instance registered (`user_nkey` + `account`), or
-   * `undefined` when the connection has no identity. Set by `start()`.
+   * The agent ID this instance registered (`user_nkey` + `account`). Set by
+   * `start()`; `undefined` before start, when host identity was omitted, or
+   * when an optional unsigned lookup could not establish an identity.
    */
   get identity(): AgentId | undefined {
     return this.#identity;
@@ -594,19 +598,22 @@ export class AgentService {
       }
     }
 
-    // Sender identity: learn the connection's own agent ID once. A signer
-    // that does not match the connection's user is a configuration error
-    // (throw); a connection without an identity starts without the
-    // metadata keys — verifying *senders* needs no host identity.
+    // Sender identity is opt-in. Omission performs no lookup and registers
+    // no self-identity metadata. Explicit unsigned identity is best-effort;
+    // a configured signer must bind to the live user/account or startup
+    // fails, never silently downgrades.
     const signer = this.#options.identity?.signer;
+    this.#identity = undefined;
     let identity: AgentId | undefined;
-    try {
-      identity = await selfId(this.#options.nc, signer ? { signer } : {});
-    } catch (err) {
-      if (err instanceof IdentityMismatchError) throw err;
-      this.#logger.warn("AgentService: starting without identity metadata", {
-        reason: err instanceof Error ? err.message : String(err),
-      });
+    if (this.#options.identity !== undefined) {
+      try {
+        identity = await selfId(this.#options.nc, signer ? { signer } : {});
+      } catch (err) {
+        if (signer) throw err;
+        this.#logger.warn("AgentService: starting without identity metadata", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     this.#identity = identity;
 

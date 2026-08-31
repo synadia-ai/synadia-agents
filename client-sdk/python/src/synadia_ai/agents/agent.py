@@ -5,11 +5,11 @@ Wraps a parsed :class:`~synadia_ai.agents.discovery.AgentInfo` with the
 SDK's ``Agent`` class (PR #7): every field flat / read-only, ``prompt()``
 and ``status()`` are the methods that actually do I/O.
 
-Sender identity (extension): when constructed by an :class:`Agents`
-client the handle carries its :class:`~synadia_ai.agents.identity.Identity`,
-and ``prompt()`` / ``status()`` attach an ``Agent-Sender`` header —
-signed when a signer is configured, an unsigned claim otherwise, nothing
-when the connection has no identity.
+Sender identity (extension): a handle carries an
+:class:`~synadia_ai.agents.identity.Identity` only when its
+:class:`Agents` client explicitly enables one. ``prompt()`` / ``status()``
+then attach a live-bound signed header or an explicitly requested unsigned
+claim; omission attaches nothing and performs no identity lookup.
 
 The server-side counterpart (``AgentService``) ships in the sibling
 distribution :mod:`synadia_ai.agent_service`.
@@ -418,8 +418,9 @@ class Agent:
         :class:`ProtocolError` on an error-headered reply or a reply that
         is not a §8.3 heartbeat payload, :class:`TimeoutError` /
         :class:`~nats.errors.NoRespondersError` from the transport, and
-        :class:`IdentityMismatchError` when a configured signer is not
-        the connection's user (other identity failures mean "no header").
+        configured-signer identity errors when its live connection binding
+        cannot be established. Without a signer, an unavailable optional
+        unsigned identity means "no header".
         """
         endpoint = next((e for e in self.endpoints if e.name == STATUS_ENDPOINT_NAME), None)
         publish_subject = (
@@ -569,9 +570,9 @@ class Agent:
         # cleanly, before any wire I/O or mux state mutation.
         self._raise_if_closed()
 
-        # Sender identity: resolve the identity (at most one awaited lookup
-        # per connection) and re-check `max_payload` with the exact header
-        # size. The header itself is built — signed — at publish time.
+        # Sender identity: resolve the live identity for this operation and
+        # re-check `max_payload` with the exact header size. The header itself
+        # is built — signed — at publish time.
         plan = await plan_sender_header(
             self._sender_identity, self._nc, sub, require_signed=require_signed
         )

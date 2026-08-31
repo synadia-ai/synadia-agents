@@ -266,6 +266,8 @@ async def test_replay_transplant_stale_malformed_and_unknown_v(
             assert _error_code(replay) == "401" and _error_desc(replay) == "sender rejected"
             assert len(a.senders) == 1
             assert any("already seen" in r.getMessage() for r in caplog.records)
+            assert h.nonce is not None
+            assert all(h.nonce not in r.getMessage() for r in caplog.records)
             # Transplanted verbatim onto a sibling's subject → 401 there.
             other = b.service.subject.prompt
             assert (
@@ -350,13 +352,17 @@ async def test_accept_sender_403_401_500_and_runs_before_the_ack(
 ) -> None:
     host, caller = alice_pair
     seen_by_hook: list[SenderInfo | None] = []
+    hook_secret: str | None = None
 
     def refuse(sender: SenderInfo | None) -> bool:
         seen_by_hook.append(sender)
         return False
 
-    async def explode(_sender: SenderInfo | None) -> bool:
-        raise RuntimeError("registry down")
+    async def explode(sender: SenderInfo | None) -> bool:
+        nonlocal hook_secret
+        assert isinstance(sender, VerifiedSender)
+        hook_secret = sender.header.nonce
+        raise RuntimeError(f"sensitive hook detail: {hook_secret}")
 
     async def accept_async(_sender: SenderInfo | None) -> bool:
         return True
@@ -398,6 +404,9 @@ async def test_accept_sender_403_401_500_and_runs_before_the_ack(
             r.levelno == logging.ERROR and "accept_sender hook raised" in r.getMessage()
             for r in caplog.records
         )
+        assert hook_secret is not None
+        assert hook_secret not in caplog.text
+        assert "sensitive hook detail" not in caplog.text
 
         events = await _drain((await _discover(caller, "accepting", signed)).prompt("hi"))
         assert any(isinstance(m, ResponseChunk) for m in events)

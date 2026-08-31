@@ -9,19 +9,16 @@
 > status handler describe behavior shipped from **this** package now;
 > the wire shapes themselves are unchanged.
 
-## Sender identity (extension — `agent-protocol-sender-identity.md`)
+## Sender identity (optional extension)
 
 The sender-identity extension is additive on top of the unchanged 0.3
-protocol; its
-[spec document](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
-lives in `synadia-ai/synadia-agent-fabric-docs`. Section names below refer
-to that document. This package ships the **receiver** side over the
+protocol. This package ships the **receiver** side over the
 shared codec in `synadia-ai-agents` (`synadia_ai.agents.identity`); it
 adds only the stateful parts.
 
 | SDK | Wire behaviour | Spec ref |
 | --- | --- | --- |
-| `AgentService.start()` registration | `user_nkey` / `account` whenever the connection's `self_id()` succeeds (awaited once at start; `IdentityMismatchError` for a signer that is not the connection's user; `NoIdentityError` / `IdentityUnavailableError` → logged, started without the keys); `id_sig` (`AGENT-ID-V1\n{user}\n{account}\n{agent}\n{owner}\n{prompt_subject}\n`) only with `identity=ServiceIdentity(signer=…)`; `min_sender_trust` **always** on the `prompt` endpoint metadata, never on `status`. `protocol_version` stays `"0.3"`. | Registration, Declaring the requirement, Relation to protocol 0.3 |
+| `AgentService.start()` registration | Omitted `identity` performs no self lookup and registers no `user_nkey`, `account`, or `id_sig`; explicit `ServiceIdentity()` attempts unsigned metadata; a signer requires uncached live user/account binding and makes any binding failure fatal. `id_sig` is `AGENT-ID-V1\n{user}\n{account}\n{agent}\n{owner}\n{prompt_subject}\n`. `min_sender_trust` is **always** on prompt metadata, defaults to `"any"`, and is never on `status`. `protocol_version` stays `"0.3"`. | Registration, Declaring the requirement, Relation to protocol 0.3 |
 | `prompt` dispatch order | envelope `400` → header parse `400` → (`ts` window / `sub` acceptance / operator-attested cross-check / nonce lookup / ed25519) `401` → `signed` + unsigned `401 signature required` → nonce **record** (check-and-set, last) → `accept_sender` `403` (verified) / `401` (claimed, absent) / raise `500 server error` → §6.4 ack → handler. A refusal is the §9 error frame + the §9.3 terminator, no ack. Two wire descriptions only: `signature required` and `sender rejected`; the detail goes to the log. | Verification (the check order is advisory: cheap checks first, same outcome) |
 | `PromptStream.sender` | `VerifiedSender` (`id`, `account_attested`, `resolve()` bound to the host's `SenderResolver`), `ClaimedSender` (`claim`, no `id`), or `None` for no header / unknown `v`. | Verification, Reverse lookup |
 | Nonce set (`NonceCache`) | Per instance, keyed `(user, nonce)`; entries expire at `ts + replay_window_s` (default 30 s), never at arrival + window; second-bucketed sweeps; hard cap (100 000, oldest evicted, warned once per overload); `record()` is the synchronous CAS — no `await` between the last check and the record. Not shared across queue-group instances; a restart empties it. | Verification |
@@ -30,6 +27,7 @@ adds only the stateful parts.
 | `operator_attested` | Off by default. Signed headers only: a present `Nats-Request-Info` `acc` / `user` must equal the signed pair, a stamp the server would not write → `401`, an absent stamp is compared to nothing; agreement on `acc` — or the `account_token_position` cross-check — sets `account_attested` (`format_sender` → `(verified)`). The header is read nowhere else. | Appendix A |
 | `resolve_ttl_s` | TTL of the `$SRV.INFO.agents` index behind `sender.resolve()` (default 10 s; `0` enumerates per call); account-local; identifies, never authorizes. | Reverse lookup |
 | Logging | Every served request is logged at DEBUG and every refusal at WARNING with the sender rendered by `format_sender` (trust class next to the id); foreign strings are `repr`-quoted. | Registration ("show the trust class") |
+| Prompt responses / query replies | Not independently signed. A response or approval actor is not inferred from the original prompt sender. | Protocol boundary |
 
 Not in the spec (SDK choices, shared with the TypeScript host): the
 generic wire descriptions, the nonce-cache cap and its hysteresis, the

@@ -13,9 +13,10 @@
 //     §8.3 fields including `instance_id` (from the service id).
 //   - Emits an empty-body no-headers terminator after each prompt
 //     (default handler).
-//   - Sender identity (extension): registers `user_nkey` / `account` /
-//     `id_sig` when the connection has an identity (and a signer), always
-//     advertises `min_sender_trust` on `prompt`, classifies every prompt
+//   - Sender identity (extension): when explicitly configured, registers
+//     `user_nkey` / `account` and, with a live-bound signer, `id_sig`;
+//     omission performs no self lookup. Always advertises
+//     `min_sender_trust` on `prompt`, classifies every prompt
 //     (400 / 401 / 403 / 500 before the handler runs) and hands the
 //     classified sender to the handler as its second argument; `status`
 //     is classified and logged, never rejected.
@@ -36,7 +37,6 @@ import {
   formatHumanBytes,
   formatSender,
   IDENTITY_METADATA_KEYS,
-  IdentityMismatchError,
   MIN_SENDER_TRUST_KEY,
   normalizeAccountTokenPosition,
   normalizeResolveTtlMs,
@@ -107,7 +107,7 @@ export interface ReferenceAgentOptions {
   readonly promptHandler?: ReferenceAgentPromptHandler;
   /** Extra metadata keys merged into the service metadata (forward-compat). */
   readonly extraMetadata?: Readonly<Record<string, string>>;
-  /** Sender-identity: the agent's own signer (registers `id_sig`). */
+  /** Sender identity registration; omission performs no self lookup or identity registration. */
   readonly identity?: { readonly signer?: SenderSigner };
   /** `min_sender_trust` on the prompt endpoint. Default `"any"`; always emitted. */
   readonly minSenderTrust?: MinSenderTrust;
@@ -201,17 +201,21 @@ export class ReferenceAgent {
   async start(): Promise<void> {
     if (this.#service) return;
 
-    // Same policy as `AgentService.start()`: a mismatching signer throws;
-    // no identity → log and register without the identity keys.
+    // Same policy as `AgentService.start()`: omission performs no lookup;
+    // explicit unsigned identity is best-effort; a signer binding failure
+    // is fatal and never downgrades registration.
     const signer = this.#options.identity?.signer;
+    this.#identity = undefined;
     let identity: AgentId | undefined;
-    try {
-      identity = await selfId(this.#options.nc, signer ? { signer } : {});
-    } catch (err) {
-      if (err instanceof IdentityMismatchError) throw err;
-      this.#logger.warn("ReferenceAgent: starting without identity metadata", {
-        reason: err instanceof Error ? err.message : String(err),
-      });
+    if (this.#options.identity !== undefined) {
+      try {
+        identity = await selfId(this.#options.nc, signer ? { signer } : {});
+      } catch (err) {
+        if (signer) throw err;
+        this.#logger.warn("ReferenceAgent: starting without identity metadata", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     this.#identity = identity;
 

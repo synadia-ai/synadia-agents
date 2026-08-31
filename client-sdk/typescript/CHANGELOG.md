@@ -22,18 +22,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   a timestamp and a nonce. The wire protocol stays `0.3`; support is
   advertised by feature detection (`min_sender_trust` on the prompt
   endpoint ⇔ the agent implements the extension; `Agent-Sender` sent ⇔
-  the caller does). Spec:
-  [`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+  the caller does). The extension is additive to protocol `0.3`.
   - `new Agents({ nc, identity: { signer?, name?, sendUnsignedClaim? } })`.
     `signerFromSeed` / `signerFromCreds` / `signerFromCredsFile` /
     `signerFromContext` build a `SenderSigner`; custom (HSM / KMS)
-    signers implement the interface (`sign` may be async). Without a
-    signer the SDK sends an unsigned **claim** when the connection has an
-    NKEY identity (`sendUnsignedClaim: false` turns that off); without an
-    identity it sends nothing — 0.3 behaviour.
+    signers implement the interface (`sign` may be async). Omitting
+    `identity` performs no lookup and sends no header; explicit `{}` sends
+    an unsigned **claim** when the connection has an NKEY identity;
+    `sendUnsignedClaim: false` turns that off.
   - `agents.selfId()` / `agents.refreshSelfId()` — the connection's own
-    agent ID, from the credentials JWT when the signer carries one, else
-    `$SYS.REQ.USER.INFO`; memoised once per connection, failures retried
+    agent ID from live `$SYS.REQ.USER.INFO`. A signer's user and JWT account
+    must match the live connection. Results are memoised per connection and
+    public identity-source fingerprint, cleared on reconnect; failures retry
     after 30 s. Errors: `NoIdentityError` (no NKEY user — the message
     names the fix), `IdentityUnavailableError` (no answer / permission
     violation), `IdentityMismatchError` (signer ≠ connection user).
@@ -120,8 +120,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   iterates late. `buildServiceErrorFromMsg` is exported.
 - `PayloadTooLargeError` gained a `headerBytes` field (0 when no header
   is sent) and mentions the header in its message when it counted one.
-- `discover()` now also _starts_ the connection's identity lookup
-  (fire-and-forget) so the first `prompt()` usually finds it memoised.
+- `discover()` starts identity lookup only when identity was explicitly
+  enabled; omission and `sendUnsignedClaim: false` without a signer perform
+  no identity work.
+- A configured signer now fails every identity-bearing operation when live
+  user/account binding is unavailable or mismatched; it never downgrades to
+  an unsigned or headerless request.
 - The `Agent` constructor takes an optional fifth argument (the
   identity context); handles constructed by third parties without it
   send no header.

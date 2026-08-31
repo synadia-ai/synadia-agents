@@ -21,10 +21,10 @@ only (heartbeat wildcard sub, in-flight stream cancellation), and the
 underlying :class:`~nats.aio.client.Client` is the caller's
 responsibility.
 
-Sender identity (extension): pass ``identity=Identity(signer=…, name=…)``
-to sign every ``prompt`` / ``status`` request; without a signer the SDK
-sends an unsigned claim when the connection has an NKEY identity, and
-nothing otherwise. :meth:`Agents.self_id` is the connection's own agent
+Sender identity is off by default: no lookup and no header. Pass
+``identity=Identity(signer=…, name=…)`` to sign every ``prompt`` /
+``status`` request; an explicit identity without a signer sends an unsigned
+claim when the connection has an NKEY identity. :meth:`Agents.self_id` is the connection's own agent
 ID; :meth:`Agents.sign_sender` / :meth:`Agents.publish_signed` /
 :meth:`Agents.request_signed` sign arbitrary publishes (JetStream
 included); :meth:`Agents.resolve_sender` is the reverse lookup.
@@ -53,7 +53,6 @@ from .heartbeat import HeartbeatListener, HeartbeatTracker, Liveness
 from .identity.agent_id import AgentId
 from .identity.options import (
     Identity,
-    kickoff_self_id,
     plan_sender_header,
     refresh_self_id_for,
     self_id_for,
@@ -191,12 +190,11 @@ class Agents:
 
         The first call to :meth:`discover` lazily starts the heartbeat
         wildcard subscription BEFORE publishing the discovery PING,
-        enforcing §8.5 automatically. It also *starts* the connection's
-        identity lookup (fire-and-forget) so the first ``prompt()``
-        usually finds it memoised — it never waits for it.
+        enforcing §8.5 automatically. Discovery itself never starts sender-
+        identity lookup; identity is resolved only by an explicitly enabled
+        identity-bearing request.
         """
         self._ensure_open()
-        kickoff_self_id(self._identity, self._nc)
         if not self._tracker.is_started:
             await self._tracker.start()
         infos = await discover_agent_infos(
@@ -270,15 +268,16 @@ class Agents:
     # --- sender identity -------------------------------------------------
 
     async def self_id(self) -> AgentId:
-        """The connection's own agent ID (``{account}.{user}``), learned once per connection.
+        """The connection's own agent ID (``{account}.{user}``).
 
-        From the credentials JWT when the signer carries one, else from
-        ``$SYS.REQ.USER.INFO``. Raises :class:`NoIdentityError` (no NKEY
+        Obtained from ``$SYS.REQ.USER.INFO``. A configured signer is bound
+        to that live user and account without using the signer-less memo.
+        Raises :class:`NoIdentityError` (no NKEY
         user — the message names the fix),
         :class:`IdentityUnavailableError` (no answer / permission
         violation) or :class:`IdentityMismatchError` (a configured signer
-        holds a different key). Failures are retried after 30 s;
-        :meth:`refresh_self_id` retries at once.
+        holds a different identity). Signer-less diagnostic lookups and
+        failures are memoised; :meth:`refresh_self_id` retries at once.
         """
         self._ensure_open()
         return await self_id_for(self._identity, self._nc)

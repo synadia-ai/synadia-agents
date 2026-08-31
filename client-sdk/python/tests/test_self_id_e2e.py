@@ -4,7 +4,8 @@ Unit rows over stubbed ``$SYS.REQ.USER.INFO`` replies first, then real
 servers: no auth (``NoIdentityError``), one nkey user (``$G.U…``), a
 mismatched signer, and ``deny: "$SYS.>"`` — where the SDK fails at once
 on the asynchronous permissions violation instead of waiting 2 s,
-memoises the failure for the TTL, and never blocks ``discover()``.
+memoises signer-less diagnostic failures for the TTL, and never blocks
+``discover()``.
 """
 
 from __future__ import annotations
@@ -141,7 +142,7 @@ async def test_t0_no_identity_names_the_fix_and_is_asked_once(
 # --- T1: nkey user, $G --------------------------------------------------------
 
 
-async def test_t1_self_id_is_global_account_user_and_lookups_are_shared(
+async def test_t1_signer_lookups_are_live_while_signerless_diagnostics_are_memoised(
     nats_server_nkey: RunningServer,
     connect_nkey_user: ConnectNkeyUser,
     identity_keys: dict[str, NkeyUser],
@@ -161,14 +162,20 @@ async def test_t1_self_id_is_global_account_user_and_lookups_are_shared(
     expected = AgentId.new("$G", alice.public)
     results = await asyncio.gather(*(agents.self_id() for _ in range(CONCURRENT_CALLERS)))
     assert all(r == expected for r in results)
-    assert await self_id(nc) == expected  # module-level, same memo
+    assert await self_id(nc) == expected  # signer-less diagnostic creates its own memo
     assert peek_self_id(nc) == expected
-    await wait_for(lambda: len(probes) == 1, what="one $SYS.REQ.USER.INFO probe")
+    await wait_for(
+        lambda: len(probes) == CONCURRENT_CALLERS + 1,
+        what="one live probe per signed operation plus the diagnostic",
+    )
     await nc.flush()
-    assert len(probes) == 1  # concurrent callers shared one in-flight lookup
+    assert len(probes) == CONCURRENT_CALLERS + 1
     assert await agents.refresh_self_id() == expected
     assert await refresh_self_id(nc) == expected
-    await wait_for(lambda: len(probes) == 3, what="three probes after two refreshes")
+    await wait_for(
+        lambda: len(probes) == CONCURRENT_CALLERS + 3,
+        what="two more probes after the signed and signer-less refreshes",
+    )
     await agents.close()
 
 
@@ -177,21 +184,22 @@ async def test_t1_mismatched_signer(
     connect_nkey_user: ConnectNkeyUser,
     identity_keys: dict[str, NkeyUser],
 ) -> None:
-    # A dedicated connection: the mismatch is negative-cached per connection.
+    # A signer mismatch is a live binding result, never persisted in the
+    # signer-less diagnostic memo.
     nc = await connect_nkey_user(nats_server_nkey, "alice")
     agents = Agents(nc=nc, identity=Identity(signer=signer_from_seed(identity_keys["bob"].seed)))
     with pytest.raises(IdentityMismatchError) as exc_info:
         await agents.self_id()
     assert identity_keys["bob"].public in str(exc_info.value)
     assert identity_keys["alice"].public in str(exc_info.value)
-    assert isinstance(peek_self_id(nc), IdentityMismatchError)
+    assert peek_self_id(nc) is None
     await agents.close()
 
 
 # --- T1-deny: nkey user, deny $SYS.> ----------------------------------------------
 
 
-async def test_t1_deny_fails_fast_and_memoises(
+async def test_t1_deny_signed_binding_fails_fast_without_a_negative_cache(
     nc_alice_deny_sys: DenySysClient, identity_keys: dict[str, NkeyUser], evidence_for: EvidenceFor
 ) -> None:
     nc = nc_alice_deny_sys.nc
@@ -203,12 +211,12 @@ async def test_t1_deny_fails_fast_and_memoises(
     first = time.monotonic() - started
     assert first < FAST_FAIL_BUDGET_S
     assert not nc.is_closed
-    assert isinstance(peek_self_id(nc), IdentityUnavailableError)
+    assert peek_self_id(nc) is None
 
     started = time.monotonic()
     with pytest.raises(IdentityUnavailableError):
-        await agents.self_id()  # inside the TTL: immediate, no request
-    assert time.monotonic() - started < 0.05
+        await agents.self_id()  # a second signed operation revalidates live
+    assert time.monotonic() - started < FAST_FAIL_BUDGET_S
 
     started = time.monotonic()
     with pytest.raises(IdentityUnavailableError):
@@ -235,7 +243,7 @@ async def test_t1_deny_negative_cache_expires_and_retries_in_the_background(
     await asyncio.sleep(SHORT_TTL_S + 0.1)
     assert peek_self_id(nc) is None  # expired: reads as "unknown" again
     assert self_id_failure_expired(nc)
-    start_self_id_lookup(nc)  # what a prompt does past the TTL: retry behind the request
+    start_self_id_lookup(nc)  # signer-less diagnostic warm-up retries past the TTL
     await asyncio.sleep(SHORT_TTL_S / 2)  # the fast-fail retry lands well inside the new TTL
     assert isinstance(peek_self_id(nc), IdentityUnavailableError)  # failed again, freshly memoised
     assert not self_id_failure_expired(nc)
@@ -252,7 +260,32 @@ async def test_t1_deny_discover_does_not_block(
     await agents.close()
 
 
-async def test_t1_deny_creds_signer_reads_the_jwt_without_asking_the_server(
+async def test_identity_omission_and_explicit_disable_do_not_start_lookup(
+    nats_server: RunningServer,
+) -> None:
+    nc = await nats.connect(nats_server.url)
+    probes: list[Msg] = []
+
+    async def spy(msg: Msg) -> None:
+        probes.append(msg)
+
+    try:
+        await nc.subscribe(USER_INFO_SUBJECT, cb=spy)
+        await nc.flush()
+        omitted = Agents(nc=nc)
+        disabled = Agents(nc=nc, identity=Identity(send_unsigned_claim=False))
+        await omitted.discover(timeout=0.1)
+        await disabled.discover(timeout=0.1)
+        await nc.flush()
+        assert probes == []
+        assert not is_self_id_inflight(nc)
+        await omitted.close()
+        await disabled.close()
+    finally:
+        await nc.close()
+
+
+async def test_t1_deny_creds_signer_requires_live_connection_binding(
     nats_server_nkey_deny_sys: RunningServer,
     connect_nkey_user: ConnectNkeyUser,
     identity_keys: dict[str, NkeyUser],
@@ -260,13 +293,43 @@ async def test_t1_deny_creds_signer_reads_the_jwt_without_asking_the_server(
     alice = identity_keys["alice"]
     jwt = fake_jwt({"sub": alice.public, "iss": A, "nats": {"type": "user"}})
     nc = await connect_nkey_user(nats_server_nkey_deny_sys, "alice")
-    before = nc.last_error
     agents = Agents(nc=nc, identity=Identity(signer=signer_from_seed(alice.seed, jwt)))
-    id = await agents.self_id()
-    assert len(id) == OPERATOR_FORM_LENGTH
-    assert id.account == A and id.user == alice.public
-    await nc.flush()
-    assert nc.last_error is before  # no `$SYS.REQ.USER.INFO` publish → no violation
+    with pytest.raises(IdentityUnavailableError, match="permissions violation"):
+        await agents.self_id()
+    await agents.close()
+
+
+async def test_t1_creds_account_must_match_the_live_connection(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    identity_keys: dict[str, NkeyUser],
+) -> None:
+    alice = identity_keys["alice"]
+    jwt = fake_jwt({"sub": alice.public, "iss": A, "nats": {"type": "user"}})
+    nc = await connect_nkey_user(nats_server_nkey, "alice")
+    agents = Agents(nc=nc, identity=Identity(signer=signer_from_seed(alice.seed, jwt)))
+    with pytest.raises(IdentityMismatchError) as exc_info:
+        await agents.self_id()
+    assert exc_info.value.signer_account == A
+    assert exc_info.value.identity_account == "$G"
+    assert "account" in str(exc_info.value)
+    await agents.close()
+
+
+async def test_t1_creds_jwt_user_must_match_the_signer(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    identity_keys: dict[str, NkeyUser],
+) -> None:
+    alice = identity_keys["alice"]
+    bob = identity_keys["bob"]
+    jwt = fake_jwt({"sub": bob.public, "iss": "$G", "nats": {"type": "user"}})
+    nc = await connect_nkey_user(nats_server_nkey, "alice")
+    agents = Agents(nc=nc, identity=Identity(signer=signer_from_seed(alice.seed, jwt)))
+    with pytest.raises(IdentityMismatchError) as exc_info:
+        await agents.self_id()
+    assert exc_info.value.credential_user == bob.public
+    assert "credentials JWT" in str(exc_info.value)
     await agents.close()
 
 
