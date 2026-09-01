@@ -188,6 +188,13 @@ config file > derived defaults. Config file:
 | `SYNADIA_ACP_CWD` | ACP session working directory | process cwd |
 | `SYNADIA_GROK_PERMISSION_POLICY`, `SYNADIA_ACP_PERMISSION_POLICY` | `reject`, `query`, `allow` | `reject` |
 | `NATS_URL` / `NATS_CONTEXT` / `NATS_CREDS` | NATS connection. A context carries its own auth, so `NATS_CREDS` applies only when no context is set. | `nats://127.0.0.1:4222` |
+| `NATS_SENDER_IDENTITY` | Host identity: `off` or connection-bound `signed` | `off` |
+| `NATS_MIN_SENDER_TRUST` | Incoming prompt policy: `any` or `signed` | `any` |
+
+Identity and incoming trust are independent. In signed mode, the SDK
+connection-bundle helper derives the host signer from the same context or
+URL-mode credentials used for NATS; there is no separate identity credential.
+The default `off` / `any` combination preserves identity-free operation.
 
 Run `acp-agent doctor` to print the resolved identity, spawn command, and a
 `--version` probe of the agent binary.

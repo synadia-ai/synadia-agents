@@ -12,6 +12,9 @@
   },
   "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agents/eve",
   "type": "module",
+  "engines": {
+    "bun": ">=1.3.14"
+  },
   "bin": {
     "eve-agent": "./src/cli.ts"
   },
@@ -19,7 +22,8 @@
     "src",
     "scripts",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "scripts": {
     "start": "bun src/cli.ts start",
@@ -38,7 +42,7 @@
     "eve": "^0.27.0"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "1.3.14",
     "@types/node": "^20.16.0",
     "typescript": "~5.6.0"
   }

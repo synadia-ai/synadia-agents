@@ -8,6 +8,32 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Changed
+
+- Host identity registration is now opt-in: omitting `identity` performs no
+  self lookup and emits no `user_nkey`, `account`, or `id_sig` metadata;
+  incoming sender classification and the default `min_sender_trust="any"`
+  behavior are unchanged. Explicit `ServiceIdentity()` remains a
+  best-effort unsigned registration request.
+- A configured host signer is bound to the live connection's user and
+  account with an uncached lookup. Every binding failure aborts `start()` and
+  never downgrades the registration.
+- Replay rejection details omit raw nonces. Acceptance-hook failures use only
+  a fixed safe marker, never an application-controlled exception type, message,
+  or traceback.
+- **BREAKING (pre-1.0):** `AgentService` no longer exposes the unusable
+  `account_token_position` option: its fixed five-token subscription cannot
+  receive the inserted six-token subject. Applications that need an account
+  token in a remapped subject must use a hand-rolled wildcard service with
+  `SenderGate(account_token_position=…)` or call
+  `verify_sender_header(…, account_token_position=…)` directly.
+- Unexpected handler, status, and classification failures use generic wire
+  descriptions and fixed safe log markers. These paths intentionally omit
+  exception types, messages, and tracebacks because application frames can
+  retain secrets. Operator log alerts must not depend on those tracebacks;
+  applications that need private diagnostics should capture and redact them
+  in their own instrumentation.
+
 ## [0.5.0] - 2026-08-29
 
 The receiver side of the **sender-identity extension** (PR-P2 of the
@@ -17,8 +43,7 @@ and the handler sees the result as `stream.sender`; the registration
 carries the agent's own identity; `min_sender_trust` is always
 advertised. The wire protocol stays `0.3` — support is advertised by
 feature detection (`min_sender_trust` on the prompt endpoint ⇔ the agent
-implements the extension). Spec:
-[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+implements the extension). The extension is additive to protocol `0.3`.
 Behaviour-equal with `@synadia-ai/agent-service` 0.6.0 (same dispatch
 order, wire descriptions, nonce-cache semantics); the reverse interop
 test runs the TS client probe signed against this host.
@@ -45,16 +70,13 @@ test runs the TS client probe signed against this host.
 - **`AgentService` options** — `identity=ServiceIdentity(signer=…)`
   (the host's own signer; the host never sends `Agent-Sender`, so no
   display name), `min_sender_trust` (`"any"` default / `"signed"`),
-  `replay_window_s` (30), `account_token_position` (1-based; validated
-  and honoured by the classifier — note the five-token hosting limit in
-  the README), `accept_sender` (the acceptance hook: `False` → `403` for
+  `replay_window_s` (30), `accept_sender` (the acceptance hook: `False` → `403` for
   a verified sender, `401 signature required` for a claimed / absent
   one; a raise → `500 server error`, logged, never served; sync or
   async), `resolve_ttl_s`, `operator_attested` (off by default — the
   `Nats-Request-Info` cross-check of a *closed* endpoint: a present
   stamp that disagrees with the signed `account` / `user`, or a stamp
-  the server would not write, → `401`; agreement on `acc` — or the
-  `account_token_position` cross-check — sets
+  the server would not write, → `401`; agreement on `acc` sets
   `sender.account_attested`, rendered `(verified)`). Properties
   `identity` (the registered `AgentId`, `None` without one),
   `min_sender_trust`, `operator_attested`, `instance_id`.

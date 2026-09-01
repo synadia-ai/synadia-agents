@@ -69,13 +69,12 @@ to run them.
 
 ## Sender identity
 
-`AgentService` implements the receiver side of the
-[sender-identity extension](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md):
-every `prompt` request is classified **before** the §6.4 ack, and the
-handler sees the result as `stream.sender`.
+`AgentService` implements the receiver side of the optional sender-identity
+extension: every `prompt` request is classified **before** the §6.4 ack,
+and the handler sees the result as `stream.sender`.
 
 ```python
-from synadia_ai.agents import format_sender, signer_from_seed
+from synadia_ai.agents import format_sender
 from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
 service = AgentService(
@@ -83,7 +82,8 @@ service = AgentService(
     owner="demo",
     session_name="main",
     nc=nc,
-    identity=ServiceIdentity(signer=signer_from_seed(Path(os.environ["NATS_NKEY_SEED_FILE"]).read_bytes())),
+    # host_signer must come from the same credential snapshot that authenticated `nc`.
+    identity=ServiceIdentity(signer=host_signer),
     min_sender_trust="signed",  # default "any"
     accept_sender=lambda sender: sender is not None
     and sender.trust == "verified"
@@ -107,22 +107,23 @@ async def handler(envelope: Envelope, stream: PromptStream) -> None:
 
 What to know:
 
-- **Registration.** When the connection has an NKEY identity the service
-  registers `user_nkey` and `account`; with `identity=ServiceIdentity(signer=…)`
-  it also registers `id_sig` (`AGENT-ID-V1` over the prompt subject) so
-  callers can verify the claim (`AgentInfo.id_sig_verified`).
+- **Registration is opt-in.** Omit `identity` for no host-identity lookup
+  and no `user_nkey`, `account`, or `id_sig` metadata; incoming senders
+  are still classified. Pass `ServiceIdentity()` explicitly for
+  best-effort unsigned registration, or provide a signer to register
+  `id_sig` (`AGENT-ID-V1` over the prompt subject).
   `min_sender_trust` is **always** emitted on the prompt endpoint — its
-  presence is what advertises the extension — and never on `status`. A
-  signer that is not the connection's user makes `start()` raise
-  `IdentityMismatchError`; a connection without an identity starts
-  without the keys (logged) — verifying *senders* needs no host identity.
+  presence is what advertises the extension — and never on `status`; it
+  defaults to `"any"` independently of host identity. A signer is checked
+  against the live connection's user and account; mismatch or unavailable
+  binding makes `start()` fail and never downgrades.
   `start()` returns only once the endpoints are registered at the server
   (`flush()`).
 - **The verified identity is `user`.** `account` is the sender's signed
   claim; `format_sender` / `str(sender)` renders
   `… (verified user, claimed account)`. Which verified senders to accept
   is authorization — the `accept_sender` hook is where a harness
-  consults a list it provisions or, later, the fabric's agent registry.
+  consults its provisioned policy.
   The hook runs for every classified prompt (never for `status`), may be
   sync or async; per-request network I/O in it delays the ack and is an
   amplification vector on `any` endpoints. A refused claimed / absent
@@ -135,18 +136,17 @@ What to know:
 - **`status`** is classified and logged (its verified nonce enters the
   shared set), never rejected — a liveness probe must not depend on the
   prober's credentials.
-- **`account_token_position`** is for a service behind an export that
-  inserts the caller's account token (`account_token_position`, the
-  ScratchPad shape): the receiver checks the token against the header's
-  `account` and accepts `sub` with the token removed. The inserted token
-  is a server stamp only on a **closed** endpoint. Note that
-  `AgentService` hosts five-token `agents.{verb}.a.o.n` subjects, which
-  such an export turns into six-token arrivals its subscription never
-  sees — the option is validated and honoured by the classifier, but
-  hosting *behind* such an export today means a hand-rolled service on
-  the wildcard subject calling `verify_sender_header(…,
-  account_token_position=…)` or a `SenderGate` (see
-  `test_signed_wrappers_e2e.py` in the client package).
+- **Only the incoming request is signed.** Prompt responses and mid-stream
+  query replies are not independently authenticated; do not attribute a
+  query reply to the original prompt sender.
+- **Account-token insertion requires a hand-rolled wildcard service.** An
+  export with `account_token_position` turns AgentService's fixed
+  five-token subject into a six-token arrival its subscription cannot
+  receive, so AgentService deliberately exposes no such option. Use
+  `SenderGate(account_token_position=…)` or
+  `verify_sender_header(…, account_token_position=…)` on the wildcard
+  subscription; the inserted token is a server stamp only on a **closed**
+  endpoint (see `test_signed_wrappers_e2e.py` in the client package).
 - **Cross-account callers** need the deployment's help: export the prompt
   subject with `response_type: stream` (a response is many messages —
   without it every reply after the first is dropped silently), export
@@ -169,20 +169,23 @@ What to know:
   server's. With it on, a verified header whose signed `account` /
   `user` disagree with a present stamp is refused (`401`), a present but
   unparseable stamp is refused, an absent stamp is compared to nothing,
-  and agreement on `acc` — or the `account_token_position` cross-check —
-  surfaces as `stream.sender.account_attested is True` (`format_sender`
+  and agreement on `acc` surfaces as
+  `stream.sender.account_attested is True` (`format_sender`
   → `(verified)`). Claims are never cross-checked. On an open endpoint
   (the typical NGS account where peers call each other) leave it off: a
   peer can write that header, and the mode would attest a forgery.
 - **A trusted server over TLS is a precondition** of identity: the NATS
   handshake signs a server-chosen nonce with the same seed that signs
   `Agent-Sender`.
-- The reference agent takes `--nkey` / `--creds` (`$NATS_NKEY_SEED_FILE`
-  / `$NATS_CREDS` — a file, never an environment value holding the seed)
-  and `--min-sender-trust` (`$REFERENCE_AGENT_MIN_SENDER_TRUST`), prints
+- The reference agent takes connection credentials via `--nkey` / `--creds`
+  (`$NATS_NKEY_SEED_FILE` / `$NATS_CREDS`) and enables identity separately
+  with `--sender-identity signed` (`$NATS_SENDER_IDENTITY`). It uses one
+  connection bundle for authentication and signing. With
+  `--min-sender-trust` (`$REFERENCE_AGENT_MIN_SENDER_TRUST`) it prints
   `identity: <id> (min_sender_trust=…)` after its ready line and appends
   ` sender: <id> (<trust class>)` to the echo when a sender was
-  classified. The ladder examples take the same `--nkey` / `--creds`.
+  classified. The ladder examples use the same credential and identity-mode
+  flags.
 
 `SenderGate` / `NonceCache` (`synadia_ai.agent_service.identity`) expose
 the same classification for hand-rolled services; the codec itself

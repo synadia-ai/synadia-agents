@@ -197,7 +197,7 @@ The underlying transport (`@nats-io/transport-node`) is explicitly supported on 
 ## Sender identity
 
 If your connection authenticates with an NKEY or a credentials file, hand the
-SDK the seed and every `prompt` / `status` request carries a signed
+SDK a signer for that same NATS user and every `prompt` / `status` request carries a signed
 `Agent-Sender` header the receiver can verify:
 
 ```ts
@@ -211,13 +211,14 @@ const agents = new Agents({
 console.log("I am", await agents.selfId());
 ```
 
-Without a signer the SDK sends an unsigned claim (or nothing when the
-connection has no NKEY identity — every `min_sender_trust: any` endpoint,
-the default, still serves you). An endpoint that requires `signed` rejects
+Omitting `identity` performs no identity lookup and sends no header. Passing
+`identity: {}` explicitly enables unsigned claims; `sendUnsignedClaim: false`
+turns those off. A permissive `min_sender_trust: any` endpoint (the default)
+still serves headerless callers. An endpoint that requires `signed` rejects
 with `SenderSignatureRequiredError` before anything hits the wire. Check
 `agent.supportsSenderIdentity` / `agent.minSenderTrust` after discovery,
-and read the README's "Sender identity" section for the remapped-import
-overrides and the TLS precondition.
+and read the README's "Sender identity" section for live signer binding,
+remapped-import overrides, and the TLS precondition.
 
 ## Next steps
 

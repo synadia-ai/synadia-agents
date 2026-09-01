@@ -14,14 +14,11 @@
 // Prerequisites: a local Ollama (https://ollama.com) with the model pulled:
 //   ollama pull llama3.2
 //
-// Connection resolution (same as 01-echo.ts):
-//   1. $NATS_CONTEXT — name of a NATS CLI context under ~/.config/nats/context/
-//   2. $NATS_URL     — raw URL (credentials in userinfo are honored)
-//   3. nats://127.0.0.1:4222
+// Connection and optional signed registration use the shared atomic bundle in
+// `_connection.ts`; see 01-echo.ts or README.md for env precedence.
 
-import { connect as natsConnect } from "@nats-io/transport-node";
-import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
+import { openExampleNatsConnection, waitForTermination } from "./_connection";
 
 // Which model to prompt, and where the OpenAI-compatible endpoint lives.
 // Override either from the environment, or just edit the defaults below.
@@ -77,54 +74,52 @@ async function* ollamaTokens(prompt: string): AsyncGenerator<string> {
 }
 
 async function main(): Promise<void> {
-  const opts = process.env["NATS_CONTEXT"]
-    ? await loadContextOptions(process.env["NATS_CONTEXT"])
-    : process.env["NATS_URL"]
-      ? parseNatsUrl(process.env["NATS_URL"])
-      : { servers: "nats://127.0.0.1:4222" };
-  const nc = await natsConnect(opts);
+  const connection = await openExampleNatsConnection();
+  let service: AgentService | undefined;
 
-  // Identity and heartbeat cadence are env-overridable (see 01-echo.ts).
-  const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
-  const service = new AgentService({
-    nc,
-    agent: "ollama",
-    owner:
-      process.env["SYNADIA_OLLAMA_OWNER"] ??
-      process.env["SYNADIA_OWNER"] ??
-      process.env["NATS_AGENT_OWNER"] ??
-      process.env["USER"] ??
-      "anon",
-    name:
-      process.env["SYNADIA_OLLAMA_NAME"] ??
-      process.env["SYNADIA_NAME"] ??
-      process.env["NATS_AGENT_NAME"] ??
-      "main",
-    ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
-    description: `LLM agent — answers prompts with the local Ollama '${MODEL}' model`,
-  });
+  try {
+    // Identity and heartbeat cadence are env-overridable (see 01-echo.ts).
+    const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
+    service = new AgentService({
+      nc: connection.nc,
+      agent: "ollama",
+      owner:
+        process.env["SYNADIA_OLLAMA_OWNER"] ??
+        process.env["SYNADIA_OWNER"] ??
+        process.env["NATS_AGENT_OWNER"] ??
+        process.env["USER"] ??
+        "anon",
+      name:
+        process.env["SYNADIA_OLLAMA_NAME"] ??
+        process.env["SYNADIA_NAME"] ??
+        process.env["NATS_AGENT_NAME"] ??
+        "main",
+      ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
+      ...(connection.signer ? { identity: { signer: connection.signer } } : {}),
+      description: `LLM agent — answers prompts with the local Ollama '${MODEL}' model`,
+    });
 
-  // Same handler shape as the echo agent: instead of one reply, we `send(...)`
-  // each token as Ollama emits it. The SDK closes the stream when we return.
-  service.onPrompt(async (envelope, response) => {
-    for await (const token of ollamaTokens(envelope.prompt)) {
-      await response.send(token);
-    }
-  });
+    // Same handler shape as the echo agent: instead of one reply, we `send(...)`
+    // each token as Ollama emits it. The SDK closes the stream when we return.
+    service.onPrompt(async (envelope, response) => {
+      for await (const token of ollamaTokens(envelope.prompt)) {
+        await response.send(token);
+      }
+    });
 
-  await service.start();
-  console.log(`ollama agent listening on ${service.subject.prompt}`);
-  console.log(`prompting model '${MODEL}' at ${OLLAMA_URL}`);
-  console.log("press Ctrl+C to stop");
-
-  const shutdown = async (): Promise<void> => {
+    await service.start();
+    console.log(`ollama agent listening on ${service.subject.prompt}`);
+    console.log(`prompting model '${MODEL}' at ${OLLAMA_URL}`);
+    console.log("press Ctrl+C to stop");
+    await waitForTermination();
     console.log("\nshutting down…");
-    await service.stop();
-    await nc.close();
-    process.exit(0);
-  };
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
+  } finally {
+    try {
+      await service?.stop();
+    } finally {
+      await connection.close();
+    }
+  }
 }
 
 void main().catch((err: unknown) => {

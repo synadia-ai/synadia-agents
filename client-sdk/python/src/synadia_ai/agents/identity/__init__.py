@@ -1,7 +1,7 @@
 """Sender-identity extension — the shared codec, the caller-side options, and ``self_id``.
 
-Spec: ``agent-protocol-sender-identity.md`` in
-`synadia-ai/synadia-agent-fabric-docs <https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md>`_.
+The extension is additive to protocol ``0.3`` and is enabled explicitly
+by caller and host configuration.
 The host package (``synadia_ai.agent_service``) imports the codec from
 here and adds only the stateful parts (nonce cache, acceptance hook).
 """

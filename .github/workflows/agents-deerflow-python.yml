@@ -13,26 +13,27 @@ name: CI — agents/deerflow
 # pre-publish gate will too.
 #
 # Scope notes:
-#   * Path filter is deerflow-only. deerflow resolves `synadia-ai-agents` /
-#     `synadia-ai-agent-service` to the local checkouts via
-#     `[tool.uv.sources]`, so a breaking SDK change *could* affect it — but
-#     those SDKs have their own CI, and deerflow's release `verify` job is the
-#     backstop. Running deerflow's full matrix on every SDK PR would be
-#     redundant, so we keep it scoped here.
+#   * DeerFlow resolves `synadia-ai-agents` / `synadia-ai-agent-service` to
+#     local checkouts via `[tool.uv.sources]`, so SDK changes trigger this
+#     workflow during the coordinated rollout.
 #   * No `nats-server` step (unlike `client-sdk-python-agent-service.yml`):
 #     deerflow's suite is unit/integration-level with no e2e tests that spawn
 #     a broker, so the binary isn't needed.
 
 on:
   push:
-    branches: [main]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "agents/deerflow/**"
+      - "client-sdk/python/**"
+      - "agent-sdk/python/**"
       - ".github/workflows/agents-deerflow-python.yml"
   pull_request:
-    branches: [main]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "agents/deerflow/**"
+      - "client-sdk/python/**"
+      - "agent-sdk/python/**"
       - ".github/workflows/agents-deerflow-python.yml"
 
 concurrency:

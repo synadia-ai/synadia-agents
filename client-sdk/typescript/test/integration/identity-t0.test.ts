@@ -132,7 +132,7 @@ describe.skipIf(!bin)("identity T0 — no auth", () => {
     expect(old.minSenderTrust).toBeUndefined();
   });
 
-  it("prompt sends no header, the harness sees sender=undefined, and the lookup runs once per connection", async () => {
+  it("omitted caller identity sends no header and performs no identity lookup", async () => {
     const seen: Array<{ sender: unknown; header: string | undefined }> = [];
     const ref = new ReferenceAgent({
       nc: hostNc,
@@ -148,10 +148,9 @@ describe.skipIf(!bin)("identity T0 — no auth", () => {
     await ref.start();
     cleanups.push(() => ref.stop());
 
-    // A fresh connection: the memo is per connection, and an earlier test
-    // already negative-cached this file's shared `nc`. Count
-    // $SYS.REQ.USER.INFO requests from here on (same account; the reference
-    // agent's own lookup already happened in start()).
+    // Count `$SYS.REQ.USER.INFO` publishes from a fresh connection. Neither
+    // the omitted caller identity nor the omitted reference-agent identity
+    // should start one.
     const fresh = await connect({ servers: server.url });
     cleanups.push(() => fresh.close());
     const probes: Msg[] = [];
@@ -174,7 +173,7 @@ describe.skipIf(!bin)("identity T0 — no auth", () => {
     sub.unsubscribe();
     expect(seen).toHaveLength(2);
     expect(seen.every((s) => s.sender === undefined && !s.header)).toBe(true);
-    expect(probes).toHaveLength(1);
+    expect(probes).toHaveLength(0);
   });
 
   it("status still answers, and a service handler sees response.sender === undefined", async () => {
@@ -214,7 +213,18 @@ describe.skipIf(!bin)("identity T0 — no auth", () => {
       filter: { agent: "t0-agent", name: service.subject.name },
     });
     expect(agent!.minSenderTrust).toBe("signed");
-    expect(() => agent!.prompt("hi")).toThrow(SenderSignatureRequiredError);
+    let required: unknown;
+    try {
+      agent!.prompt("hi");
+    } catch (err) {
+      required = err;
+    }
+    expect(required).toBeInstanceOf(SenderSignatureRequiredError);
+    expect(required).toMatchObject({
+      code: 401,
+      description: "signature required",
+      subject: service.subject.prompt,
+    });
 
     const signing = new Agents({
       nc,

@@ -4,8 +4,8 @@ The receiving side is the fake agent in ``tests/harness/fake_agent.py``:
 it classifies every request with the *shared* ``verify_sender`` (the
 codec PR-P2's host will call), records the verdict and answers §6 chunks
 — so what these tests assert is what the shared verifier decided over
-the header the caller actually put on the wire. The evidence
-``messages.jsonl`` of each test holds the raw ``Agent-Sender`` values.
+the header the caller actually put on the wire. Evidence records header
+presence but redact ``Agent-Sender`` and ``Nats-Request-Info`` values.
 """
 
 from __future__ import annotations
@@ -147,6 +147,13 @@ async def test_t1_signed_prompts_verify_with_fresh_nonces(
     caller = await connect_nkey_user(nats_server_nkey, "alice")
     recorder = await evidence_for(caller)
     fake = await FakePromptAgent(host, PROMPT_SUBJECT).start()
+    probes: list[Msg] = []
+
+    async def spy(msg: Msg) -> None:
+        probes.append(msg)
+
+    await caller.subscribe(USER_INFO_SUBJECT, cb=spy)
+    await caller.flush()
     agent = Agent(
         caller, _info(PROMPT_SUBJECT), identity=Identity(signer=alice_signer, name="claude-code")
     )
@@ -163,8 +170,16 @@ async def test_t1_signed_prompts_verify_with_fresh_nonces(
         assert seen.header is not None
     assert fake.seen[0].sender is not None and fake.seen[1].sender is not None
     assert fake.seen[0].sender.header.nonce != fake.seen[1].sender.header.nonce
+    await wait_for(lambda: len(probes) == 2, what="one live binding lookup per signed prompt")
     recorder.write_jsonl(
-        "seen.jsonl", [{"header": s.header, "sender": str(s.sender)} for s in fake.seen]
+        "seen.jsonl",
+        [
+            {
+                "signed_header_present": s.header is not None,
+                "sender": str(s.sender),
+            }
+            for s in fake.seen
+        ],
     )
     await fake.stop()
 
@@ -207,10 +222,16 @@ async def test_t1_signed_endpoint_rules(
     fake = await FakePromptAgent(host, PROMPT_SUBJECT, min_sender_trust="signed").start()
     info = _info(PROMPT_SUBJECT, min_sender_trust="signed")
     # No signer → raised at call time, before any wire I/O.
-    with pytest.raises(SenderSignatureRequiredError):
+    with pytest.raises(SenderSignatureRequiredError) as explicit_error:
         Agent(caller, info, identity=Identity()).prompt("hi")
-    with pytest.raises(SenderSignatureRequiredError):
+    assert explicit_error.value.code == 401
+    assert explicit_error.value.description == "signature required"
+    assert explicit_error.value.subject == PROMPT_SUBJECT
+    with pytest.raises(SenderSignatureRequiredError) as omitted_error:
         Agent(caller, info).prompt("hi")
+    assert omitted_error.value.code == 401
+    assert omitted_error.value.description == "signature required"
+    assert omitted_error.value.subject == PROMPT_SUBJECT
     assert fake.seen == []
     # Signed → served.
     events = await _drain(Agent(caller, info, identity=Identity(signer=alice_signer)).prompt("hi"))
@@ -241,8 +262,11 @@ async def test_t1_mismatched_signer_rejects_on_first_iteration(
     identity_keys: dict[str, NkeyUser],
 ) -> None:
     host = await connect_nkey_user(nats_server_nkey, "alice")
-    caller = await connect_nkey_user(nats_server_nkey, "alice")  # fresh: memo is per connection
+    caller = await connect_nkey_user(nats_server_nkey, "alice")
     fake = await FakePromptAgent(host, PROMPT_SUBJECT).start()
+    # A signer-less diagnostic result must not let a later signer bypass live
+    # connection binding on the same connection.
+    assert await Agents(nc=caller).self_id() == AgentId.new("$G", identity_keys["alice"].public)
     bob = Identity(signer=signer_from_seed(identity_keys["bob"].seed))
     stream = Agent(caller, _info(PROMPT_SUBJECT), identity=bob).prompt("hi")  # no raise yet
     with pytest.raises(IdentityMismatchError):
@@ -345,7 +369,7 @@ def test_identity_name_is_validated_at_option_time() -> None:
 # --- T0: no auth --------------------------------------------------------------
 
 
-async def test_t0_no_header_no_sender_lookup_once(
+async def test_t0_identity_options_control_lookup_and_never_downgrade_a_signer(
     nats_server: RunningServer, alice_signer: NkeySigner, evidence_for: EvidenceFor
 ) -> None:
     host = await nats.connect(nats_server.url)
@@ -368,23 +392,40 @@ async def test_t0_no_header_no_sender_lookup_once(
             )
         assert len(fake.seen) == 2
         assert all(s.header is None and s.sender is None for s in fake.seen)
-        await wait_for(lambda: len(probes) == 1, what="one $SYS.REQ.USER.INFO probe")
+        await wait_for(lambda: len(probes) == 2, what="one live identity probe per request")
         await caller.flush()
-        assert len(probes) == 1  # the lookup ran once per connection
+        assert len(probes) == 2
         recorder.write_json("probes.json", len(probes))
 
-        # A signer on a no-auth connection: NoIdentityError on the first iteration
-        # of a `signed` endpoint (a 0.3-style `any` endpoint just sends no header).
+        # Disabled and omitted identity are distinct from explicit default
+        # identity: neither performs lookup or sends a header.
+        await _drain(
+            Agent(
+                caller,
+                _info(PROMPT_SUBJECT),
+                identity=Identity(send_unsigned_claim=False),
+            ).prompt("disabled")
+        )
+        await _drain(Agent(caller, _info(PROMPT_SUBJECT)).prompt("omitted"))
+        await caller.flush()
+        assert len(probes) == 2
+        assert all(s.header is None and s.sender is None for s in fake.seen)
+
+        # A configured signer never degrades. Both strict and permissive
+        # endpoints fail before publication when live binding is unavailable.
         signed = _info(PROMPT_SUBJECT, min_sender_trust="signed")
         stream = Agent(caller, signed, identity=Identity(signer=alice_signer)).prompt("hi")
         with pytest.raises(NoIdentityError):
             await _drain(stream)
-        await _drain(
-            Agent(caller, _info(PROMPT_SUBJECT), identity=Identity(signer=alice_signer)).prompt(
-                "hi"
+        with pytest.raises(NoIdentityError):
+            await _drain(
+                Agent(
+                    caller,
+                    _info(PROMPT_SUBJECT),
+                    identity=Identity(signer=alice_signer),
+                ).prompt("hi")
             )
-        )
-        assert fake.seen[-1].header is None
+        assert len(fake.seen) == 4
         await fake.stop()
     finally:
         await host.close()
@@ -508,7 +549,11 @@ async def test_accounts_same_and_cross_account_signing(  # noqa: PLR0915 — one
     recorder.write_jsonl(
         "seen.jsonl",
         [
-            {"subject": s.subject, "sender": str(s.sender), "request_info": s.request_info}
+            {
+                "subject": s.subject,
+                "sender": str(s.sender),
+                "request_info_present": s.request_info is not None,
+            }
             for s in host.seen
         ],
     )

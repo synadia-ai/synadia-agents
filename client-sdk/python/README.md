@@ -92,6 +92,7 @@ asyncio.run(main())
 | `AgentInfo` | [`discovery.py`](src/synadia_ai/agents/discovery.py) | Pure-data record (parsed `$SRV.INFO` per §4.3). What `build_agent_info()` returns. |
 | `Liveness` | [`heartbeat.py`](src/synadia_ai/agents/heartbeat.py) | Frozen snapshot from `Agents.liveness(instance_id)`. |
 | `load_context_options` | [`context.py`](src/synadia_ai/agents/context.py) | Resolve a `nats` CLI context into kwargs for `nats.connect(...)`. |
+| `resolve_nats_connection_bundle` | [`connection_bundle.py`](src/synadia_ai/agents/connection_bundle.py) | Read connection auth once and optionally derive a signer from that exact snapshot. |
 | `Identity`, `signer_from_seed` / `signer_from_creds_file` / `signer_from_context` | [`identity/`](src/synadia_ai/agents/identity/) | Sender identity: sign every `prompt` / `status` with the connection's NKEY — see below. |
 | `Agents.self_id()`, `Agents.sign_sender` / `publish_signed` / `request_signed`, `Agents.resolve_sender` | [`agents.py`](src/synadia_ai/agents/agents.py) | The connection's own agent ID; signed publishes for any subject; the reverse lookup. |
 | `Agent.status()` | [`agent.py`](src/synadia_ai/agents/agent.py) | The §8.7 status probe (header attached) → `HeartbeatPayload`. |
@@ -100,54 +101,79 @@ asyncio.run(main())
 
 ## Sender identity
 
-The [sender-identity extension](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
-lets a receiving agent know *who* prompted it, verified per message:
+The optional sender-identity extension lets a receiving agent know *who*
+prompted it, verified per message:
 the caller attaches an `Agent-Sender` header that names its agent ID —
-the `(account, user)` NKEY pair the connection already has — and, with
+the `(account, user)` NKEY pair authenticated on that connection — and, with
 a signer, an ed25519 signature bound to the subject, the payload, a
 timestamp and a nonce. Nothing in it changes protocol `0.3`: an agent
 that implements the extension says so with `min_sender_trust` on its
-prompt endpoint (`agent.supports_sender_identity`), and a caller that
-has no identity simply sends no header.
+prompt endpoint (`agent.supports_sender_identity`). Identity is off when
+the `identity` argument is omitted.
 
 ```python
 import nats
-from synadia_ai.agents import Agents, Identity, signer_from_creds_file
+from synadia_ai.agents import Agents, Identity, resolve_nats_connection_bundle
 
-nc = await nats.connect(servers="tls://connect.ngs.global", user_credentials="~/.config/nats/user.creds")
-agents = Agents(
-    nc=nc,
-    identity=Identity(signer=signer_from_creds_file("~/.config/nats/user.creds"), name="claude-code"),
+bundle = resolve_nats_connection_bundle(
+    url="tls://connect.ngs.global",
+    creds="~/.config/nats/user.creds",
+    identity="signed",
 )
-print(await agents.self_id())   # "AABY….UAWW…" — 113 chars on NGS, "$G.U…" / "ACME.U…" on a config-file server
-async for msg in agent.prompt("hello"):
-    ...                         # the receiver sees a VerifiedSender
+nc = None
+try:
+    nc = await nats.connect(**bundle.connection_options)
+    agents = Agents(
+        nc=nc,
+        identity=Identity(signer=bundle.signer, name="claude-code"),
+    )
+    try:
+        print(await agents.self_id())
+    finally:
+        await agents.close()
+finally:
+    if nc is not None:
+        await nc.close()
+    bundle.wipe()               # after NATS closes; reconnect needs the snapshot
 ```
 
 What to know:
 
-- **The seed is handed in explicitly.** The SDK never reads credentials
-  out of the connection. `signer_from_seed` (an `SU…` seed, or a seed
-  file's contents), `signer_from_creds` / `signer_from_creds_file` (a
-  `.creds` file — the identity is then read from its JWT, without asking
-  the server) and `signer_from_context` (a `nats` CLI context) cover the
-  common cases; an HSM / KMS signer implements the `SenderSigner`
-  protocol (`sign` may be async). Runners should take the seed from a
-  **file** (`NATS_NKEY_SEED_FILE`, as the examples do), not from an
-  environment value every spawned tool process inherits.
-- **Without a signer** the SDK sends an unsigned *claim* when the
-  connection has an NKEY identity (`Identity(send_unsigned_claim=False)`
-  turns that off — a claim discloses your user NKEY to every receiver),
-  and nothing when it has none (no auth, password or token users →
-  `NoIdentityError`, whose message names the fix). An endpoint that
+- **Identity is opt-in.** Omit `identity` for no lookup and no header.
+  Pass `Identity()` explicitly for an unsigned claim, or use
+  `Identity(send_unsigned_claim=False)` for no automatic identity work.
+  An unsigned claim discloses your user NKEY to the receiver.
+- **Use the connection's credentials.** Prefer
+  `resolve_nats_connection_bundle(context=..., identity="signed")`, or its
+  `url=...` plus `creds=...` / `nkey=...` form. It reads the selected context
+  and credential file once, builds reconnect-safe NATS options, and derives
+  the signer from that exact snapshot. There is no separate identity
+  credential path. The older `load_context_options` and `signer_from_*`
+  helpers remain available for compatibility and advanced use, but do not
+  independently read the same mutable file for a new signed connection.
+  Before every signed send, the SDK compares the signer's user and account
+  with live `$SYS.REQ.USER.INFO`; a mismatch or unavailable binding fails
+  and never downgrades to unsigned or headerless delivery. An HSM / KMS
+  signer can implement `SenderSigner` (`sign` may be async).
+- **One bundle belongs to one connection.** Multiple `Agents` controllers
+  or sessions sharing that connection may reuse `bundle.signer`; it names
+  the NATS user, not an individual chat session. Close every controller,
+  close NATS, then call the idempotent `bundle.wipe()`. Do not wipe while
+  reconnect is possible. `bundle.connection_options` necessarily contains
+  authentication configuration: never log or serialize it. The bundle's
+  own `repr` / `str` are redacted.
+- An endpoint that
   declares `min_sender_trust: signed` fails early with
   `SenderSignatureRequiredError` at call time when no signer is
-  configured, and with the `self_id()` error on the first iteration when
-  the identity is unavailable.
-- **Cost.** One `$SYS.REQ.USER.INFO` round trip per connection (2 s
-  timeout at most, a permission violation fails at once), awaited by the
-  first request only; failures are memoised for 30 s and retried in the
-  background. A signed header is ~400 bytes and counts against
+  configured. The error exposes stable `code` (`401`), `description`
+  (`"signature required"`), and `subject` attributes, so callers do not
+  need to parse its message. With a signer, an unavailable identity raises
+  the `self_id()` error on the first iteration.
+- **Cost.** Each identity-bearing request performs a live
+  `$SYS.REQ.USER.INFO` lookup (2 s timeout at most; a permission violation
+  fails at once), because nats-py exposes no reconnect generation that
+  could safely invalidate a cached identity. Explicit diagnostic calls to
+  `self_id()` are memoised. A signed header is ~400 bytes and counts against
   `max_payload` (header framing included — `PayloadTooLargeError.header_bytes`).
   nats-py does **not** count headers in its own check, so the SDK's is
   the only guard before the server closes the connection with
@@ -173,6 +199,9 @@ What to know:
   `accept_sender` (`synadia-ai-agent-service` 0.5.0, whose `AgentService`
   classifies every prompt before the ack and hands the handler
   `stream.sender`).
+- **Only the request is signed.** Prompt response chunks and mid-stream
+  query replies are not independently authenticated; do not infer the
+  actor answering a query from the original prompt sender.
 - `scripts/whoami.py` prints what `self_id()` resolves for a connection
   (or why it resolves nothing).
 
@@ -216,18 +245,45 @@ See [`examples/README.md`](examples/README.md) for the full tour.
 ## Connecting to NATS in production
 
 For [Synadia Cloud](https://www.synadia.com/cloud/) or any self-hosted
-NATS that needs credentials, JWTs, or a non-default URL, use a `nats`
-CLI context and load its kwargs into `nats.connect`:
+NATS that needs credentials, JWTs, or a non-default URL, resolve a `nats`
+CLI context once. Identity is off by default, so ordinary connections do
+not expose a signer:
 
 ```python
 import nats
-from synadia_ai.agents import Agents, load_context_options
+from synadia_ai.agents import Agents, resolve_nats_connection_bundle
 
-nc = await nats.connect(**load_context_options("prod"))
-agents = Agents(nc=nc)
+bundle = resolve_nats_connection_bundle(context="prod")
+nc = None
+try:
+    nc = await nats.connect(**bundle.connection_options)
+    agents = Agents(nc=nc)
+    try:
+        ...
+    finally:
+        await agents.close()
+finally:
+    if nc is not None:
+        await nc.close()
+    bundle.wipe()
 ```
 
-`load_context_options(...)` reads
+Pass `identity="signed"` and configure `Identity(signer=bundle.signer)`
+when outgoing requests should carry signed sender identity. Signed mode
+fails clearly for anonymous, token, user/password, or JWT-without-seed
+authentication; it never silently sends unsigned requests. URL mode is
+also available:
+
+```python
+bundle = resolve_nats_connection_bundle(
+    url="tls://connect.example.com",
+    creds="~/user.creds",  # or: nkey="~/user.nk"
+    identity="signed",
+)
+```
+
+`load_context_options(...)` remains available as the compatibility helper
+when a connection-only dict is all you need. It reads
 `~/.config/nats/context/<name>.json` — URL, creds file, nkey seed
 file, token, user/password, inbox prefix are all honored. See
 [`CLAUDE.md`](CLAUDE.md#connecting-to-nats) for the full field-by-field

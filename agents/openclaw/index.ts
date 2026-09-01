@@ -1,4 +1,8 @@
-import type { ChannelPlugin, OpenClawPluginApi, PluginRuntime } from "openclaw/plugin-sdk/core";
+import type {
+  ChannelPlugin,
+  OpenClawPluginApi,
+  PluginRuntime,
+} from "openclaw/plugin-sdk/core";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 import { natsPlugin } from "./src/channel.js";
 import { setNatsRuntime } from "./src/runtime.js";
@@ -33,7 +37,13 @@ let bootstrapAttempted = false;
 function ensureNatsChannelConfig(runtime: PluginRuntime): void {
   if (bootstrapAttempted) return;
   try {
-    const cfg = runtime.config.loadConfig() as Record<string, unknown>;
+    // OpenClaw 2026.8 replaced direct load/write methods with current/mutate.
+    // Use the new focused mutation API when present and retain the legacy path
+    // for the older supported host releases.
+    const configApi = runtime.config as unknown as CompatConfigApi;
+    const cfg = (configApi.current?.() ?? configApi.loadConfig?.()) as
+      Record<string, unknown> | undefined;
+    if (!cfg) throw new Error("OpenClaw config API is unavailable");
     const channels = (cfg.channels ?? {}) as Record<string, unknown>;
     const nats = (channels.nats ?? {}) as Record<string, unknown>;
     const accounts = (nats.accounts ?? {}) as Record<string, unknown>;
@@ -43,18 +53,48 @@ function ensureNatsChannelConfig(runtime: PluginRuntime): void {
       return;
     }
 
-    // Write skeleton so the gateway discovers this channel
-    accounts.default = accounts.default ?? {};
-    nats.accounts = accounts;
-    channels.nats = nats;
-    cfg.channels = channels;
     bootstrapAttempted = true;
-    Promise.resolve(runtime.config.writeConfigFile(cfg as Record<string, unknown>))
+    const write = configApi.mutateConfigFile
+      ? configApi.mutateConfigFile({
+          afterWrite: { mode: "auto" },
+          mutate: (draft) => applyNatsChannelSkeleton(draft),
+        })
+      : configApi.writeConfigFile
+        ? configApi.writeConfigFile(applyNatsChannelSkeleton(cfg))
+        : Promise.reject(new Error("OpenClaw config write API is unavailable"));
+    Promise.resolve(write)
       .then(() => console.log("[nats] created default channel config entry"))
-      .catch((err) => console.warn(`[nats] could not persist channel config skeleton: ${err}`));
+      .catch((err) =>
+        console.warn(
+          `[nats] could not persist channel config skeleton: ${err}`,
+        ),
+      );
   } catch (err) {
     console.warn(`[nats] could not ensure channel config: ${err}`);
   }
+}
+
+interface CompatConfigApi {
+  current?: () => unknown;
+  loadConfig?: () => unknown;
+  mutateConfigFile?: (params: {
+    afterWrite: { mode: "auto" };
+    mutate: (draft: Record<string, unknown>) => void;
+  }) => Promise<unknown>;
+  writeConfigFile?: (cfg: Record<string, unknown>) => Promise<unknown>;
+}
+
+function applyNatsChannelSkeleton(
+  cfg: Record<string, unknown>,
+): Record<string, unknown> {
+  const channels = (cfg.channels ?? {}) as Record<string, unknown>;
+  const nats = (channels.nats ?? {}) as Record<string, unknown>;
+  const accounts = (nats.accounts ?? {}) as Record<string, unknown>;
+  accounts.default ??= {};
+  nats.accounts = accounts;
+  channels.nats = nats;
+  cfg.channels = channels;
+  return cfg;
 }
 
 export { natsPlugin } from "./src/channel.js";

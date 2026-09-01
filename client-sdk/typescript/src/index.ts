@@ -261,6 +261,16 @@ export {
   type NatsContextFile,
 } from "./context.js";
 
+// One-snapshot connection credentials + optional sender signer.
+export {
+  resolveNatsConnectionBundle,
+  type NatsConnectionBundle,
+  type NatsConnectionSource,
+  type NatsUrlConnectionSource,
+  type ResolveNatsConnectionBundleOptions,
+  type SignedNatsConnectionBundle,
+} from "./connection-bundle.js";
+
 // Opinionated reconnect defaults for agent runtimes — see #121.
 export { AGENT_RECONNECT_DEFAULTS, withAgentReconnectDefaults } from "./connect-defaults.js";
 

@@ -20,34 +20,43 @@ the TypeScript mirror of
 
 ## Environment variables
 
-The demos resolve their NATS connection the same way; neither is required (the
-default connects to a local server). They discover and prompt agents — no agent
-identity to set, so the identity vars (`SYNADIA_OWNER` / `SYNADIA_NAME`, legacy
-`NATS_AGENT_*`) used by the
-[host-side examples](../../../agent-sdk/typescript/examples/) don't apply here.
+The demos resolve their NATS connection the same way; none of these variables
+is required (the default connects to a local server). They do not set host
+`owner` / `name` fields, but can optionally sign their outgoing prompts as the
+NATS user that authenticated the connection.
 
-| Variable       | Default   | Purpose                                                                                                                   |
-| -------------- | --------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `NATS_CONTEXT` | _(unset)_ | Connect via a named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins when set. |
-| `NATS_URL`     | _(unset)_ | Connect via a raw URL; credentials in the userinfo are honored.                                                           |
+| Variable                         | Default   | Purpose                                                                                                                                                                 |
+| -------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NATS_CONTEXT`                   | _(unset)_ | Complete named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins over all direct URL/credential variables.                    |
+| `NATS_URL`                       | _(unset)_ | Direct connection URL; userinfo credentials are honored.                                                                                                                |
+| `NATS_NKEY_SEED_FILE`            | _(unset)_ | User-seed file used to authenticate the direct URL connection. Wins over creds when both are set.                                                                       |
+| `NATS_CREDS`, `NATS_CREDENTIALS` | _(unset)_ | Credentials file used to authenticate the direct URL connection. `NATS_CREDS` wins between the aliases.                                                                 |
+| `NATS_SENDER_IDENTITY`           | `off`     | `off` sends no identity header. `signed` derives the caller signer from the selected connection source; the context or direct credential file must contain a user seed. |
 
-When neither is set, the demos fall back to `nats://127.0.0.1:4222`.
+When no context or URL is set, the direct source falls back to
+`nats://127.0.0.1:4222` (and still uses a configured direct credential file).
 
-`_run-reference-agent.ts` additionally reads the sender-identity knobs (they
-merge into whichever connection path is active):
+Connection sources are atomic. A context supplies its own URL, authentication,
+and TLS settings; it is never combined with a direct credentials file. The
+shared connection bundle reads the selected source once and supplies both NATS
+authentication and, only in signed mode, the signer. There is no second
+identity credential, and the default mode performs no identity lookup.
 
-| Variable                           | Default   | Purpose                                                                                                                      |
-| ---------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `NATS_NKEY_SEED_FILE`              | _(unset)_ | Path to a user seed file (`SU…`): authenticates the connection **and** signs `id_sig`. A file on purpose — not an env value. |
-| `NATS_CREDS`                       | _(unset)_ | Path to a credentials file (JWT + seed); same effect.                                                                        |
-| `REFERENCE_AGENT_MIN_SENDER_TRUST` | `any`     | `any` or `signed` — what the prompt endpoint requires of callers.                                                            |
+`_run-reference-agent.ts` additionally reads the inbound trust policy. Like the
+other examples, credentials authenticate its connection without implicitly
+enabling identity. Set `NATS_SENDER_IDENTITY=signed` to opt into signed
+registration for either a context or direct credential source.
+
+| Variable                           | Default | Purpose                                                           |
+| ---------------------------------- | ------- | ----------------------------------------------------------------- |
+| `REFERENCE_AGENT_MIN_SENDER_TRUST` | `any`   | `any` or `signed` — what the prompt endpoint requires of callers. |
 
 Its echo ends with `sender: <id> (<trust>)` only when a sender was classified,
 e.g. `demo agent received your prompt. sender: $G.UCDU… (verified user, claimed account)`;
 the identity is printed on its own line after the `reference agent listening on …` marker.
 
 `_run-client-probe.ts` reads `NATS_URL` only (never `NATS_CONTEXT`) plus the
-same `NATS_NKEY_SEED_FILE` / `NATS_CREDS` knobs to authenticate the connection.
+same direct nkey/creds knobs to authenticate the connection.
 With `--signed` the same file also signs the prompt's `Agent-Sender`, and a
 first NDJSON line `{"type":"identity","id":"<account>.<user>"}` precedes the
 chunks (not counted in `done.chunks`); without `--signed` the probe sends no
@@ -59,7 +68,7 @@ request surfaces on stderr as `{"type":"error","name":"ServiceError","code":401,
 
 ```sh
 # Build the SDK once, then run a demo. Connection resolution:
-#   $NATS_CONTEXT  >  $NATS_URL  >  nats://127.0.0.1:4222
+#   $NATS_CONTEXT > direct $NATS_URL + credential > localhost
 bun install && bun run build
 
 # Terminal 1 — start an agent for the demos to talk to:
@@ -70,6 +79,12 @@ bun examples/_run-reference-agent.ts
 bun examples/01-discover.ts
 bun examples/02-prompt-text.ts "say hello in five words"
 NATS_CONTEXT=my-context bun examples/02-prompt-text.ts "hello"
+# sign prompts from the same credentials used to connect:
+NATS_URL=tls://connect.ngs.global NATS_CREDS=./user.creds \
+  NATS_SENDER_IDENTITY=signed bun examples/02-prompt-text.ts "hello"
+
+# Focused connection-source/lifecycle tests:
+npx vitest run --config examples/_vitest.config.ts
 ```
 
 ## Notes
@@ -84,7 +99,8 @@ NATS_CONTEXT=my-context bun examples/02-prompt-text.ts "hello"
   test asserts on the NDJSON lines (one per decoded chunk, then
   `{"type":"done","chunks":N}`). It honours `NATS_URL` only — never
   `NATS_CONTEXT` — so a test run cannot pick up your selected context.
-  `--signed` (with `NATS_NKEY_SEED_FILE` / `NATS_CREDS`) is the signed leg.
+  `--signed` (with `NATS_NKEY_SEED_FILE`, `NATS_CREDS`, or
+  `NATS_CREDENTIALS`) is the signed leg.
 - **`06-chat.ts`** reads as a real conversation only against a _stateful_ agent —
   under v0.3 one chat = one session = one subject. The bundled reference agent is
   stateless, so it replies to each turn independently; it's still the simplest

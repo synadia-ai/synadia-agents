@@ -1,4 +1,5 @@
 import type { NatsConnection } from "@nats-io/nats-core";
+import type { NatsConnectionBundle } from "@synadia-ai/agents";
 import type { AgentService } from "@synadia-ai/agent-service";
 import { CodexAppServerClient } from "./codex-app-server-client.js";
 import { EndpointRegistry, type EndpointRegistryEntry } from "./endpoint-registry.js";
@@ -17,6 +18,7 @@ export interface CodexSessionManagerOptions {
   readonly nc: NatsConnection;
   readonly config: CodexChannelConfig;
   readonly version: string;
+  readonly connectionBundle?: NatsConnectionBundle;
   readonly registry?: EndpointRegistry;
   readonly clientFactory?: CodexEndpointClientFactory;
   readonly turnTimeoutMs?: number;
@@ -199,6 +201,7 @@ export class CodexSessionManager {
         nc: this.#opts.nc,
         config,
         version: this.#opts.version,
+        ...(this.#opts.connectionBundle ? { connectionBundle: this.#opts.connectionBundle } : {}),
         client: scopedClient,
         extraMetadata: {
           codex_mode: "manager",

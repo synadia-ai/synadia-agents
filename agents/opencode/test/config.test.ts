@@ -3,12 +3,14 @@ import { DEFAULT_CONFIG_PATH, loadConfigFromSources, parseArgs, renderConfigTemp
 
 describe("config", () => {
   test("parses CLI flags", () => {
-    const flags = parseArgs(["start", "--owner", "alice", "--session", "project-main", "--base-url", "http://127.0.0.1:4096", "--permission-policy", "reject"]);
+    const flags = parseArgs(["start", "--owner", "alice", "--session", "project-main", "--base-url", "http://127.0.0.1:4096", "--permission-policy", "reject", "--sender-identity", "signed", "--min-sender-trust", "signed"]);
     expect(flags.command).toBe("start");
     expect(flags.owner).toBe("alice");
     expect(flags.name).toBe("project-main");
     expect(flags.baseUrl).toBe("http://127.0.0.1:4096");
     expect(flags.permissionPolicy).toBe("reject");
+    expect(flags.senderIdentity).toBe("signed");
+    expect(flags.minSenderTrust).toBe("signed");
   });
 
   test("does not expose a fake custom OpenCode binary path knob", () => {
@@ -42,6 +44,8 @@ describe("config", () => {
     expect(cfg.opencode.baseUrl).toBe("http://cli.example");
     expect(cfg.opencode.mode).toBe("attached");
     expect(cfg.opencode.permissionPolicy).toBe("reject");
+    expect(cfg.nats.senderIdentity).toBe("off");
+    expect(cfg.agent.minSenderTrust).toBe("any");
   });
 
   test("identity chain: per-agent beats fleet-wide beats file; SYNADIA_OPENCODE_NAME beats _SESSION", () => {
@@ -102,6 +106,8 @@ describe("config", () => {
   test("rejects invalid numeric config values", () => {
     const file = `[opencode]\nport = nope\n`;
     expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "alice" }, readFile: () => file, cwd: "/tmp/project-main" })).toThrow("opencode.port must be a positive number");
+    expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "alice", NATS_SENDER_IDENTITY: "auto" }, readFile: () => "", cwd: "/tmp/project-main" })).toThrow("nats.sender_identity must be off or signed");
+    expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "alice", NATS_MIN_SENDER_TRUST: "trusted" }, readFile: () => "", cwd: "/tmp/project-main" })).toThrow("agent.min_sender_trust must be any or signed");
   });
 
   test("renders a config template", () => {
@@ -110,6 +116,8 @@ describe("config", () => {
     expect(template).toContain("[agent]");
     expect(template).toContain("[opencode]");
     expect(template).toContain('permission_policy = "query"');
+    expect(template).toContain('sender_identity = "off"');
+    expect(template).toContain('min_sender_trust = "any"');
     expect(DEFAULT_CONFIG_PATH).toContain("opencode-nats-channel.toml");
   });
 });

@@ -35,7 +35,6 @@ from examples._connect_cli import (
     add_connection_flags,
     add_identity_flags,
     connect_from_cli,
-    signer_from_cli,
 )
 from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
@@ -93,27 +92,37 @@ async def main() -> None:
         )
         sys.exit(1)
 
-    nc = await connect_from_cli(args)
+    connection = await connect_from_cli(args)
 
-    service = AgentService(
-        agent="openrouter",
-        owner=args.owner,
-        session_name=args.session_name,
-        nc=nc,
-        description=f"LLM agent — answers prompts with OpenRouter '{MODEL}'",
-        heartbeat_interval_s=args.heartbeat_interval,
-        # Sender identity: --nkey / --creds ($NATS_NKEY_SEED_FILE / $NATS_CREDS)
-        # sign the registration's id_sig; without them the identity keys are
-        # registered unsigned when the connection has an NKEY identity.
-        identity=ServiceIdentity(signer=signer_from_cli(args)),
-    )
+    try:
+        service = AgentService(
+            agent="openrouter",
+            owner=args.owner,
+            session_name=args.session_name,
+            nc=connection.nc,
+            description=f"LLM agent — answers prompts with OpenRouter '{MODEL}'",
+            heartbeat_interval_s=args.heartbeat_interval,
+            identity=(
+                ServiceIdentity(signer=connection.signer) if connection.signer is not None else None
+            ),
+        )
+    except BaseException:
+        await connection.close()
+        raise
 
     async def handler(envelope: Envelope, stream: PromptStream) -> None:
         async for token in openrouter_tokens(envelope.prompt):
             await stream.send(token)
 
-    service.on_prompt(handler)
-    await service.start()
+    try:
+        service.on_prompt(handler)
+        await service.start()
+    except BaseException:
+        try:
+            await service.stop()
+        finally:
+            await connection.close()
+        raise
     print(f"openrouter agent listening on {service.subject.prompt}")
     print(f"prompting model '{MODEL}' via OpenRouter")
     print("press Ctrl+C to stop")
@@ -126,8 +135,10 @@ async def main() -> None:
         await stop.wait()
     finally:
         print("\nshutting down…")
-        await service.stop()
-        await nc.close()
+        try:
+            await service.stop()
+        finally:
+            await connection.close()
 
 
 if __name__ == "__main__":

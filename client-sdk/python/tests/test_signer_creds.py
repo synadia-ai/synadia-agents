@@ -111,6 +111,17 @@ def test_signer_redacts_and_wipes(identity_keys: dict[str, NkeyUser]) -> None:
     assert s.public_key == alice.public  # cached; the seed is gone
 
 
+def test_signer_wipe_drops_credentials_jwt(identity_keys: dict[str, NkeyUser]) -> None:
+    alice = identity_keys["alice"]
+    jwt = fake_jwt({"sub": alice.public, "iss": ACCOUNT_A})
+    signer = signer_from_creds(creds_text(jwt, alice.seed))
+    assert signer.jwt == jwt
+    signer.wipe()
+    assert signer.jwt is None
+    with pytest.raises(IdentityError, match="wiped"):
+        signer.sign(b"x")
+
+
 def test_parse_creds_and_jwt(identity_keys: dict[str, NkeyUser]) -> None:
     alice = identity_keys["alice"]
     jwt = fake_jwt({"sub": alice.public, "iss": ACCOUNT_A, "nats": {"type": "user"}})

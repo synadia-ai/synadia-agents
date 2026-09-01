@@ -12,11 +12,17 @@ lockstep:
 | `client-sdk/typescript/` | `@synadia-ai/agents` | Caller side — discover, prompt, stream. Most consumers want only this. |
 | `agent-sdk/typescript/` | `@synadia-ai/agent-service` | Host side — `AgentService`, `ReferenceAgent`, server-side wire helpers. Depends on the caller package. |
 
-Inside the monorepo every consumer (`agents/*`, `examples/*`) refers to
-both packages via `file:` links in its `package.json`. Bun **copies**
-those links at install time rather than symlinking, so an edit to
-either SDK is invisible to a consumer until that consumer's install is
-refreshed against a freshly built `dist/`.
+Inside the monorepo the dependency state is deliberately mixed. Most
+consumers (`agents/*`, `examples/*`) use `file:` links while some, such
+as `agents/acp`, `agents/codex`, and `agents/opencode`, may point at the
+currently published SDKs and receive branch artifacts as a CI overlay.
+`agents/claude-code` is excluded from `devmode.sh` because its
+marketplace subtree must be staged explicitly; during coordinated
+development it may temporarily use branch-local SDK inputs. These are
+development inputs, not publishable manifests. For `file:` consumers,
+Bun **copies** those links at install time rather than symlinking, so an
+SDK edit is invisible until the consumer is refreshed against a newly
+built `dist/`.
 
 The same applies inside `agent-sdk/typescript/` itself: it depends on
 `@synadia-ai/agents` via `file:`, so its own `node_modules` carries a
@@ -84,11 +90,14 @@ bun agent-sdk/typescript/examples/01-echo.ts
 ## Installing extension-style agent plugins locally (PI, OpenClaw, Claude Code)
 
 `agents/pi/`, `agents/openclaw/`, and `agents/claude-code/` are
-extension/plugin packages that get loaded by their host application
-(`pi`, `openclaw`, the Claude Code MCP runtime). When the host loads
-the extension it follows the `file:` link in the extension's
-`package.json` back to the SDK source — so both SDKs need a current
-`dist/` when the extension is installed.
+extension/plugin packages loaded by their host application (`pi`,
+`openclaw`, or the Claude Code MCP runtime). PI and OpenClaw follow
+their branch-local SDK links, so both SDKs need a current `dist/` when
+the extension is installed. Claude Code is different: the marketplace
+runs the committed self-contained `runtime/server.js`; it does not run
+`bun install` at startup. To exercise branch SDK changes there, install
+the packed branch SDK artifacts, rebuild the runtime, and run the
+bundle verification described in `agents/claude-code/README.md`.
 
 Other agent packages in `agents/`, including `agents/flue/`,
 `agents/eve/`, `agents/opencode/`, and `agents/codex/`, run as
@@ -159,90 +168,146 @@ CI runs the same shape — see
 [`.github/workflows/client-sdk-typescript.yml`](.github/workflows/client-sdk-typescript.yml)
 and [`.github/workflows/agent-sdk-typescript.yml`](.github/workflows/agent-sdk-typescript.yml).
 
-## Releasing the SDKs
+## Local dependency wiring helper
 
-`main` keeps `file:` links between consumers and the SDK packages so
-contributors editing the SDK see their changes live in the
-agents/examples without any flip step. That's also why a fresh `npm
-publish` of any consumer would ship `file:` refs that break for npm
-users — published tarballs need `^semver` instead. The
-[`devtools/devmode.sh`](devtools/devmode.sh) script bridges the two
-states.
+[`devtools/devmode.sh`](devtools/devmode.sh) is a convenience for local
+development. It mutates checkout manifests between `file:` links and
+`^semver` SDK ranges and may refresh locks with an ordinary `bun
+install`. It is **not release tooling**, and neither `off` nor
+`check-release` proves that an artifact is publishable.
 
 ```sh
-./devtools/devmode.sh status        # what's currently flipped where
-./devtools/devmode.sh off           # flip every tracked consumer to ^semver
-./devtools/devmode.sh on            # flip back to file: (the default state)
-./devtools/devmode.sh check-release # exit 0 iff every dep is at its SDK's ^semver
+./devtools/devmode.sh status        # inspect local wiring
+./devtools/devmode.sh off           # local registry-compatibility exercise
+./devtools/devmode.sh on            # restore local file: wiring where tracked
+./devtools/devmode.sh check-release # checks only the helper's ^semver state
 ```
 
-The script discovers consumers automatically — every `package.json`
-under `examples/`, `agents/`, `client-sdk/`, and `agent-sdk/` that
-depends on a tracked SDK gets flipped. Names listed in
-`devtools/.devmodeignore` are skipped (currently just `dspy`, which
-lives on `file:` permanently).
+The helper tracks only `@synadia-ai/agents` and
+`@synadia-ai/agent-service`. It does not cover Grok's dependency on ACP
+or any Python source override. Entries in `devtools/.devmodeignore`,
+including the Claude Code marketplace subtree, are not touched. A
+release must therefore use the clean staging flow below and validate
+the complete graph independently.
 
-### The release ladder (one cycle)
+## Releasing SDKs and integrations
 
-Order matters: caller `@synadia-ai/agents` first because the host SDK
-declares `^0.4.x` against it; agent harnesses and headless examples
-follow once both SDKs are on npm. Each `npm publish` is a separate
-user-approval gate — read the dry-run output before pulling the
-trigger.
+The authoritative rollout contract is
+[`docs/sdk-release-rollout-roadmap.md`](docs/sdk-release-rollout-roadmap.md).
+Release inputs come from a clean, reviewed commit, but publishable
+manifests and locks are generated in a separate clean staging directory.
+Never publish a checkout temporarily rewritten by `devmode.sh`, `npm pkg
+set`, or a CI artifact overlay.
+
+### Inputs required before publication
+
+- Record the source commit and freeze approved external dependencies,
+  build tools, runtimes, and release actions.
+- Measure and record the real dependency-cooldown duration, enforcement
+  point, and exact internal-package exception syntax. This is required
+  before the first registry publication; it does not block branch
+  implementation or local artifact rehearsal.
+- Choose candidate versions and confirm each one is absent from npm or
+  PyPI and from repository tags. Every changed package whose current
+  version already exists must be bumped. Never reuse a version whose
+  bytes reached a registry.
+- Verify the npm publisher and PyPI trusted-publisher configuration.
+  Every npm publication remains a separate explicit approval.
+
+### Dependency order
+
+Publish and stop on failure in this order:
+
+1. TypeScript caller SDK, `@synadia-ai/agents`.
+2. TypeScript host SDK, `@synadia-ai/agent-service`, selecting the exact
+   caller version.
+3. After both SDKs exist: ACP, Codex, OpenCode, Eve, Flue, OpenClaw, PI,
+   PI headless, and Claude Code headless. Their release manifests select
+   both SDKs by exact version.
+4. Grok Build after ACP, selecting the exact ACP version.
+5. The Claude Code marketplace subtree after its exact SDK inputs,
+   committed runtime bundle, lock, package manifest, and plugin
+   descriptor have been validated together.
+
+The Python order is caller SDK → AgentService SDK → DeerFlow, again with
+exact internal versions. The language ladders may proceed independently,
+but no dependent may pass a failed prerequisite.
+
+### Stage, validate, and build once
+
+The release staging process must:
+
+1. Copy the reviewed source into a clean directory and transform every
+   internal edge to an exact candidate version. It must cover the SDK
+   pair, all integrations and published headless packages, Grok → ACP,
+   and the Claude marketplace subtree.
+2. Create registry-only Python inputs by removing
+   `[tool.uv.sources]`/editable SDK overrides from staged projects and
+   selecting exact Python SDK versions.
+3. Remove or constrain `latest`, wildcard, empty, local, workspace, Git,
+   and editable dependency specifications. Generate immutable locks;
+   OpenClaw and PI receive their release locks only after their cyclic
+   development links have been replaced by registry versions.
+4. Run one cross-ecosystem graph validator over staged manifests and
+   locks. Fail on a missing/stale lock or any forbidden dependency, and
+   inspect package allowlists for unintended files.
+5. Install with `bun install --frozen-lockfile` and `uv sync --locked`.
+   Builds and tests must fail rather than rewrite a lock.
+6. Run each build or lifecycle build exactly once, then create each npm
+   tarball and Python wheel/sdist exactly once. Record SHA-256 digests,
+   package manifests, and provenance/SBOM evidence.
+7. Copy the artifacts to clean environments, install only from those
+   artifacts, and run identity-free, signed, strict-trust, package-import,
+   CLI/runtime, and integration smokes. Test both the Python wheel and
+   sdist without source/editable fallback.
+
+Do not use `npm publish --dry-run && npm publish` from a package
+directory: lifecycle hooks can rebuild between the inspection and the
+upload. Inspect and approve the already-created tarball, then publish
+that exact hashed file:
 
 ```sh
-# 1. Pre-flight: confirm versions, identity, and tarball shape.
-git status                                       # tree must be clean
-jq -r '.version' client-sdk/typescript/package.json
-jq -r '.version' agent-sdk/typescript/package.json
-npm whoami                                       # the @synadia-ai publish identity
-
-# 2. Build dist/ artifacts fresh.
-(cd client-sdk/typescript && bun install && bun run build)
-(cd agent-sdk/typescript  && bun install && bun run build)
-
-# 3. Flip to release mode.
-./devtools/devmode.sh off
-
-# 4. Publish caller, then host. Inspect each dry-run before publishing.
-(cd client-sdk/typescript && npm publish --dry-run && npm publish)
-(cd agent-sdk/typescript  && npm publish --dry-run && npm publish)
-
-# 5. Publish each consumer that needs to ship.
-#    Bundled (agents/openclaw, agents/pi) — `bun install` first so
-#    bundleDependencies can copy the SDKs into the tarball.
-(cd agents/openclaw && bun install && npm publish --dry-run && npm publish)
-(cd agents/pi       && bun install && npm publish --dry-run && npm publish)
-#    Plain plugin packages with Bun TypeScript entrypoints.
-(cd agents/opencode && bun install && npm publish --dry-run && npm publish)
-(cd agents/codex    && bun install && npm publish --dry-run && npm publish)
-(cd agents/eve      && bun install && npm publish --dry-run && npm publish)
-#    Plain (examples/pi-headless, examples/claude-code-headless) — the
-#    `prepack` hook builds dist/ on its own.
-(cd examples/pi-headless           && npm publish --dry-run && npm publish)
-(cd examples/claude-code-headless  && npm publish --dry-run && npm publish)
-
-# 6. Flip back to dev mode and commit any non-empty diff.
-./devtools/devmode.sh on
-git status
+npm publish /absolute/path/to/approved-package.tgz --tag next
 ```
 
-### Gotchas the script accounts for (so you don't trip over them)
+Use `next` for every npm candidate. Existing packages keep their old
+`latest` during aging; first-publish packages intentionally have no
+`latest` until cutover. The `next` tag is not a security quarantine—the
+normal cooldown still applies to the exact uploaded version.
 
-- **`agent-sdk/typescript`'s self-dep on caller.** Discovery scans
-  `agent-sdk/` and `client-sdk/` in addition to `examples/` and
-  `agents/`. Without that, the host SDK would publish with a `file:`
-  ref to caller, which breaks every npm consumer of the host.
-- **`bun install --silent` can spin on `agents/openclaw`.** Its
-  `peerDependencies: { openclaw: "" }` (empty version range) sends bun
-  into a 100%-CPU walk. Each per-consumer `bun install` is wrapped in
-  `timeout 60` (override with `BUN_INSTALL_TIMEOUT=…`); the script
-  prints a `⏱ timed out` line and continues.
-- **`^semver` `bun install` failures pre-publish are normal.** Before
-  the SDK pair is on npm, `devmode.sh off` flips the deps but the
-  follow-on `bun install` can't resolve `^0.4.0` against an empty
-  registry. The script treats those as best-effort; the package.json
-  flips themselves succeed and that's what `npm publish` reads.
+Python candidates are public immediately through the approved tag
+workflows. Those workflows must build, artifact-test, and publish the
+same wheel/sdist bytes with `uv --locked` semantics. If a quieter aging
+window is wanted, manually delete only the generated GitHub Release
+entry after confirming PyPI and recording its artifact digests. Keep
+the source tag and PyPI files; recreate the GitHub Release from the same
+tag and digests at cutover.
+
+Claude Code is not published to npm. Validate the exact marketplace
+subtree as the release artifact: synchronized `package.json` and
+`.claude-plugin/plugin.json` versions, no local dependency references,
+an immutable lock, a freshly verified committed `runtime/server.js`, and
+a clean marketplace install smoke.
+
+After every final artifact has aged, remove the temporary internal-only
+cooldown exception, repeat clean frozen registry installs under the
+normal policy, and verify recorded digests. Move `latest` to those
+already-published npm bytes; do not rebuild or republish at cutover.
+
+### Development-helper caveats
+
+- The host SDK's dependency on the caller and the caller's test-only
+  dependency on the host form a local cycle. Release staging must still
+  transform and validate both package manifests.
+- OpenClaw's current peer is `openclaw >=2026.5.4 <2027`; PI's is
+  `@earendil-works/pi-coding-agent >=0.84.0 <0.85.0`. Both are bounded,
+  and neither package has `bundleDependencies`. Their release locks must
+  be generated after exact registry SDK selection; do not work around
+  the local cycle by declaring the SDKs bundled.
+- Re-running `devmode.sh off` after it has already flipped every tracked
+  manifest does not refresh locks—it exits because nothing changed.
+- A successful helper `check-release` accepts `^semver`, ignores Grok,
+  Python, and Claude Code, and is therefore never a release gate.
 
 ## Troubleshooting
 
@@ -252,8 +317,8 @@ git status
 | `Cannot find module '.../agent-sdk/typescript/node_modules/@synadia-ai/agents/dist/index.cjs'` | Caller's `dist/` not present in agent-sdk's nested install | `(cd client-sdk/typescript && bun run build) && (cd agent-sdk/typescript && bun install)` |
 | Edits to SDK source aren't reflected when running an example or extension | Consumer's `node_modules` carries a stale copy | Rebuild the SDK(s) and re-`bun install` in the consumer |
 | `Failed to resolve entry for package "@synadia-ai/agents"` from vitest | Stale CI-style install without sibling SDK source | `bun install` in the sibling SDK directory |
-| `./devtools/devmode.sh off` hangs on `agents/openclaw` | bun's empty-string peer-dep walk | The script auto-times-out at 60 s; kill manually if you ran an older version |
-| `./devtools/devmode.sh off` reports `bun install` failures with `404` / `No version matching ^x.y.z` | Pre-publish — the SDKs aren't on npm yet | Expected; the package.json flips succeeded. Run again after `npm publish` to refresh lockfiles. |
+| Local Bun install hangs on the OpenClaw/PI SDK cycle | Both branch SDKs are connected by `file:` development edges | Use the branch artifact-overlay workflow for development. Generate the release lock only after staged manifests select exact registry SDKs. |
+| `devmode.sh check-release` passes but the graph validator rejects the package | The helper accepts `^semver` and covers only the SDK pair | Fix the clean staged manifest/lock; never publish the helper-mutated checkout. |
 
 ## Why not workspaces?
 

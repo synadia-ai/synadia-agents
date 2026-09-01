@@ -3,11 +3,13 @@ import { DEFAULT_CONFIG_PATH, loadConfigFromSources, parseArgs, renderConfigTemp
 
 describe("config", () => {
   test("parses CLI flags", () => {
-    const flags = parseArgs(["start", "--owner", "rene", "--name", "support", "--eve-base-url", "http://cli.example:2000"]);
+    const flags = parseArgs(["start", "--owner", "rene", "--name", "support", "--eve-base-url", "http://cli.example:2000", "--sender-identity", "signed", "--min-sender-trust", "signed"]);
     expect(flags.command).toBe("start");
     expect(flags.owner).toBe("rene");
     expect(flags.name).toBe("support");
     expect(flags.eveBaseUrl).toBe("http://cli.example:2000");
+    expect(flags.senderIdentity).toBe("signed");
+    expect(flags.minSenderTrust).toBe("signed");
   });
 
   test("CLI overrides env and defaults", () => {
@@ -33,6 +35,8 @@ describe("config", () => {
     expect(template).toContain("[agent]");
     expect(template).toContain("[eve]");
     expect(template).toContain('base_url = "http://127.0.0.1:2000"');
+    expect(template).toContain('sender_identity = "off"');
+    expect(template).toContain('min_sender_trust = "any"');
     expect(DEFAULT_CONFIG_PATH).toContain("eve-nats-channel.toml");
   });
 
@@ -43,6 +47,8 @@ describe("config", () => {
     expect(cfg.eve.askTimeoutS).toBe(120);
     expect(cfg.agent.subjectToken).toBe("eve");
     expect(cfg.agent.name).toBe("main");
+    expect(cfg.nats.senderIdentity).toBe("off");
+    expect(cfg.agent.minSenderTrust).toBe("any");
   });
 
   test("env owner overrides file owner and CLI owner overrides both", () => {
@@ -131,5 +137,7 @@ describe("config", () => {
       env: { USER: "rene" },
       readFile: () => file,
     })).toThrow("eve.ask_timeout_s must be a positive number");
+    expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "rene", NATS_SENDER_IDENTITY: "auto" }, readFile: () => "" })).toThrow("nats.sender_identity must be off or signed");
+    expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "rene", NATS_MIN_SENDER_TRUST: "trusted" }, readFile: () => "" })).toThrow("agent.min_sender_trust must be any or signed");
   });
 });

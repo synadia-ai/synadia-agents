@@ -3,9 +3,12 @@ name: CI — agents (TypeScript)
 # Runs the test suites for the TypeScript agent harnesses. Packages that
 # consume the published TS SDKs use semver ranges; older packages may still
 # use local file links, so SDK changes trigger this workflow too.
+# SDK tarballs here are branch-local overlays and may contain runner-local
+# dependency paths. These checks prove coordinated branch compatibility, not
+# the clean staged manifests/locks or immutable bytes required for release.
 on:
   push:
-    branches: [main]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "agents/pi/**"
       - "agents/openclaw/**"
@@ -14,6 +17,10 @@ on:
       - "agents/acp/**"
       - "agents/grok/**"
       - "agents/eve/**"
+      - "agents/flue/**"
+      - "agents/claude-code/**"
+      - "agents/open-agent/**"
+      - ".claude-plugin/**"
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
       - ".github/workflows/agents-typescript.yml"
@@ -26,6 +33,10 @@ on:
       - "agents/acp/**"
       - "agents/grok/**"
       - "agents/eve/**"
+      - "agents/flue/**"
+      - "agents/claude-code/**"
+      - "agents/open-agent/**"
+      - ".claude-plugin/**"
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
       - ".github/workflows/agents-typescript.yml"
@@ -49,62 +60,88 @@ jobs:
           tar -xzf nats-server.tar.gz --strip-components=1
           sudo mv nats-server /usr/local/bin/
           nats-server --version
-      # pi imports both SDKs via `file:` links, which resolve to each
-      # package's built `dist/` — so build them before installing pi.
-      - name: Build client-sdk
+      # Build the branch SDKs, then install the exact packed artifacts into
+      # pi. This exercises what a registry consumer receives and avoids Bun's
+      # cyclic local-file resolver.
+      - name: Build current client-sdk artifact
         working-directory: client-sdk/typescript
-        run: bun install && bun run build
-      - name: Build agent-sdk
+        run: |
+          npm install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk artifact
         working-directory: agent-sdk/typescript
-        run: bun install && bun run build
-      - name: Install pi
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm install
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Install pi from packed SDKs
         working-directory: agents/pi
-        run: bun install
-      - name: Unit tests (owner-token precedence + context TLS)
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm pkg set "dependencies.@synadia-ai/agent-service=file:$AGENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+      - name: Unit tests
         working-directory: agents/pi
-        run: bun test test/owner.test.ts test/context.test.ts
-      - name: Spec-compliance smoke (spawns its own nats-server)
+        run: bun test test/owner.test.ts test/context.test.ts test/prompt-queue.test.ts
+      - name: Identity-mode smoke (spawns its own nats-server)
         working-directory: agents/pi
-        run: bun test/smoke.mjs
+        run: bun run test:smoke
+      - name: Package contents
+        working-directory: agents/pi
+        run: npm pack --dry-run --json
 
   openclaw:
-    name: agents/openclaw (vitest)
+    name: agents/openclaw ${{ matrix.openclaw-version }} (build + test)
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest supported release plus a newer validated release. The peer
+        # range remains bounded; testing arbitrary latest could move outside it.
+        openclaw-version: ["2026.5.4", "2026.8.1"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Build client-sdk
+      - name: Build current client-sdk artifact
         working-directory: client-sdk/typescript
-        run: npm install && npm run build
-      - name: Build agent-sdk
+        run: |
+          npm install
+          npm run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk artifact
         working-directory: agent-sdk/typescript
-        run: npm install && npm run build
-      # The `openclaw` peer is optional with an empty version range, so npm
-      # treats it as satisfied-by-absence: a plain `npm install`, `npm install
-      # --no-save openclaw`, and even `npm install openclaw` all leave it out,
-      # silently SKIPPING the account-resolution suite. Promote it to a real
-      # dependency (ephemeral on the CI checkout) so the full tree installs,
-      # then assert the subpath the tests import actually resolves — a broken
-      # peer fails the job instead of hollowing it out.
-      #
-      # Resolve the LATEST openclaw rather than pinning: this plugin's whole
-      # job is to track openclaw, so a breaking change to `plugin-sdk/core`
-      # SHOULD surface here (the resolve-assert guards presence; a broken API
-      # surfaces as a vitest failure). A pin silently rots — openclaw shipped
-      # 2026.6.5 -> 2026.6.6 within days of this workflow landing.
-      - name: Install openclaw deps + peer (latest)
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm install
+          npm run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      # The peer is optional, so install each matrix endpoint explicitly and
+      # assert the subpath used by the plugin resolves before tests begin.
+      - name: Install openclaw deps + peer
         working-directory: agents/openclaw
         run: |
-          OPENCLAW_VERSION="$(npm view openclaw version)"
-          echo "openclaw peer: $OPENCLAW_VERSION"
-          npm pkg set "dependencies.openclaw=${OPENCLAW_VERSION}"
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm pkg set "dependencies.@synadia-ai/agent-service=file:$AGENT_SDK_TGZ"
+          npm pkg set "dependencies.openclaw=${{ matrix.openclaw-version }}"
           npm install
           node -e "require.resolve('openclaw/plugin-sdk/core')"
-      - name: Tests (account resolution + protocol + context loader)
+      - name: Build
+        working-directory: agents/openclaw
+        run: npm run build
+      - name: Tests (configuration + connection bundle + protocol)
         working-directory: agents/openclaw
         run: npm test
+      - name: Package contents
+        working-directory: agents/openclaw
+        run: npm pack --dry-run --json
 
   opencode:
     name: agents/opencode (typecheck + package-safe smokes)
@@ -123,7 +160,7 @@ jobs:
       - name: Build current client-sdk
         working-directory: client-sdk/typescript
         run: |
-          bun install
+          npm install
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
@@ -132,7 +169,7 @@ jobs:
         run: |
           # CI-only: replace the relative file: link with an absolute tgz so the packed agent-service artifact resolves after install.
           npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
-          bun install
+          npm install
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
@@ -179,7 +216,7 @@ jobs:
       - name: Build current client-sdk
         working-directory: client-sdk/typescript
         run: |
-          bun install
+          npm install
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
@@ -188,7 +225,7 @@ jobs:
         run: |
           # CI-only: replace the relative file: link with an absolute tgz so the packed agent-service artifact resolves after install.
           npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
-          bun install
+          npm install
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
@@ -232,7 +269,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.3.14"
       - name: Install nats-server
         run: |
           curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
@@ -242,7 +279,7 @@ jobs:
       - name: Build current client-sdk
         working-directory: client-sdk/typescript
         run: |
-          bun install
+          npm install --no-package-lock --no-audit --no-fund
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
@@ -251,7 +288,7 @@ jobs:
         run: |
           # CI-only: replace the relative file: link with an absolute tgz so the packed agent-service artifact resolves after install.
           npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
-          bun install
+          npm install --no-package-lock --no-audit --no-fund
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
@@ -300,7 +337,7 @@ jobs:
       - name: Build current client-sdk
         working-directory: client-sdk/typescript
         run: |
-          bun install
+          npm install --no-package-lock --no-audit --no-fund
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
@@ -309,7 +346,7 @@ jobs:
         run: |
           # CI-only: replace the relative file: link with an absolute tgz so the packed agent-service artifact resolves after install.
           npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
-          bun install
+          npm install --no-package-lock --no-audit --no-fund
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
@@ -348,3 +385,168 @@ jobs:
       - name: Grok wrapper unit tests
         working-directory: agents/grok
         run: bun test
+
+  flue:
+    name: agents/flue (typecheck + tests + protocol smoke)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Build current client-sdk artifact
+        working-directory: client-sdk/typescript
+        run: |
+          npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk artifact
+        working-directory: agent-sdk/typescript
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Package contents
+        working-directory: agents/flue
+        run: npm pack --dry-run --json
+      # Install from the packed branch SDKs. Resolving both development
+      # `file:` links directly can deadlock Bun on the SDK dependency cycle.
+      - name: Install packed SDKs and dependencies
+        working-directory: agents/flue
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm pkg set "dependencies.@synadia-ai/agent-service=file:$AGENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+      - name: Typecheck
+        working-directory: agents/flue
+        run: bun run typecheck
+      - name: Unit tests
+        working-directory: agents/flue
+        run: bun test
+      - name: Protocol smoke
+        working-directory: agents/flue
+        run: |
+          nats-server > "$RUNNER_TEMP/flue-nats.log" 2>&1 &
+          nats_pid=$!
+          trap 'kill "$nats_pid" 2>/dev/null || true' EXIT
+          bun run smoke:protocol
+
+  claude-code:
+    name: agents/claude-code (bundle + identity modes + package shape)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Build current client-sdk artifact
+        working-directory: client-sdk/typescript
+        run: |
+          npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk artifact
+        working-directory: agent-sdk/typescript
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      # The committed branch manifest intentionally keeps local SDK links for
+      # development. The runtime bundle is committed from the exact packed SDK
+      # artifacts, so CI must reproduce and verify it from that same graph.
+      - name: Install packed SDKs and verify committed runtime bundle
+        working-directory: agents/claude-code
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm pkg set "dependencies.@synadia-ai/agent-service=file:$AGENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          git diff --exit-code -- runtime/server.js
+          bun run verify:bundle
+      - name: Validate plugin descriptors
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json', 'utf8'))"
+          node -e "JSON.parse(require('fs').readFileSync('agents/claude-code/.claude-plugin/plugin.json', 'utf8'))"
+      - name: Typecheck against packed SDKs
+        working-directory: agents/claude-code
+        run: bun run typecheck
+      - name: Unit + identity-off + signed/strict tests
+        working-directory: agents/claude-code
+        env:
+          # Override the developer's configured context with the disposable
+          # broker; an empty context selects NATS_URL by design.
+          NATS_CONTEXT: ""
+          NATS_URL: nats://localhost:4222
+        run: |
+          nats-server > "$RUNNER_TEMP/claude-code-nats.log" 2>&1 &
+          nats_pid=$!
+          trap 'kill "$nats_pid" 2>/dev/null || true' EXIT
+          bun run test
+      - name: Package contents
+        working-directory: agents/claude-code
+        run: npm pack --dry-run --json
+
+  open-agent:
+    name: agents/open-agent (typecheck + tests)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Build current client-sdk artifact
+        working-directory: client-sdk/typescript
+        run: |
+          npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk artifact
+        working-directory: agent-sdk/typescript
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      # As with Flue, avoid Bun's cyclic local-link resolver and install the
+      # exact packed branch SDK artifacts instead.
+      - name: Install packed SDKs and dependencies
+        working-directory: agents/open-agent
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm pkg set "dependencies.@synadia-ai/agent-service=file:$AGENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+      - name: Typecheck
+        working-directory: agents/open-agent
+        run: bun run typecheck
+      # The bridge integration suite's NatsServerProcess harness starts and
+      # stops the nats-server binary installed above; no shared broker is
+      # started by this job.
+      - name: Unit and integration tests
+        working-directory: agents/open-agent
+        run: bun test test/

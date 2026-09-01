@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 import { connect as natsConnect } from "@nats-io/transport-node";
+import { withAgentReconnectDefaults } from "@synadia-ai/agents";
 import { readFileSync } from "node:fs";
 import { FakeAcpBridgeClient, type AcpBridgeClient } from "./bridge.js";
 import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from "./config.js";
 import { runDoctor } from "./doctor.js";
 import { ManagedAcpRuntime } from "./managed-runtime.js";
-import { resolveNatsOptions } from "./nats.js";
+import { resolveNatsBundle } from "./nats.js";
 import { createAcpAgentService } from "./service.js";
 
 /**
@@ -32,20 +33,47 @@ export async function runCli(argv: readonly string[]): Promise<void> {
   if (command !== "start") throw new Error(`unknown command ${command}`);
 
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-  const client = await createBridgeClient(config);
-  const nc = await natsConnect(await resolveNatsOptions(config.nats));
-  const service = createAcpAgentService({
-    nc,
-    config,
-    version: pkg.version ?? "0.0.0",
-    client,
+  const connectionBundle = await resolveNatsBundle(config.nats);
+  const nc = await natsConnect(withAgentReconnectDefaults(connectionBundle.connectionOptions)).catch((error: unknown) => {
+    connectionBundle.wipe();
+    throw error;
   });
-  await service.start();
-  console.log(`acp-agent (${config.acp.agentId}, ${config.acp.mode}) listening on ${service.subject.prompt}`);
-  await waitForShutdown();
-  await service.stop();
-  await client.close?.();
-  await nc.drain();
+  let client: AcpBridgeClient | undefined;
+  let service: ReturnType<typeof createAcpAgentService> | undefined;
+  try {
+    client = await createBridgeClient(config);
+    service = createAcpAgentService({
+      nc,
+      config,
+      version: pkg.version ?? "0.0.0",
+      client,
+      connectionBundle,
+    });
+    await service.start();
+    console.log(`acp-agent (${config.acp.agentId}, ${config.acp.mode}) listening on ${service.subject.prompt}`);
+    await waitForShutdown();
+  } finally {
+    try {
+      try {
+        await service?.stop();
+      } finally {
+        await client?.close?.();
+      }
+    } finally {
+      await drainAndWipeConnection(nc, connectionBundle);
+    }
+  }
+}
+
+export async function drainAndWipeConnection(
+  nc: { drain(): Promise<void> },
+  connectionBundle: { wipe(): void },
+): Promise<void> {
+  try {
+    await nc.drain();
+  } finally {
+    connectionBundle.wipe();
+  }
 }
 
 export function resolveCliCommand(argv: readonly string[]): string {

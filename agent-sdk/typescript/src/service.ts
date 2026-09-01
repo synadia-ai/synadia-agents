@@ -34,9 +34,10 @@
 //     (claimed / absent) — and hands the classified sender to the handler
 //     as `PromptResponse.sender` (a `VerifiedSender.resolve()` is bound to
 //     a TTL-cached `$SRV.INFO` reverse lookup, `resolveTtlMs`). `status`
-//     is classified and logged, never rejected. Registers `user_nkey` /
-//     `account` / `id_sig` when the connection has an identity (and a
-//     signer), and **always** advertises `min_sender_trust` on the prompt
+//     is classified and logged, never rejected. When host identity is
+//     explicitly configured it registers `user_nkey` / `account` and, with
+//     a live-bound signer, `id_sig`; omission performs no self lookup and
+//     registers none of those keys. It **always** advertises `min_sender_trust` on the prompt
 //     endpoint. `operatorAttested` (off by default) adds the
 //     `Nats-Request-Info` cross-check of a closed endpoint.
 //
@@ -55,10 +56,8 @@ import {
   formatHumanBytes,
   formatSender,
   IDENTITY_METADATA_KEYS,
-  IdentityMismatchError,
   MIN_SENDER_TRUST_KEY,
   newInbox,
-  normalizeAccountTokenPosition,
   normalizeResolveTtlMs,
   parseHumanBytes,
   PROMPT_ENDPOINT_NAME,
@@ -120,7 +119,11 @@ const DEFAULT_VERSION = "0.0.1";
 
 /** Sender-identity options of the host: the signer for `id_sig`. The host never sends `Agent-Sender`. */
 export interface AgentServiceIdentityOptions {
-  /** Signs `id_sig` (`AGENT-ID-V1`) over the prompt subject. Must hold the connection's user NKEY. */
+  /**
+   * Signs `id_sig` (`AGENT-ID-V1`) over the prompt subject. Must hold the
+   * live connection's user NKEY; a credentials JWT must also carry that
+   * connection's user and account.
+   */
   readonly signer?: SenderSigner;
 }
 
@@ -205,13 +208,12 @@ export interface AgentServiceOptions {
    */
   readonly logger?: Logger;
   /**
-   * Sender-identity: the host's own signer. With it, `start()` registers
-   * `id_sig` next to `user_nkey` / `account`; without it the identity
-   * keys are a display-grade claim (still registered when the connection
-   * has an identity). `start()` throws `IdentityMismatchError` when the
-   * signer's key is not the connection's user; on `NoIdentityError` /
-   * `IdentityUnavailableError` it logs and starts without identity
-   * metadata (verification of *senders* needs no host identity).
+   * Sender-identity registration. Omit this option for no self lookup and
+   * no `user_nkey` / `account` / `id_sig` metadata. An explicit empty
+   * object requests unsigned registration metadata. With a signer,
+   * `start()` registers `id_sig` only after the signer's user and account
+   * match the live connection; any binding failure is fatal. Verification
+   * of incoming senders does not require host identity.
    */
   readonly identity?: AgentServiceIdentityOptions;
   /**
@@ -225,18 +227,6 @@ export interface AgentServiceOptions {
    * `ts + replayWindowMs`. Default 30 000.
    */
   readonly replayWindowMs?: number;
-  /**
-   * 1-based position of the caller's account token the server inserts
-   * into the arrival subject when this agent sits behind a service export
-   * with `account_token_position`. Precondition: the inserted token is a
-   * server stamp only on a **closed** endpoint. Note `AgentService` hosts
-   * five-token `agents.{verb}.a.o.n` subjects, which such an export turns
-   * into six-token arrivals its subscription never sees — the option is
-   * validated and passed to classification for a future subject override;
-   * today a service behind such an export uses `verifySenderHeader` on its
-   * own subscription.
-   */
-  readonly accountTokenPosition?: number;
   /**
    * Acceptance hook — runs for every classified `prompt` request (never
    * for `status`), after classification and before the ack. `false` for a
@@ -259,8 +249,8 @@ export interface AgentServiceOptions {
    * server's stamp). The SDK cannot verify that promise. With it on, a
    * verified header whose signed `account` / `user` disagree with the
    * stamp is refused (`401`), a present but unparseable stamp is refused,
-   * and agreement on `acc` — or the `accountTokenPosition` cross-check —
-   * surfaces as `sender.accountAttested === true` (`formatSender` then
+   * and agreement on `acc` surfaces as
+   * `sender.accountAttested === true` (`formatSender` then
    * renders `(verified)`). An absent stamp is compared to nothing.
    * Unsigned claims are never cross-checked.
    */
@@ -449,7 +439,6 @@ export class AgentService {
     if (!(replayWindowMs > 0)) {
       throw new Error("AgentService: replayWindowMs must be > 0");
     }
-    const accountTokenPosition = normalizeAccountTokenPosition(options.accountTokenPosition);
     const resolveTtlMs = normalizeResolveTtlMs(options.resolveTtlMs);
     if (options.operatorAttested !== undefined && typeof options.operatorAttested !== "boolean") {
       throw new Error("AgentService: operatorAttested must be a boolean");
@@ -470,7 +459,6 @@ export class AgentService {
     this.#gate = new SenderGate({
       minSenderTrust,
       replayWindowMs,
-      ...(accountTokenPosition !== undefined ? { accountTokenPosition } : {}),
       ...(options.acceptSender !== undefined ? { acceptSender: options.acceptSender } : {}),
       logger: this.#logger,
       operatorAttested: options.operatorAttested ?? false,
@@ -479,8 +467,9 @@ export class AgentService {
   }
 
   /**
-   * The agent ID this instance registered (`user_nkey` + `account`), or
-   * `undefined` when the connection has no identity. Set by `start()`.
+   * The agent ID this instance registered (`user_nkey` + `account`). Set by
+   * `start()`; `undefined` before start, when host identity was omitted, or
+   * when an optional unsigned lookup could not establish an identity.
    */
   get identity(): AgentId | undefined {
     return this.#identity;
@@ -594,19 +583,26 @@ export class AgentService {
       }
     }
 
-    // Sender identity: learn the connection's own agent ID once. A signer
-    // that does not match the connection's user is a configuration error
-    // (throw); a connection without an identity starts without the
-    // metadata keys — verifying *senders* needs no host identity.
+    // Sender identity is opt-in. Omission performs no lookup and registers
+    // no self-identity metadata. Explicit unsigned identity is best-effort;
+    // a configured signer must bind to the live user/account or startup
+    // fails, never silently downgrades.
     const signer = this.#options.identity?.signer;
+    this.#identity = undefined;
     let identity: AgentId | undefined;
-    try {
-      identity = await selfId(this.#options.nc, signer ? { signer } : {});
-    } catch (err) {
-      if (err instanceof IdentityMismatchError) throw err;
-      this.#logger.warn("AgentService: starting without identity metadata", {
-        reason: err instanceof Error ? err.message : String(err),
-      });
+    if (this.#options.identity !== undefined) {
+      try {
+        // TypeScript can safely share this memoised/in-flight lookup because
+        // its connection status iterator clears every source on reconnect.
+        // Python deliberately uses an uncached lookup because nats-py exposes
+        // no equivalent reconnect generation.
+        identity = await selfId(this.#options.nc, signer ? { signer } : {});
+      } catch (err) {
+        if (signer) throw err;
+        this.#logger.warn("AgentService: starting without identity metadata", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     this.#identity = identity;
 
@@ -745,10 +741,13 @@ export class AgentService {
         this.#options.session !== undefined ? { session: this.#options.session } : {},
       );
       msg.respond(encodeHeartbeatPayload(payload));
-    } catch (err) {
+    } catch {
+      this.#logger.error("status handler failed", {
+        subject: msg.subject,
+        error: "exception",
+      });
       try {
-        const desc = err instanceof Error ? err.message : String(err);
-        msg.respondError(500, sanitizeErrorDesc(`status handler error: ${desc}`));
+        msg.respondError(500, "status handler error");
       } catch {
         /* connection may already be gone */
       }
@@ -788,10 +787,10 @@ export class AgentService {
         return;
       }
       sender = admission.sender;
-    } catch (err) {
+    } catch {
       this.#logger.error("sender classification failed", {
         subject: msg.subject,
-        error: err instanceof Error ? err.message : String(err),
+        error: "exception",
       });
       try {
         msg.respondError(500, "sender classification error");
@@ -858,6 +857,10 @@ export class AgentService {
       // Stop keep-alive BEFORE the §9 error frame so an ack chunk can't
       // race in between the error and the terminator.
       stopKeepalive();
+      this.#logger.error("prompt handler failed", {
+        subject: msg.subject,
+        error: "exception",
+      });
       try {
         const desc = err instanceof Error ? err.message : String(err);
         const isProtocolError =
@@ -866,7 +869,7 @@ export class AgentService {
           err instanceof ProtocolError || (err instanceof Error && err.name === "ProtocolError");
         msg.respondError(
           isProtocolError ? 400 : 500,
-          sanitizeErrorDesc(isProtocolError ? desc : `handler error: ${desc}`),
+          isProtocolError ? sanitizeErrorDesc(desc) : "handler error",
         );
       } catch {
         /* connection may already be gone */

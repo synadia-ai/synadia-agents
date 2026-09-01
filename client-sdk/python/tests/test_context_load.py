@@ -417,6 +417,11 @@ def test_parse_url_hostless_url_rejected() -> None:
         parse_nats_url("nats://")
 
 
+def test_parse_url_whitespace_in_host_rejected() -> None:
+    with pytest.raises(NatsContextError, match="whitespace in host"):
+        parse_nats_url("not a nats url")
+
+
 def test_parse_url_ipv6_host_rebracketed() -> None:
     """``urlparse`` strips IPv6 brackets — we must put them back."""
     opts = parse_nats_url("nats://[::1]:4222")
@@ -452,6 +457,15 @@ def test_parse_url_ws_and_wss_schemes() -> None:
     # bare ws/wss without userinfo
     ws_bare = parse_nats_url("ws://host:9222")
     assert ws_bare == {"servers": ["ws://host:9222"]}
+
+    path = parse_nats_url("wss://tok@host:9222/nats/connect?tenant=acme")
+    assert path == {
+        "servers": ["wss://host:9222/nats/connect?tenant=acme"],
+        "token": "tok",
+    }
+
+    bare_query = parse_nats_url("ws://host:9222?route=one")
+    assert bare_query == {"servers": ["ws://host:9222/?route=one"]}
 
 
 def test_parse_url_defaults_port_for_bare_nats_host() -> None:

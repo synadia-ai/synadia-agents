@@ -8,6 +8,42 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Added
+
+- `SenderSignatureRequiredError` exposes stable `code` (`401`),
+  `description` (`"signature required"`), and `subject` attributes for
+  handling local signed-target preflight failures without parsing a message.
+- `AgentSenderHeader.to_log_dict()` provides a structured-log view with
+  `nonce` and `sig` redacted. Those proof fields remain directly readable for
+  signing and wire serialization; generic dataclass reflection such as
+  `dataclasses.asdict()` must not be used for logging this type.
+- `resolve_nats_connection_bundle(...)` snapshots a selected `nats` CLI
+  context or direct URL plus `.creds` / nkey connection source exactly once.
+  `identity="off"` is the default and exposes no signer;
+  `identity="signed"` derives the signer from that same authentication
+  snapshot and fails clearly when the connection uses token, user/password,
+  JWT-without-seed, or anonymous authentication. The returned connection
+  options use captured JWT/signature callbacks for `.creds` reconnects, not
+  a mutable path; nkey files are normalized once before both connection auth
+  and signing. `wipe()` is idempotent and must run after the NATS connection
+  closes. Bundle representations are redacted; callers must still never log
+  the necessarily sensitive `connection_options` mapping.
+
+### Changed
+
+- Sender identity is now opt-in: omitting `identity` performs no lookup and
+  sends no `Agent-Sender` header; explicit `Identity()` enables unsigned
+  claims, and `send_unsigned_claim=False` performs no automatic identity
+  work.
+- Every identity-bearing request uses an uncached live
+  `$SYS.REQ.USER.INFO` answer. A configured signer's user and credentials-JWT
+  account must match that live connection; any failure is fatal and never
+  downgrades to unsigned or headerless delivery. Explicit diagnostic
+  `self_id()` calls remain memoised.
+- NATS URL errors redact token and user/password userinfo. URL and context
+  bundle resolution preserve WebSocket paths and query strings. The existing
+  `load_context_options` API and auth precedence remain compatible.
+
 ## [0.8.0] - 2026-08-29
 
 The caller side of the **sender-identity extension** (PR-P1 of the
@@ -17,8 +53,8 @@ identity plan). Every `prompt` / `status` request can now carry an
 ed25519 signature bound to the subject, the payload, a timestamp and a
 nonce. The wire protocol stays `0.3`; support is advertised by feature
 detection (`min_sender_trust` on the prompt endpoint ⇔ the agent
-implements the extension; `Agent-Sender` sent ⇔ the caller does). Spec:
-[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+implements the extension; `Agent-Sender` sent ⇔ the caller does). The
+extension is additive to protocol `0.3`.
 Byte-for-byte compatible with the TypeScript SDK (`@synadia-ai/agents`
 0.6.0): the shared known-answer vectors under
 `test-fixtures/identity/` are verified by both.

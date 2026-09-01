@@ -1,6 +1,6 @@
 {
   "_comment": "Agent-ID parse fixtures for the sender-identity extension. `parse` carries the spec's own table (in order) followed by the rows the plan adds; `new` exercises the two-argument constructor. Keys are real NKEYs (they pass the nkeys prefix + CRC check); the bad-CRC row is the spec's account key with its last character changed.",
-  "_source": "https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md#parse-fixtures",
+  "_source": "shared sender-identity working specification: parse fixtures",
   "regex": "^(A[A-Z2-7]{55}|[A-Za-z0-9_-]+|\\$G)\\.U[A-Z2-7]{55}$",
   "parse": [
     {

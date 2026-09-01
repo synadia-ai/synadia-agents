@@ -1,7 +1,10 @@
 import { connect } from "@nats-io/transport-node";
-import { credsAuthenticator, type NatsConnection } from "@nats-io/nats-core";
-import { parseNatsUrl, withAgentReconnectDefaults } from "@synadia-ai/agents";
-import { readFileSync } from "node:fs";
+import type { NatsConnection } from "@nats-io/nats-core";
+import {
+  resolveNatsConnectionBundle,
+  withAgentReconnectDefaults,
+  type NatsConnectionBundle,
+} from "@synadia-ai/agents";
 import type { ConnectionConfig } from "./types.js";
 
 // Connections we initiated a drain on. The status loop checks membership
@@ -9,30 +12,34 @@ import type { ConnectionConfig } from "./types.js";
 // and the operator already knows they asked to exit.
 const shuttingDownConnections = new WeakSet<NatsConnection>();
 
-export async function connectToNats(config: ConnectionConfig = {}): Promise<NatsConnection> {
-  // Default `demo.nats.io` matches agents/pi and agents/claude-code so
-  // every agent in this repo lands on the same broker out of the box.
-  // `||` (not `??`) so an empty-string `config.url` — which
-  // `resolveNatsAccount` produces when no url source is configured —
-  // also falls through to the default.
-  const url = config.url || "demo.nats.io";
-  // SDK `parseNatsUrl` extracts userinfo (token / user:password) — without
-  // it a URL like `nats://TOKEN@host:port` would silently drop the token,
-  // because `@nats-io/transport-node`'s `connect({ servers: url })` does
-  // not parse credentials from URLs.
-  const opts: Parameters<typeof connect>[0] = {
-    ...parseNatsUrl(url),
-    name: config.name,
-  };
-  // Wire NKEY/JWT auth from a `.creds` file when configured. Required for
-  // NGS (Synadia Cloud) and any account-mode NATS server. `readFileSync`
-  // is intentional: the connection is async but the creds file is small
-  // and read once at startup, and `credsAuthenticator` wants the bytes
-  // synchronously to derive the seed/JWT pair.
-  if (config.credentials) {
-    opts.authenticator = credsAuthenticator(readFileSync(config.credentials));
+export interface ConnectedNats {
+  readonly nc: NatsConnection;
+  /** Retains reconnect/signing bytes until the connection has closed. */
+  readonly bundle: NatsConnectionBundle;
+}
+
+export async function connectToNats(
+  config: ConnectionConfig,
+): Promise<ConnectedNats> {
+  // This helper is the only credential seam: it captures the selected
+  // context/creds once, derives connection auth and (when requested) the
+  // signer from that same snapshot, and owns cleanup of sensitive bytes.
+  const bundle = await resolveNatsConnectionBundle(config.source, {
+    identity: config.senderIdentity,
+  });
+  let nc: NatsConnection;
+  try {
+    nc = await connect(
+      withAgentReconnectDefaults({
+        ...bundle.connectionOptions,
+        name: config.name,
+      }),
+    );
+  } catch (error) {
+    // No reconnect can use the snapshot when connect() failed.
+    bundle.wipe();
+    throw error;
   }
-  const nc = await connect(withAgentReconnectDefaults(opts));
 
   // Log connection status events
   (async () => {
@@ -56,14 +63,20 @@ export async function connectToNats(config: ConnectionConfig = {}): Promise<Nats
           // so this generally means a fatal auth error. Skip the warning
           // if we initiated the drain — the operator already knows.
           if (shuttingDownConnections.has(nc)) break;
-          console.error("[nats] connection closed — agent is off-bus until restart");
+          console.error(
+            "[nats] connection closed — agent is off-bus until restart",
+          );
           break;
       }
     }
   })().catch(() => {});
 
-  console.error(`[nats] connected to ${url}`);
-  return nc;
+  const sourceLabel =
+    "context" in config.source
+      ? `context ${JSON.stringify(config.source.context)}`
+      : "configured URL";
+  console.error(`[nats] connected using ${sourceLabel}`);
+  return { nc, bundle };
 }
 
 export async function drainConnection(nc: NatsConnection): Promise<void> {
@@ -73,5 +86,15 @@ export async function drainConnection(nc: NatsConnection): Promise<void> {
     console.error("[nats] connection drained");
   } catch (err) {
     console.error("[nats] drain error:", err);
+    // The connection bundle may only wipe its retained auth snapshot after
+    // reconnect is impossible. Force a close when graceful drain fails so the
+    // caller can safely wipe immediately after this function returns.
+    try {
+      await nc.close();
+      console.error("[nats] connection closed after drain error");
+    } catch (closeErr) {
+      console.error("[nats] close after drain error:", closeErr);
+      throw closeErr;
+    }
   }
 }

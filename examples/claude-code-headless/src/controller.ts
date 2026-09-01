@@ -1,54 +1,34 @@
-// claude-code-headless controller service.
+// Production AgentService-backed controller for claude-code-headless.
 //
-// One protocol-compliant NATS agent that registers under the agent token
-// `cc-headless` (3rd subject token, see subjects.ts for the full layout)
-// and exposes endpoints:
-//
-//   - `prompt`  (§5/§6-compliant)  — returns a help-text response, so the
-//                                    controller is usable with `nats req`.
-//   - `status`                     — replies with a heartbeat-shaped payload.
-//   - `spawn`   (request/reply)    — creates a new Claude Code session,
-//                                    registers it as its own NATS agent.
-//   - `stop`    (request/reply)    — disposes a session.
-//   - `list`    (request/reply)    — returns an array of session summaries.
-//
-// Heartbeats go to `agents.hb.cc-headless.<owner>.<name>` every 30s.
+// The protocol-required prompt/status/heartbeat behavior comes from
+// AgentService. Spawn/stop/list remain extension endpoints registered on the
+// same service through extraEndpoints.
 
 import type { NatsConnection } from "@nats-io/nats-core";
-import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";
-import {
-  SDK_PROTOCOL_VERSION,
-  SERVICE_NAME,
-  PROMPT_QUEUE_GROUP,
-  STATUS_ENDPOINT_NAME,
-  STATUS_QUEUE_GROUP,
-  formatHumanBytes,
-} from "@synadia-ai/agents";
+import type { ServiceMsg } from "@nats-io/services";
+import type { MinSenderTrust, SenderSigner } from "@synadia-ai/agents";
+import { AgentService, type AgentServiceExtraEndpoint } from "@synadia-ai/agent-service";
 
-import { responseText, statusAck } from "./chunk-encoder.js";
 import {
-  controllerHeartbeatSubject,
   controllerListSubject,
-  controllerPromptSubject,
   controllerSpawnSubject,
-  controllerStatusSubject,
   controllerStopSubject,
 } from "./subjects.js";
 import type { ClaudeSessionManager, SpawnSpec } from "./claude-session-manager.js";
+import { protocolLogger } from "./protocol-logger.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 export interface ControllerOptions {
   readonly nc: NatsConnection;
   readonly owner: string;
   readonly name: string;
-  readonly version?: string;
-  readonly heartbeatIntervalS?: number;
   readonly manager: ClaudeSessionManager;
+  readonly signer?: SenderSigner;
+  readonly minSenderTrust?: MinSenderTrust;
+  readonly heartbeatIntervalS?: number;
   readonly logger?: (line: string) => void;
 }
 
-const DEFAULT_VERSION = "0.4.0";
-// Mirrors the session-side `HEARTBEAT_INTERVAL_S` so a controller
-// and its spawned sessions share the same cadence on `agents.hb.*`.
 const DEFAULT_HEARTBEAT_INTERVAL_S = 5;
 
 const helpText = (
@@ -62,7 +42,7 @@ const helpText = (
     "",
     "This is a control-plane agent. It spawns, stops, and lists Claude Code",
     "sessions backed by @anthropic-ai/claude-agent-sdk. Each spawned session",
-    "registers as its OWN NATS agent at `agents.prompt.cc-headless.<owner>.<session_id>`",
+    "registers as a logical NATS agent at `agents.prompt.cc-headless.<owner>.<session_id>`",
     "and speaks the standard Synadia Agent Protocol for NATS v0.3 — discover it via",
     "$SRV.INFO.agents and prompt it like any agent.",
     "",
@@ -86,159 +66,79 @@ const helpText = (
 export class Controller {
   private readonly opts: ControllerOptions;
   private readonly log: (line: string) => void;
-  private readonly promptSubject: string;
-  private readonly heartbeatSubject: string;
-  private service: Service | null = null;
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-
-  private readonly statusSubject: string;
+  private readonly agentService: AgentService;
 
   constructor(opts: ControllerOptions) {
     this.opts = opts;
     this.log = opts.logger ?? ((line) => process.stderr.write(`${line}\n`));
-    this.promptSubject = controllerPromptSubject(opts.owner, opts.name);
-    this.heartbeatSubject = controllerHeartbeatSubject(opts.owner, opts.name);
-    this.statusSubject = controllerStatusSubject(opts.owner, opts.name);
+
+    const spawnSubject = controllerSpawnSubject(opts.owner, opts.name);
+    const stopSubject = controllerStopSubject(opts.owner, opts.name);
+    const listSubject = controllerListSubject(opts.owner, opts.name);
+    const extraEndpoints: AgentServiceExtraEndpoint[] = [
+      {
+        name: "spawn",
+        subject: spawnSubject,
+        handler: (err, msg) => {
+          if (!err) {
+            void this.handleSpawn(msg).catch(() => this.respondError(msg, 500, "spawn failed"));
+          }
+        },
+      },
+      {
+        name: "stop",
+        subject: stopSubject,
+        handler: (err, msg) => {
+          if (!err) {
+            void this.handleStop(msg).catch(() => this.respondError(msg, 500, "stop failed"));
+          }
+        },
+      },
+      {
+        name: "list",
+        subject: listSubject,
+        handler: (err, msg) => {
+          if (!err) this.handleList(msg);
+        },
+      },
+    ];
+
+    this.agentService = new AgentService({
+      nc: opts.nc,
+      agent: "cc-headless",
+      owner: opts.owner,
+      name: opts.name,
+      description: `claude-code-headless controller (${opts.owner}/${opts.name})`,
+      version: PACKAGE_VERSION,
+      attachmentsOk: false,
+      heartbeatIntervalS: opts.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S,
+      extraMetadata: { role: "controller" },
+      extraEndpoints,
+      minSenderTrust: opts.minSenderTrust ?? "any",
+      logger: protocolLogger,
+      ...(opts.signer ? { identity: { signer: opts.signer } } : {}),
+    });
+    this.agentService.onPrompt(async (_envelope, response) => {
+      await response.send(
+        helpText(this.agentService.subject.prompt, spawnSubject, stopSubject, listSubject),
+      );
+    });
   }
 
   get instanceId(): string {
-    if (!this.service) throw new Error("Controller not started");
-    return this.service.info().id;
+    return this.agentService.instanceId;
   }
 
   async start(): Promise<void> {
-    if (this.service) return;
-    const svcm = new Svcm(this.opts.nc);
-
-    const metadata: Record<string, string> = {
-      agent: "cc-headless",
-      owner: this.opts.owner,
-      protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
-      role: "controller",
-    };
-
-    this.service = await svcm.add({
-      name: SERVICE_NAME,
-      version: this.opts.version ?? DEFAULT_VERSION,
-      description: `claude-code-headless controller (${this.opts.owner}/${this.opts.name})`,
-      metadata,
-    });
-
-    // §5/§6 prompt endpoint — returns help text. Reflect the broker's
-    // negotiated `max_payload` rather than hardcoding "1MB", so the
-    // controller's advertised cap matches what callers can actually send.
-    const serverMaxPayload = this.opts.nc.info?.max_payload;
-    const maxPayloadStr = serverMaxPayload ? formatHumanBytes(serverMaxPayload) : "1MB";
-
-    this.service.addEndpoint("prompt", {
-      subject: this.promptSubject,
-      queue: PROMPT_QUEUE_GROUP,
-      handler: (err, msg) => {
-        if (err) return;
-        void this.handleHelp(msg);
-      },
-      metadata: {
-        max_payload: maxPayloadStr,
-        attachments_ok: "false",
-      },
-    });
-
-    // Status endpoint — replies with a heartbeat-shaped payload.
-    this.service.addEndpoint(STATUS_ENDPOINT_NAME, {
-      subject: this.statusSubject,
-      queue: STATUS_QUEUE_GROUP,
-      handler: (err, msg) => {
-        if (err) return;
-        this.handleStatus(msg);
-      },
-    });
-
-    // Extension endpoints (verb-first, agents.<verb>.cc-headless.<owner>.<name>).
-    this.service.addEndpoint("spawn", {
-      subject: controllerSpawnSubject(this.opts.owner, this.opts.name),
-      handler: (err, msg) => {
-        if (err) return;
-        void this.handleSpawn(msg);
-      },
-    });
-
-    this.service.addEndpoint("stop", {
-      subject: controllerStopSubject(this.opts.owner, this.opts.name),
-      handler: (err, msg) => {
-        if (err) return;
-        void this.handleStop(msg);
-      },
-    });
-
-    this.service.addEndpoint("list", {
-      subject: controllerListSubject(this.opts.owner, this.opts.name),
-      handler: (err, msg) => {
-        if (err) return;
-        void this.handleList(msg);
-      },
-    });
-
-    this.startHeartbeats();
-    this.log(`claude-code-headless: controller listening on ${this.promptSubject}`);
+    await this.agentService.start();
+    this.log(`claude-code-headless: controller listening on ${this.agentService.subject.prompt}`);
     this.log(
       `claude-code-headless: control endpoints — ${controllerSpawnSubject(this.opts.owner, this.opts.name)}, ${controllerStopSubject(this.opts.owner, this.opts.name)}, ${controllerListSubject(this.opts.owner, this.opts.name)}`,
     );
   }
 
   async stop(): Promise<void> {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = null;
-    if (this.service) {
-      try {
-        await this.service.stop();
-      } catch {
-        /* noop */
-      }
-      this.service = null;
-    }
-  }
-
-  // ─── Handlers ──────────────────────────────────────────────────────────────
-
-  private async handleHelp(msg: ServiceMsg): Promise<void> {
-    try {
-      msg.respond(statusAck());
-      msg.respond(
-        responseText(
-          helpText(
-            this.promptSubject,
-            controllerSpawnSubject(this.opts.owner, this.opts.name),
-            controllerStopSubject(this.opts.owner, this.opts.name),
-            controllerListSubject(this.opts.owner, this.opts.name),
-          ),
-        ),
-      );
-    } catch {
-      /* noop */
-    } finally {
-      try {
-        msg.respond("");
-      } catch {
-        /* noop */
-      }
-    }
-  }
-
-  private handleStatus(msg: ServiceMsg): void {
-    if (!this.service) return;
-    const intervalS = this.opts.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S;
-    const payload = {
-      agent: "cc-headless",
-      owner: this.opts.owner,
-      instance_id: this.service.info().id,
-      ts: new Date().toISOString(),
-      interval_s: intervalS,
-    };
-    try {
-      msg.respond(JSON.stringify(payload));
-    } catch {
-      /* noop */
-    }
+    await this.agentService.stop();
   }
 
   private async handleSpawn(msg: ServiceMsg): Promise<void> {
@@ -246,8 +146,8 @@ export class Controller {
     try {
       const raw = msg.string();
       spec = raw.length === 0 ? ({ cwd: "" } as SpawnSpec) : (JSON.parse(raw) as SpawnSpec);
-    } catch (e) {
-      this.respondError(msg, 400, `invalid JSON: ${(e as Error).message}`);
+    } catch {
+      this.respondError(msg, 400, "invalid JSON");
       return;
     }
 
@@ -259,7 +159,7 @@ export class Controller {
     try {
       msg.respond(JSON.stringify(result));
     } catch {
-      /* noop */
+      /* connection gone */
     }
   }
 
@@ -268,14 +168,13 @@ export class Controller {
     try {
       const raw = msg.string();
       const parsed = raw.length === 0 ? {} : (JSON.parse(raw) as { session_id?: unknown });
-      const value = parsed.session_id;
-      if (typeof value !== "string" || value.length === 0) {
+      if (typeof parsed.session_id !== "string" || parsed.session_id.length === 0) {
         this.respondError(msg, 400, "session_id is required");
         return;
       }
-      sessionId = value;
-    } catch (e) {
-      this.respondError(msg, 400, `invalid JSON: ${(e as Error).message}`);
+      sessionId = parsed.session_id;
+    } catch {
+      this.respondError(msg, 400, "invalid JSON");
       return;
     }
 
@@ -287,16 +186,15 @@ export class Controller {
     try {
       msg.respond(JSON.stringify(result));
     } catch {
-      /* noop */
+      /* connection gone */
     }
   }
 
-  private async handleList(msg: ServiceMsg): Promise<void> {
-    const sessions = this.opts.manager.list();
+  private handleList(msg: ServiceMsg): void {
     try {
-      msg.respond(JSON.stringify({ sessions }));
+      msg.respond(JSON.stringify({ sessions: this.opts.manager.list() }));
     } catch {
-      /* noop */
+      /* connection gone */
     }
   }
 
@@ -304,29 +202,7 @@ export class Controller {
     try {
       msg.respondError(code, message);
     } catch {
-      /* noop */
+      /* connection gone */
     }
-  }
-
-  private startHeartbeats(): void {
-    const intervalS = this.opts.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S;
-    const publish = (): void => {
-      if (!this.service) return;
-      const payload = {
-        agent: "cc-headless",
-        owner: this.opts.owner,
-        instance_id: this.service.info().id,
-        ts: new Date().toISOString(),
-        interval_s: intervalS,
-      };
-      try {
-        this.opts.nc.publish(this.heartbeatSubject, JSON.stringify(payload));
-      } catch {
-        /* noop */
-      }
-    };
-    publish();
-    this.heartbeatTimer = setInterval(publish, intervalS * 1000);
-    this.heartbeatTimer.unref?.();
   }
 }

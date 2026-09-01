@@ -13,9 +13,10 @@
 //     §8.3 fields including `instance_id` (from the service id).
 //   - Emits an empty-body no-headers terminator after each prompt
 //     (default handler).
-//   - Sender identity (extension): registers `user_nkey` / `account` /
-//     `id_sig` when the connection has an identity (and a signer), always
-//     advertises `min_sender_trust` on `prompt`, classifies every prompt
+//   - Sender identity (extension): when explicitly configured, registers
+//     `user_nkey` / `account` and, with a live-bound signer, `id_sig`;
+//     omission performs no self lookup. Always advertises
+//     `min_sender_trust` on `prompt`, classifies every prompt
 //     (400 / 401 / 403 / 500 before the handler runs) and hands the
 //     classified sender to the handler as its second argument; `status`
 //     is classified and logged, never rejected.
@@ -36,9 +37,7 @@ import {
   formatHumanBytes,
   formatSender,
   IDENTITY_METADATA_KEYS,
-  IdentityMismatchError,
   MIN_SENDER_TRUST_KEY,
-  normalizeAccountTokenPosition,
   normalizeResolveTtlMs,
   parseHumanBytes,
   PROMPT_ENDPOINT_NAME,
@@ -107,14 +106,12 @@ export interface ReferenceAgentOptions {
   readonly promptHandler?: ReferenceAgentPromptHandler;
   /** Extra metadata keys merged into the service metadata (forward-compat). */
   readonly extraMetadata?: Readonly<Record<string, string>>;
-  /** Sender-identity: the agent's own signer (registers `id_sig`). */
+  /** Sender identity registration; omission performs no self lookup or identity registration. */
   readonly identity?: { readonly signer?: SenderSigner };
   /** `min_sender_trust` on the prompt endpoint. Default `"any"`; always emitted. */
   readonly minSenderTrust?: MinSenderTrust;
   /** Replay window in milliseconds. Default 30 000. */
   readonly replayWindowMs?: number;
-  /** 1-based `account_token_position` of the export this agent sits behind. */
-  readonly accountTokenPosition?: number;
   /** Acceptance hook — see `AgentServiceOptions.acceptSender`. */
   readonly acceptSender?: AcceptSenderHook;
   /** Logger for classification outcomes. Default: silent. */
@@ -145,14 +142,12 @@ export class ReferenceAgent {
     this.#subject = AgentSubject.new(options.agent, options.owner, options.name);
     this.#logger = options.logger ?? SILENT_LOGGER;
     this.#minSenderTrust = options.minSenderTrust ?? DEFAULT_MIN_SENDER_TRUST;
-    const accountTokenPosition = normalizeAccountTokenPosition(options.accountTokenPosition);
     this.#resolver = new SenderResolver(options.nc, {
       ttlMs: normalizeResolveTtlMs(options.resolveTtlMs),
     });
     this.#gate = new SenderGate({
       minSenderTrust: this.#minSenderTrust,
       replayWindowMs: options.replayWindowMs ?? DEFAULT_REPLAY_WINDOW_MS,
-      ...(accountTokenPosition !== undefined ? { accountTokenPosition } : {}),
       ...(options.acceptSender !== undefined ? { acceptSender: options.acceptSender } : {}),
       logger: this.#logger,
       operatorAttested: options.operatorAttested ?? false,
@@ -201,17 +196,21 @@ export class ReferenceAgent {
   async start(): Promise<void> {
     if (this.#service) return;
 
-    // Same policy as `AgentService.start()`: a mismatching signer throws;
-    // no identity → log and register without the identity keys.
+    // Same policy as `AgentService.start()`: omission performs no lookup;
+    // explicit unsigned identity is best-effort; a signer binding failure
+    // is fatal and never downgrades registration.
     const signer = this.#options.identity?.signer;
+    this.#identity = undefined;
     let identity: AgentId | undefined;
-    try {
-      identity = await selfId(this.#options.nc, signer ? { signer } : {});
-    } catch (err) {
-      if (err instanceof IdentityMismatchError) throw err;
-      this.#logger.warn("ReferenceAgent: starting without identity metadata", {
-        reason: err instanceof Error ? err.message : String(err),
-      });
+    if (this.#options.identity !== undefined) {
+      try {
+        identity = await selfId(this.#options.nc, signer ? { signer } : {});
+      } catch (err) {
+        if (signer) throw err;
+        this.#logger.warn("ReferenceAgent: starting without identity metadata", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     this.#identity = identity;
 
@@ -320,9 +319,9 @@ export class ReferenceAgent {
         subject: msg.subject,
         sender: formatSender(sender),
       });
-    } catch (err) {
+    } catch {
       this.#logger.error("ReferenceAgent: status classification failed", {
-        error: err instanceof Error ? err.message : String(err),
+        error: "exception",
       });
     }
     const payload = buildHeartbeatPayload(
@@ -352,9 +351,9 @@ export class ReferenceAgent {
         return;
       }
       sender = admission.sender;
-    } catch (err) {
+    } catch {
       this.#logger.error("ReferenceAgent: sender classification failed", {
-        error: err instanceof Error ? err.message : String(err),
+        error: "exception",
       });
       try {
         msg.respondError(500, "sender classification error");
@@ -366,13 +365,15 @@ export class ReferenceAgent {
     }
     try {
       await promptHandler(msg, sender);
-    } catch (handlerErr) {
+    } catch {
       try {
         msg.respondError(500, "reference agent handler error");
       } catch {
         /* connection may already be gone */
       }
-      console.error("ReferenceAgent prompt handler threw", handlerErr);
+      this.#logger.error("ReferenceAgent prompt handler threw", {
+        error: "exception",
+      });
     }
   }
 

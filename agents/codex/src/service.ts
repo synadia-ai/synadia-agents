@@ -1,4 +1,5 @@
 import type { NatsConnection } from "@nats-io/nats-core";
+import type { NatsConnectionBundle } from "@synadia-ai/agents";
 import { AgentService, type AgentServiceOptions } from "@synadia-ai/agent-service";
 import type { CodexBridgeClient } from "./bridge.js";
 import { bridgePromptToCodex } from "./bridge.js";
@@ -9,10 +10,14 @@ export interface BuildAgentServiceOptionsInput {
   readonly nc: NatsConnection;
   readonly config: CodexChannelConfig;
   readonly version: string;
+  readonly connectionBundle?: NatsConnectionBundle;
   readonly extraMetadata?: Record<string, string>;
 }
 
 export function buildAgentServiceOptions(input: BuildAgentServiceOptionsInput): AgentServiceOptions {
+  if (input.config.nats.senderIdentity === "signed" && !input.connectionBundle?.signer) {
+    throw new Error("signed sender identity requires the resolved NATS connection bundle");
+  }
   const mapping = mappingFromConfig(input.config);
   return {
     nc: input.nc,
@@ -26,6 +31,8 @@ export function buildAgentServiceOptions(input: BuildAgentServiceOptionsInput): 
     attachmentsOk: false,
     heartbeatIntervalS: input.config.agent.heartbeatIntervalS,
     keepaliveIntervalS: input.config.agent.keepaliveIntervalS,
+    ...(input.connectionBundle?.signer ? { identity: { signer: input.connectionBundle.signer } } : {}),
+    minSenderTrust: input.config.agent.minSenderTrust ?? "any",
     extraMetadata: {
       codex_mode: mapping.codex.mode,
       permission_policy: mapping.codex.permissionPolicy,

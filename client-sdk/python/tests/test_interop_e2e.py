@@ -318,7 +318,11 @@ async def ts_reference_agent_signed(
     seed_file.chmod(0o600)
     proc = _ReferenceAgentProcess(
         nats_server_nkey.url,
-        env={"NATS_NKEY_SEED_FILE": str(seed_file), "REFERENCE_AGENT_MIN_SENDER_TRUST": "signed"},
+        env={
+            "NATS_NKEY_SEED_FILE": str(seed_file),
+            "NATS_SENDER_IDENTITY": "signed",
+            "REFERENCE_AGENT_MIN_SENDER_TRUST": "signed",
+        },
     )
     await proc.start()
     try:

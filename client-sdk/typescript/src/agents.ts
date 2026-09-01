@@ -16,9 +16,9 @@
 // closing the underlying connection is the caller's responsibility.
 //
 // Sender identity (extension): pass `identity: { signer, name }` to sign
-// every `prompt` / `status` request; without a signer the SDK sends an
-// unsigned claim when the connection has an NKEY identity, and nothing
-// otherwise. `selfId()` is the connection's own agent ID; `signSender` /
+// every `prompt` / `status` request; pass `identity: {}` explicitly for an
+// unsigned claim. Omitting `identity` performs no automatic lookup and sends
+// no header. `selfId()` is the connection's own agent ID; `signSender` /
 // `publishSigned` / `requestSigned` sign arbitrary publishes (JetStream
 // included); `resolveSender(id)` is the reverse lookup (agent ID → the
 // agent that registered it, `id_sig` verified, TTL-cached).
@@ -38,6 +38,7 @@ import { type HeartbeatPayload } from "./heartbeat/payload.js";
 import type { AgentId } from "./identity/agent-id.js";
 import { IdentityContext, type IdentityOptions } from "./identity/context.js";
 import { SenderResolver } from "./identity/resolve-sender.js";
+import { refreshSelfId, selfId } from "./identity/self-id.js";
 import {
   AGENT_SENDER_HEADER,
   serializeSenderHeader,
@@ -61,7 +62,10 @@ export interface AgentsOptions {
   readonly streamInactivityTimeoutMs?: number;
   /** Pluggable logger. Default: silent. */
   readonly logger?: Logger;
-  /** Sender-identity configuration (signer, display name, unsigned-claim policy). */
+  /**
+   * Sender-identity configuration. Omit for no lookup/header; pass `{}`
+   * explicitly for an unsigned claim, or provide a signer.
+   */
   readonly identity?: IdentityOptions;
   /**
    * TTL of the `$SRV.INFO.agents` index behind {@link Agents.resolveSender},
@@ -91,7 +95,7 @@ export class Agents {
   readonly #tracker: HeartbeatTracker;
   readonly #logger: Logger;
   readonly #streamInactivityTimeoutMs: number;
-  readonly #identity: IdentityContext;
+  readonly #identity: IdentityContext | undefined;
   readonly #resolver: SenderResolver;
   readonly #closeController = new AbortController();
   #closed = false;
@@ -101,8 +105,12 @@ export class Agents {
     this.#logger = options.logger ?? SILENT_LOGGER;
     this.#streamInactivityTimeoutMs =
       options.streamInactivityTimeoutMs ?? DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS;
-    // Validates `identity.name` up front (throws `IdentityError`).
-    this.#identity = new IdentityContext(options.nc, options.identity ?? {});
+    // Omission is meaningful: no automatic lookup and no sender header.
+    // An explicit empty object opts into an unsigned claim.
+    this.#identity =
+      options.identity !== undefined
+        ? new IdentityContext(options.nc, options.identity)
+        : undefined;
     // Validates `resolveTtlMs` up front (throws `IdentityError`).
     this.#resolver = new SenderResolver(
       options.nc,
@@ -138,8 +146,11 @@ export class Agents {
    *
    * The first call to `discover()` lazily starts the heartbeat wildcard
    * subscription BEFORE publishing `$SRV.PING`, enforcing §8.5 automatically.
-   * It also *starts* the connection's identity lookup (fire-and-forget) so
-   * the first `prompt()` usually finds it memoised.
+   * With an explicit identity option that can send a signed or unsigned
+   * claim, it also *starts* the connection's identity lookup
+   * (fire-and-forget) so the first `prompt()` usually finds it memoised.
+   * With identity omitted, or with unsigned claims explicitly disabled and
+   * no signer, discovery performs no identity work.
    *
    * Two instances of the same logical agent (same `(agent, owner, name)`)
    * show up as separate entries with distinct `instanceId`s; callers who
@@ -147,7 +158,7 @@ export class Agents {
    */
   async discover(opts: DiscoverOptions = {}): Promise<Agent[]> {
     this.#ensureOpen();
-    this.#identity.kickoff();
+    this.#identity?.kickoff();
     if (!this.#tracker.isStarted) {
       // tracker.start() flushes internally so the SUB is at the server before
       // we send $SRV.PING (§8.5 subscribe-before-discover).
@@ -236,23 +247,24 @@ export class Agents {
   // ---------------------------------------------------------------------
 
   /**
-   * The connection's own agent ID (`{account}.{user}`), learned once per
-   * connection: from the credentials JWT when the signer carries one,
-   * else from `$SYS.REQ.USER.INFO`. Rejects with {@link NoIdentityError}
+   * The connection's own agent ID (`{account}.{user}`), learned from
+   * `$SYS.REQ.USER.INFO` and cached per connection and identity source. A
+   * credentials JWT is compared with the live user/account, never used as a
+   * substitute for binding. Rejects with {@link NoIdentityError}
    * (no NKEY user — the message names the fix), {@link IdentityUnavailableError}
    * (no answer / permission violation), or {@link IdentityMismatchError}
-   * (a configured signer holds a different key). Failures are retried
+   * (a configured signer represents a different user/account). Failures are retried
    * after 30 s; `refreshSelfId()` retries at once.
    */
   selfId(): Promise<AgentId> {
     this.#ensureOpen();
-    return this.#identity.selfId();
+    return this.#identity?.selfId() ?? selfId(this.#nc);
   }
 
   /** Force a fresh identity lookup, discarding the memoised answer. */
   refreshSelfId(): Promise<AgentId> {
     this.#ensureOpen();
-    return this.#identity.refresh();
+    return this.#identity?.refresh() ?? refreshSelfId(this.#nc);
   }
 
   /**
@@ -327,8 +339,9 @@ export class Agents {
     sub: string | undefined,
   ): Promise<AgentSenderHeader> {
     this.#ensureOpen();
-    if (!this.#identity.signer) throw new SenderSignatureRequiredError(subject);
-    const plan = await this.#identity.plan(sub ?? subject, true);
+    const identity = this.#identity;
+    if (!identity?.signer) throw new SenderSignatureRequiredError(subject);
+    const plan = await identity.plan(sub ?? subject, true);
     if (!plan) throw new SenderSignatureRequiredError(subject); // unreachable with a signer
     return plan.build(payload);
   }

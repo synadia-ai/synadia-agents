@@ -61,14 +61,14 @@ compatibility between the two SDKs.
 | `client-sdk/python/` | `synadia-ai-agents` (import: `synadia_ai.agents`) | PyPI | Python SDK — has its own CLAUDE.md |
 | `agents/pi/` | `@synadia-ai/nats-pi-channel` | npm (public) | PI extension plugin |
 | `agents/openclaw/` | `@synadia-ai/nats-channel` | npm (public) | OpenClaw plugin |
-| `agents/claude-code/` | `claude-channel-nats` | npm (public) | Claude Code MCP plugin |
+| `agents/claude-code/` | `claude-channel-nats` | Claude marketplace | Claude Code MCP plugin; package and plugin descriptor versions must agree |
 | `agents/hermes/` | — | not in repo | README only; ships from upstream Hermes |
-| `agents/flue/` | `@synadia-ai/flue-nats-channel` | npm (public) | Flue sidecar channel |
-| `agents/opencode/` | `@synadia-ai/opencode-nats-channel` | npm (public) | OpenCode plugin channel |
-| `agents/codex/` | `@synadia-ai/codex-nats-channel` | npm (public) | Codex app-server-backed channel |
-| `agents/acp/` | `@synadia-ai/acp-nats-channel` | npm (public) | Generic ACP channel (grok preset + custom) |
-| `agents/grok/` | `@synadia-ai/grok-nats-channel` | npm (public) | Grok Build front door — thin pin over `agents/acp` |
-| `agents/eve/` | `@synadia-ai/eve-nats-channel` | npm (public) | Eve sidecar channel |
+| `agents/flue/` | `@synadia-ai/flue-nats-channel` | npm (public; first publish pending) | Flue sidecar channel |
+| `agents/opencode/` | `@synadia-ai/opencode-nats-channel` | npm (public; first publish pending) | OpenCode plugin channel |
+| `agents/codex/` | `@synadia-ai/codex-nats-channel` | npm (public; first publish pending) | Codex app-server-backed channel |
+| `agents/acp/` | `@synadia-ai/acp-nats-channel` | npm (public; first publish pending) | Generic ACP channel (grok preset + custom) |
+| `agents/grok/` | `@synadia-ai/grok-nats-channel` | npm (public; first publish pending) | Grok Build front door — thin pin over `agents/acp` |
+| `agents/eve/` | `@synadia-ai/eve-nats-channel` | npm (public; first publish pending) | Eve sidecar channel |
 | `examples/pi-headless/` | `@synadia-ai/nats-pi-headless` | npm (public) | depends on `@synadia-ai/agents@^0.5.x` |
 | `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | github only | local-clone test client; `private: true` so it never publishes |
 | `examples/dspy/` | `@synadia-ai/nats-dspy-agent` | private | uses `file:` link to local SDK |
@@ -129,12 +129,10 @@ Two distinct version axes:
     on PyPI first) — both published to PyPI; versions diverge per
     package.
 - **Sender-identity extension** — additive on top of `0.3`, no
-  protocol bump. Spec: `docs/agent-protocol-sender-identity.md` in
-  `synadia-ai/synadia-agent-fabric-docs`; the implementation plan with
-  its per-PR log is `docs/plans/agent-identity-sdk-implementation-plan.md`
-  in that repo (read its §12 before touching identity code). Shared
-  fixtures and the TS-generated known-answer vectors live under
-  `test-fixtures/identity/`.
+  protocol bump. Public behavior is documented in both SDKs' README and
+  protocol-mapping documents. Shared fixtures and the TS-generated
+  known-answer vectors live under `test-fixtures/identity/`; keep those
+  four-language fixtures authoritative when changing identity code.
 
 The package versions differ for historical reasons. They are **not** a
 protocol skew. The Python `tests/test_interop_e2e.py` runs the TS
@@ -187,6 +185,14 @@ description.
 
 ## Release ladder for SDK changes that examples need
 
+The normal sequence below releases from `main`. The coordinated rollout tracked in
+`docs/sdk-release-rollout-roadmap.md` has an explicit exception: reviewed, clean commits on the
+`sdk-release-rollout` branch may be version-tagged and published so their cooldown clocks
+start before final cutover. Integrations first use local/packed artifacts from that branch, then
+exact registry versions. After aging, the exact tagged release commits are reconciled into `main`;
+artifact-affecting differences require a new version. Every publication still requires the normal
+explicit approval.
+
 The trap: consumers that pin the SDK from npm (`agents/acp`, `codex`,
 `opencode` at `^0.5.2`, `agents/claude-code` at `^0.5.0`) do not see an
 unpublished change; the in-repo examples and the `file:`-linked harnesses
@@ -217,9 +223,11 @@ publishing — no long-lived API token):
 - `python-v*` → `synadia-ai-agents` via `release-python.yml`
 - `python-agent-service-v*` → `synadia-ai-agent-service` via
   `release-python-agent-service.yml`
+- `python-deerflow-v*` → `synadia-ai-nats-deerflow-channel` via
+  `release-python-deerflow.yml`
 
-Both workflows run in the `pypi` GitHub Environment, whose
-tag-deployment policy gates them to those two prefixes. **Gotcha
+All three workflows run in the `pypi` GitHub Environment, whose
+tag-deployment policy gates them to those three prefixes. **Gotcha
 when adding a new tag-triggered release workflow:** the `pypi` env
 policy must be extended to cover the new tag prefix, or the
 publish job fails with *"Tag X is not allowed to deploy to pypi

@@ -209,11 +209,7 @@ deferred to a follow-up. All shapes are imported from
   terminator. The "error frame, then empty terminator" rule is
   agent-side; the exception classes themselves are imported from
   `synadia_ai.agents`.
-- **Sender identity** (extension, additive on 0.3 — spec
-  [`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
-  in `synadia-ai/synadia-agent-fabric-docs`; the implementation plan
-  with its per-PR log is `docs/plans/agent-identity-sdk-implementation-plan.md`
-  there — read its §12 before touching identity code): `AgentService`
+- **Sender identity** (optional extension, additive on 0.3): `AgentService`
   classifies every `prompt` request **before** the §6.4 ack through
   `agent_service/identity.py` (`SenderGate` over the shared
   `verify_sender`; `NonceCache` keyed `(user, nonce)`, expiry at
@@ -273,41 +269,43 @@ state only; the caller is responsible for `nc.close()`.
 
 ```python
 import nats
-from synadia_ai.agents import load_context_options
-from synadia_ai.agent_service import AgentService
+from synadia_ai.agents import resolve_nats_connection_bundle
+from synadia_ai.agent_service import AgentService, ServiceIdentity
 
-# 1. Direct URL(s) — caller drives nats-py directly.
-nc = await nats.connect(servers="nats://127.0.0.1:4222")
+# One complete connection source. Direct mode may additionally supply
+# creds= or nkey=; context mode supplies its own URL/auth/TLS settings.
+bundle = resolve_nats_connection_bundle(
+    context="prod",  # or url="nats://127.0.0.1:4222"
+    identity="signed",  # omit for the identity-free default
+)
+nc = await nats.connect(**bundle.connection_options)
 
-# 2. Load a `nats` CLI context (~/.config/nats/context/<name>.json) and
-#    splat its kwargs into nats.connect. Pass `"current"` to honour
-#    $NATS_CONTEXT → the `context.txt` pointer written by
-#    `nats context select`.
-nc = await nats.connect(**load_context_options("prod"))
-nc = await nats.connect(**load_context_options("current"))
-
-# Then in either case:
 service = AgentService(
     nc=nc,
     agent="my-runtime",   # REQUIRED, no default — see §2 rule above.
     owner="my-tenant",
     session_name="default",
     handler=my_prompt_handler,
+    identity=ServiceIdentity(signer=bundle.signer) if bundle.signer else None,
 )
 await service.start()
+
+# On shutdown: stop the service, close NATS, then wipe the bundle.
+await service.stop()
+await nc.close()
+bundle.wipe()
 ```
 
-`load_context_options` lives in `synadia-ai-agents` and is re-used
-verbatim — same precedence rules (`creds` > `nkey` > `user_jwt` >
-`user`+`password` > `token`; `nkey` is a seed-file path whose seed
-line is passed as `nkeys_seed_str`), same unsupported-field surface
-(TLS triple, `nsc://...` URLs raise `NatsContextError`). The SDK
-itself does NOT read `NATS_URL`; that stays an `examples/`-only
-convenience. The host's own identity is configured separately, on
-`AgentService(identity=ServiceIdentity(signer=…))` — the SDK never
-reads the seed out of the connection; `examples/_connect_cli.py` shows
-the pairing: `--nkey` / `--creds` feed both `nats.connect` and the
-signer (`signer_from_cli`).
+`resolve_nats_connection_bundle` lives in `synadia-ai-agents` and is
+the required high-level seam for examples and integrations. It resolves
+one complete context or direct URL/credential source into connection
+options and, only when `identity="signed"` is requested, a signer from
+that same immutable credential snapshot. The SDK itself does not read
+`NATS_URL`; that remains an examples-only convenience translated into
+helper inputs. Never compose `load_context_options` with a separate
+`signer_from_*` read in an integration: `examples/_connect_cli.py`
+demonstrates bundle ownership, connection-before-wipe cleanup, and
+passing `bundle.signer` to `ServiceIdentity` when present.
 
 ### Examples vs scripts
 
@@ -506,8 +504,8 @@ them to success or frustrates them.
   `AgentService` classifies every prompt before the ack (`SenderGate`
   / `NonceCache` in `agent_service/identity.py` over the shared
   codec), exposes `PromptStream.sender`, takes `identity` /
-  `min_sender_trust` / `replay_window_s` / `account_token_position` /
-  `accept_sender` / `resolve_ttl_s` / `operator_attested`, registers
+  `min_sender_trust` / `replay_window_s` / `accept_sender` /
+  `resolve_ttl_s` / `operator_attested`, registers
   `user_nkey` / `account` / `id_sig` and always `min_sender_trust`,
   and flushes at the end of `start()`. The reverse interop test runs
   the TS probe with `--signed`; the reference agent gained `--nkey` /
