@@ -57,6 +57,11 @@ describe("claude-code-headless config", () => {
     });
   });
 
+  test("help is parsed without requiring a value", () => {
+    expect(parseCliOverrides(["--help"])).toEqual({ help: true });
+    expect(parseCliOverrides(["-h"])).toEqual({ help: true });
+  });
+
   test("invalid modes fail instead of silently downgrading", () => {
     cleanEnv();
     process.env.NATS_SENDER_IDENTITY = "auto";

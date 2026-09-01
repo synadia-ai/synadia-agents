@@ -85,4 +85,9 @@ describe("pi-headless config", () => {
       context: "cli",
     });
   });
+
+  test("help is parsed without requiring a value", () => {
+    expect(parseCliOverrides(["--help"])).toEqual({ help: true });
+    expect(parseCliOverrides(["-h"])).toEqual({ help: true });
+  });
 });

@@ -1,0 +1,300 @@
+{
+  "schema_version": 1,
+  "stage_remove_files": [".gitignore"],
+  "toolchain": {
+    "node": "22.22.3",
+    "npm": "10.9.8",
+    "bun": "1.3.14",
+    "python": ["3.11", "3.12", "3.13"],
+    "uv": "0.9.26",
+    "hatchling": "1.32.0",
+    "runner": "ubuntu-24.04"
+  },
+  "npm": [
+    {
+      "id": "ts-caller",
+      "path": "client-sdk/typescript/package.json",
+      "name": "@synadia-ai/agents",
+      "role": "publishable",
+      "layer": 1,
+      "lock": "client-sdk/typescript/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": [],
+      "stage_remove": ["devDependencies:@synadia-ai/agent-service"],
+      "build": ["npm", "run", "build"],
+      "import_smoke": ["@synadia-ai/agents", "@synadia-ai/agents/errors"]
+    },
+    {
+      "id": "ts-host",
+      "path": "agent-sdk/typescript/package.json",
+      "name": "@synadia-ai/agent-service",
+      "role": "publishable",
+      "layer": 2,
+      "lock": "agent-sdk/typescript/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/agents"],
+      "build": ["npm", "run", "build"],
+      "import_smoke": ["@synadia-ai/agent-service", "@synadia-ai/agent-service/testing"]
+    },
+    {
+      "id": "acp",
+      "path": "agents/acp/package.json",
+      "name": "@synadia-ai/acp-nats-channel",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "agents/acp/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "stage_license_from": "LICENSE",
+      "build": null,
+      "import_smoke": ["@synadia-ai/acp-nats-channel"],
+      "bin_smoke": {"acp-agent": ["--help"]}
+    },
+    {
+      "id": "codex",
+      "path": "agents/codex/package.json",
+      "name": "@synadia-ai/codex-nats-channel",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "agents/codex/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "stage_license_from": "LICENSE",
+      "build": null,
+      "import_smoke": ["@synadia-ai/codex-nats-channel"],
+      "bin_smoke": {"codex-agent": ["--help"]}
+    },
+    {
+      "id": "opencode",
+      "path": "agents/opencode/package.json",
+      "name": "@synadia-ai/opencode-nats-channel",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "agents/opencode/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "stage_license_from": "LICENSE",
+      "build": null,
+      "import_smoke": ["@synadia-ai/opencode-nats-channel", "@synadia-ai/opencode-nats-channel/opencode-plugin"],
+      "bin_smoke": {"opencode-agent": ["help"]}
+    },
+    {
+      "id": "eve",
+      "path": "agents/eve/package.json",
+      "name": "@synadia-ai/eve-nats-channel",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "agents/eve/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "stage_license_from": "LICENSE",
+      "build": null,
+      "bin_smoke": {"eve-agent": ["help"]},
+      "smoke_note": "CLI-only package: bin_smoke is its public runtime reachability check."
+    },
+    {
+      "id": "flue",
+      "path": "agents/flue/package.json",
+      "name": "@synadia-ai/flue-nats-channel",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "agents/flue/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "stage_license_from": "LICENSE",
+      "build": null,
+      "bin_smoke": {"flue-nats-channel": ["help"]},
+      "smoke_note": "CLI-only package: bin_smoke is its public runtime reachability check."
+    },
+    {
+      "id": "openclaw",
+      "path": "agents/openclaw/package.json",
+      "name": "@synadia-ai/nats-channel",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "agents/openclaw/bun.lock",
+      "lock_phase": "registry",
+      "source_lock_optional": true,
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "build": ["npm", "run", "build"],
+      "smoke_waiver": "OpenClaw loads this host extension directly; it has no standalone package export or CLI. Host-level integration CI is the runtime evidence."
+    },
+    {
+      "id": "pi",
+      "path": "agents/pi/package.json",
+      "name": "@synadia-ai/nats-pi-channel",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "agents/pi/bun.lock",
+      "lock_phase": "registry",
+      "source_lock_optional": true,
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "build": null,
+      "smoke_waiver": "Pi loads this host extension directly; it has no standalone package export or CLI. Host-level integration CI is the runtime evidence."
+    },
+    {
+      "id": "claude-headless",
+      "path": "examples/claude-code-headless/package.json",
+      "name": "@synadia-ai/nats-claude-code-headless",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "examples/claude-code-headless/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "build": ["npm", "run", "build"],
+      "bin_smoke": {"nats-claude-code-headless": ["--help"]}
+    },
+    {
+      "id": "pi-headless",
+      "path": "examples/pi-headless/package.json",
+      "name": "@synadia-ai/nats-pi-headless",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "examples/pi-headless/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "build": ["npm", "run", "build"],
+      "bin_smoke": {"nats-pi-headless": ["--help"]}
+    },
+    {
+      "id": "grok",
+      "path": "agents/grok/package.json",
+      "name": "@synadia-ai/grok-nats-channel",
+      "role": "publishable",
+      "layer": 4,
+      "lock": "agents/grok/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/acp-nats-channel"],
+      "stage_license_from": "LICENSE",
+      "build": null,
+      "import_smoke": ["@synadia-ai/grok-nats-channel"],
+      "bin_smoke": {"grok-agent": ["help"]}
+    },
+    {
+      "id": "claude-marketplace",
+      "path": "agents/claude-code/package.json",
+      "name": "claude-channel-nats",
+      "role": "marketplace",
+      "layer": 3,
+      "lock": "agents/claude-code/bun.lock",
+      "lock_phase": "registry",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
+      "plugin_descriptor": "agents/claude-code/.claude-plugin/plugin.json",
+      "runtime_bundle": "agents/claude-code/runtime/server.js"
+    },
+    {
+      "id": "open-agent",
+      "path": "agents/open-agent/package.json",
+      "name": "@synadia-ai/open-agent",
+      "role": "evidence",
+      "lock": "agents/open-agent/bun.lock",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"]
+    },
+    {
+      "id": "agent-web-ui",
+      "path": "examples/agent-web-ui/package.json",
+      "name": "@synadia-ai/nats-ai-testui",
+      "role": "evidence",
+      "lock": "examples/agent-web-ui/bun.lock",
+      "internal_edges": ["@synadia-ai/agents"]
+    },
+    {
+      "id": "dspy-research",
+      "path": "examples/dspy-research-agent/package.json",
+      "name": "@synadia-ai/nats-dspy-research-agent",
+      "role": "evidence",
+      "lock": "examples/dspy-research-agent/bun.lock",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"]
+    },
+    {
+      "id": "dspy",
+      "path": "examples/dspy/package.json",
+      "name": "@synadia-ai/nats-dspy-agent",
+      "role": "evidence",
+      "lock": "examples/dspy/bun.lock",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"]
+    },
+    {
+      "id": "durable-agents",
+      "path": "examples/durable-agents/package.json",
+      "name": "@synadia-ai/nats-durable-agents",
+      "role": "evidence",
+      "lock": "examples/durable-agents/bun.lock",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"]
+    },
+    {
+      "id": "open-agent-vercel",
+      "path": "examples/open-agent-vercel/package.json",
+      "name": "@synadia-ai/open-agent-vercel-example",
+      "role": "evidence",
+      "lock": "examples/open-agent-vercel/bun.lock",
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service", "@synadia-ai/open-agent"],
+      "allowed_stage_local_edges": ["@synadia-ai/open-agent"]
+    }
+  ],
+  "python": [
+    {
+      "id": "py-caller",
+      "path": "client-sdk/python/pyproject.toml",
+      "name": "synadia-ai-agents",
+      "import": "synadia_ai.agents",
+      "role": "publishable",
+      "layer": 1,
+      "lock": "client-sdk/python/uv.lock",
+      "internal_edges": [],
+      "stage_remove_files": [".gitignore"],
+      "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "docs", "examples", "pyproject.toml", "src"]
+    },
+    {
+      "id": "py-host",
+      "path": "agent-sdk/python/pyproject.toml",
+      "name": "synadia-ai-agent-service",
+      "import": "synadia_ai.agent_service",
+      "role": "publishable",
+      "layer": 2,
+      "lock": "agent-sdk/python/uv.lock",
+      "internal_edges": ["synadia-ai-agents"],
+      "stage_remove_files": [".gitignore"],
+      "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "docs", "examples", "pyproject.toml", "src"]
+    },
+    {
+      "id": "deerflow",
+      "path": "agents/deerflow/pyproject.toml",
+      "name": "synadia-ai-nats-deerflow-channel",
+      "import": "synadia_ai.nats_deerflow_channel",
+      "role": "publishable",
+      "layer": 3,
+      "lock": "agents/deerflow/uv.lock",
+      "internal_edges": ["synadia-ai-agents", "synadia-ai-agent-service"],
+      "stage_license_from": "LICENSE",
+      "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "examples", "pyproject.toml", "src"]
+    },
+    {
+      "id": "identity-workbook",
+      "path": "examples/identity-workbook/python/pyproject.toml",
+      "name": "synadia-python-identity-workbook",
+      "role": "evidence",
+      "lock": "examples/identity-workbook/python/uv.lock",
+      "internal_edges": ["synadia-ai-agents", "synadia-ai-agent-service"]
+    }
+  ],
+  "excluded_manifests": [
+    {
+      "path": "agents/eve/test/fixtures/eve-agent/package.json",
+      "reason": "Real-runtime test fixture; its ignored lock keeps it outside immutable release proof."
+    },
+    {
+      "path": "agents/open-agent/vendor/agent/package.json",
+      "reason": "Vendored fixture with intentional catalog/workspace references; never packed or published."
+    }
+  ],
+  "external_gates": [
+    {
+      "id": "hermes",
+      "repository": "synadia-ai/hermes-nats-gateway",
+      "branch": "rollout-agent-identity",
+      "source_sha": "b574f0ce024a66a166f23bbf3828237f0ae550f5",
+      "note": "Branch-artifact evidence only; update after the final SDK/tracing source SHA."
+    }
+  ]
+}

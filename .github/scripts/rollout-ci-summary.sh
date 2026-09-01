@@ -77,6 +77,7 @@ for path in "${changed_paths[@]}"; do
       expect "CI — agent-sdk/python"
       expect "CI — agents/deerflow"
       expect "CI — Python identity workbook"
+      expect "CI — release rehearsal"
       ;;
     client-sdk/typescript/*|agent-sdk/typescript/*|test-fixtures/*|.github/workflows/client-sdk-typescript.yml)
       expect "CI — client-sdk/typescript"
@@ -122,6 +123,12 @@ for path in "${changed_paths[@]}"; do
   case "$path" in
     examples/identity-workbook/python/*|client-sdk/python/*|agent-sdk/python/*|.github/workflows/python-identity-workbook.yml)
       expect "CI — Python identity workbook"
+      ;;
+  esac
+
+  case "$path" in
+    client-sdk/*|client-sdk/**/*|agent-sdk/*|agent-sdk/**/*|agents/*|agents/**/*|examples/*|examples/**/*|devtools/release/*|devtools/release/**/*|.github/workflows/release-*.yml|LICENSE)
+      expect "CI — release rehearsal"
       ;;
   esac
 done

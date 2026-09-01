@@ -1,9 +1,8 @@
 version: 2
 
 updates:
-  # Python dependencies declared in pyproject.toml + uv.lock.
   - package-ecosystem: "pip"
-    directory: "/"
+    directory: "/client-sdk/python"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -15,15 +14,11 @@ updates:
       prefix: "deps"
       include: "scope"
     groups:
-      # Group minor/patch bumps so we get one PR per week rather than
-      # one per package. Majors still get their own PR (reviewer needs
-      # to think about each).
       python-minor-and-patch:
         update-types:
           - "minor"
           - "patch"
 
-  # GitHub Actions used in .github/workflows/.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

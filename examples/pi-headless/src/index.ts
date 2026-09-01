@@ -27,8 +27,22 @@ const log = (line: string): void => {
   process.stderr.write(`${line}\n`);
 };
 
+const HELP_TEXT = `Usage: nats-pi-headless [options]
+
+Options:
+  --context <name>  NATS context
+  --url <url>       NATS server URL
+  --owner <token>   agent owner token
+  --name <token>    controller name
+  -h, --help        show this help
+`;
+
 async function main(): Promise<void> {
   const cli = parseCliOverrides(process.argv.slice(2));
+  if (cli.help) {
+    process.stdout.write(HELP_TEXT);
+    return;
+  }
   const config = loadConfig(cli);
 
   // This is the only credential read. The bundle retains one snapshot for
