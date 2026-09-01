@@ -1,0 +1,246 @@
+{
+  "files": {
+    ".github/scripts/rollout-ci-summary.sh": {
+      "sha256": "dda749a6231b2b3f529141de44c38160e015dd5cc2722ee37713146b72bc1cb9",
+      "size": 6077
+    },
+    ".github/workflows/release-python-agent-service.yml": {
+      "sha256": "dd4ea202103012f5dcf752cc1f1dadecc1abe573641fab78ffb33127f1f491a1",
+      "size": 5597
+    },
+    ".github/workflows/release-python-deerflow.yml": {
+      "sha256": "75b138b7bd772bb62582c2456bfa43b3828035ad0c77195ee3f22406a2432813",
+      "size": 4927
+    },
+    ".github/workflows/release-python.yml": {
+      "sha256": "244bc1207e298af901c0b74697bd658d45804c626ca599bb4fe4253dbcb342d1",
+      "size": 5561
+    },
+    ".github/workflows/release-rehearsal.yml": {
+      "sha256": "5ce6dfe2ae8a95825e7b07e62228b92a77f0d956427b40f1cbb080e383ba5deb",
+      "size": 4250
+    },
+    ".github/workflows/rollout-ci-summary.yml": {
+      "sha256": "be74c44ee4ba3ea36470ca73914c8393744c43d9d5e8bf18bd4360cf136aab3e",
+      "size": 885
+    },
+    "agent-sdk/python/pyproject.toml": {
+      "sha256": "17670694c20f3a9ad37babcb498944176bc0ac0780506c46a49c9f1334b0bb96",
+      "size": 3577
+    },
+    "agent-sdk/python/uv.lock": {
+      "sha256": "d92b9ddcd8ca168b98619405e9702fbc72ca6c90d22c0623fd19fe949c643afb",
+      "size": 123857
+    },
+    "agent-sdk/typescript/bun.lock": {
+      "sha256": "44c47d2d0bfc3ced73dc36a160a59d9499d28c9c3742e4babc127a62c312070c",
+      "size": 79946
+    },
+    "agent-sdk/typescript/package.json": {
+      "sha256": "74284b7244e79f7c305299df50d15cdb181a187af88c22030ebb9756fd97320d",
+      "size": 2461
+    },
+    "agents/acp/bun.lock": {
+      "sha256": "1297ea49b0eaffc4db851f8c876ac93ad00255f2ec7c750f95ded397845315ae",
+      "size": 3644
+    },
+    "agents/acp/package.json": {
+      "sha256": "d903128f277d12027db40686a26adaf5a3c4c555f0919151b3b63550fb1fb5b0",
+      "size": 1682
+    },
+    "agents/claude-code/bun.lock": {
+      "sha256": "990dd489bdfc6dd9c400ac59e1cbe9995caab589cacec974c554c93bfe8f1183",
+      "size": 99548
+    },
+    "agents/claude-code/package.json": {
+      "sha256": "94c8f5ac334887c7421c2aa588a9b26f8caf8fd000910dc20a3fe63e3e4ecd96",
+      "size": 1332
+    },
+    "agents/codex/bun.lock": {
+      "sha256": "76d3c40b7b0b09b8e78e6c95403b8fdcce86f84936b588f9c69911dc92d4d9e9",
+      "size": 3238
+    },
+    "agents/codex/package.json": {
+      "sha256": "7afd31bfe93f8e1b66070ade227a3f1dbd31322eabca6761a2dc7ca35158418c",
+      "size": 2202
+    },
+    "agents/deerflow/pyproject.toml": {
+      "sha256": "cdc9078f812221a7812d0d52135209bd277d3f1a6591df3f2408241381dd6f1f",
+      "size": 2595
+    },
+    "agents/deerflow/uv.lock": {
+      "sha256": "71c69e4e3f8b3d9287e70a98e3297bb1ebf88a3d5a791c792ae5811db189a067",
+      "size": 135577
+    },
+    "agents/eve/bun.lock": {
+      "sha256": "9b445efc3f3cea64c166cb8977af3f7611b09cca9e218e947852efcdd34372b6",
+      "size": 94143
+    },
+    "agents/eve/package.json": {
+      "sha256": "c6be12141eb94e3d47302ca637b13ad7c3899be61ee832ac9afa532dc24952f3",
+      "size": 1335
+    },
+    "agents/flue/bun.lock": {
+      "sha256": "d1077cc096480db79a0112bdd118299fe6b3b190e0f91003fefc558df4d8eb76",
+      "size": 80717
+    },
+    "agents/flue/package.json": {
+      "sha256": "42742510ae4fe28fcd38487e9ebe7514e389992e17fc06d1c86ee717b0a0d168",
+      "size": 1326
+    },
+    "agents/grok/bun.lock": {
+      "sha256": "8c62b33b6d42f78cdfc350a2ab306865bd6deb628360bb918ca8977a7acb62c2",
+      "size": 3905
+    },
+    "agents/grok/package.json": {
+      "sha256": "1e31819b10d381d99151c1d194487c5d924c6771567a5064e4939099cf0496c6",
+      "size": 1464
+    },
+    "agents/open-agent/bun.lock": {
+      "sha256": "69b969ecf6d6b571987ab8a3d79f5a212b6816b0d728e6f4143359faab462383",
+      "size": 84416
+    },
+    "agents/open-agent/package.json": {
+      "sha256": "99da867c2ddd1e565d0afd9fd500ae15e9efce3d191039bd0f91272461bb5cc2",
+      "size": 1030
+    },
+    "agents/openclaw/package.json": {
+      "sha256": "a4489e3dff5d49688b4d78a03e6db344d7828b0e32c3b4f3b955cf8be23099cf",
+      "size": 2033
+    },
+    "agents/opencode/bun.lock": {
+      "sha256": "cac2a8168d93f13881b0d0c250b9e6635f91b8739924cd6cca802805d4615583",
+      "size": 4588
+    },
+    "agents/opencode/package.json": {
+      "sha256": "a8368f9017be44b4ea335141ef11734ec102292d9cef168489dc93e9d76a7c47",
+      "size": 2085
+    },
+    "agents/pi/package.json": {
+      "sha256": "bfd7df36e85942d708b18fb9b4fba8d9821048c31dcf2f605f097ad400a7053f",
+      "size": 1412
+    },
+    "client-sdk/python/pyproject.toml": {
+      "sha256": "e293366da6c2b687127462b65c5f24e4420fe311d715924726c50ea704da291f",
+      "size": 3409
+    },
+    "client-sdk/python/uv.lock": {
+      "sha256": "ede3983765d225ccd2afe838bdd3d43f162da74d27fd7c74678a507a49395676",
+      "size": 120705
+    },
+    "client-sdk/typescript/bun.lock": {
+      "sha256": "cfc9cf0d1963706da4585af4c6eef8f042c0cc9b2cb7fa13fa79d6c3aa204f71",
+      "size": 79680
+    },
+    "client-sdk/typescript/package.json": {
+      "sha256": "ea3c00b045561a5a444ba901c0c0984b01a813f7b9ad22b016a2e12f0d6d3ba1",
+      "size": 2519
+    },
+    "devtools/release/cooldown-policy.json": {
+      "sha256": "448a94fa59cfcba9f896db9f7c4c70d5f2cced0b3494418f02a5734c925c493f",
+      "size": 390
+    },
+    "devtools/release/plan.json": {
+      "sha256": "c7a348ff00cfd7ac3d100a8dc995ff1b18f5bc43466348d55ecb681a50c40ec8",
+      "size": 10118
+    },
+    "devtools/release/python-build-constraints.txt": {
+      "sha256": "f414ac60a696061f1080ee2b0e2f067dcadb3314ff5dbaee2489bd14c225ab8d",
+      "size": 1131
+    },
+    "devtools/release/python-build-requirements.in": {
+      "sha256": "6fcc9e51d8a27c449b5fd414b3436019936eb1e4d99638e80f09d931b9f7a7b6",
+      "size": 173
+    },
+    "devtools/release/release.py": {
+      "sha256": "7f71fbb068eca0b73662857fde5ebc11d00868cb573771ede0dde7f04bdeda53",
+      "size": 57305
+    },
+    "devtools/release/versions.json": {
+      "sha256": "53ca98a878887284a94b0fab92d7e51c348a16682e03c65609f2d307e454fd21",
+      "size": 699
+    },
+    "devtools/release/versions.rehearsal.json": {
+      "sha256": "2c58c21afbb2e755226e67109ac13d67312727ce55fe36fb9a7a48c0beea4e55",
+      "size": 918
+    },
+    "examples/agent-web-ui/bun.lock": {
+      "sha256": "c5ca71ba0f72b4e2436b181ff98bce2e9a15eb179656e0c5aa01601fe6cd0282",
+      "size": 88156
+    },
+    "examples/agent-web-ui/package.json": {
+      "sha256": "0e070734a66e64dfc11e86c949a5da740d3704525cf0722030f61061f4fdcfc1",
+      "size": 1485
+    },
+    "examples/claude-code-headless/bun.lock": {
+      "sha256": "d4f920da8de90e8bd01bc53634eb096fd7436e54ba221cc1c58c5707be1de6d3",
+      "size": 116015
+    },
+    "examples/claude-code-headless/package.json": {
+      "sha256": "69c8cb5da719589c2d91d37af3c6806aea44623361a794de01ec4a69c00b277a",
+      "size": 1929
+    },
+    "examples/dspy-research-agent/bun.lock": {
+      "sha256": "2b3fdf0d0b06eb7fc6f5d74070b3035e6ab427b2822486ffe4109bdc3d1af99a",
+      "size": 84630
+    },
+    "examples/dspy-research-agent/package.json": {
+      "sha256": "40e9274bc6b8e6fc8839d59fc4c4e035621c2c9efe2fcc21e06e5b0488d2bc2e",
+      "size": 743
+    },
+    "examples/dspy/bun.lock": {
+      "sha256": "dc3f8f7170b98b5e6e807d8397ec0519d769546bc7ba715650d1370688a28dcb",
+      "size": 82186
+    },
+    "examples/dspy/package.json": {
+      "sha256": "6aa29075c391a4fa83d5d5830a5f8e52c92e4bbed5aa6ad288868dc861d1861b",
+      "size": 705
+    },
+    "examples/durable-agents/bun.lock": {
+      "sha256": "4a44b409cf88461e1cfa16a00bd2db118acb95f633a8a39b3ec75a617e745793",
+      "size": 82382
+    },
+    "examples/durable-agents/package.json": {
+      "sha256": "2f5d4475b1ee5acbe2f14cccfb076fb305de8ec30166ab78d19d8327310b6abf",
+      "size": 1039
+    },
+    "examples/identity-workbook/python/pyproject.toml": {
+      "sha256": "59479a1e1f1a115ded2493d4da3ecf81b33c981e0aa5caee5a6cb7c66d112f0a",
+      "size": 1342
+    },
+    "examples/identity-workbook/python/uv.lock": {
+      "sha256": "6f25a6455f5c2eaf24e449ff25c7cb9d6608816f3553998f34fb93431341bb1d",
+      "size": 156004
+    },
+    "examples/open-agent-vercel/bun.lock": {
+      "sha256": "517869f987381ffa6f72ff1b049a7d8eea4aeca5f9388d611f9c7db6e77b6f1b",
+      "size": 88683
+    },
+    "examples/open-agent-vercel/package.json": {
+      "sha256": "81c8c33501bc97927c270b2e0e2151fe862661d152fd7517e161708ab2c71729",
+      "size": 861
+    },
+    "examples/pi-headless/bun.lock": {
+      "sha256": "e8849e883fa22dda9a7d6beb185817d4f0fda03ddb2154179f660ffeaaa7b2b9",
+      "size": 155824
+    },
+    "examples/pi-headless/package.json": {
+      "sha256": "1be014f0b0d1ccae785ee30e8af8b519e4c0834eac283a85d07564f9c0294e6c",
+      "size": 2093
+    }
+  },
+  "schema_version": 1,
+  "toolchain": {
+    "bun": "1.3.14",
+    "hatchling": "1.32.0",
+    "node": "22.22.3",
+    "npm": "10.9.8",
+    "python": [
+      "3.11",
+      "3.12",
+      "3.13"
+    ],
+    "runner": "ubuntu-24.04",
+    "uv": "0.9.26"
+  }
+}

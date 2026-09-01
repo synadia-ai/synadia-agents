@@ -2,9 +2,9 @@ name: CI — rollout summary
 
 on:
   push:
-    branches: [main, sdk-release-rollout, rollout-agent-integrations]
+    branches: [main, sdk-release-rollout]
   pull_request:
-    branches: [main, sdk-release-rollout, rollout-agent-integrations]
+    branches: [main, sdk-release-rollout]
 
 permissions:
   actions: read
@@ -21,7 +21,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - name: Wait for and evaluate expected workflows
         env:
           GH_TOKEN: ${{ github.token }}

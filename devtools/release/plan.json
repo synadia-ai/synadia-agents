@@ -234,7 +234,8 @@
       "role": "publishable",
       "layer": 1,
       "lock": "client-sdk/python/uv.lock",
-      "internal_edges": []
+      "internal_edges": [],
+      "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "docs", "examples", "pyproject.toml", "src"]
     },
     {
       "id": "py-host",
@@ -244,7 +245,8 @@
       "role": "publishable",
       "layer": 2,
       "lock": "agent-sdk/python/uv.lock",
-      "internal_edges": ["synadia-ai-agents"]
+      "internal_edges": ["synadia-ai-agents"],
+      "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "docs", "examples", "pyproject.toml", "src"]
     },
     {
       "id": "deerflow",
@@ -255,7 +257,8 @@
       "layer": 3,
       "lock": "agents/deerflow/uv.lock",
       "internal_edges": ["synadia-ai-agents", "synadia-ai-agent-service"],
-      "stage_license_from": "LICENSE"
+      "stage_license_from": "LICENSE",
+      "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "examples", "pyproject.toml", "src"]
     },
     {
       "id": "identity-workbook",

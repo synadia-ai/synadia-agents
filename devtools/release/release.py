@@ -9,6 +9,7 @@ internal dependency versions written only into that stage.
 from __future__ import annotations
 
 import argparse
+import email.parser
 import hashlib
 import json
 import os
@@ -19,6 +20,7 @@ import sys
 import tarfile
 import tempfile
 import tomllib
+import zipfile
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -50,6 +52,11 @@ FORBIDDEN_SPEC_PREFIXES = (
     "https:",
     "catalog:",
 )
+FORBIDDEN_PUBLIC_TEXT = (
+    b"agent fabric",
+    b"synadia-agent-fabric",
+)
+NKEY_SEED_PATTERN = re.compile(rb"\bSU[A-Z2-7]{54,60}\b")
 
 
 class ReleaseError(RuntimeError):
@@ -590,14 +597,6 @@ def validate_python_lock(
     lock_path = root / entry["lock"]
     if not lock_path.is_file():
         fail(f"missing Python lock: {entry['lock']}")
-    raw = lock_path.read_text(encoding="utf-8")
-    for pattern in (
-        r"source\s*=\s*\{\s*editable",
-        r"source\s*=\s*\{\s*directory",
-        r"source\s*=\s*\{\s*git",
-    ):
-        if re.search(pattern, raw):
-            fail(f"local/editable/Git source in {entry['lock']}")
     with lock_path.open("rb") as stream:
         lock = tomllib.load(stream)
     packages = defaultdict(list)
@@ -605,16 +604,48 @@ def validate_python_lock(
         packages[package.get("name")].append(package)
     for dependency in entry.get("internal_edges", []):
         matches = packages.get(dependency, [])
+        registry_matches = [
+            package
+            for package in matches
+            if package.get("version") == versions[dependency]
+            and isinstance(package.get("source"), dict)
+            and "registry" in package["source"]
+        ]
+        if not registry_matches:
+            fail(
+                f"wrong, missing, or non-registry internal version {dependency} "
+                f"in {entry['lock']}"
+            )
+
+        own = packages.get(entry["name"], [])
+        if not own:
+            fail(f"missing root package {entry['name']} in {entry['lock']}")
+        requirements = [
+            requirement
+            for package in own
+            for requirement in package.get("metadata", {}).get("requires-dist", [])
+        ]
+        expected = f"=={versions[dependency]}"
         if not any(
-            package.get("version") == versions[dependency] for package in matches
+            requirement.get("name") == dependency
+            and requirement.get("specifier") == expected
+            and "editable" not in requirement
+            and "directory" not in requirement
+            and "git" not in requirement
+            for requirement in requirements
         ):
             fail(
-                f"wrong or missing locked internal version {dependency} in {entry['lock']}"
+                f"root metadata does not exact-pin registry dependency {dependency} "
+                f"in {entry['lock']}"
             )
 
 
 def validate_stage(
-    root: Path, plan_path: Path, *, require_registry_locks: bool
+    root: Path,
+    plan_path: Path,
+    *,
+    require_registry_locks: bool,
+    required_lock_ids: set[str] | None = None,
 ) -> None:
     plan = read_json(plan_path)
     validate_plan(plan)
@@ -659,7 +690,13 @@ def validate_stage(
                 fail("Claude marketplace package/plugin version mismatch")
             if not (root / entry["runtime_bundle"]).is_file():
                 fail("Claude marketplace runtime bundle is missing")
-        if require_registry_locks and entry.get("lock"):
+        lock_required = required_lock_ids is None or entry["id"] in required_lock_ids
+        if (
+            require_registry_locks
+            and lock_required
+            and entry.get("lock")
+            and entry.get("lock_phase") == "registry"
+        ):
             validate_bun_lock(root, entry, manifest, versions)
 
     python_names = {entry["name"] for entry in plan["python"]}
@@ -685,7 +722,8 @@ def validate_stage(
             expected = f"{name}=={versions[name]}"
             if dependencies[name] != expected:
                 fail(f"non-exact Python internal requirement {dependencies[name]!r}")
-        if require_registry_locks:
+        lock_required = required_lock_ids is None or entry["id"] in required_lock_ids
+        if require_registry_locks and lock_required and entry["role"] == "publishable":
             validate_python_lock(root, entry, versions)
 
     qualifier = " with registry locks" if require_registry_locks else ""
@@ -699,12 +737,18 @@ def freeze_paths(repo: Path, plan: dict[str, Any]) -> list[str]:
         *[entry["lock"] for entry in plan["npm"] if entry.get("lock")],
         *[entry["lock"] for entry in plan["python"] if entry.get("lock")],
         "devtools/release/plan.json",
+        "devtools/release/release.py",
+        "devtools/release/python-build-constraints.txt",
+        "devtools/release/python-build-requirements.in",
         "devtools/release/versions.rehearsal.json",
+        "devtools/release/versions.json",
         "devtools/release/cooldown-policy.json",
+        ".github/scripts/rollout-ci-summary.sh",
         ".github/workflows/release-rehearsal.yml",
         ".github/workflows/release-python.yml",
         ".github/workflows/release-python-agent-service.yml",
         ".github/workflows/release-python-deerflow.yml",
+        ".github/workflows/rollout-ci-summary.yml",
     }
     return sorted(path for path in paths if (repo / path).is_file())
 
@@ -778,6 +822,33 @@ def internal_closure(
     return result
 
 
+def select_publishable_entries(
+    plan: dict[str, Any],
+    ecosystem: str,
+    package_ids: set[str] | None,
+) -> list[dict[str, Any]]:
+    entries = sorted(
+        (entry for entry in plan[ecosystem] if entry["role"] == "publishable"),
+        key=lambda item: (item["layer"], item["id"]),
+    )
+    if package_ids is None:
+        return entries
+    known = {entry["id"] for entry in entries}
+    unknown = sorted(package_ids - known)
+    if unknown:
+        fail(f"unknown {ecosystem} publishable package ids: {unknown}")
+    return [entry for entry in entries if entry["id"] in package_ids]
+
+
+def inspect_public_text(artifact: Path, member: str, data: bytes) -> None:
+    lowered = data.lower()
+    for forbidden in FORBIDDEN_PUBLIC_TEXT:
+        if forbidden in lowered:
+            fail(f"private product terminology in {artifact.name}: {member}")
+    if NKEY_SEED_PATTERN.search(data):
+        fail(f"possible NKEY seed in {artifact.name}: {member}")
+
+
 def inspect_npm_tarball(tarball: Path, staged_manifest: dict[str, Any]) -> None:
     with tarfile.open(tarball, "r:gz") as archive:
         members = archive.getmembers()
@@ -792,6 +863,12 @@ def inspect_npm_tarball(tarball: Path, staged_manifest: dict[str, Any]) -> None:
                 or PurePosixPath(lowered).name in {".env", ".npmrc"}
             ):
                 fail(f"forbidden file in {tarball.name}: {name}")
+        for member in members:
+            if not member.isfile() or member.size > 2 * 1024 * 1024:
+                continue
+            stream = archive.extractfile(member)
+            if stream is not None:
+                inspect_public_text(tarball, member.name, stream.read())
         try:
             package_file = archive.extractfile("package/package.json")
         except KeyError:
@@ -816,6 +893,97 @@ def inspect_npm_tarball(tarball: Path, staged_manifest: dict[str, Any]) -> None:
                 fail(f"bin {binary} target is missing from {tarball}: {target}")
             if member.mode & 0o111 == 0:
                 fail(f"bin {binary} is not executable in {tarball}: {target}")
+
+
+def canonical_python_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+
+def inspect_python_metadata(
+    artifact: Path,
+    member: str,
+    data: bytes,
+    entry: dict[str, Any],
+    version: str,
+) -> None:
+    metadata = email.parser.BytesParser().parsebytes(data)
+    if canonical_python_name(metadata.get("Name", "")) != canonical_python_name(
+        entry["name"]
+    ):
+        fail(f"wrong metadata name in {artifact.name}: {member}")
+    if metadata.get("Version") != version:
+        fail(f"wrong metadata version in {artifact.name}: {member}")
+
+
+def inspect_python_distribution(
+    artifact: Path,
+    entry: dict[str, Any],
+    version: str,
+) -> None:
+    if artifact.name.endswith(".tar.gz"):
+        with tarfile.open(artifact, "r:gz") as archive:
+            files = [member for member in archive.getmembers() if member.isfile()]
+            roots = {PurePosixPath(member.name).parts[0] for member in files}
+            if len(roots) != 1:
+                fail(f"sdist must have one top-level directory: {artifact.name}")
+            root = next(iter(roots))
+            relative_names: list[str] = []
+            metadata_seen = False
+            for member in files:
+                path = PurePosixPath(member.name)
+                relative = PurePosixPath(*path.parts[1:])
+                relative_names.append(str(relative))
+                stream = archive.extractfile(member)
+                if stream is None:
+                    fail(f"cannot read {member.name} from {artifact.name}")
+                data = stream.read()
+                inspect_public_text(artifact, member.name, data)
+                if relative.name == "PKG-INFO" and len(relative.parts) == 1:
+                    inspect_python_metadata(artifact, member.name, data, entry, version)
+                    metadata_seen = True
+
+            top_level = {PurePosixPath(name).parts[0] for name in relative_names}
+            allowed = set(entry["sdist_roots"]) | {"PKG-INFO"}
+            unexpected = sorted(top_level - allowed)
+            required = {"src", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"}
+            missing = sorted(required - top_level)
+            if unexpected or missing:
+                fail(
+                    f"sdist content mismatch for {entry['id']}: "
+                    f"unexpected={unexpected}, missing={missing}"
+                )
+            if not metadata_seen:
+                fail(f"sdist has no root PKG-INFO: {artifact.name}")
+            if not root.startswith(
+                canonical_python_name(entry["name"]).replace("-", "_")
+            ):
+                fail(f"unexpected sdist root {root!r} in {artifact.name}")
+        return
+
+    if artifact.suffix != ".whl":
+        fail(f"unknown Python artifact type: {artifact}")
+    with zipfile.ZipFile(artifact) as archive:
+        names = archive.namelist()
+        metadata_names = [
+            name for name in names if name.endswith(".dist-info/METADATA")
+        ]
+        if len(metadata_names) != 1:
+            fail(f"wheel must contain exactly one METADATA: {artifact.name}")
+        if not any(name.endswith(".dist-info/licenses/LICENSE") for name in names):
+            fail(f"wheel is missing LICENSE: {artifact.name}")
+        for name in names:
+            if name.endswith("/") or archive.getinfo(name).file_size > 2 * 1024 * 1024:
+                continue
+            data = archive.read(name)
+            inspect_public_text(artifact, name, data)
+        metadata_name = metadata_names[0]
+        inspect_python_metadata(
+            artifact,
+            metadata_name,
+            archive.read(metadata_name),
+            entry,
+            version,
+        )
 
 
 def artifact_record(stage: Path, files: list[Path], kind: str) -> dict[str, Any]:
@@ -966,7 +1134,78 @@ def build_npm(stage: Path, plan_path: Path, output: Path) -> None:
     print(f"built and artifact-tested {len(files)} npm tarballs")
 
 
-def build_python(stage: Path, plan_path: Path, constraints: Path, output: Path) -> None:
+def python_cooldown_args(
+    cooldown: dict[str, Any], entries: list[dict[str, Any]]
+) -> list[str]:
+    exclusions = cooldown.get("python_internal_exclusions", [])
+    if not isinstance(exclusions, list) or not all(
+        isinstance(value, str) for value in exclusions
+    ):
+        fail("python_internal_exclusions must be a list of package names")
+    internal_names = {
+        edge for entry in entries for edge in entry.get("internal_edges", [])
+    }
+    result: list[str] = []
+    for name in sorted(set(exclusions) & internal_names):
+        result.extend(["--exclude-newer-package", f"{name}=9999-12-31T23:59:59Z"])
+    return result
+
+
+def smoke_python_artifacts(
+    entries: list[dict[str, Any]],
+    artifacts: list[Path],
+    constraints: Path,
+    cooldown: dict[str, Any],
+    env: dict[str, str],
+) -> None:
+    cooldown_args = python_cooldown_args(cooldown, entries)
+    for artifact_kind, suffix in (("wheel", ".whl"), ("sdist", ".tar.gz")):
+        selected = sorted(path for path in artifacts if path.name.endswith(suffix))
+        if not selected:
+            fail(f"no {artifact_kind} artifacts selected for smoke test")
+        harness = Path(
+            tempfile.mkdtemp(prefix=f"synadia-python-{artifact_kind}-smoke-")
+        )
+        try:
+            python = harness / ".venv/bin/python"
+            run(
+                ["uv", "venv", "--python", "3.11", str(harness / ".venv")],
+                cwd=harness,
+                env=env,
+            )
+            run(
+                [
+                    "uv",
+                    "pip",
+                    "install",
+                    "--python",
+                    str(python),
+                    "--build-constraints",
+                    str(constraints.resolve()),
+                    "--no-progress",
+                    *cooldown_args,
+                    *[str(path.resolve()) for path in selected],
+                ],
+                cwd=harness,
+                env=env,
+            )
+            for entry in entries:
+                run(
+                    [str(python), "-c", f"import {entry['import']}"],
+                    cwd=harness,
+                    env=env,
+                )
+        finally:
+            shutil.rmtree(harness, ignore_errors=True)
+
+
+def build_python(
+    stage: Path,
+    plan_path: Path,
+    constraints: Path,
+    output: Path,
+    package_ids: set[str] | None = None,
+) -> None:
     validate_stage(stage, plan_path, require_registry_locks=False)
     plan = read_json(plan_path)
     marker = read_json(stage / STAGE_MARKER)
@@ -978,10 +1217,7 @@ def build_python(stage: Path, plan_path: Path, constraints: Path, output: Path) 
     if not isinstance(cutoff, str) or not cutoff:
         fail("Python artifact rehearsal requires an external freeze cutoff")
     env["UV_EXCLUDE_NEWER"] = cutoff
-    entries = sorted(
-        (entry for entry in plan["python"] if entry["role"] == "publishable"),
-        key=lambda item: (item["layer"], item["id"]),
-    )
+    entries = select_publishable_entries(plan, "python", package_ids)
     by_id: dict[str, list[Path]] = {}
     for entry in entries:
         directory = stage / package_dir(entry)
@@ -1006,44 +1242,13 @@ def build_python(stage: Path, plan_path: Path, constraints: Path, output: Path) 
         if len(new_wheels) != 1:
             fail(f"expected one new wheel for {entry['id']}, found {new_wheels}")
         by_id[entry["id"]] = [sdist, new_wheels[0]]
-
-    for artifact_kind, pattern in (("wheel", "*.whl"), ("sdist", "*.tar.gz")):
-        harness = Path(
-            tempfile.mkdtemp(prefix=f"synadia-python-{artifact_kind}-smoke-")
-        )
-        try:
-            python = harness / ".venv/bin/python"
-            run(
-                ["uv", "venv", "--python", "3.11", str(harness / ".venv")],
-                cwd=harness,
-                env=env,
-            )
-            artifacts = [str(path.resolve()) for path in sorted(output.glob(pattern))]
-            run(
-                [
-                    "uv",
-                    "pip",
-                    "install",
-                    "--python",
-                    str(python),
-                    "--build-constraints",
-                    str(constraints.resolve()),
-                    "--no-progress",
-                    *artifacts,
-                ],
-                cwd=harness,
-                env=env,
-            )
-            for entry in entries:
-                run(
-                    [str(python), "-c", f"import {entry['import']}"],
-                    cwd=harness,
-                    env=env,
-                )
-        finally:
-            shutil.rmtree(harness, ignore_errors=True)
-
     files = [*output.glob("*.whl"), *output.glob("*.tar.gz")]
+    for entry in entries:
+        for artifact in by_id[entry["id"]]:
+            inspect_python_distribution(
+                artifact, entry, marker["versions"][entry["name"]]
+            )
+    smoke_python_artifacts(entries, files, constraints, cooldown, env)
     record = artifact_record(stage, files, "python")
     record["packages"] = {
         entry_id: [path.name for path in paths] for entry_id, paths in by_id.items()
@@ -1055,6 +1260,44 @@ def build_python(stage: Path, plan_path: Path, constraints: Path, output: Path) 
         overwrite=False,
     )
     print(f"built and artifact-tested {len(files)} Python distributions")
+
+
+def verify_python_artifacts(
+    record_path: Path,
+    artifact_dir: Path,
+    plan_path: Path,
+    constraints: Path,
+    cooldown_path: Path,
+) -> None:
+    verify_record(record_path, artifact_dir)
+    record = read_json(record_path)
+    if record.get("kind") != "python":
+        fail("artifact record is not for Python")
+    package_files = record.get("packages")
+    versions = record.get("versions")
+    if not isinstance(package_files, dict) or not isinstance(versions, dict):
+        fail("Python artifact record lacks package or version metadata")
+    plan = read_json(plan_path)
+    entries = select_publishable_entries(plan, "python", set(package_files))
+    artifacts: list[Path] = []
+    for entry in entries:
+        filenames = package_files.get(entry["id"])
+        if not isinstance(filenames, list) or len(filenames) != 2:
+            fail(f"wrong artifact list for {entry['id']}")
+        for filename in filenames:
+            if not isinstance(filename, str):
+                fail(f"non-string artifact name for {entry['id']}")
+            artifact = artifact_dir / filename
+            artifacts.append(artifact)
+            inspect_python_distribution(artifact, entry, versions[entry["name"]])
+    cooldown = read_json(cooldown_path)
+    cutoff = cooldown.get("external_freeze_cutoff")
+    if not isinstance(cutoff, str) or not cutoff:
+        fail("Python artifact verification requires an external freeze cutoff")
+    env = os.environ.copy()
+    env["UV_EXCLUDE_NEWER"] = cutoff
+    smoke_python_artifacts(entries, artifacts, constraints, cooldown, env)
+    print(f"verified and installed Python artifacts for {sorted(package_files)}")
 
 
 def verify_record(record_path: Path, artifact_dir: Path) -> None:
@@ -1085,20 +1328,49 @@ def publication_preflight(
     plan_path: Path,
     versions_path: Path,
     cooldown_path: Path,
+    package_ids: set[str] | None,
 ) -> None:
     plan = read_json(plan_path)
     phase, _ = load_versions(versions_path, plan)
     if phase != "candidate":
         fail("publication requires the candidate version map")
     cooldown = read_json(cooldown_path)
+    enforcement_points = cooldown.get("enforcement_points")
     if (
         cooldown.get("status") != "resolved"
         or not isinstance(cooldown.get("minimum_age_seconds"), int)
         or cooldown["minimum_age_seconds"] <= 0
-        or not cooldown.get("enforcement_points")
+        or not isinstance(enforcement_points, list)
+        or not enforcement_points
+        or not all(isinstance(value, str) and value for value in enforcement_points)
     ):
         fail("cooldown policy is unresolved; registry publication is blocked")
-    validate_stage(stage, plan_path, require_registry_locks=True)
+    publishable = {
+        entry["id"]: entry
+        for ecosystem in ("npm", "python")
+        for entry in plan[ecosystem]
+        if entry["role"] == "publishable"
+    }
+    if package_ids is not None:
+        unknown = sorted(package_ids - set(publishable))
+        if unknown:
+            fail(f"unknown publishable package ids: {unknown}")
+    release_names = {entry["name"] for entry in publishable.values()}
+    for key in ("npm_internal_exclusions", "python_internal_exclusions"):
+        exclusions = cooldown.get(key)
+        if not isinstance(exclusions, list) or not all(
+            isinstance(value, str) for value in exclusions
+        ):
+            fail(f"{key} must be a list of package names")
+        unknown = sorted(set(exclusions) - release_names)
+        if unknown:
+            fail(f"{key} contains non-release packages: {unknown}")
+    validate_stage(
+        stage,
+        plan_path,
+        require_registry_locks=True,
+        required_lock_ids=package_ids,
+    )
     print("publication preflight passed")
 
 
@@ -1118,6 +1390,7 @@ def parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate-stage")
     validate.add_argument("--stage", type=Path, required=True)
     validate.add_argument("--require-registry-locks", action="store_true")
+    validate.add_argument("--package-id", action="append")
 
     freeze = commands.add_parser("freeze")
     freeze.add_argument("action", choices=("write", "check"))
@@ -1133,15 +1406,25 @@ def parser() -> argparse.ArgumentParser:
         "--constraints", type=Path, default=HERE / "python-build-constraints.txt"
     )
     python.add_argument("--output", type=Path, required=True)
+    python.add_argument("--package-id", action="append")
 
     verify = commands.add_parser("verify-record")
     verify.add_argument("--record", type=Path, required=True)
     verify.add_argument("--artifacts", type=Path, required=True)
 
+    verify_python = commands.add_parser("verify-python-artifacts")
+    verify_python.add_argument("--record", type=Path, required=True)
+    verify_python.add_argument("--artifacts", type=Path, required=True)
+    verify_python.add_argument(
+        "--constraints", type=Path, default=HERE / "python-build-constraints.txt"
+    )
+    verify_python.add_argument("--cooldown", type=Path, default=DEFAULT_COOLDOWN)
+
     publish = commands.add_parser("publication-preflight")
     publish.add_argument("--stage", type=Path, required=True)
     publish.add_argument("--versions", type=Path, default=DEFAULT_CANDIDATE_VERSIONS)
     publish.add_argument("--cooldown", type=Path, default=DEFAULT_COOLDOWN)
+    publish.add_argument("--package-id", action="append")
     return result
 
 
@@ -1161,6 +1444,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.stage.resolve(),
                 plan_path,
                 require_registry_locks=args.require_registry_locks,
+                required_lock_ids=(
+                    set(args.package_id) if args.package_id is not None else None
+                ),
             )
         elif args.command == "freeze":
             freeze_command(
@@ -1174,15 +1460,25 @@ def main(argv: list[str] | None = None) -> int:
                 plan_path,
                 args.constraints.resolve(),
                 args.output.resolve(),
+                set(args.package_id) if args.package_id is not None else None,
             )
         elif args.command == "verify-record":
             verify_record(args.record.resolve(), args.artifacts.resolve())
+        elif args.command == "verify-python-artifacts":
+            verify_python_artifacts(
+                args.record.resolve(),
+                args.artifacts.resolve(),
+                plan_path,
+                args.constraints.resolve(),
+                args.cooldown.resolve(),
+            )
         elif args.command == "publication-preflight":
             publication_preflight(
                 args.stage.resolve(),
                 plan_path,
                 args.versions.resolve(),
                 args.cooldown.resolve(),
+                set(args.package_id) if args.package_id is not None else None,
             )
         else:  # pragma: no cover - argparse prevents this
             fail(f"unknown command: {args.command}")
