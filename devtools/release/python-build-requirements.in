@@ -1,0 +1,3 @@
+# The build backend itself is exact; this input is compiled with hashes into
+# python-build-constraints.txt and reviewed as part of the dependency freeze.
+hatchling==1.32.0

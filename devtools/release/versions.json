@@ -1,0 +1,21 @@
+{
+  "phase": "candidate",
+  "versions": {
+    "@synadia-ai/agents": null,
+    "@synadia-ai/agent-service": null,
+    "@synadia-ai/acp-nats-channel": null,
+    "@synadia-ai/codex-nats-channel": null,
+    "@synadia-ai/opencode-nats-channel": null,
+    "@synadia-ai/eve-nats-channel": null,
+    "@synadia-ai/flue-nats-channel": null,
+    "@synadia-ai/nats-channel": null,
+    "@synadia-ai/nats-pi-channel": null,
+    "@synadia-ai/nats-claude-code-headless": null,
+    "@synadia-ai/nats-pi-headless": null,
+    "@synadia-ai/grok-nats-channel": null,
+    "claude-channel-nats": null,
+    "synadia-ai-agents": null,
+    "synadia-ai-agent-service": null,
+    "synadia-ai-nats-deerflow-channel": null
+  }
+}

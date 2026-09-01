@@ -1,0 +1,21 @@
+{
+  "phase": "rehearsal",
+  "versions": {
+    "@synadia-ai/agents": "0.5.3-rehearsal.0",
+    "@synadia-ai/agent-service": "0.5.3-rehearsal.0",
+    "@synadia-ai/acp-nats-channel": "0.1.0-rehearsal.0",
+    "@synadia-ai/codex-nats-channel": "0.1.0-rehearsal.0",
+    "@synadia-ai/opencode-nats-channel": "0.1.0-rehearsal.0",
+    "@synadia-ai/eve-nats-channel": "0.1.0-rehearsal.0",
+    "@synadia-ai/flue-nats-channel": "0.1.0-rehearsal.0",
+    "@synadia-ai/nats-channel": "0.5.7-rehearsal.0",
+    "@synadia-ai/nats-pi-channel": "0.5.7-rehearsal.0",
+    "@synadia-ai/nats-claude-code-headless": "0.5.5-rehearsal.0",
+    "@synadia-ai/nats-pi-headless": "0.5.6-rehearsal.0",
+    "@synadia-ai/grok-nats-channel": "0.1.0-rehearsal.0",
+    "claude-channel-nats": "0.5.2-rehearsal.0",
+    "synadia-ai-agents": "0.8.0.dev0",
+    "synadia-ai-agent-service": "0.5.0.dev0",
+    "synadia-ai-nats-deerflow-channel": "0.3.0.dev0"
+  }
+}
