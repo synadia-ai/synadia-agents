@@ -150,8 +150,10 @@ from .identity import (
 from .messages import Chunk, QueryChunk, ResponseChunk, StatusChunk
 from .subjects import AgentSubject
 from .trace import (
+    DEFAULT_EDGE_SUBJECT,
     THREAD_ID_HEX_LEN,
     TOOL_CALL_ID_MAX,
+    TraceOptions,
     TraceScope,
     active_trace,
     bind_active_trace,
@@ -165,6 +167,7 @@ __all__ = [
     "AGENT_SENDER_SIGNED_INPUT_TAG",
     "DEFAULT_DISCOVER_MAX_WAIT_S",
     "DEFAULT_DISCOVER_STALL_S",
+    "DEFAULT_EDGE_SUBJECT",
     "DEFAULT_LIVENESS_SLACK",
     "DEFAULT_PROMPT_MAX_WAIT_S",
     "DEFAULT_REPLAY_WINDOW_S",
@@ -240,6 +243,7 @@ __all__ = [
     "StreamMaxWaitExceededError",
     "StreamMessage",
     "StreamStalledError",
+    "TraceOptions",
     "TraceScope",
     "ValidationError",
     "VerifiedSender",

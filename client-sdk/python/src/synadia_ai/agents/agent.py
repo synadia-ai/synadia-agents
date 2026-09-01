@@ -42,7 +42,13 @@ from .heartbeat import HeartbeatPayload
 from .identity.agent_id import AgentId
 from .identity.options import Identity, plan_sender_header, sender_header_bound
 from .messages import QueryChunk, ResponseChunk, StatusChunk, decode_chunk
-from .trace import _emit_edge_record, random_thread_id, valid_tool_call_id
+from .trace import (
+    TraceOptions,
+    active_trace,
+    build_edge_record,
+    random_thread_id,
+    valid_tool_call_id,
+)
 from .validation import (
     assert_attachments_allowed,
     assert_prompt_non_empty,
@@ -144,7 +150,7 @@ class Agent:
         prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         close_event: asyncio.Event | None = None,
         identity: Identity | None = None,
-        trace: bool = False,
+        trace: TraceOptions | None = None,
     ) -> None:
         if prompt_max_wait_s <= 0:
             raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
@@ -155,6 +161,11 @@ class Agent:
         self._close_event = close_event
         self._sender_identity = identity
         self._trace = trace
+
+    @property
+    def tracing_enabled(self) -> bool:
+        """``True`` iff tracing was enabled on this handle."""
+        return self._trace is not None
 
     # --- flat read-only identity / capability fields -------------------
 
@@ -357,8 +368,17 @@ class Agent:
 
         # If tracing is enabled, mint a thread ID for this prompt
         thread_id: str | None = None
-        if self._trace:
+        root_id: str | None = None
+        parent_id: str | None = None
+        if self._trace is not None:
             thread_id = random_thread_id()
+            ambient = active_trace()
+            if ambient is None:
+                root_id = thread_id
+                parent_id = None
+            else:
+                root_id = ambient.root_id
+                parent_id = ambient.thread_id
 
         if isinstance(text, Envelope):
             merged_attachments: list[Attachment] | None
@@ -370,23 +390,36 @@ class Agent:
 
             # Allow the user to override thread_id
             thread_id = text.thread_id or thread_id
+            root_id = text.root_id or root_id
 
             envelope = Envelope(
                 prompt=text.prompt,
                 attachments=merged_attachments,
                 thread_id=thread_id,
+                root_id=root_id,
             )
         else:
             envelope = Envelope(
                 prompt=text,
                 attachments=list(attachments) if attachments else None,
                 thread_id=thread_id,
+                root_id=root_id,
             )
 
         # We do this after constructing the envelope to allow
-        # overriding fields
-        if self._trace and thread_id is not None:
-            _emit_edge_record(thread_id, tool_call_id)
+        # overriding fields. Only the record is built here — the publish
+        # needs an await, so it happens in _prompt_stream.
+        edge_publish: tuple[str, bytes] | None = None
+        if (
+            self._trace is not None
+            and self._trace.edge_subject is not None
+            and thread_id is not None
+            and root_id is not None
+        ):
+            edge_publish = (
+                self._trace.edge_subject,
+                build_edge_record(thread_id, parent_id, root_id, tool_call_id),
+            )
 
         # §5.4: local validation happens synchronously BEFORE any wire I/O.
         # Raising here means callers don't even allocate a reply subject.
@@ -422,6 +455,7 @@ class Agent:
             subject=publish_subject,
             sub=signed_subject,
             require_signed=require_signed,
+            edge_publish=edge_publish,
         )
 
     # --- status --------------------------------------------------------
@@ -592,6 +626,7 @@ class Agent:
         subject: str,
         sub: str,
         require_signed: bool,
+        edge_publish: tuple[str, bytes] | None = None,
     ) -> AsyncIterator[StreamMessage]:
         # Pre-flight: refuse outright if the owning Agents is already
         # closed. This catches the "called prompt() after close()" case
@@ -639,6 +674,15 @@ class Agent:
             # live binding request was in flight. Bail before publishing
             # rather than firing a request whose reply we won't consume.
             self._raise_if_closed()
+
+            # Observability: publish the edge before the prompt goes out, so
+            # an observer sees the node before it runs. Fail-open — a failed
+            # publish never fails the prompt.
+            if edge_publish is not None:
+                try:
+                    await self._nc.publish(edge_publish[0], edge_publish[1])
+                except Exception:
+                    log.exception("failed to publish edge record on %s", edge_publish[0])
 
             # Signed at publish time so `ts` / nonce are fresh even when the
             # caller iterates late; the signature covers exactly `encoded`.
