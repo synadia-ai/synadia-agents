@@ -104,6 +104,7 @@ class Agents:
         logger: logging.Logger | None = None,
         identity: Identity | None = None,
         resolve_ttl_s: float = DEFAULT_RESOLVE_TTL_S,
+        trace: bool = False,
     ) -> None:
         if prompt_max_wait_s <= 0:
             raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
@@ -112,6 +113,7 @@ class Agents:
         self._prompt_max_wait_s = prompt_max_wait_s
         self._logger = logger if logger is not None else log
         self._identity = identity
+        self._trace = trace
         self._resolver = SenderResolver(nc, ttl_s=resolve_ttl_s)
         self._tracker = HeartbeatTracker(nc)
         # Set when close() is called; passed to every Agent so in-flight
@@ -211,6 +213,7 @@ class Agents:
                 prompt_max_wait_s=self._prompt_max_wait_s,
                 close_event=self._close_event,
                 identity=self._identity,
+                trace=self._trace,
             )
             for info in infos
             if matches_filter(info, filter)

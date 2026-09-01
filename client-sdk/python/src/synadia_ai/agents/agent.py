@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import secrets
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
@@ -77,6 +78,9 @@ DEFAULT_STREAM_INACTIVITY_TIMEOUT_S: float = 60.0
 DEFAULT_PROMPT_MAX_WAIT_S: float = 600.0
 
 
+THREAD_ID_HEX_LEN = 32
+
+
 @dataclass(frozen=True)
 class Query:
     """A mid-stream question from the agent (§7).
@@ -112,6 +116,12 @@ StreamMessage: TypeAlias = ResponseChunk | StatusChunk | Query
 """One item yielded by :meth:`Agent.prompt`'s async iterator."""
 
 
+def random_thread_id() -> str:
+    # Thread IDs don't need to be secure and any random generator will suffice.
+    # Still, using secrets.token_hex() doesn't cost us much.
+    return secrets.token_hex(THREAD_ID_HEX_LEN // 2)
+
+
 class Agent:
     """A live handle returned by :meth:`Agents.discover`.
 
@@ -143,6 +153,7 @@ class Agent:
         prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         close_event: asyncio.Event | None = None,
         identity: Identity | None = None,
+        trace: bool = False,
     ) -> None:
         if prompt_max_wait_s <= 0:
             raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
@@ -152,6 +163,7 @@ class Agent:
         self._default_max_wait_s = prompt_max_wait_s
         self._close_event = close_event
         self._sender_identity = identity
+        self._trace = trace
 
     # --- flat read-only identity / capability fields -------------------
 
@@ -343,6 +355,11 @@ class Agent:
                 f"max_wait_s must be > 0 (got {max_wait_s!r}); pass None to use the default."
             )
 
+        # If tracing is enabled, mint a thread ID for this prompt
+        thread_id = None
+        if self._trace:
+            thread_id = random_thread_id()
+
         if isinstance(text, Envelope):
             merged_attachments: list[Attachment] | None
             if attachments:
@@ -350,14 +367,20 @@ class Agent:
                 merged_attachments.extend(attachments)
             else:
                 merged_attachments = list(text.attachments) if text.attachments else None
+
+            # Allow the user to override thread_id
+            thread_id = text.thread_id or thread_id
+
             envelope = Envelope(
                 prompt=text.prompt,
                 attachments=merged_attachments,
+                thread_id=thread_id,
             )
         else:
             envelope = Envelope(
                 prompt=text,
                 attachments=list(attachments) if attachments else None,
+                thread_id=thread_id,
             )
 
         # §5.4: local validation happens synchronously BEFORE any wire I/O.

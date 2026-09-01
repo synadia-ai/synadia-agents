@@ -74,12 +74,17 @@ class Envelope(BaseModel):
     decode → encode is lossless (§5.6); a stray `session` from a
     non-compliant peer rides this unknown-field bag instead of surfacing
     as a first-class attribute.
+
+    The thread_id field is NOT part of v0.3 but is part of the SDK's
+    tracing extension.
     """
 
     model_config = ConfigDict(extra="allow", frozen=True)
 
     prompt: str
     attachments: list[Attachment] | None = None
+
+    thread_id: str | None = None
 
 
 def encode(envelope: Envelope) -> bytes:
