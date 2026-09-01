@@ -25,8 +25,8 @@
       "size": 885
     },
     "agent-sdk/python/pyproject.toml": {
-      "sha256": "17670694c20f3a9ad37babcb498944176bc0ac0780506c46a49c9f1334b0bb96",
-      "size": 3577
+      "sha256": "5a8f85380003486b18c76c2e7c4b390fcda73ca38d9c301e150ef92c289407e4",
+      "size": 3603
     },
     "agent-sdk/python/uv.lock": {
       "sha256": "d92b9ddcd8ca168b98619405e9702fbc72ca6c90d22c0623fd19fe949c643afb",
@@ -65,8 +65,8 @@
       "size": 2202
     },
     "agents/deerflow/pyproject.toml": {
-      "sha256": "cdc9078f812221a7812d0d52135209bd277d3f1a6591df3f2408241381dd6f1f",
-      "size": 2595
+      "sha256": "2a09582b2c55ca6e5462f67cf8d2b21c6f6d1b43711cb085742d24f9f832a3ec",
+      "size": 2621
     },
     "agents/deerflow/uv.lock": {
       "sha256": "71c69e4e3f8b3d9287e70a98e3297bb1ebf88a3d5a791c792ae5811db189a067",
@@ -121,8 +121,8 @@
       "size": 1412
     },
     "client-sdk/python/pyproject.toml": {
-      "sha256": "e293366da6c2b687127462b65c5f24e4420fe311d715924726c50ea704da291f",
-      "size": 3409
+      "sha256": "4da5625516a1d84e11df26be300ff3f96bba803b1a09f632598ed74f1243f01a",
+      "size": 3435
     },
     "client-sdk/python/uv.lock": {
       "sha256": "ede3983765d225ccd2afe838bdd3d43f162da74d27fd7c74678a507a49395676",

@@ -75,6 +75,7 @@ include = [
     "/pyproject.toml",
     "/src",
 ]
+exclude = ["/.gitignore"]
 
 [tool.ruff]
 line-length = 100
