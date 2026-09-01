@@ -216,6 +216,27 @@ esac
         )
         self.assertIn("All expected rollout workflows succeeded.", completed.stdout)
 
+    def test_full_summary_rejects_failed_same_sha_push_rehearsal(self) -> None:
+        completed = self.run_summary([workflow_run(conclusion="failure")])
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn(
+            "FAILED: CI — release rehearsal (push\tcompleted\tfailure)",
+            completed.stdout,
+        )
+
+    def test_full_summary_rejects_failed_pr_run_instead_of_using_push(self) -> None:
+        runs = [
+            workflow_run(event="push", conclusion="success"),
+            workflow_run(event="pull_request", conclusion="failure", run_id=2),
+        ]
+        completed = self.run_summary(runs)
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn(
+            "FAILED: CI — release rehearsal (pull_request\tcompleted\tfailure)",
+            completed.stdout,
+        )
+        self.assertNotIn("Accepted the successful same-SHA push run", completed.stdout)
+
     def test_missing_workflow_fails_fast_with_its_name(self) -> None:
         completed = self.run_summary([])
         self.assertEqual(completed.returncode, 1)

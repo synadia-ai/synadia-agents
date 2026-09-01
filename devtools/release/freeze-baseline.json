@@ -1,8 +1,8 @@
 {
   "files": {
     ".github/scripts/rollout-ci-summary.sh": {
-      "sha256": "fbd9cd7e88dae192b27b7bb094395835a1450ac16b7cda11849aa03cf4d8227d",
-      "size": 8912
+      "sha256": "9c2f5ccfc35129af260108ec9076351c3ba8cec0dc3773e836c56630051ef357",
+      "size": 8973
     },
     ".github/workflows/release-python-agent-service.yml": {
       "sha256": "dd4ea202103012f5dcf752cc1f1dadecc1abe573641fab78ffb33127f1f491a1",

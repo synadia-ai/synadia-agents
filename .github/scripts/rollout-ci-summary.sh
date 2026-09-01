@@ -224,8 +224,8 @@ while (( SECONDS < deadline )); do
   pending=0
   missing=0
   failed=0
-  declare -a pending_names=()
-  declare -a missing_names=()
+  pending_names=()
+  missing_names=()
   for name in "${expected_names[@]}"; do
     state="$(
       workflow_state \
@@ -238,6 +238,7 @@ while (( SECONDS < deadline )); do
         if [[
           "$GITHUB_EVENT_NAME" == "pull_request"
           && "$name" == "CI — release rehearsal"
+          # The unquoted * intentionally matches the state fields after the event.
           && "$state" == $'push\t'*
         ]]; then
           echo "Accepted the successful same-SHA push run for $name."
