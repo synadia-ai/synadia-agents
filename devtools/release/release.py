@@ -638,7 +638,9 @@ def validate_stage(
             fail(f"staged license is missing for {entry['name']}")
         dependencies = npm_dependencies(manifest)
         for name, (section, spec) in dependencies.items():
-            if is_forbidden_spec(spec):
+            if is_forbidden_spec(spec) and name not in entry.get(
+                "allowed_stage_local_edges", []
+            ):
                 fail(
                     f"forbidden staged dependency {section}:{name}={spec!r} in {entry['path']}"
                 )

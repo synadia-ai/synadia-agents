@@ -60,6 +60,17 @@ class StagingTransformTests(unittest.TestCase):
         self.assertNotIn("devDependencies", result)
         self.assertEqual(manifest["version"], "1.0.0")
 
+    def test_local_evidence_exception_is_explicit_in_plan(self) -> None:
+        plan = release.read_json(release.DEFAULT_PLAN)
+        entries = {entry["id"]: entry for entry in plan["npm"]}
+        self.assertEqual(
+            entries["open-agent-vercel"]["allowed_stage_local_edges"],
+            ["@synadia-ai/open-agent"],
+        )
+        for entry in plan["npm"]:
+            if entry["role"] in {"publishable", "marketplace"}:
+                self.assertNotIn("allowed_stage_local_edges", entry)
+
     def test_candidate_transform_does_not_hide_own_version_mismatch(self) -> None:
         with self.assertRaisesRegex(release.ReleaseError, "source version mismatch"):
             release.rewrite_npm_manifest(

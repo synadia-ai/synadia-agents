@@ -48,10 +48,13 @@ python3 devtools/release/release.py build-python \
   --stage "$stage" --output "$(dirname "$stage")/python-artifacts"
 ```
 
-Rehearsal proves exact local artifact compatibility. It does **not** claim
-that registry locks exist. OpenClaw, PI, dependent npm locks, Python consumer
-locks, and the Claude marketplace lock become registry-ready only layer by
-layer after their exact prerequisites have been uploaded.
+Rehearsal proves exact local artifact compatibility. The private
+`open-agent-vercel` evidence project explicitly retains its private
+`open-agent` source edge; all of its release SDK edges are still exact. No
+publishable package receives this exception. Rehearsal does **not** claim that
+registry locks exist. OpenClaw, PI, dependent npm locks, Python consumer locks,
+and the Claude marketplace lock become registry-ready only layer by layer
+after their exact prerequisites have been uploaded.
 
 ## Freeze
 

@@ -223,7 +223,8 @@
       "name": "@synadia-ai/open-agent-vercel-example",
       "role": "evidence",
       "lock": "examples/open-agent-vercel/bun.lock",
-      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service", "@synadia-ai/open-agent"]
+      "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service", "@synadia-ai/open-agent"],
+      "allowed_stage_local_edges": ["@synadia-ai/open-agent"]
     }
   ],
   "python": [
