@@ -89,7 +89,8 @@
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
       "stage_license_from": "LICENSE",
       "build": null,
-      "bin_smoke": {"eve-agent": ["help"]}
+      "bin_smoke": {"eve-agent": ["help"]},
+      "smoke_note": "CLI-only package: bin_smoke is its public runtime reachability check."
     },
     {
       "id": "flue",
@@ -102,7 +103,8 @@
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
       "stage_license_from": "LICENSE",
       "build": null,
-      "bin_smoke": {"flue-nats-channel": ["help"]}
+      "bin_smoke": {"flue-nats-channel": ["help"]},
+      "smoke_note": "CLI-only package: bin_smoke is its public runtime reachability check."
     },
     {
       "id": "openclaw",
@@ -114,7 +116,8 @@
       "lock_phase": "registry",
       "source_lock_optional": true,
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
-      "build": ["npm", "run", "build"]
+      "build": ["npm", "run", "build"],
+      "smoke_waiver": "OpenClaw loads this host extension directly; it has no standalone package export or CLI. Host-level integration CI is the runtime evidence."
     },
     {
       "id": "pi",
@@ -126,7 +129,8 @@
       "lock_phase": "registry",
       "source_lock_optional": true,
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
-      "build": null
+      "build": null,
+      "smoke_waiver": "Pi loads this host extension directly; it has no standalone package export or CLI. Host-level integration CI is the runtime evidence."
     },
     {
       "id": "claude-headless",
@@ -137,7 +141,8 @@
       "lock": "examples/claude-code-headless/bun.lock",
       "lock_phase": "registry",
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
-      "build": ["npm", "run", "build"]
+      "build": ["npm", "run", "build"],
+      "bin_smoke": {"nats-claude-code-headless": ["--help"]}
     },
     {
       "id": "pi-headless",
@@ -148,7 +153,8 @@
       "lock": "examples/pi-headless/bun.lock",
       "lock_phase": "registry",
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
-      "build": ["npm", "run", "build"]
+      "build": ["npm", "run", "build"],
+      "bin_smoke": {"nats-pi-headless": ["--help"]}
     },
     {
       "id": "grok",

@@ -98,6 +98,7 @@ function readConfigFile(): RawConfigFile {
 }
 
 export interface CliOverrides {
+  help?: boolean;
   context?: string;
   natsUrl?: string;
   owner?: string;
@@ -110,6 +111,10 @@ export function parseCliOverrides(argv: ReadonlyArray<string>): CliOverrides {
   const out: CliOverrides = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+    if (arg === "--help" || arg === "-h") {
+      out.help = true;
+      continue;
+    }
     if (!arg || !arg.startsWith("--")) continue;
     let key: string;
     let value: string | undefined;

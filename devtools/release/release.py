@@ -9,6 +9,8 @@ internal dependency versions written only into that stage.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import email.parser
 import hashlib
 import json
@@ -23,7 +25,7 @@ import tomllib
 import zipfile
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, BinaryIO
 
 
 HERE = Path(__file__).resolve().parent
@@ -56,7 +58,9 @@ FORBIDDEN_PUBLIC_TEXT = (
     b"agent fabric",
     b"synadia-agent-fabric",
 )
-NKEY_SEED_PATTERN = re.compile(rb"\bSU[A-Z2-7]{54,60}\b")
+NKEY_SEED_PATTERN = re.compile(rb"\bS[UAONC][A-Z2-7]{54,60}\b")
+PUBLIC_TEXT_SCAN_CHUNK = 1024 * 1024
+PUBLIC_TEXT_SCAN_OVERLAP = 128
 
 
 class ReleaseError(RuntimeError):
@@ -147,6 +151,7 @@ def validate_plan(plan: dict[str, Any]) -> None:
     paths: set[str] = set()
     names: set[str] = set()
     all_entries = [*plan.get("npm", []), *plan.get("python", [])]
+    npm_ids = {entry.get("id") for entry in plan.get("npm", [])}
     for entry in all_entries:
         for key in ("id", "path", "name", "role"):
             if not entry.get(key):
@@ -160,6 +165,20 @@ def validate_plan(plan: dict[str, Any]) -> None:
         ids.add(entry["id"])
         paths.add(entry["path"])
         names.add(entry["name"])
+
+        if entry["role"] == "publishable" and entry["id"] in npm_ids:
+            imports = entry.get("import_smoke", [])
+            bins = entry.get("bin_smoke", {})
+            waiver = entry.get("smoke_waiver")
+            if (
+                not imports
+                and not bins
+                and not (isinstance(waiver, str) and waiver.strip())
+            ):
+                fail(
+                    f"npm publishable {entry['id']} needs an artifact runtime "
+                    "smoke or an explicit smoke_waiver"
+                )
 
     excluded_paths: set[str] = set()
     for entry in plan.get("excluded_manifests", []):
@@ -192,6 +211,15 @@ def validate_plan(plan: dict[str, Any]) -> None:
         for edge in entry.get("internal_edges", []):
             if layers[edge] >= layers[entry["name"]]:
                 fail(f"non-topological edge: {entry['name']} -> {edge}")
+
+    python_versions = plan.get("toolchain", {}).get("python")
+    if (
+        not isinstance(python_versions, list)
+        or not python_versions
+        or not all(isinstance(value, str) and value for value in python_versions)
+        or len(set(python_versions)) != len(python_versions)
+    ):
+        fail("release toolchain needs distinct supported Python versions")
 
 
 def git_tracked_manifests(repo: Path) -> set[str]:
@@ -335,6 +363,20 @@ def resolve_source(repo: Path, source: str) -> tuple[str, int]:
     return sha, int(epoch_text)
 
 
+def extract_checked_tar(archive: tarfile.TarFile, destination: Path) -> None:
+    for member in archive.getmembers():
+        path = PurePosixPath(member.name)
+        if path.is_absolute() or ".." in path.parts:
+            fail(f"unsafe path in git archive: {member.name}")
+    try:
+        archive.extractall(
+            destination,
+            filter="data",
+        )  # noqa: S202 - names and the data filter are checked above
+    except tarfile.TarError as exc:
+        fail(f"unsafe member in git archive: {exc}")
+
+
 def safe_extract_git_archive(repo: Path, sha: str, destination: Path) -> None:
     archive = subprocess.run(
         ["git", "archive", "--format=tar", sha],
@@ -347,11 +389,7 @@ def safe_extract_git_archive(repo: Path, sha: str, destination: Path) -> None:
     with tarfile.open(
         fileobj=__import__("io").BytesIO(archive.stdout), mode="r:"
     ) as tar:
-        for member in tar.getmembers():
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts:
-                fail(f"unsafe path in git archive: {member.name}")
-        tar.extractall(destination)  # noqa: S202 - members were checked above
+        extract_checked_tar(tar, destination)
 
 
 def load_versions(path: Path, plan: dict[str, Any]) -> tuple[str, dict[str, str]]:
@@ -591,12 +629,18 @@ def validate_bun_lock(
         expected_prefix = f"{dependency}@{versions[dependency]}"
         if record[0] != expected_prefix:
             fail(f"wrong locked internal version for {dependency} in {entry['lock']}")
-        if (
-            len(record) < 4
-            or not isinstance(record[-1], str)
-            or not record[-1].startswith("sha512-")
-        ):
+        if len(record) < 4 or not valid_sha512_integrity(record[-1]):
             fail(f"missing registry integrity for {dependency} in {entry['lock']}")
+
+
+def valid_sha512_integrity(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha512-"):
+        return False
+    try:
+        digest = base64.b64decode(value.removeprefix("sha512-"), validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return len(digest) == hashlib.sha512().digest_size
 
 
 def validate_python_lock(
@@ -612,6 +656,9 @@ def validate_python_lock(
     packages = defaultdict(list)
     for package in lock.get("package", []):
         packages[package.get("name")].append(package)
+    own = packages.get(entry["name"], [])
+    if not own:
+        fail(f"missing root package {entry['name']} in {entry['lock']}")
     for dependency in entry.get("internal_edges", []):
         matches = packages.get(dependency, [])
         registry_matches = [
@@ -627,9 +674,6 @@ def validate_python_lock(
                 f"in {entry['lock']}"
             )
 
-        own = packages.get(entry["name"], [])
-        if not own:
-            fail(f"missing root package {entry['name']} in {entry['lock']}")
         requirements = [
             requirement
             for package in own
@@ -648,6 +692,21 @@ def validate_python_lock(
                 f"root metadata does not exact-pin registry dependency {dependency} "
                 f"in {entry['lock']}"
             )
+
+    # Let uv validate the entire solution, not only internal edges. This catches
+    # stale or incompatible external resolutions while remaining offline and
+    # incapable of rewriting the approved lock.
+    run(
+        [
+            "uv",
+            "lock",
+            "--check",
+            "--offline",
+            "--project",
+            str(package_dir(entry)),
+        ],
+        cwd=root,
+    )
 
 
 def validate_stage(
@@ -865,6 +924,18 @@ def inspect_public_text(artifact: Path, member: str, data: bytes) -> None:
         fail(f"possible NKEY seed in {artifact.name}: {member}")
 
 
+def inspect_public_stream(
+    artifact: Path,
+    member: str,
+    stream: BinaryIO,
+) -> None:
+    tail = b""
+    while chunk := stream.read(PUBLIC_TEXT_SCAN_CHUNK):
+        data = tail + chunk
+        inspect_public_text(artifact, member, data)
+        tail = data[-PUBLIC_TEXT_SCAN_OVERLAP:]
+
+
 def inspect_npm_tarball(tarball: Path, staged_manifest: dict[str, Any]) -> None:
     with tarfile.open(tarball, "r:gz") as archive:
         members = archive.getmembers()
@@ -880,11 +951,11 @@ def inspect_npm_tarball(tarball: Path, staged_manifest: dict[str, Any]) -> None:
             ):
                 fail(f"forbidden file in {tarball.name}: {name}")
         for member in members:
-            if not member.isfile() or member.size > 2 * 1024 * 1024:
+            if not member.isfile():
                 continue
             stream = archive.extractfile(member)
             if stream is not None:
-                inspect_public_text(tarball, member.name, stream.read())
+                inspect_public_stream(tarball, member.name, stream)
         try:
             package_file = archive.extractfile("package/package.json")
         except KeyError:
@@ -952,11 +1023,13 @@ def inspect_python_distribution(
                 stream = archive.extractfile(member)
                 if stream is None:
                     fail(f"cannot read {member.name} from {artifact.name}")
-                data = stream.read()
-                inspect_public_text(artifact, member.name, data)
                 if relative.name == "PKG-INFO" and len(relative.parts) == 1:
+                    data = stream.read()
+                    inspect_public_text(artifact, member.name, data)
                     inspect_python_metadata(artifact, member.name, data, entry, version)
                     metadata_seen = True
+                else:
+                    inspect_public_stream(artifact, member.name, stream)
 
             top_level = {PurePosixPath(name).parts[0] for name in relative_names}
             allowed = set(entry["sdist_roots"]) | {"PKG-INFO"}
@@ -988,10 +1061,14 @@ def inspect_python_distribution(
         if not any(name.endswith(".dist-info/licenses/LICENSE") for name in names):
             fail(f"wheel is missing LICENSE: {artifact.name}")
         for name in names:
-            if name.endswith("/") or archive.getinfo(name).file_size > 2 * 1024 * 1024:
+            if name.endswith("/"):
                 continue
-            data = archive.read(name)
-            inspect_public_text(artifact, name, data)
+            if name == metadata_names[0]:
+                data = archive.read(name)
+                inspect_public_text(artifact, name, data)
+            else:
+                with archive.open(name) as stream:
+                    inspect_public_stream(artifact, name, stream)
         metadata_name = metadata_names[0]
         inspect_python_metadata(
             artifact,
@@ -1188,46 +1265,56 @@ def smoke_python_artifacts(
     constraints: Path,
     cooldown: dict[str, Any],
     env: dict[str, str],
+    python_versions: list[str],
 ) -> None:
     cooldown_args = python_cooldown_args(cooldown, entries)
     for artifact_kind, suffix in (("wheel", ".whl"), ("sdist", ".tar.gz")):
         selected = sorted(path for path in artifacts if path.name.endswith(suffix))
         if not selected:
             fail(f"no {artifact_kind} artifacts selected for smoke test")
-        harness = Path(
-            tempfile.mkdtemp(prefix=f"synadia-python-{artifact_kind}-smoke-")
-        )
-        try:
-            python = harness / ".venv/bin/python"
-            run(
-                ["uv", "venv", "--python", "3.11", str(harness / ".venv")],
-                cwd=harness,
-                env=env,
+        for python_version in python_versions:
+            harness = Path(
+                tempfile.mkdtemp(
+                    prefix=(f"synadia-python-{python_version}-{artifact_kind}-smoke-")
+                )
             )
-            run(
-                [
-                    "uv",
-                    "pip",
-                    "install",
-                    "--python",
-                    str(python),
-                    "--build-constraints",
-                    str(constraints.resolve()),
-                    "--no-progress",
-                    *cooldown_args,
-                    *[str(path.resolve()) for path in selected],
-                ],
-                cwd=harness,
-                env=env,
-            )
-            for entry in entries:
+            try:
+                python = harness / ".venv/bin/python"
                 run(
-                    [str(python), "-c", f"import {entry['import']}"],
+                    [
+                        "uv",
+                        "venv",
+                        "--python",
+                        python_version,
+                        str(harness / ".venv"),
+                    ],
                     cwd=harness,
                     env=env,
                 )
-        finally:
-            shutil.rmtree(harness, ignore_errors=True)
+                run(
+                    [
+                        "uv",
+                        "pip",
+                        "install",
+                        "--python",
+                        str(python),
+                        "--build-constraints",
+                        str(constraints.resolve()),
+                        "--no-progress",
+                        *cooldown_args,
+                        *[str(path.resolve()) for path in selected],
+                    ],
+                    cwd=harness,
+                    env=env,
+                )
+                for entry in entries:
+                    run(
+                        [str(python), "-c", f"import {entry['import']}"],
+                        cwd=harness,
+                        env=env,
+                    )
+            finally:
+                shutil.rmtree(harness, ignore_errors=True)
 
 
 def build_python(
@@ -1293,7 +1380,14 @@ def build_python(
             inspect_python_distribution(
                 artifact, entry, marker["versions"][entry["name"]]
             )
-    smoke_python_artifacts(entries, files, constraints, cooldown, env)
+    smoke_python_artifacts(
+        entries,
+        files,
+        constraints,
+        cooldown,
+        env,
+        plan["toolchain"]["python"],
+    )
     record = artifact_record(stage, files, "python")
     record["packages"] = {
         entry_id: [path.name for path in paths] for entry_id, paths in by_id.items()
@@ -1325,6 +1419,8 @@ def verify_python_artifacts(
     plan = read_json(plan_path)
     entries = select_publishable_entries(plan, "python", set(package_files))
     artifacts: list[Path] = []
+    recorded_names = {item["file"] for item in record["artifacts"]}
+    package_artifact_names: set[str] = set()
     for entry in entries:
         filenames = package_files.get(entry["id"])
         if not isinstance(filenames, list) or len(filenames) != 2:
@@ -1332,7 +1428,12 @@ def verify_python_artifacts(
         for filename in filenames:
             if not isinstance(filename, str):
                 fail(f"non-string artifact name for {entry['id']}")
-            artifact = artifact_dir / filename
+            artifact = safe_artifact_path(artifact_dir, filename)
+            if filename not in recorded_names:
+                fail(f"unrecorded Python artifact for {entry['id']}: {filename}")
+            if filename in package_artifact_names:
+                fail(f"duplicate Python package artifact: {filename}")
+            package_artifact_names.add(filename)
             artifacts.append(artifact)
             inspect_python_distribution(artifact, entry, versions[entry["name"]])
     cooldown = read_json(cooldown_path)
@@ -1341,8 +1442,32 @@ def verify_python_artifacts(
         fail("Python artifact verification requires an external freeze cutoff")
     env = os.environ.copy()
     env["UV_EXCLUDE_NEWER"] = cutoff
-    smoke_python_artifacts(entries, artifacts, constraints, cooldown, env)
+    smoke_python_artifacts(
+        entries,
+        artifacts,
+        constraints,
+        cooldown,
+        env,
+        plan["toolchain"]["python"],
+    )
     print(f"verified and installed Python artifacts for {sorted(package_files)}")
+
+
+def safe_artifact_path(artifact_dir: Path, filename: Any) -> Path:
+    if (
+        not isinstance(filename, str)
+        or not filename
+        or filename in {".", ".."}
+        or "/" in filename
+        or "\\" in filename
+        or PurePosixPath(filename).name != filename
+    ):
+        fail(f"unsafe artifact filename in record: {filename!r}")
+    artifact_root = artifact_dir.resolve()
+    path = artifact_root / filename
+    if path.is_symlink() or path.resolve().parent != artifact_root:
+        fail(f"unsafe artifact filename in record: {filename!r}")
+    return path
 
 
 def verify_record(record_path: Path, artifact_dir: Path) -> None:
@@ -1350,19 +1475,37 @@ def verify_record(record_path: Path, artifact_dir: Path) -> None:
     expected = record.get("artifacts")
     if not isinstance(expected, list) or not expected:
         fail("artifact record is empty")
-    expected_names = {item["file"] for item in expected}
-    actual_names = {
-        path.name
-        for path in artifact_dir.iterdir()
-        if path.is_file()
-        and path.name not in {record_path.name, "artifacts.json", "SHA256SUMS.json"}
-    }
+    expected_paths: list[tuple[dict[str, Any], Path]] = []
+    expected_names: set[str] = set()
+    for item in expected:
+        if not isinstance(item, dict):
+            fail(f"invalid artifact record entry: {item!r}")
+        path = safe_artifact_path(artifact_dir, item.get("file"))
+        if path.name in expected_names:
+            fail(f"duplicate artifact filename in record: {path.name}")
+        if (
+            not isinstance(item.get("size"), int)
+            or item["size"] < 0
+            or not isinstance(item.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is None
+        ):
+            fail(f"invalid artifact metadata for {path.name}")
+        expected_names.add(path.name)
+        expected_paths.append((item, path))
+
+    ignored = {record_path.name, "artifacts.json", "SHA256SUMS.json"}
+    actual_names: set[str] = set()
+    for path in artifact_dir.iterdir():
+        if path.name in ignored:
+            continue
+        if path.is_symlink() or not path.is_file():
+            fail(f"unexpected non-file artifact entry: {path.name}")
+        actual_names.add(path.name)
     if actual_names != expected_names:
         fail(
             f"artifact set mismatch: expected={sorted(expected_names)}, actual={sorted(actual_names)}"
         )
-    for item in expected:
-        path = artifact_dir / item["file"]
+    for item, path in expected_paths:
         if path.stat().st_size != item["size"] or sha256_file(path) != item["sha256"]:
             fail(f"artifact digest mismatch: {path}")
     print(f"verified {len(expected)} recorded artifacts")

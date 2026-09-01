@@ -97,8 +97,10 @@ merging shared-branch feature work; complete the remaining operational items bef
   [Python caller](../.github/workflows/release-python.yml),
   [Python AgentService](../.github/workflows/release-python-agent-service.yml), and
   [DeerFlow](../.github/workflows/release-python-deerflow.yml) workflows publish the tagged commit;
-  the live `pypi` environment permits those tag prefixes without requiring `main`; npm publication
-  is manual and has no branch restriction.
+  the live `pypi` environment's deployment policies were re-verified on 2026-09-01 and permit
+  `python-v*`, `python-agent-service-v*`, and `python-deerflow-v*` without requiring `main`; npm
+  publication is manual and has no branch restriction. DeerFlow's suite is intentionally
+  broker-free, so its source-verification workflow does not need a `nats-server` setup step.
 - [x] Adopt the documented [rollout exception](../CLAUDE.md#release-ladder-for-sdk-changes-that-examples-need):
       reviewed, clean release commits on the integration branch may be tagged/published,
       then the exact commits are reconciled into `main` after aging.
@@ -592,7 +594,9 @@ Fallback, only if a scoped mechanism is unavailable:
       checksum/signature.
 - [ ] Verify npm publisher identity, 2FA/automation policy, access level, provenance support, and
       the explicit non-default publish tag.
-- [ ] Verify PyPI trusted-publisher environment/tag rules and require publication approval.
+- [x] Verify PyPI trusted-publisher environment/tag rules for all three Python tag prefixes. A
+      deliberate version-tag push is the recorded publication approval; the environment scopes
+      trusted-publishing credentials and does not add a second approval screen.
 - [ ] Record whether each Python GitHub Release remains visible during aging or is manually deleted;
       never delete the source tag as part of quieting the release.
 

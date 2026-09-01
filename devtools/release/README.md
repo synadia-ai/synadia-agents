@@ -57,8 +57,12 @@ python3 devtools/release/release.py verify-python-artifacts \
 
 The artifact inspectors enforce npm file allowlists and executable bin modes,
 strict Python sdist roots, package metadata name/version consistency, required
-licenses, the public-terminology boundary, and a seed-shaped secret check.
-Python sdists are built first and wheels are built from those sdists.
+licenses, the public-terminology boundary, and a streaming seed-shaped secret
+check over every packed file regardless of size. Every publishable npm package
+has a clean-install import/CLI runtime smoke or a documented host-extension
+waiver in `plan.json`. Python sdists are built first, wheels are built from
+those sdists, and both forms are installed and imported on every Python version
+listed in the frozen toolchain.
 
 Rehearsal proves exact local artifact compatibility. The private
 `open-agent-vercel` evidence project explicitly retains its private
@@ -94,7 +98,8 @@ The release PR puts final, unique versions in source manifests/changelogs and
 in `versions.json`, resolves `cooldown-policy.json`, then creates registry-only
 locks in DAG order. Candidate staging refuses to hide an own-version mismatch.
 Publication preflight additionally rejects missing/stale locks, local/editable
-sources, unresolved cooldown configuration, and non-exact internal edges:
+sources, unresolved cooldown configuration, non-exact internal edges, and a
+Python lock whose complete external solution fails `uv lock --check --offline`:
 
 ```sh
 python3 devtools/release/release.py publication-preflight \

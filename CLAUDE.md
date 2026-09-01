@@ -223,9 +223,11 @@ publishing — no long-lived API token):
 - `python-v*` → `synadia-ai-agents` via `release-python.yml`
 - `python-agent-service-v*` → `synadia-ai-agent-service` via
   `release-python-agent-service.yml`
+- `python-deerflow-v*` → `synadia-ai-nats-deerflow-channel` via
+  `release-python-deerflow.yml`
 
-Both workflows run in the `pypi` GitHub Environment, whose
-tag-deployment policy gates them to those two prefixes. **Gotcha
+All three workflows run in the `pypi` GitHub Environment, whose
+tag-deployment policy gates them to those three prefixes. **Gotcha
 when adding a new tag-triggered release workflow:** the `pypi` env
 policy must be extended to cover the new tag prefix, or the
 publish job fails with *"Tag X is not allowed to deploy to pypi
