@@ -39,7 +39,8 @@ python3 devtools/release/release.py validate-stage --stage "$stage"
 
 Build commands create each final-format output once, pack npm with lifecycle
 scripts disabled, install the tarballs/wheels/sdists outside the source tree,
-and write an immutable digest record:
+and write an immutable digest record. Python resolution also applies the
+recorded external freeze cutoff to runtime and isolated-build dependencies:
 
 ```sh
 python3 devtools/release/release.py build-npm \
@@ -55,6 +56,11 @@ publishable package receives this exception. Rehearsal does **not** claim that
 registry locks exist. OpenClaw, PI, dependent npm locks, Python consumer locks,
 and the Claude marketplace lock become registry-ready only layer by layer
 after their exact prerequisites have been uploaded.
+
+The npm rehearsal's unlocked external install is only build/artifact evidence;
+it is not the dependency-freeze or cooldown gate. Candidate proof regenerates
+the registry locks under the measured age policy and then uses frozen installs.
+The tooling asserts that rehearsal installs cannot rewrite a staged manifest.
 
 ## Freeze
 

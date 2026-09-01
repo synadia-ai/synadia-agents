@@ -756,6 +756,7 @@ def inspect_npm_tarball(tarball: Path, staged_manifest: dict[str, Any]) -> None:
     with tarfile.open(tarball, "r:gz") as archive:
         members = archive.getmembers()
         names = [member.name for member in members]
+        members_by_name = {member.name: member for member in members}
         for name in names:
             lowered = name.lower()
             if (
@@ -774,6 +775,21 @@ def inspect_npm_tarball(tarball: Path, staged_manifest: dict[str, Any]) -> None:
         packed_manifest = json.load(package_file)
         if packed_manifest != staged_manifest:
             fail(f"packed manifest differs from staged manifest: {tarball}")
+        if (
+            "LICENSE" in staged_manifest.get("files", [])
+            and "package/LICENSE" not in names
+        ):
+            fail(f"declared LICENSE is missing from {tarball}")
+        bins = staged_manifest.get("bin", {})
+        if isinstance(bins, str):
+            bins = {staged_manifest["name"].rsplit("/", 1)[-1]: bins}
+        for binary, target in bins.items():
+            member_name = f"package/{str(target).removeprefix('./')}"
+            member = members_by_name.get(member_name)
+            if member is None:
+                fail(f"bin {binary} target is missing from {tarball}: {target}")
+            if member.mode & 0o111 == 0:
+                fail(f"bin {binary} is not executable in {tarball}: {target}")
 
 
 def artifact_record(stage: Path, files: list[Path], kind: str) -> dict[str, Any]:
@@ -815,10 +831,13 @@ def build_npm(stage: Path, plan_path: Path, output: Path) -> None:
     )
     for entry in entries:
         directory = stage / package_dir(entry)
+        manifest_path = directory / "package.json"
+        manifest_before_install = manifest_path.read_bytes()
         internal = [str(tarballs[name]) for name in entry.get("internal_edges", [])]
         install = [
             "npm",
             "install",
+            "--no-save",
             "--ignore-scripts",
             "--no-package-lock",
             "--no-audit",
@@ -827,6 +846,8 @@ def build_npm(stage: Path, plan_path: Path, output: Path) -> None:
             *internal,
         ]
         run(install, cwd=directory, env=env)
+        if manifest_path.read_bytes() != manifest_before_install:
+            fail(f"dependency install mutated staged manifest for {entry['id']}")
         build = entry.get("build")
         if build:
             run(build, cwd=directory, env=env)
@@ -923,6 +944,11 @@ def build_python(stage: Path, plan_path: Path, constraints: Path, output: Path) 
     ensure_empty_output(output)
     env = os.environ.copy()
     env["SOURCE_DATE_EPOCH"] = str(marker["source_epoch"])
+    cooldown = read_json(stage / "devtools/release/cooldown-policy.json")
+    cutoff = cooldown.get("external_freeze_cutoff")
+    if not isinstance(cutoff, str) or not cutoff:
+        fail("Python artifact rehearsal requires an external freeze cutoff")
+    env["UV_EXCLUDE_NEWER"] = cutoff
     entries = sorted(
         (entry for entry in plan["python"] if entry["role"] == "publishable"),
         key=lambda item: (item["layer"], item["id"]),
@@ -971,6 +997,8 @@ def build_python(stage: Path, plan_path: Path, constraints: Path, output: Path) 
                     "install",
                     "--python",
                     str(python),
+                    "--build-constraints",
+                    str(constraints.resolve()),
                     "--no-progress",
                     *artifacts,
                 ],

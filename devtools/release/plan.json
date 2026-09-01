@@ -136,8 +136,7 @@
       "lock": "examples/claude-code-headless/bun.lock",
       "lock_phase": "registry",
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
-      "build": ["npm", "run", "build"],
-      "bin_smoke": ["nats-claude-code-headless"]
+      "build": ["npm", "run", "build"]
     },
     {
       "id": "pi-headless",
@@ -148,8 +147,7 @@
       "lock": "examples/pi-headless/bun.lock",
       "lock_phase": "registry",
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
-      "build": ["npm", "run", "build"],
-      "bin_smoke": ["nats-pi-headless"]
+      "build": ["npm", "run", "build"]
     },
     {
       "id": "grok",
