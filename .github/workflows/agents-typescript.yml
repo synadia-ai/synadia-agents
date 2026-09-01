@@ -454,17 +454,6 @@ jobs:
           tar -xzf nats-server.tar.gz --strip-components=1
           sudo mv nats-server /usr/local/bin/
           nats-server --version
-      # Bundle reproducibility belongs to the committed dependency graph.
-      # Verify it with the pinned Bun before the SDK manifests below are
-      # temporarily rewritten to branch-local tarballs. npm handles the
-      # committed cyclic local file links without Bun's resolver stall.
-      - name: Verify committed runtime bundle
-        working-directory: agents/claude-code
-        run: |
-          npm install --no-package-lock --no-audit --no-fund
-          bun run build
-          git diff --exit-code -- runtime/server.js
-          bun run verify:bundle
       - name: Build current client-sdk artifact
         working-directory: client-sdk/typescript
         run: |
@@ -480,6 +469,17 @@ jobs:
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      # Bundle reproducibility belongs to Claude's committed local-link graph.
+      # Build the current SDKs first so those links expose dist on a clean
+      # runner, then verify with the pinned Bun before rewriting Claude's
+      # manifest to branch-local tarballs. Keep file: directories as links.
+      - name: Verify committed runtime bundle
+        working-directory: agents/claude-code
+        run: |
+          npm install --install-links=false --no-package-lock --no-audit --no-fund
+          bun run build
+          git diff --exit-code -- runtime/server.js
+          bun run verify:bundle
       # The committed branch manifest intentionally keeps local SDK links for
       # development. CI substitutes the exact packed branch bytes, avoiding
       # Bun's cyclic file-link resolver and exercising the publishable shape.

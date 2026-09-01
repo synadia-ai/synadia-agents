@@ -60,9 +60,19 @@ export async function runCli(argv: readonly string[]): Promise<void> {
         await client?.close?.();
       }
     } finally {
-      await nc.drain();
-      connectionBundle.wipe();
+      await drainAndWipeConnection(nc, connectionBundle);
     }
+  }
+}
+
+export async function drainAndWipeConnection(
+  nc: { drain(): Promise<void> },
+  connectionBundle: { wipe(): void },
+): Promise<void> {
+  try {
+    await nc.drain();
+  } finally {
+    connectionBundle.wipe();
   }
 }
 
