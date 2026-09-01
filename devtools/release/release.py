@@ -515,6 +515,11 @@ def stage_release(
                 path.read_text(encoding="utf-8"), entry, versions, phase, hatchling
             )
             path.write_text(rewritten, encoding="utf-8")
+            for relative in entry.get("stage_remove_files", []):
+                target = path.parent / relative
+                if not target.is_file():
+                    fail(f"staged removal target is missing: {target}")
+                target.unlink()
             if license_source := entry.get("stage_license_from"):
                 shutil.copyfile(temp / license_source, path.parent / "LICENSE")
 
@@ -717,6 +722,9 @@ def validate_stage(
             and not (root / package_dir(entry) / "LICENSE").is_file()
         ):
             fail(f"staged license is missing for {entry['name']}")
+        for relative in entry.get("stage_remove_files", []):
+            if (path.parent / relative).exists():
+                fail(f"staged removal target remains for {entry['name']}: {relative}")
         dependencies = python_dependencies(project)
         for name in set(dependencies) & python_names:
             expected = f"{name}=={versions[name]}"
