@@ -37,14 +37,17 @@ async function start(): Promise<void> {
       exitCode = 1;
       console.error(`eve-nats-channel service stop failed: ${(error as Error).message}`);
     }
-    await nc.close();
-    connectionBundle.wipe();
+    try {
+      await nc.close();
+    } finally {
+      connectionBundle.wipe();
+    }
     process.exit(exitCode);
   };
   const requestShutdown = (): void => {
     void shutdown().catch((error: unknown) => {
       console.error(`eve-nats-channel shutdown failed: ${(error as Error).message}`);
-      process.exitCode = 1;
+      process.exit(1);
     });
   };
   process.on("SIGINT", requestShutdown);
