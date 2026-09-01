@@ -47,6 +47,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
+      - run: npm run build
       - name: Example connection-bundle tests
         run: npx vitest run --config examples/_vitest.config.ts
 

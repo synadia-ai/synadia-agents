@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { connect as natsConnect } from "@nats-io/transport-node";
+import { withAgentReconnectDefaults } from "@synadia-ai/agents";
 import { readFileSync } from "node:fs";
 import { FakeAcpBridgeClient, type AcpBridgeClient } from "./bridge.js";
 import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from "./config.js";
@@ -33,7 +34,7 @@ export async function runCli(argv: readonly string[]): Promise<void> {
 
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
   const connectionBundle = await resolveNatsBundle(config.nats);
-  const nc = await natsConnect(connectionBundle.connectionOptions).catch((error: unknown) => {
+  const nc = await natsConnect(withAgentReconnectDefaults(connectionBundle.connectionOptions)).catch((error: unknown) => {
     connectionBundle.wipe();
     throw error;
   });

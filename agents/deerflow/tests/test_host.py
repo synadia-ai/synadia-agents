@@ -135,16 +135,16 @@ def test_format_human_bytes_rounds_non_aligned_limits_down_to_kb() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_channel_retains_bundle_when_close_fails(monkeypatch: Any) -> None:
+async def test_run_channel_wipes_bundle_when_close_fails(monkeypatch: Any) -> None:
     class Connection:
         async def close(self) -> None:
             raise RuntimeError("close failed")
 
     class Bundle:
-        wiped = False
+        credential_material = bytearray(b"secret connection credentials")
 
         def wipe(self) -> None:
-            self.wiped = True
+            self.credential_material[:] = b"\x00" * len(self.credential_material)
 
     class Service:
         async def start(self) -> None:
@@ -166,10 +166,9 @@ async def test_run_channel_retains_bundle_when_close_fails(monkeypatch: Any) -> 
     stop_event = asyncio.Event()
     stop_event.set()
 
-    with pytest.raises(RuntimeError, match="close failed"):
-        await run_channel(ChannelConfig(owner="rene"), stop_event=stop_event)
+    await run_channel(ChannelConfig(owner="rene"), stop_event=stop_event)
 
-    assert bundle.wiped is False
+    assert bundle.credential_material == bytearray(len(bundle.credential_material))
 
 
 @pytest.mark.parametrize("filename", ["../x.txt", "file.txt\r\nX-Injected: evil"])

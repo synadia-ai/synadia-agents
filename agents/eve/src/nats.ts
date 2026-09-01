@@ -1,6 +1,5 @@
 import {
   resolveNatsConnectionBundle,
-  withAgentReconnectDefaults,
   type NatsConnectionBundle,
   type NatsConnectionSource,
 } from "@synadia-ai/agents";
@@ -13,6 +12,5 @@ export async function resolveNatsBundle(config: NatsConfig): Promise<NatsConnect
   const bundle = config.senderIdentity === "signed"
     ? await resolveNatsConnectionBundle(source, { identity: "signed" })
     : await resolveNatsConnectionBundle(source);
-  Object.assign(bundle.connectionOptions, withAgentReconnectDefaults(bundle.connectionOptions));
   return bundle;
 }

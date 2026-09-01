@@ -31,7 +31,6 @@ export async function resolveConnectionBundle(
   const bundle = opts.senderIdentity === "signed"
     ? await resolveNatsConnectionBundle(source, { identity: "signed" })
     : await resolveNatsConnectionBundle(source);
-  Object.assign(bundle.connectionOptions, withAgentReconnectDefaults(bundle.connectionOptions));
   return bundle;
 }
 
@@ -43,7 +42,7 @@ export interface ConnectedNats {
 export async function connectFrom(opts: ResolveNatsOptions): Promise<ConnectedNats> {
   const bundle = await resolveConnectionBundle(opts);
   try {
-    return { nc: await connect(bundle.connectionOptions), bundle };
+    return { nc: await connect(withAgentReconnectDefaults(bundle.connectionOptions)), bundle };
   } catch (error) {
     bundle.wipe();
     throw error;

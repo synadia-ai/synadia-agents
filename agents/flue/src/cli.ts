@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { connect as natsConnect } from "@nats-io/transport-node";
+import { withAgentReconnectDefaults } from "@synadia-ai/agents";
 import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from "./config.js";
 import { resolveNatsBundle } from "./nats.js";
 import { createFlueAgentService } from "./service.js";
@@ -9,7 +10,7 @@ import pkg from "../package.json" assert { type: "json" };
 async function start(): Promise<void> {
   const config = loadConfigFromSources();
   const connectionBundle = await resolveNatsBundle(config.nats);
-  const nc = await natsConnect(connectionBundle.connectionOptions).catch((error: unknown) => {
+  const nc = await natsConnect(withAgentReconnectDefaults(connectionBundle.connectionOptions)).catch((error: unknown) => {
     connectionBundle.wipe();
     throw error;
   });
@@ -42,8 +43,8 @@ async function start(): Promise<void> {
   };
   const requestShutdown = (): void => {
     void shutdown().catch((error: unknown) => {
-      shuttingDown = false;
       console.error(`flue-nats-channel shutdown failed: ${(error as Error).message}`);
+      process.exitCode = 1;
     });
   };
   process.on("SIGINT", requestShutdown);

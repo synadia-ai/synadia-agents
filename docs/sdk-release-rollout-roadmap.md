@@ -1,7 +1,7 @@
 # SDK identity and tracing release roadmap
 
 - Status: active; implementation contracts resolved, release prerequisites tracked below
-- Last updated: 2026-08-31
+- Last updated: 2026-09-01
 - Integration branch: `sdk-release-rollout`
 - Scope: TypeScript and Python caller/host SDKs, sender identity, optional tracing, provided
   integrations, examples, and release operations
@@ -178,8 +178,10 @@ context.
 
 The 2026-09-01 branch audit found no integration or release-example code that directly loads a
 context/creds/seed, constructs an authenticator, or derives a signer. The sole test-harness bypass
-found in PI was replaced with one connection bundle, and close-failure tests now prove retained
-credential snapshots are not wiped while a connection may still reconnect.
+found in PI was replaced with one connection bundle. Lifecycle tests now distinguish retryable
+connection owners, which retain the bundle until a successful close, from process-level runners
+that expose no retry handle, which perform a best-effort close and then guarantee the bundle is
+wiped.
 
 ### Registry release contract
 

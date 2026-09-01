@@ -3,6 +3,9 @@ export const protocolLogger = {
   debug(message: string, context?: Readonly<Record<string, unknown>>) {
     write("debug", message, context);
   },
+  info(message: string, context?: Readonly<Record<string, unknown>>) {
+    write("info", message, context);
+  },
   warn(message: string, context?: Readonly<Record<string, unknown>>) {
     write("warn", message, context);
   },

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { connect as natsConnect } from "@nats-io/transport-node";
+import { withAgentReconnectDefaults } from "@synadia-ai/agents";
 import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from "./config.js";
 import { formatDoctorChecks, runDoctorChecks } from "./doctor.js";
 import { resolveNatsBundle } from "./nats.js";
@@ -11,7 +12,7 @@ import pkg from "../package.json" assert { type: "json" };
 async function start(): Promise<void> {
   const config = loadConfigFromSources();
   const connectionBundle = await resolveNatsBundle(config.nats);
-  const nc = await natsConnect(connectionBundle.connectionOptions).catch((error: unknown) => {
+  const nc = await natsConnect(withAgentReconnectDefaults(connectionBundle.connectionOptions)).catch((error: unknown) => {
     connectionBundle.wipe();
     throw error;
   });

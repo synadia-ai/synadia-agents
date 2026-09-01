@@ -1,4 +1,5 @@
 import { connect as natsConnect } from "@nats-io/transport-node";
+import { withAgentReconnectDefaults } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
 import { bridgePromptToOpenCode } from "../bridge.js";
 import { resolveNatsBundle } from "../nats.js";
@@ -55,7 +56,7 @@ export async function createSynadiaPluginChannel(
   };
   const bridgeClient = new PluginOpenCodeBridgeClient(ctx, state);
   const connectionBundle = await resolveNatsBundle(resolved.config.nats);
-  const nc = await natsConnect(connectionBundle.connectionOptions).catch((error: unknown) => {
+  const nc = await natsConnect(withAgentReconnectDefaults(connectionBundle.connectionOptions)).catch((error: unknown) => {
     connectionBundle.wipe();
     throw error;
   });

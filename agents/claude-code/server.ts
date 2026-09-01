@@ -25,7 +25,7 @@ import {
   PromptResponse,
   splitResponseText,
 } from "@synadia-ai/agent-service";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +35,7 @@ import {
   resolveRuntimeSettings,
   type NatsChannelConfig,
 } from "./src/config.js";
+import { loadPluginVersion } from "./src/plugin-version.js";
 
 const AGENT_ID = "claude-code";
 const AGENT_SUBJECT_TOKEN = "cc";
@@ -46,16 +47,6 @@ const DEFAULT_MAX_PAYLOAD_BYTES = parseHumanBytes(DEFAULT_MAX_PAYLOAD);
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT =
   basename(MODULE_DIR) === "runtime" ? dirname(MODULE_DIR) : MODULE_DIR;
-
-function loadPluginVersion(): string {
-  const manifest = JSON.parse(
-    readFileSync(join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"), "utf8"),
-  ) as { version?: unknown };
-  if (typeof manifest.version !== "string" || manifest.version.length === 0) {
-    throw new Error("invalid plugin descriptor version");
-  }
-  return manifest.version;
-}
 
 type Deferred = {
   readonly promise: Promise<void>;
@@ -119,6 +110,9 @@ function logEvent(
 
 const protocolLogger = {
   debug(message: string, context?: Readonly<Record<string, unknown>>) {
+    logEvent(message, safeProtocolContext(context));
+  },
+  info(message: string, context?: Readonly<Record<string, unknown>>) {
     logEvent(message, safeProtocolContext(context));
   },
   warn(message: string, context?: Readonly<Record<string, unknown>>) {
@@ -277,7 +271,9 @@ async function closeConnectionBeforeWipe(
 }
 
 async function run(): Promise<void> {
-  const pluginVersion = loadPluginVersion();
+  const pluginVersion = loadPluginVersion(
+    join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"),
+  );
   const stateDir =
     process.env.NATS_STATE_DIR ??
     join(homedir(), ".claude", "channels", "nats");

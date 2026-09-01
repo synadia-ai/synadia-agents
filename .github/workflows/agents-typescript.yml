@@ -482,11 +482,12 @@ jobs:
         run: |
           node -e "JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json', 'utf8'))"
           node -e "JSON.parse(require('fs').readFileSync('agents/claude-code/.claude-plugin/plugin.json', 'utf8'))"
-      - name: Typecheck and rebuild committed runtime bundle
+      - name: Typecheck and verify committed runtime bundle
         working-directory: agents/claude-code
         run: |
           bun run typecheck
           bun run build
+          git diff --exit-code -- runtime/server.js
           bun run verify:bundle
       - name: Unit + identity-off + signed/strict tests
         working-directory: agents/claude-code

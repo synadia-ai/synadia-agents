@@ -206,10 +206,15 @@ async def run_channel(config: ChannelConfig, *, stop_event: asyncio.Event | None
         else:
             await stop_event.wait()
     finally:
-        if service is not None:
-            with suppress(Exception):
-                await service.stop()
-        # Reconnect authentication retains the bundle snapshot until close
-        # succeeds. A close failure must leave it intact for a caller retry.
-        await nc.close()
-        connection_bundle.wipe()
+        try:
+            if service is not None:
+                with suppress(Exception):
+                    await service.stop()
+        finally:
+            try:
+                # This process-level runner has no connection handle to expose
+                # for a later retry, so closing is necessarily best effort.
+                with suppress(Exception):
+                    await nc.close()
+            finally:
+                connection_bundle.wipe()
