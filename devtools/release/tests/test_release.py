@@ -116,6 +116,18 @@ build-backend = "hatchling.build"
 
 
 class ValidationTests(unittest.TestCase):
+    def test_internal_closure_is_dependency_first(self) -> None:
+        entries = {
+            "caller": {"name": "caller", "internal_edges": []},
+            "host": {"name": "host", "internal_edges": ["caller"]},
+            "adapter": {"name": "adapter", "internal_edges": ["caller", "host"]},
+            "wrapper": {"name": "wrapper", "internal_edges": ["adapter"]},
+        }
+        self.assertEqual(
+            release.internal_closure(entries["wrapper"], entries),
+            ["caller", "host", "adapter"],
+        )
+
     def test_plan_rejects_non_topological_edge(self) -> None:
         plan = {
             "schema_version": 1,

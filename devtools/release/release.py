@@ -752,6 +752,32 @@ def ensure_empty_output(path: Path) -> None:
         path.mkdir(parents=True)
 
 
+def internal_closure(
+    entry: dict[str, Any], entries_by_name: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Return a dependency-first transitive internal closure for an entry."""
+    result: list[str] = []
+    visiting: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in result:
+            return
+        if name in visiting:
+            fail(f"internal dependency cycle at {name}")
+        dependency = entries_by_name.get(name)
+        if dependency is None:
+            fail(f"unknown internal dependency in artifact build: {name}")
+        visiting.add(name)
+        for child in dependency.get("internal_edges", []):
+            visit(child)
+        visiting.remove(name)
+        result.append(name)
+
+    for edge in entry.get("internal_edges", []):
+        visit(edge)
+    return result
+
+
 def inspect_npm_tarball(tarball: Path, staged_manifest: dict[str, Any]) -> None:
     with tarfile.open(tarball, "r:gz") as archive:
         members = archive.getmembers()
@@ -829,11 +855,14 @@ def build_npm(stage: Path, plan_path: Path, output: Path) -> None:
         (entry for entry in plan["npm"] if entry["role"] == "publishable"),
         key=lambda item: (item["layer"], item["id"]),
     )
+    entries_by_name = {entry["name"]: entry for entry in entries}
     for entry in entries:
         directory = stage / package_dir(entry)
         manifest_path = directory / "package.json"
         manifest_before_install = manifest_path.read_bytes()
-        internal = [str(tarballs[name]) for name in entry.get("internal_edges", [])]
+        internal = [
+            str(tarballs[name]) for name in internal_closure(entry, entries_by_name)
+        ]
         install = [
             "npm",
             "install",
