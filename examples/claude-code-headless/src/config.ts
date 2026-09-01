@@ -12,14 +12,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
+import type { NatsConnectionSource } from "@synadia-ai/agents";
 
 import { sanitizeToken } from "./subjects.js";
 
 export interface ClaudeCodeHeadlessConfig {
-  /** NATS CLI context name. Empty/undefined means "use NATS_URL only". */
-  readonly context?: string;
-  /** Explicit NATS URL; used only when `context` is unset. */
-  readonly natsUrl?: string;
+  /** The single source used to derive connection authentication and optional identity. */
+  readonly connectionSource: NatsConnectionSource;
+  /** Safe label for startup logs; never contains a URL or credential. */
+  readonly connectionLabel: string;
+  /** Whether services register the identity of this connection. */
+  readonly senderIdentity: "off" | "signed";
+  /** Minimum trust accepted by every controller/session prompt endpoint. */
+  readonly minSenderTrust: "any" | "signed";
   /** Owner token (3rd subject segment). Defaults to $USER. */
   readonly owner: string;
   /** Controller instance name (4th subject token for the controller). */
@@ -61,6 +66,8 @@ const BUILT_IN_DEFAULTS = {
 
 interface RawConfigFile {
   context?: string;
+  senderIdentity?: "off" | "signed";
+  minSenderTrust?: "any" | "signed";
   name?: string;
   defaultModel?: string;
   defaultPermissionMode?: string;
@@ -72,17 +79,22 @@ interface RawConfigFile {
 
 function readConfigFile(): RawConfigFile {
   if (!existsSync(CONFIG_FILE)) return {};
+  let raw: string;
   try {
-    const raw = readFileSync(CONFIG_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed as RawConfigFile;
+    raw = readFileSync(CONFIG_FILE, "utf8");
   } catch (e) {
-    process.stderr.write(
-      `claude-code-headless: failed to read ${CONFIG_FILE}: ${(e as Error).message}\n`,
-    );
-    return {};
+    throw new Error("claude-code-headless: invalid config.json: cannot read file", { cause: e });
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error("claude-code-headless: invalid config.json: expected valid JSON", { cause: e });
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("claude-code-headless: invalid config.json: expected an object");
+  }
+  return parsed as RawConfigFile;
 }
 
 export interface CliOverrides {
@@ -166,8 +178,46 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
     env["CLAUDE_CODE_HEADLESS_NAME"] ??
     file.name ??
     BUILT_IN_DEFAULTS.name;
-  const context = cli.context ?? env["NATS_CONTEXT"] ?? file.context;
-  const natsUrl = cli.natsUrl ?? env["NATS_URL"];
+  // Select exactly one connection source by precedence. In particular, a CLI
+  // URL must override a context stored in config.json rather than being
+  // silently ignored by a later context-first resolver.
+  const cliContext = nonEmpty(cli.context);
+  const cliUrl = nonEmpty(cli.natsUrl);
+  const envContext = nonEmpty(env["NATS_CONTEXT"]);
+  const envUrl = nonEmpty(env["NATS_URL"]);
+  const fileContext = nonEmpty(file.context);
+  const connectionSource: NatsConnectionSource | undefined = cliContext
+    ? { context: cliContext }
+    : cliUrl
+      ? { url: cliUrl }
+      : envContext
+        ? { context: envContext }
+        : envUrl
+          ? { url: envUrl }
+          : fileContext
+            ? { context: fileContext }
+            : undefined;
+  const connectionLabel = cliContext
+    ? "--context"
+    : cliUrl
+      ? "--url"
+      : envContext
+        ? "$NATS_CONTEXT"
+        : envUrl
+          ? "$NATS_URL"
+          : fileContext
+            ? "config context"
+            : "unconfigured";
+  const senderIdentity = enumValue(
+    "NATS_SENDER_IDENTITY / senderIdentity",
+    env["NATS_SENDER_IDENTITY"] ?? file.senderIdentity ?? "off",
+    ["off", "signed"],
+  );
+  const minSenderTrust = enumValue(
+    "NATS_MIN_SENDER_TRUST / minSenderTrust",
+    env["NATS_MIN_SENDER_TRUST"] ?? file.minSenderTrust ?? "any",
+    ["any", "signed"],
+  );
   const defaultModel =
     env["CLAUDE_CODE_HEADLESS_DEFAULT_MODEL"] ??
     file.defaultModel ??
@@ -191,7 +241,7 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
     file.defaultMaxLifetimeS ??
     BUILT_IN_DEFAULTS.defaultMaxLifetimeS;
 
-  if (!context && !natsUrl) {
+  if (!connectionSource) {
     throw new Error(
       "claude-code-headless: no NATS target configured. Set --context, NATS_CONTEXT, or NATS_URL.",
     );
@@ -217,8 +267,10 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
     cli.claudeCodePath ?? env["CLAUDE_CODE_HEADLESS_CLAUDE_PATH"] ?? file.claudeCodePath;
 
   return {
-    ...(context ? { context } : {}),
-    ...(natsUrl ? { natsUrl } : {}),
+    connectionSource,
+    connectionLabel,
+    senderIdentity,
+    minSenderTrust,
     owner,
     name,
     defaultModel,
@@ -228,4 +280,19 @@ export function loadConfig(cli: CliOverrides = {}): ClaudeCodeHeadlessConfig {
     defaultMaxLifetimeS,
     ...(claudeCodePath ? { claudeCodePath } : {}),
   };
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value && value.length > 0 ? value : undefined;
+}
+
+function enumValue<const T extends string>(
+  field: string,
+  value: string,
+  allowed: readonly T[],
+): T {
+  if ((allowed as readonly string[]).includes(value)) return value as T;
+  throw new Error(
+    `claude-code-headless: invalid ${field}: expected ${allowed.join(" or ")}`,
+  );
 }

@@ -7,6 +7,7 @@ import { existsSync, statSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 
 import type { NatsConnection } from "@nats-io/nats-core";
+import type { MinSenderTrust, SenderSigner } from "@synadia-ai/agents";
 import {
   AuthStorage,
   ModelRegistry,
@@ -27,7 +28,14 @@ const LIFETIME_CHECK_INTERVAL_MS = 2_000;
 const STALE_PRUNE_INTERVAL_MS = 60_000;
 const STALE_REQUEST_CUTOFF_MS = 30 * 60 * 1000;
 
-const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const VALID_THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const;
 type ThinkingLevel = (typeof VALID_THINKING_LEVELS)[number];
 
 export interface SpawnSpec {
@@ -58,6 +66,9 @@ export type SpawnError =
 export interface PiSessionManagerOptions {
   readonly nc: NatsConnection;
   readonly owner: string;
+  /** Connection-bound signer shared by every logical session. */
+  readonly signer?: SenderSigner;
+  readonly minSenderTrust?: MinSenderTrust;
   readonly defaultModel?: string;
   readonly defaultThinkingLevel?: string;
   readonly defaultMaxLifetimeS: number;
@@ -87,9 +98,15 @@ export class PiSessionManager {
     this.authStorage = AuthStorage.create();
     this.modelRegistry = ModelRegistry.create(this.authStorage);
 
-    this.lifetimeTimer = setInterval(() => this.checkLifetimes(), LIFETIME_CHECK_INTERVAL_MS);
+    this.lifetimeTimer = setInterval(
+      () => this.checkLifetimes(),
+      LIFETIME_CHECK_INTERVAL_MS,
+    );
     this.lifetimeTimer.unref?.();
-    this.pruneTimer = setInterval(() => this.pruneStale(), STALE_PRUNE_INTERVAL_MS);
+    this.pruneTimer = setInterval(
+      () => this.pruneStale(),
+      STALE_PRUNE_INTERVAL_MS,
+    );
     this.pruneTimer.unref?.();
   }
 
@@ -126,7 +143,10 @@ export class PiSessionManager {
     }
     const absCwd = pathResolve(spec.cwd);
     if (!existsSync(absCwd) || !statSync(absCwd).isDirectory()) {
-      return { code: 400, message: `cwd not found or not a directory: ${absCwd}` };
+      return {
+        code: 400,
+        message: `cwd not found or not a directory: ${absCwd}`,
+      };
     }
 
     let sessionId: string;
@@ -152,7 +172,11 @@ export class PiSessionManager {
     }
 
     if (this.sessions.has(sessionId) || this.creating.has(sessionId)) {
-      return { code: 409, session_id: sessionId, message: "session already exists" };
+      return {
+        code: 409,
+        session_id: sessionId,
+        message: "session already exists",
+      };
     }
 
     const modelSpec = spec.model ?? this.options.defaultModel;
@@ -161,10 +185,13 @@ export class PiSessionManager {
       return { code: 400, message: `unknown model: ${modelSpec}` };
     }
 
-    const thinkingLevelRaw = spec.thinking_level ?? this.options.defaultThinkingLevel;
+    const thinkingLevelRaw =
+      spec.thinking_level ?? this.options.defaultThinkingLevel;
     let thinkingLevel: ThinkingLevel | undefined;
     if (thinkingLevelRaw !== undefined && thinkingLevelRaw !== "") {
-      if (!(VALID_THINKING_LEVELS as readonly string[]).includes(thinkingLevelRaw)) {
+      if (
+        !(VALID_THINKING_LEVELS as readonly string[]).includes(thinkingLevelRaw)
+      ) {
         return {
           code: 400,
           message: `invalid thinking_level: ${thinkingLevelRaw} (must be one of ${VALID_THINKING_LEVELS.join(", ")})`,
@@ -173,9 +200,14 @@ export class PiSessionManager {
       thinkingLevel = thinkingLevelRaw as ThinkingLevel;
     }
 
-    const maxLifetimeS = Number(spec.max_lifetime_s ?? this.options.defaultMaxLifetimeS);
+    const maxLifetimeS = Number(
+      spec.max_lifetime_s ?? this.options.defaultMaxLifetimeS,
+    );
     if (!Number.isFinite(maxLifetimeS) || maxLifetimeS < 0) {
-      return { code: 400, message: "max_lifetime_s must be a non-negative number" };
+      return {
+        code: 400,
+        message: "max_lifetime_s must be a non-negative number",
+      };
     }
 
     this.creating.add(sessionId);
@@ -192,7 +224,10 @@ export class PiSessionManager {
       piSession = created.session;
     } catch (e) {
       this.creating.delete(sessionId);
-      return { code: 400, message: `failed to create PI session: ${(e as Error).message}` };
+      return {
+        code: 400,
+        message: `failed to create PI session: ${(e as Error).message}`,
+      };
     }
 
     const managed = new ManagedSession({
@@ -204,17 +239,16 @@ export class PiSessionManager {
       thinkingLevel,
       maxLifetimeS,
       piSession,
+      signer: this.options.signer,
+      minSenderTrust: this.options.minSenderTrust,
+      logger: this.log,
     });
 
     try {
       await managed.start();
     } catch (e) {
       this.creating.delete(sessionId);
-      try {
-        piSession.dispose();
-      } catch {
-        /* noop */
-      }
+      await managed.dispose().catch(() => undefined);
       return {
         code: 400,
         message: `failed to register session agent: ${(e as Error).message}`,
@@ -241,7 +275,9 @@ export class PiSessionManager {
 
   async stopOne(
     sessionId: string,
-  ): Promise<{ ok: true; session_id: string } | { code: 404; message: string }> {
+  ): Promise<
+    { ok: true; session_id: string } | { code: 404; message: string }
+  > {
     const m = this.sessions.get(sessionId);
     if (!m) return { code: 404, message: `no such session: ${sessionId}` };
     this.sessions.delete(sessionId);

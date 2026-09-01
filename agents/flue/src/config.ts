@@ -9,6 +9,7 @@ export interface NatsConfig {
   readonly url?: string;
   readonly context?: string;
   readonly creds?: string;
+  readonly senderIdentity?: "off" | "signed";
 }
 
 export interface AgentConfig {
@@ -17,6 +18,7 @@ export interface AgentConfig {
   readonly subjectToken: string;
   readonly heartbeatIntervalS: number;
   readonly keepaliveIntervalS: number;
+  readonly minSenderTrust?: "any" | "signed";
 }
 
 export interface FlueTargetConfig {
@@ -46,6 +48,8 @@ export interface ParsedArgs {
   readonly natsUrl?: string;
   readonly natsContext?: string;
   readonly natsCreds?: string;
+  readonly senderIdentity?: "off" | "signed";
+  readonly minSenderTrust?: "any" | "signed";
   readonly owner?: string;
   readonly name?: string;
   readonly subjectToken?: string;
@@ -73,6 +77,8 @@ const flagMap: Record<string, keyof Omit<ParsedArgs, "command">> = {
   "--nats-url": "natsUrl",
   "--nats-context": "natsContext",
   "--nats-creds": "natsCreds",
+  "--sender-identity": "senderIdentity",
+  "--min-sender-trust": "minSenderTrust",
   "--owner": "owner",
   "--name": "name",
   "--subject-token": "subjectToken",
@@ -104,6 +110,10 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
     } else if (key === "flueTransport") {
       if (!isFlueTransport(value)) throw new Error(`${arg} must be websocket, http-sync, or http-stream`);
       out[key] = value;
+    } else if (key === "senderIdentity") {
+      out[key] = parseSenderIdentity(value, arg);
+    } else if (key === "minSenderTrust") {
+      out[key] = parseMinSenderTrust(value, arg);
     } else {
       out[key] = value;
     }
@@ -171,6 +181,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): FlueChan
   if (natsUrl) nats.url = natsUrl;
   if (natsContext) nats.context = natsContext;
   if (natsCreds) nats.creds = natsCreds;
+  nats.senderIdentity = parseSenderIdentity(get(args.senderIdentity, env.NATS_SENDER_IDENTITY, natsSection.sender_identity, "off")!, "nats.sender_identity");
 
   return {
     nats,
@@ -180,6 +191,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): FlueChan
       subjectToken,
       heartbeatIntervalS: parsePositiveNumber(get(args.heartbeatIntervalS?.toString(), agentSection.heartbeat_interval_s, "30")!, "agent.heartbeat_interval_s"),
       keepaliveIntervalS: parsePositiveNumber(get(args.keepaliveIntervalS?.toString(), agentSection.keepalive_interval_s, "30")!, "agent.keepalive_interval_s"),
+      minSenderTrust: parseMinSenderTrust(get(args.minSenderTrust, env.NATS_MIN_SENDER_TRUST, agentSection.min_sender_trust, "any")!, "agent.min_sender_trust"),
     },
     flue: {
       baseUrl: get(args.flueBaseUrl, env.FLUE_BASE_URL, flueSection.base_url, "http://127.0.0.1:3583")!,
@@ -197,6 +209,16 @@ function parsePositiveNumber(value: string, field: string): number {
   return number;
 }
 
+function parseSenderIdentity(value: string, field: string): "off" | "signed" {
+  if (value === "off" || value === "signed") return value;
+  throw new Error(`${field} must be off or signed`);
+}
+
+function parseMinSenderTrust(value: string, field: string): "any" | "signed" {
+  if (value === "any" || value === "signed") return value;
+  throw new Error(`${field} must be any or signed`);
+}
+
 export function mappingFromConfig(config: FlueChannelConfig): FlueMapping {
   return {
     owner: config.agent.owner,
@@ -211,6 +233,7 @@ export function renderConfigTemplate(): string {
 url = "nats://127.0.0.1:4222"
 context = "local"
 creds = "/path/to/user.creds"
+sender_identity = "off"
 
 [agent]
 owner = "rene"
@@ -218,6 +241,7 @@ name = "support"
 subject_token = "flue"
 heartbeat_interval_s = 30
 keepalive_interval_s = 30
+min_sender_trust = "any"
 
 [flue]
 base_url = "http://127.0.0.1:3583"
@@ -241,6 +265,8 @@ Options:
   --nats-url URL
   --nats-context NAME
   --nats-creds PATH
+  --sender-identity off|signed
+  --min-sender-trust any|signed
   --owner TOKEN
   --name TOKEN
   --subject-token TOKEN

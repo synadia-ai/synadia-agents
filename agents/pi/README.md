@@ -56,30 +56,35 @@ Restart PI to pick up changes — or use the in-PI commands below.
 
 Config file lives at `~/.pi/agent/nats-channel.json`:
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `context` | no | — | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). When unset, falls back to `$NATS_URL` or, if that's also unset, the built-in `demo.nats.io`. |
-| `sessionName` | no | sanitized basename of CWD | The 5th subject token. Override to give your session a stable, addressable name. |
-| `owner` | no | `$USER` | The 4th subject token. Override to scope the session to a service account, deployment, or tenant instead of the OS user — sanitized to a legal subject token. The owner env vars (below) take precedence over this field. |
+| Field            | Required | Default                   | Description                                                                                                                                                                                                               |
+| ---------------- | -------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `context`        | no       | —                         | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). When unset, falls back to `$NATS_URL` or, if that's also unset, the built-in `demo.nats.io`.                                                |
+| `sessionName`    | no       | sanitized basename of CWD | The 5th subject token. Override to give your session a stable, addressable name.                                                                                                                                          |
+| `owner`          | no       | `$USER`                   | The 4th subject token. Override to scope the session to a service account, deployment, or tenant instead of the OS user — sanitized to a legal subject token. The owner env vars (below) take precedence over this field. |
+| `senderIdentity` | no       | `"off"`                   | `"signed"` registers PI with the NATS user identity from the selected connection credentials.                                                                                                                             |
+| `minSenderTrust` | no       | `"any"`                   | `"signed"` accepts only prompts with a signature-valid sender. This is independent of `senderIdentity`.                                                                                                                   |
 
 The `owner` token (4th) defaults to `$USER` but is overridable via the `SYNADIA_PI_OWNER` / `SYNADIA_OWNER` env vars (or the legacy `NATS_PI_OWNER`), or the `owner` config field — env wins over config. Useful for service-account or deployment-scoped sessions. For multi-tenant isolation, see [Multi-tenancy](#multi-tenancy) below.
 
 ### Environment variables
 
-Env vars override the config file. Identity vars follow the `SYNADIA_*`
-convention shared across the agent plugins: per-agent var > fleet-wide
-var > legacy alias > config file > derived fallback.
+Env vars override the config file. Owner/session naming vars follow the
+`SYNADIA_*` convention shared across the agent plugins: per-agent var >
+fleet-wide var > legacy alias > config file > derived fallback. Sender
+identity and trust use the NATS-wide variables shown below.
 
-| Variable | Sets | Notes |
-|----------|------|-------|
-| `NATS_CONTEXT` | `context` | Highest precedence — see below. |
-| `NATS_URL` | raw URL (no auth context) | Used only when `NATS_CONTEXT` and `config.context` are both unset. |
-| `SYNADIA_PI_OWNER` | `owner` | Per-agent override — highest owner precedence. |
-| `SYNADIA_OWNER` | `owner` | Fleet-wide override — below the per-agent var. |
-| `NATS_PI_OWNER` | `owner` | Legacy alias, still honored below the `SYNADIA_*` vars. **Now wins over the `owner` config field** — this precedence flipped with the `SYNADIA_*` adoption (see CHANGELOG). |
-| `SYNADIA_PI_NAME` | `sessionName` | Per-agent override — highest session-name precedence. |
-| `SYNADIA_NAME` | `sessionName` | Fleet-wide override — below the per-agent var. |
-| `NATS_SESSION_NAME` | `sessionName` | Legacy alias, still honored below the `SYNADIA_*` vars. |
+| Variable                | Sets                      | Notes                                                                                                                                                                       |
+| ----------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NATS_CONTEXT`          | `context`                 | Highest precedence — see below.                                                                                                                                             |
+| `NATS_URL`              | raw URL (no auth context) | Used only when `NATS_CONTEXT` and `config.context` are both unset.                                                                                                          |
+| `NATS_SENDER_IDENTITY`  | `senderIdentity`          | `off` or `signed`; overrides the config file.                                                                                                                               |
+| `NATS_MIN_SENDER_TRUST` | `minSenderTrust`          | `any` or `signed`; overrides the config file.                                                                                                                               |
+| `SYNADIA_PI_OWNER`      | `owner`                   | Per-agent override — highest owner precedence.                                                                                                                              |
+| `SYNADIA_OWNER`         | `owner`                   | Fleet-wide override — below the per-agent var.                                                                                                                              |
+| `NATS_PI_OWNER`         | `owner`                   | Legacy alias, still honored below the `SYNADIA_*` vars. **Now wins over the `owner` config field** — this precedence flipped with the `SYNADIA_*` adoption (see CHANGELOG). |
+| `SYNADIA_PI_NAME`       | `sessionName`             | Per-agent override — highest session-name precedence.                                                                                                                       |
+| `SYNADIA_NAME`          | `sessionName`             | Fleet-wide override — below the per-agent var.                                                                                                                              |
+| `NATS_SESSION_NAME`     | `sessionName`             | Legacy alias, still honored below the `SYNADIA_*` vars.                                                                                                                     |
 
 ### Resolution order
 
@@ -92,19 +97,49 @@ For `sessionName`: `$SYNADIA_PI_NAME` > `$SYNADIA_NAME` > `$NATS_SESSION_NAME` (
 
 For `owner`: `$SYNADIA_PI_OWNER` > `$SYNADIA_OWNER` > `$NATS_PI_OWNER` (legacy) > `config.owner` > `$USER` > `unknown`.
 
+For sender identity and trust: `$NATS_SENDER_IDENTITY` > `config.senderIdentity` > `off`, and `$NATS_MIN_SENDER_TRUST` > `config.minSenderTrust` > `any`.
+
+### Optional sender identity
+
+The default remains identity-free and permissive: PI does no self-identity lookup, publishes no identity registration fields, and accepts prompts without identity headers.
+
+To register PI with the NATS user identity already used by its connection:
+
+```json
+{
+  "context": "prod",
+  "senderIdentity": "signed"
+}
+```
+
+The selected NATS context must authenticate with signing material (`creds`, `nkey`, or `user_jwt` plus `user_seed`). The SDK reads the connection credentials once and derives both NATS authentication and the registration signer from that same snapshot. There is no separate identity credentials setting. Token-, username/password-, and anonymous connections remain valid when `senderIdentity` is `"off"`, but cannot enable signed identity.
+
+Incoming policy is a separate choice. To require every caller to use a signature-valid sender:
+
+```json
+{
+  "context": "prod",
+  "minSenderTrust": "signed"
+}
+```
+
+Either option can be enabled without the other. Invalid signatures are rejected before PI receives the prompt and before an acknowledgement is sent. For accepted requests, `/nats-status` can show the active sender with its trust class; sender metadata is never added to the model prompt. Prompt responses and mid-stream query replies are not independently signed.
+
 ### In-PI commands
 
 Available inside a running PI session:
 
-| Command | What it does |
-|---------|--------------|
-| `/nats-status` | Show current subject, service, instance id, protocol version, pending/queued counts |
-| `/nats-configure` | Print current config |
-| `/nats-configure <context>` | Switch NATS context |
-| `/nats-configure session <name>` | Override session name |
-| `/nats-configure session clear` | Revert to CWD basename |
-| `/nats-configure owner <name>` | Override the owner (4th subject token) |
-| `/nats-configure owner clear` | Revert to `$USER` |
+| Command                                  | What it does                                                                        |
+| ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| `/nats-status`                           | Show current subject, service, instance id, protocol version, pending/queued counts |
+| `/nats-configure`                        | Print current config                                                                |
+| `/nats-configure <context>`              | Switch NATS context                                                                 |
+| `/nats-configure session <name>`         | Override session name                                                               |
+| `/nats-configure session clear`          | Revert to CWD basename                                                              |
+| `/nats-configure owner <name>`           | Override the owner (4th subject token)                                              |
+| `/nats-configure owner clear`            | Revert to `$USER`                                                                   |
+| `/nats-configure identity <off\|signed>` | Disable or enable connection-bound registration identity                            |
+| `/nats-configure trust <any\|signed>`    | Accept any sender or require a signature-valid sender                               |
 
 `/nats-configure` writes the config file; restart PI to apply. (Live reconnect on context switch is a deferral — see [Limitations](#limitations).)
 
@@ -139,7 +174,11 @@ A successful `$SRV.INFO.agents` response for a PI session looks like:
       "name": "prompt",
       "subject": "agents.prompt.pi.me.my-session",
       "queue_group": "agents",
-      "metadata": { "max_payload": "8MB", "attachments_ok": "true" }
+      "metadata": {
+        "max_payload": "8MB",
+        "attachments_ok": "true",
+        "min_sender_trust": "any"
+      }
     },
     {
       "name": "status",
@@ -211,6 +250,8 @@ Caller-side limits (rejected with `400` if violated):
 
 Each PI session processes one NATS request at a time. Additional requests queue until the session is idle. The local TUI input and inbound NATS prompts share the same agent — typing locally during a NATS-driven turn means that local output flows to the NATS reply alongside the remote prompt's response.
 
+Queued prompts keep their AgentService response open until PI finishes the corresponding turn. The service owns admission, acknowledgement, keep-alive messages, errors, and the final stream terminator. Requests that expire in the local queue or remain during shutdown are explicitly settled instead of being silently dropped.
+
 Multiple PI sessions on the same host register as distinct service instances; `nats micro info agents` aggregates across all of them. If two sessions try to register on the same `owner + session`, the later one auto-suffixes `-2`, `-3`, … — pick a stable name with `/nats-configure session <name>` if you want addressability.
 
 ## Multi-tenancy
@@ -229,6 +270,8 @@ Deliberate deferrals:
 
 - **`NATS: reconnecting…`** — the connection dropped; the channel keeps retrying indefinitely (`maxReconnectAttempts: -1` from the SDK's `withAgentReconnectDefaults`), so just leave it — it will recover when the server is reachable again, including after a host sleep / network blip.
 - **`NATS: disconnected` in footer** — terminal. The client gave up reconnecting; the typical cause is repeated identical auth errors (the one path nats.js does not retry through, regardless of our defaults). Run `/nats-status`, then check the context file at `~/.config/nats/context/<context>.json` and that the NATS server is reachable. Restart PI after fixing.
+- **Signed identity fails at startup** — the selected connection context must contain a user seed (`creds`, `nkey`, or `user_jwt` plus `user_seed`). PI will not fall back to a different identity or silently start unsigned. Set `senderIdentity` back to `"off"` for token/password/anonymous connections.
+- **Unsigned callers get `401`** — `minSenderTrust` is `"signed"`. Configure the caller with a signer bound to its own NATS connection, or restore `minSenderTrust` to `"any"`.
 - **My session got a `-2` suffix** — another PI session was already registered on the same `owner + session`. Use `/nats-configure session <name>` to pick a different one.
 - **`nats req` returns only the initial ack and exits** — pass `--reply-timeout 30s` (default is 300 ms, shorter than the gap between the ack chunk and the LLM's first response). See the "Talk to your session" section above for the full command. `--wait-for-empty` alone isn't enough.
 - **`nats req` hangs or returns nothing** — pass `--wait-for-empty`. The protocol ends streams with an empty-body message, not a single response.

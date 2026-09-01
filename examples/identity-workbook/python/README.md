@@ -12,7 +12,10 @@ This workbook runs sender identity end to end with the monorepo's Python SDKs:
 
 The three generated users are throwaway local NKEY users in the global `$G` account. Private
 seeds live under the gitignored `.local/` directory with mode `0600`; none of the programs logs
-seeds, credentials, nonces, or raw signatures.
+seeds, credentials, nonces, or raw signatures. Every program uses the SDK's
+connection-bundle helper, so one credential snapshot supplies both NATS
+authentication and the matching signer; the examples contain no separate
+credential-reading or signer-derivation path.
 
 ## Set up once
 

@@ -1,9 +1,7 @@
 # `test-fixtures/identity/` — shared sender-identity test fixtures
 
 Repo-level fixtures for the **sender-identity extension** of the Synadia Agent
-Protocol (spec:
-[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
-in `synadia-agent-fabric-docs`). All four SDK test suites —
+Protocol. All four SDK test suites —
 `client-sdk/typescript`, `agent-sdk/typescript`, `client-sdk/python`,
 `agent-sdk/python` — consume the same files, so the TypeScript and Python
 SDKs are exercised against byte-identical nats-server topologies.

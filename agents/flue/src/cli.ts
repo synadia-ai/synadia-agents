@@ -1,26 +1,53 @@
 #!/usr/bin/env bun
 import { connect as natsConnect } from "@nats-io/transport-node";
 import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from "./config.js";
-import { resolveNatsOptions } from "./nats.js";
+import { resolveNatsBundle } from "./nats.js";
 import { createFlueAgentService } from "./service.js";
 import { formatDoctorChecks, runDoctorChecks } from "./doctor.js";
 import pkg from "../package.json" assert { type: "json" };
 
 async function start(): Promise<void> {
   const config = loadConfigFromSources();
-  const nc = await natsConnect(await resolveNatsOptions(config.nats));
-  const service = createFlueAgentService({ nc, config, version: pkg.version });
-  await service.start();
+  const connectionBundle = await resolveNatsBundle(config.nats);
+  const nc = await natsConnect(connectionBundle.connectionOptions).catch((error: unknown) => {
+    connectionBundle.wipe();
+    throw error;
+  });
+  let service: ReturnType<typeof createFlueAgentService>;
+  try {
+    service = createFlueAgentService({ nc, config, version: pkg.version, connectionBundle });
+    await service.start();
+  } catch (error) {
+    await nc.close();
+    connectionBundle.wipe();
+    throw error;
+  }
   console.log(`flue agent listening on ${service.subject.prompt}`);
   console.log("press Ctrl+C to stop");
+  let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log("\nshutting down…");
-    await service.stop();
+    let exitCode = 0;
+    try {
+      await service.stop();
+    } catch (error) {
+      exitCode = 1;
+      console.error(`flue-nats-channel service stop failed: ${(error as Error).message}`);
+    }
     await nc.close();
-    process.exit(0);
+    connectionBundle.wipe();
+    process.exit(exitCode);
   };
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
+  const requestShutdown = (): void => {
+    void shutdown().catch((error: unknown) => {
+      shuttingDown = false;
+      console.error(`flue-nats-channel shutdown failed: ${(error as Error).message}`);
+    });
+  };
+  process.on("SIGINT", requestShutdown);
+  process.on("SIGTERM", requestShutdown);
 }
 
 async function doctor(): Promise<void> {

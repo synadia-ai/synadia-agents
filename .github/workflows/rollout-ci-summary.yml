@@ -2,9 +2,9 @@ name: CI — rollout summary
 
 on:
   push:
-    branches: [main, sdk-release-rollout]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
   pull_request:
-    branches: [main, sdk-release-rollout]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
 
 permissions:
   actions: read

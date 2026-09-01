@@ -31,6 +31,12 @@ def _add_config_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--nats-context", help="NATS CLI context name")
     parser.add_argument("--nats-url", help="Direct NATS server URL")
     parser.add_argument(
+        "--sender-identity", choices=("off", "signed"), help="Host identity mode; default: off"
+    )
+    parser.add_argument(
+        "--min-sender-trust", choices=("any", "signed"), help="Incoming prompt policy; default: any"
+    )
+    parser.add_argument(
         "--deerflow-timeout-s",
         type=_positive_float,
         help="HTTP connect/read timeout for DeerFlow Gateway calls; default: 60",
@@ -70,6 +76,8 @@ def _resolve_from_args(args: argparse.Namespace) -> ChannelConfig:
         deerflow_url=args.deerflow_url,
         nats_context=args.nats_context,
         nats_url=args.nats_url,
+        sender_identity=args.sender_identity,
+        min_sender_trust=args.min_sender_trust,
         deerflow_timeout_s=args.deerflow_timeout_s,
         query_timeout_s=args.query_timeout_s,
         max_payload=args.max_payload,

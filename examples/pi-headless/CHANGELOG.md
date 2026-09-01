@@ -8,11 +8,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Optional connection-bound sender identity with
+  `NATS_SENDER_IDENTITY=off|signed` and independent inbound policy with
+  `NATS_MIN_SENDER_TRUST=any|signed`. Defaults remain identity-free and
+  permissive.
 - **Identity env vars adopt the `SYNADIA_*` convention** shared with
   `agents/*`: `PI_HEADLESS_OWNER|NAME` resolve as CLI flag >
   `SYNADIA_PI_HEADLESS_OWNER|NAME` (per-agent) > `SYNADIA_OWNER|NAME`
   (fleet-wide) > `PI_HEADLESS_OWNER|NAME` (legacy, keeps working) > config /
   derived fallback.
+
+### Changed
+
+- The controller and spawned sessions now use production `AgentService`.
+  Sender classification/admission happens before the SDK-owned
+  acknowledgement, and the SDK owns keep-alives, errors, terminators,
+  status, and heartbeats. The controller's `spawn`, `stop`, and `list`
+  extension subjects and payloads are unchanged.
+- NATS authentication and the optional signer now come exclusively from
+  `resolveNatsConnectionBundle`, using one retained credential snapshot.
+  There is no separate identity-credentials path.
+- All logical services on the process deliberately share the one NATS
+  connection's cryptographic identity. Session names, subjects, and trace
+  metadata remain routing/observability labels rather than independent
+  cryptographic identities.
+- CLI helpers use the same connection-bundle helper and sign SDK prompts
+  when `NATS_SENDER_IDENTITY=signed`.
 
 ## [0.5.5] - 2026-05-12
 
@@ -120,16 +141,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Subject migration
 
-| from | to |
-| --- | --- |
-| `agents.prompt.pi.<owner>.<name>` | `agents.prompt.pi-headless.<owner>.<name>` |
-| `agents.hb.pi.<owner>.<name>` | `agents.hb.pi-headless.<owner>.<name>` |
-| `agents.status.pi.<owner>.<name>` | `agents.status.pi-headless.<owner>.<name>` |
-| `agents.pi.<owner>.<name>.spawn` | `agents.spawn.pi-headless.<owner>.<name>` |
-| `agents.pi.<owner>.<name>.stop` | `agents.stop.pi-headless.<owner>.<name>` |
-| `agents.pi.<owner>.<name>.list` | `agents.list.pi-headless.<owner>.<name>` |
+| from                                    | to                                               |
+| --------------------------------------- | ------------------------------------------------ |
+| `agents.prompt.pi.<owner>.<name>`       | `agents.prompt.pi-headless.<owner>.<name>`       |
+| `agents.hb.pi.<owner>.<name>`           | `agents.hb.pi-headless.<owner>.<name>`           |
+| `agents.status.pi.<owner>.<name>`       | `agents.status.pi-headless.<owner>.<name>`       |
+| `agents.pi.<owner>.<name>.spawn`        | `agents.spawn.pi-headless.<owner>.<name>`        |
+| `agents.pi.<owner>.<name>.stop`         | `agents.stop.pi-headless.<owner>.<name>`         |
+| `agents.pi.<owner>.<name>.list`         | `agents.list.pi-headless.<owner>.<name>`         |
 | `agents.prompt.pi.<owner>.<session_id>` | `agents.prompt.pi-headless.<owner>.<session_id>` |
-| `agents.hb.pi.<owner>.<session_id>` | `agents.hb.pi-headless.<owner>.<session_id>` |
+| `agents.hb.pi.<owner>.<session_id>`     | `agents.hb.pi-headless.<owner>.<session_id>`     |
 | `agents.status.pi.<owner>.<session_id>` | `agents.status.pi-headless.<owner>.<session_id>` |
 
 ### SDK

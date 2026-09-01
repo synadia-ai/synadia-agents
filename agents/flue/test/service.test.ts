@@ -32,6 +32,8 @@ describe("service construction", () => {
     expect(opts.name).toBe("support");
     expect(opts.session).toBe("support");
     expect(opts.attachmentsOk).toBe(false);
+    expect(opts.identity).toBeUndefined();
+    expect(opts.minSenderTrust).toBe("any");
     expect(opts.extraMetadata).toEqual({
       flue_base_url: "http://127.0.0.1:3583",
       flue_agent: "assistant",
@@ -39,5 +41,21 @@ describe("service construction", () => {
       flue_session: "ticket-123",
       flue_transport: "http-stream",
     });
+
+    const signer = {} as never;
+    const signedConfig: FlueChannelConfig = {
+      ...cfg,
+      nats: { ...cfg.nats, senderIdentity: "signed" },
+      agent: { ...cfg.agent, minSenderTrust: "signed" },
+    };
+    const signed = buildAgentServiceOptions({
+      nc: {} as never,
+      config: signedConfig,
+      version: "0.1.0",
+      connectionBundle: { signer } as never,
+    });
+    expect(signed.identity).toEqual({ signer });
+    expect(signed.minSenderTrust).toBe("signed");
+    expect(() => buildAgentServiceOptions({ nc: {} as never, config: signedConfig, version: "0.1.0" })).toThrow("resolved NATS connection bundle");
   });
 });

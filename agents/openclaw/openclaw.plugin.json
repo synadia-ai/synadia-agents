@@ -36,7 +36,19 @@
                 },
                 "context": {
                   "type": "string",
-                  "description": "Name of a NATS CLI context (file under ~/.config/nats/context/<name>.json) to source url + credentials from. Per-field url/credentials and the $NATS_* env vars still take precedence."
+                  "description": "Name of a NATS CLI context used as one complete connection/auth source."
+                },
+                "senderIdentity": {
+                  "type": "string",
+                  "enum": ["off", "signed"],
+                  "default": "off",
+                  "description": "Whether to sign this agent's identity using its connection credentials."
+                },
+                "minSenderTrust": {
+                  "type": "string",
+                  "enum": ["any", "signed"],
+                  "default": "any",
+                  "description": "Minimum sender trust required for incoming prompts."
                 },
                 "enabled": {
                   "type": "boolean",
@@ -70,14 +82,42 @@
             "additionalProperties": {
               "type": "object",
               "properties": {
-                "agentName": { "type": "string", "description": "Agent identity on the NATS network" },
+                "agentName": {
+                  "type": "string",
+                  "description": "Agent identity on the NATS network"
+                },
                 "url": { "type": "string", "description": "NATS server URL" },
-                "description": { "type": "string", "description": "Shown during agent discovery" },
-                "credentials": { "type": "string", "description": "NATS auth credentials" },
-                "context": { "type": "string", "description": "NATS CLI context name; sources url + credentials" },
+                "description": {
+                  "type": "string",
+                  "description": "Shown during agent discovery"
+                },
+                "credentials": {
+                  "type": "string",
+                  "description": "NATS auth credentials"
+                },
+                "context": {
+                  "type": "string",
+                  "description": "NATS CLI context name; one complete connection/auth source"
+                },
+                "senderIdentity": {
+                  "type": "string",
+                  "enum": ["off", "signed"],
+                  "default": "off"
+                },
+                "minSenderTrust": {
+                  "type": "string",
+                  "enum": ["any", "signed"],
+                  "default": "any"
+                },
                 "enabled": { "type": "boolean", "default": true },
-                "owner": { "type": "string", "description": "Operator/account segment in the NATS subject namespace" },
-                "org": { "type": "string", "description": "Deprecated alias of `owner`" }
+                "owner": {
+                  "type": "string",
+                  "description": "Operator/account segment in the NATS subject namespace"
+                },
+                "org": {
+                  "type": "string",
+                  "description": "Deprecated alias of `owner`"
+                }
               },
               "required": ["agentName"]
             }

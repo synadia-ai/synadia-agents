@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from synadia_ai.agents import Attachment, Envelope, ProtocolError
+from synadia_ai.agent_service import ServiceIdentity
+from synadia_ai.agents import Attachment, Envelope, NatsConnectionBundle, ProtocolError
 
 from synadia_ai.nats_deerflow_channel import host as host_module
 from synadia_ai.nats_deerflow_channel.config import ChannelConfig, resolve_config
 from synadia_ai.nats_deerflow_channel.host import (
     _advertised_max_payload,
     _format_human_bytes,
-    _nats_connect_options,
     build_agent_service,
     make_deerflow_prompt_handler,
     make_prompt_handler,
+    resolve_connection_bundle,
+    run_channel,
 )
 from synadia_ai.nats_deerflow_channel.runner import ClarificationEvent, TextEvent
 from synadia_ai.nats_deerflow_channel.testing import fake_deerflow_runner
@@ -54,9 +57,11 @@ def test_connect_options_use_direct_url(tmp_path: Path, monkeypatch: Any) -> Non
     monkeypatch.setenv("NATS_URL", "nats://127.0.0.1:4222")
     config = resolve_config(config_file=tmp_path / "missing.toml")
 
-    options = _nats_connect_options(config)
+    bundle = resolve_connection_bundle(config)
 
-    assert options == {"servers": "nats://127.0.0.1:4222"}
+    assert bundle.connection_options == {"servers": ["nats://127.0.0.1:4222"]}
+    assert bundle.signer is None
+    bundle.wipe()
 
 
 def test_build_agent_service_requires_owner(tmp_path: Path) -> None:
@@ -90,6 +95,35 @@ def test_build_agent_service_honors_smaller_configured_max_payload() -> None:
     assert service._max_payload == "256KB"
 
 
+def test_build_agent_service_defaults_to_unsigned_and_accepts_any_sender() -> None:
+    config = ChannelConfig(owner="rene")
+
+    service = build_agent_service(config, nc=object())  # type: ignore[arg-type]
+
+    assert service._service_identity is None
+    assert service.min_sender_trust == "any"
+
+
+def test_build_agent_service_uses_signer_from_connection_bundle() -> None:
+    signer = object()
+    bundle = NatsConnectionBundle({}, cast(Any, signer))
+    config = ChannelConfig(owner="rene", sender_identity="signed", min_sender_trust="signed")
+
+    service = build_agent_service(config, nc=object(), connection_bundle=bundle)  # type: ignore[arg-type]
+
+    assert isinstance(service._service_identity, ServiceIdentity)
+    assert service._service_identity.signer is signer
+    assert service.min_sender_trust == "signed"
+
+
+def test_build_agent_service_rejects_signed_mode_without_bundle_signer() -> None:
+    config = ChannelConfig(owner="rene", sender_identity="signed")
+    bundle = NatsConnectionBundle({}, None)
+
+    with pytest.raises(ValueError, match="resolved NATS connection bundle"):
+        build_agent_service(config, nc=object(), connection_bundle=bundle)  # type: ignore[arg-type]
+
+
 def test_advertised_max_payload_falls_back_when_nats_info_missing() -> None:
     config = ChannelConfig(owner="rene")
 
@@ -98,6 +132,44 @@ def test_advertised_max_payload_falls_back_when_nats_info_missing() -> None:
 
 def test_format_human_bytes_rounds_non_aligned_limits_down_to_kb() -> None:
     assert _format_human_bytes((1536 * 1024) + 1) == "1536KB"
+
+
+@pytest.mark.asyncio
+async def test_run_channel_retains_bundle_when_close_fails(monkeypatch: Any) -> None:
+    class Connection:
+        async def close(self) -> None:
+            raise RuntimeError("close failed")
+
+    class Bundle:
+        wiped = False
+
+        def wipe(self) -> None:
+            self.wiped = True
+
+    class Service:
+        async def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+    connection = Connection()
+    bundle = Bundle()
+
+    async def fake_connect_nats(
+        _config: ChannelConfig,
+    ) -> tuple[Connection, Bundle]:
+        return connection, bundle
+
+    monkeypatch.setattr(host_module, "connect_nats", fake_connect_nats)
+    monkeypatch.setattr(host_module, "build_agent_service", lambda *_args: Service())
+    stop_event = asyncio.Event()
+    stop_event.set()
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        await run_channel(ChannelConfig(owner="rene"), stop_event=stop_event)
+
+    assert bundle.wiped is False
 
 
 @pytest.mark.parametrize("filename", ["../x.txt", "file.txt\r\nX-Injected: evil"])

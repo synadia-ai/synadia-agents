@@ -24,6 +24,8 @@ describe("plugin config and identity", () => {
       SYNADIA_OPENCODE_OWNER: "Team A",
       SYNADIA_OPENCODE_SESSION: "Frontend Main",
       OPENCODE_PERMISSION_POLICY: "reject",
+      NATS_SENDER_IDENTITY: "signed",
+      NATS_MIN_SENDER_TRUST: "signed",
       SYNADIA_OPENCODE_HEARTBEAT_INTERVAL_S: "5",
       SYNADIA_OPENCODE_KEEPALIVE_INTERVAL_S: "7",
     });
@@ -34,6 +36,8 @@ describe("plugin config and identity", () => {
     expect(resolved.config.opencode.permissionPolicy).toBe("reject");
     expect(resolved.config.agent.heartbeatIntervalS).toBe(5);
     expect(resolved.config.agent.keepaliveIntervalS).toBe(7);
+    expect(resolved.config.nats.senderIdentity).toBe("signed");
+    expect(resolved.config.agent.minSenderTrust).toBe("signed");
   });
 
   test("plugin session: SYNADIA_OPENCODE_NAME (canonical) beats the *_SESSION aliases", () => {

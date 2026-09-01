@@ -2,16 +2,25 @@
 // Doubles as the end-to-end verification driver and a demo entrypoint.
 //   bun run src/caller.ts "checkout is slow — investigate and fix."
 //   APPROVE=no bun run src/caller.ts     # deny the restart instead
-import { connect } from "@nats-io/transport-node";
-import { Agents, parseNatsUrl } from "@synadia-ai/agents";
+import { Agents } from "@synadia-ai/agents";
+import { closeExampleNats, connectExampleNats } from "./core/nats";
 
-const NATS_URL = process.env.NATS_URL ?? "nats://127.0.0.1:4222";
 const PROMPT = process.argv.slice(2).join(" ") || "checkout is slow — investigate and fix.";
 const APPROVE = process.env.APPROVE ?? "yes";
 const AGENT = process.env.AGENT ?? "durable-sre"; // e.g. AGENT=durable-coder to reach the coding agent
 
-const nc = await connect(parseNatsUrl(NATS_URL));
-const agents = new Agents({ nc });
+const connection = await connectExampleNats("durable-agent-caller");
+const { nc, bundle } = connection;
+let agents: Agents;
+try {
+  agents = new Agents({
+    nc,
+    ...(bundle.signer ? { identity: { signer: bundle.signer, name: "durable-agent-caller" } } : {}),
+  });
+} catch (error) {
+  await closeExampleNats(connection);
+  throw error;
+}
 try {
   // Wait for the agent to show up in discovery (tolerates starting serve + caller together).
   let agent: Awaited<ReturnType<typeof agents.discover>>[number] | undefined;
@@ -42,7 +51,10 @@ try {
   }
   console.log("\n\n✅ prompt complete");
 } finally {
-  await agents.close();
-  await nc.close();
+  try {
+    await agents.close();
+  } finally {
+    await closeExampleNats(connection);
+  }
   process.exit(0);
 }

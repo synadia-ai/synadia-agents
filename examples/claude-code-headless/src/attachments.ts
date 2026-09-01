@@ -9,7 +9,7 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { ParsedAttachment } from "./envelope.js";
+import type { RequestAttachment } from "@synadia-ai/agents";
 
 const ROOT = join(homedir(), ".claude-code-headless", "attachments");
 
@@ -22,19 +22,23 @@ export interface StagedAttachmentGroup {
 
 export async function stageAttachments(
   sessionId: string,
-  attachments: ReadonlyArray<ParsedAttachment>,
+  attachments: ReadonlyArray<RequestAttachment>,
 ): Promise<StagedAttachmentGroup> {
   const dir = pathResolve(join(ROOT, sessionId, randomUUID()));
   await mkdir(dir, { recursive: true });
   const paths: string[] = [];
-  for (const att of attachments) {
-    const safeName = sanitizeFilename(att.filename);
-    const filePath = join(dir, safeName);
-    const bytes = decodeBase64Strict(att.base64);
-    await writeFile(filePath, bytes);
-    paths.push(filePath);
+  try {
+    for (const att of attachments) {
+      const safeName = sanitizeFilename(att.filename);
+      const filePath = join(dir, safeName);
+      await writeFile(filePath, att.content);
+      paths.push(filePath);
+    }
+    return { dir, paths };
+  } catch (error) {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
   }
-  return { dir, paths };
 }
 
 export async function cleanupStaged(group: StagedAttachmentGroup): Promise<void> {
@@ -54,16 +58,6 @@ export function decorateWithAttachments(prompt: string, paths: ReadonlyArray<str
     "",
   ].join("\n");
   return `${header}\n${prompt}`;
-}
-
-// Reject URL-safe base64 / whitespace per §5.2.
-const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
-
-function decodeBase64Strict(input: string): Uint8Array {
-  if (!BASE64_RE.test(input)) {
-    throw new Error("attachment content is not valid RFC 4648 §4 base64");
-  }
-  return Uint8Array.from(Buffer.from(input, "base64"));
 }
 
 // No path traversal, no separators.

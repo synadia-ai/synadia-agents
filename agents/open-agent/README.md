@@ -126,6 +126,8 @@ agent name become underscores) > fleet-wide var (`SYNADIA_*`) > legacy alias
 | `--session` | `SYNADIA_OPEN_AGENT_NAME`, `SYNADIA_NAME`, `OPEN_AGENT_SESSION` (legacy) | `default` |
 | `--workdir` | `OPEN_AGENT_WORKDIR` | `${TMPDIR}/open-agent/<session>/` |
 | `--nats-context` | `NATS_CONTEXT` | (unset) |
+| `--sender-identity` | `NATS_SENDER_IDENTITY` | `off` |
+| `--min-sender-trust` | `NATS_MIN_SENDER_TRUST` | `any` |
 | `--provider` | `OPEN_AGENT_PROVIDER` | `gateway` (or `openrouter` if only `OPENROUTER_API_KEY` is set) |
 | — | `NATS_URL` | `nats://127.0.0.1:4222` |
 | — | `OPEN_AGENT_MODEL` | `anthropic/claude-opus-4.6` on Gateway; **required** on OpenRouter |
@@ -133,8 +135,15 @@ agent name become underscores) > fleet-wide var (`SYNADIA_*`) > legacy alias
 | — | `OPENROUTER_API_KEY` | required when provider=openrouter |
 
 `--nats-context <name>` (or `$NATS_CONTEXT`) resolves a saved `nats` CLI
-context via `@synadia-ai/agents`'s `loadContextOptions`. A selected context
-wins over `NATS_URL` — same precedence as the other agent plugins.
+context through the SDK connection-bundle helper. A selected context wins
+over `NATS_URL` — same precedence as the other agent plugins.
+
+Sender identity is opt-in. With `--sender-identity signed`, the same NATS
+credentials used to open the connection must contain a signing seed; the
+channel then registers a connection-bound signed identity. There is no second
+identity credential. `--min-sender-trust signed` is a separate incoming-prompt
+policy. The defaults (`off` and `any`) preserve identity-free operation and
+accept headerless callers.
 
 ## Wire format for tool calls
 

@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Migrated protocol hosting to `AgentService`. Sender admission now happens
+  before the SDK-owned acknowledgement, while queued PI turns keep a deferred
+  `PromptResponse` open until `agent_end`, expiration, or shutdown. Expired and
+  shutdown requests receive an error and terminator instead of being dropped.
+- Added optional, connection-bound sender identity. `senderIdentity: "signed"`
+  uses the shared SDK connection-bundle helper so the NATS authenticator and
+  registration signer come from one credential snapshot; the default remains
+  `"off"`. There is no separate identity credential path.
+- Added independent inbound policy with `minSenderTrust: "any" | "signed"`;
+  the default remains permissive. `NATS_SENDER_IDENTITY` and
+  `NATS_MIN_SENDER_TRUST` override the matching config fields.
+- Active sender metadata is available only through the trust-labelled
+  `/nats-status` diagnostic and is never inserted into PI's model prompt.
+- Constrained the PI peer dependency to the tested `0.84.x` line.
 - **Identity env vars adopt the `SYNADIA_*` convention** shared across
   `agents/*`. Owner: `SYNADIA_PI_OWNER` > `SYNADIA_OWNER` >
   `NATS_PI_OWNER` (legacy) > config `owner` > `$USER` > `unknown`.

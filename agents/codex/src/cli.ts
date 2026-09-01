@@ -6,7 +6,7 @@ import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from
 import { runDoctor } from "./doctor.js";
 import { ManagedCodexRuntime } from "./managed-runtime.js";
 import { AttachedCodexRuntime } from "./attached-runtime.js";
-import { resolveNatsOptions } from "./nats.js";
+import { resolveNatsBundle } from "./nats.js";
 import { createCodexAgentService } from "./service.js";
 import { CodexSessionManager } from "./session-manager.js";
 
@@ -40,33 +40,58 @@ async function main(): Promise<void> {
   if (command !== "start" && command !== "attach:start") throw new Error(`unknown command ${command}`);
 
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version?: string };
-  const nc = await natsConnect(await resolveNatsOptions(config.nats));
+  const connectionBundle = await resolveNatsBundle(config.nats);
+  const nc = await natsConnect(connectionBundle.connectionOptions).catch((error: unknown) => {
+    connectionBundle.wipe();
+    throw error;
+  });
   if (config.codex.mode === "manager") {
-    const manager = new CodexSessionManager({ nc, config, version: pkg.version ?? "0.0.0" });
-    const snapshots = await manager.start();
-    console.log(`codex-agent manager listening for ${snapshots.length} sessions`);
-    if (manager.endpointErrorCount > 0) console.error(`codex-agent manager endpoint errors: ${manager.endpointErrorCount}`);
-    for (const snapshot of snapshots) console.log(snapshot.promptSubject);
-    const stopCommands = installManagerCommands(manager);
-    await waitForShutdown();
-    stopCommands();
-    await manager.stop();
-    await nc.drain();
+    const manager = new CodexSessionManager({ nc, config, version: pkg.version ?? "0.0.0", connectionBundle });
+    let stopCommands: (() => void) | undefined;
+    try {
+      const snapshots = await manager.start();
+      console.log(`codex-agent manager listening for ${snapshots.length} sessions`);
+      if (manager.endpointErrorCount > 0) console.error(`codex-agent manager endpoint errors: ${manager.endpointErrorCount}`);
+      for (const snapshot of snapshots) console.log(snapshot.promptSubject);
+      stopCommands = installManagerCommands(manager);
+      await waitForShutdown();
+    } finally {
+      stopCommands?.();
+      try {
+        await manager.stop();
+      } finally {
+        await nc.drain();
+        connectionBundle.wipe();
+      }
+    }
     return;
   }
-  const client = await createBridgeClient(config);
-  const service = createCodexAgentService({
-    nc,
-    config,
-    version: pkg.version ?? "0.0.0",
-    client,
-  });
-  await service.start();
-  console.log(`codex-agent listening on ${service.subject.prompt}`);
-  await waitForShutdown();
-  await service.stop();
-  await client.close?.();
-  await nc.drain();
+  let client: CodexBridgeClient | undefined;
+  let service: ReturnType<typeof createCodexAgentService> | undefined;
+  try {
+    client = await createBridgeClient(config);
+    service = createCodexAgentService({
+      nc,
+      config,
+      version: pkg.version ?? "0.0.0",
+      client,
+      connectionBundle,
+    });
+    await service.start();
+    console.log(`codex-agent listening on ${service.subject.prompt}`);
+    await waitForShutdown();
+  } finally {
+    try {
+      try {
+        await service?.stop();
+      } finally {
+        await client?.close?.();
+      }
+    } finally {
+      await nc.drain();
+      connectionBundle.wipe();
+    }
+  }
 }
 
 export function resolveCliCommand(argv: readonly string[]): string {

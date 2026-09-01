@@ -2,7 +2,7 @@
   "mcpServers": {
     "nats": {
       "command": "bun",
-      "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "--shell=bun", "--silent", "start"],
+      "args": ["${CLAUDE_PLUGIN_ROOT}/runtime/server.js"],
       "env": {
         "CLAUDE_CWD": "${PWD}"
       }

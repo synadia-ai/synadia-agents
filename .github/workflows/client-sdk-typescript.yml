@@ -2,7 +2,7 @@ name: CI — client-sdk/typescript
 
 on:
   push:
-    branches: [main, sdk-release-rollout]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "client-sdk/typescript/**"
       - "agent-sdk/typescript/**"
@@ -48,6 +48,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
+      - name: Example connection-bundle tests
+        run: npx vitest run --config examples/_vitest.config.ts
 
   test-node:
     name: Node ${{ matrix.node }} on ${{ matrix.os }}

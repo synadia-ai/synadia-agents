@@ -20,6 +20,7 @@ export function resolvePluginConfig(
     url: natsUrl,
     ...(natsContext ? { context: natsContext } : {}),
     ...(natsCreds ? { creds: natsCreds } : {}),
+    senderIdentity: parseSenderIdentity(pick(env.NATS_SENDER_IDENTITY, "off")!, "NATS_SENDER_IDENTITY"),
   };
   const permissionPolicy = parsePermissionPolicy(pick(env.OPENCODE_PERMISSION_POLICY, env.SYNADIA_OPENCODE_PERMISSION_POLICY, "query")!, "OPENCODE_PERMISSION_POLICY");
   const config: OpenCodeChannelConfig = {
@@ -30,6 +31,7 @@ export function resolvePluginConfig(
       subjectToken: "opencode",
       heartbeatIntervalS: parsePositiveNumber(pick(env.SYNADIA_OPENCODE_HEARTBEAT_INTERVAL_S, "30")!, "SYNADIA_OPENCODE_HEARTBEAT_INTERVAL_S"),
       keepaliveIntervalS: parsePositiveNumber(pick(env.SYNADIA_OPENCODE_KEEPALIVE_INTERVAL_S, "30")!, "SYNADIA_OPENCODE_KEEPALIVE_INTERVAL_S"),
+      minSenderTrust: parseMinSenderTrust(pick(env.NATS_MIN_SENDER_TRUST, "any")!, "NATS_MIN_SENDER_TRUST"),
     },
     opencode: {
       mode: "plugin",
@@ -61,6 +63,16 @@ function parsePositiveNumber(value: string, field: string): number {
 function parsePermissionPolicy(value: string, field: string): PermissionPolicy {
   if (value === "query" || value === "local" || value === "reject") return value;
   throw new Error(`${field} must be query, local, or reject`);
+}
+
+function parseSenderIdentity(value: string, field: string): "off" | "signed" {
+  if (value === "off" || value === "signed") return value;
+  throw new Error(`${field} must be off or signed`);
+}
+
+function parseMinSenderTrust(value: string, field: string): "any" | "signed" {
+  if (value === "any" || value === "signed") return value;
+  throw new Error(`${field} must be any or signed`);
 }
 
 function serverUrlString(value: unknown): string | undefined {

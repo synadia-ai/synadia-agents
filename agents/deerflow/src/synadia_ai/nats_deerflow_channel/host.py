@@ -6,18 +6,25 @@ import asyncio
 import re
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
-from typing import Any, cast
+from typing import Any
 
 import nats
 from nats.aio.client import Client as NATSClient
-from synadia_ai.agent_service import DEFAULT_MAX_PAYLOAD, AgentService, PromptHandler, PromptStream
+from synadia_ai.agent_service import (
+    DEFAULT_MAX_PAYLOAD,
+    AgentService,
+    PromptHandler,
+    PromptStream,
+    ServiceIdentity,
+)
 from synadia_ai.agents import (
     Attachment,
     Envelope,
+    NatsConnectionBundle,
     ProtocolError,
     QueryTimeout,
     StatusChunk,
-    load_context_options,
+    resolve_nats_connection_bundle,
 )
 
 from .config import ChannelConfig
@@ -48,23 +55,48 @@ def _advertised_max_payload(config: ChannelConfig, nc: NATSClient) -> str:
     return DEFAULT_MAX_PAYLOAD
 
 
-def _nats_connect_options(config: ChannelConfig) -> dict[str, object]:
+def resolve_connection_bundle(config: ChannelConfig) -> NatsConnectionBundle[Any]:
+    """Resolve NATS auth and optional host signer from one SDK-owned snapshot."""
     if config.nats_context:
-        return dict(load_context_options(config.nats_context))
+        return resolve_nats_connection_bundle(
+            context=config.nats_context,
+            identity=config.sender_identity,
+        )
     if config.nats_url:
-        return {"servers": config.nats_url}
-    return dict(load_context_options("current"))
+        return resolve_nats_connection_bundle(
+            url=config.nats_url,
+            identity=config.sender_identity,
+        )
+    return resolve_nats_connection_bundle(
+        context="current",
+        identity=config.sender_identity,
+    )
 
 
-async def connect_nats(config: ChannelConfig) -> NATSClient:
+async def connect_nats(config: ChannelConfig) -> tuple[NATSClient, NatsConnectionBundle[Any]]:
     """Open a NATS connection for the channel wrapper."""
-    return await nats.connect(**cast(dict[str, Any], _nats_connect_options(config)))
+    bundle = resolve_connection_bundle(config)
+    try:
+        nc = await nats.connect(**bundle.connection_options)
+    except Exception:
+        bundle.wipe()
+        raise
+    return nc, bundle
 
 
-def build_agent_service(config: ChannelConfig, nc: NATSClient) -> AgentService:
+def build_agent_service(
+    config: ChannelConfig,
+    nc: NATSClient,
+    connection_bundle: NatsConnectionBundle[Any] | None = None,
+) -> AgentService:
     """Build the Synadia Agent Protocol service for DeerFlow."""
     if not config.owner:
         raise ValueError("owner is required to host the protocol service")
+    if config.sender_identity == "signed" and (
+        connection_bundle is None or connection_bundle.signer is None
+    ):
+        raise ValueError("signed sender identity requires the resolved NATS connection bundle")
+    signer = connection_bundle.signer if connection_bundle is not None else None
     service = AgentService(
         agent=config.agent,
         owner=config.owner,
@@ -73,6 +105,8 @@ def build_agent_service(config: ChannelConfig, nc: NATSClient) -> AgentService:
         description="DeerFlow channel wrapper for the Synadia Agent Protocol",
         attachments_ok=True,
         max_payload=_advertised_max_payload(config, nc),
+        identity=ServiceIdentity(signer=signer) if signer is not None else None,
+        min_sender_trust=config.min_sender_trust,
     )
     service.on_prompt(make_deerflow_prompt_handler(config))
     return service
@@ -162,15 +196,20 @@ def make_prompt_handler(runner: PromptRunner) -> PromptHandler:
 
 async def run_channel(config: ChannelConfig, *, stop_event: asyncio.Event | None = None) -> None:
     """Run the long-lived protocol host until cancelled or stop_event is set."""
-    nc = await connect_nats(config)
-    service = build_agent_service(config, nc)
-    await service.start()
+    nc, connection_bundle = await connect_nats(config)
+    service: AgentService | None = None
     try:
+        service = build_agent_service(config, nc, connection_bundle)
+        await service.start()
         if stop_event is None:
             await asyncio.Event().wait()
         else:
             await stop_event.wait()
     finally:
-        await service.stop()
-        with suppress(Exception):
-            await nc.close()
+        if service is not None:
+            with suppress(Exception):
+                await service.stop()
+        # Reconnect authentication retains the bundle snapshot until close
+        # succeeds. A close failure must leave it intact for a caller retry.
+        await nc.close()
+        connection_bundle.wipe()

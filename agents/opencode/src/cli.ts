@@ -2,7 +2,7 @@
 import { connect as natsConnect } from "@nats-io/transport-node";
 import { helpText, loadConfigFromSources, parseArgs, renderConfigTemplate } from "./config.js";
 import { formatDoctorChecks, runDoctorChecks } from "./doctor.js";
-import { resolveNatsOptions } from "./nats.js";
+import { resolveNatsBundle } from "./nats.js";
 import { createOpenCodeClient } from "./opencode-client.js";
 import { checkOpenCodePluginInstallation, installOpenCodePlugin, renderPluginEnvTemplate, uninstallOpenCodePlugin } from "./plugin/install.js";
 import { createOpenCodeAgentService } from "./service.js";
@@ -10,10 +10,30 @@ import pkg from "../package.json" assert { type: "json" };
 
 async function start(): Promise<void> {
   const config = loadConfigFromSources();
-  const client = await createOpenCodeClient(config);
-  const nc = await natsConnect(await resolveNatsOptions(config.nats));
-  const service = createOpenCodeAgentService({ nc, config, version: pkg.version, client });
-  await service.start();
+  const connectionBundle = await resolveNatsBundle(config.nats);
+  const nc = await natsConnect(connectionBundle.connectionOptions).catch((error: unknown) => {
+    connectionBundle.wipe();
+    throw error;
+  });
+  let client: Awaited<ReturnType<typeof createOpenCodeClient>> | undefined;
+  let service: ReturnType<typeof createOpenCodeAgentService> | undefined;
+  try {
+    client = await createOpenCodeClient(config);
+    service = createOpenCodeAgentService({ nc, config, version: pkg.version, client, connectionBundle });
+    await service.start();
+  } catch (error) {
+    try {
+      try {
+        await service?.stop();
+      } finally {
+        await client?.close?.();
+      }
+    } finally {
+      await nc.close();
+      connectionBundle.wipe();
+    }
+    throw error;
+  }
   console.log(`opencode agent listening on ${service.subject.prompt}`);
   console.log(`mode=${config.opencode.mode} owner=${config.agent.owner} session=${config.agent.name}`);
   console.log("press Ctrl+C to stop");
@@ -23,13 +43,31 @@ async function start(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log("\nshutting down…");
-    await service.stop();
-    await client.close?.();
+    let exitCode = 0;
+    try {
+      await service.stop();
+    } catch (error) {
+      exitCode = 1;
+      console.error(`opencode-agent service stop failed: ${(error as Error).message}`);
+    }
+    try {
+      await client.close?.();
+    } catch (error) {
+      exitCode = 1;
+      console.error(`opencode-agent client close failed: ${(error as Error).message}`);
+    }
     await nc.drain();
-    process.exit(0);
+    connectionBundle.wipe();
+    process.exit(exitCode);
   };
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
+  const requestShutdown = (): void => {
+    void shutdown().catch((error: unknown) => {
+      shuttingDown = false;
+      console.error(`opencode-agent shutdown failed: ${(error as Error).message}`);
+    });
+  };
+  process.on("SIGINT", requestShutdown);
+  process.on("SIGTERM", requestShutdown);
   await new Promise<void>(() => undefined);
 }
 

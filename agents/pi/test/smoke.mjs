@@ -12,7 +12,9 @@
 //   5. Empty payload → 400 + terminator.
 //   6. Plain-text prompt yields a `status: ack` chunk, text chunks via the
 //      mock emitter, and an empty-body no-headers terminator.
-//   7. Request with attachments → 400 + terminator.
+//   7. Identity-free registration carries no identity metadata.
+//   8. Signed registration publishes a verifiable connection-bound `id_sig`.
+//   9. Signed-only admission rejects before ack and accepts a signed caller.
 //
 // Run with:
 //   bun test/smoke.mjs
@@ -27,13 +29,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	readdirSync,
-	rmSync,
-	writeFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -52,36 +54,59 @@ import { Svcm } from "@nats-io/services";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORTS_DIR = mkdtempSync(join(tmpdir(), "nats-pi-smoke-ports-"));
 const NATS_CONF = join(__dirname, "nats-server.conf");
-const spawnedServer = spawn(
-	"nats-server",
-	["-c", NATS_CONF, "--ports_file_dir", PORTS_DIR],
-	{ stdio: "ignore" },
+const SIGNED = process.env.PI_SMOKE_SIGNED === "1";
+const STRICT = process.env.PI_SMOKE_STRICT === "1";
+const AUTHENTICATED = SIGNED || STRICT;
+const OPERATOR_FIXTURE = join(
+  __dirname,
+  "../../../test-fixtures/identity/operator",
 );
+const ALICE_CREDS = join(OPERATOR_FIXTURE, "alice.creds");
+const serverArgs = AUTHENTICATED
+  ? [
+      "-c",
+      join(OPERATOR_FIXTURE, "operator.conf"),
+      "-a",
+      "127.0.0.1",
+      "-p",
+      "-1",
+      "--ports_file_dir",
+      PORTS_DIR,
+    ]
+  : ["-c", NATS_CONF, "--ports_file_dir", PORTS_DIR];
+const spawnedServer = spawn("nats-server", serverArgs, { stdio: "ignore" });
 spawnedServer.on("error", (err) => {
-	console.error(`could not spawn nats-server: ${err.message}`);
-	console.error("install nats-server (https://nats.io) before re-running this smoke");
-	process.exit(2);
+  console.error(`could not spawn nats-server: ${err.message}`);
+  console.error(
+    "install nats-server (https://nats.io) before re-running this smoke",
+  );
+  process.exit(2);
 });
 process.on("exit", () => {
-	if (spawnedServer && !spawnedServer.killed) spawnedServer.kill();
-	try {
-		rmSync(PORTS_DIR, { recursive: true, force: true });
-	} catch {}
+  if (spawnedServer && !spawnedServer.killed) spawnedServer.kill();
+  try {
+    rmSync(PORTS_DIR, { recursive: true, force: true });
+  } catch {}
 });
 
 async function readBoundUrl() {
-	const deadline = Date.now() + 5000;
-	while (Date.now() < deadline) {
-		try {
-			const entries = readdirSync(PORTS_DIR).filter((f) => f.endsWith(".ports"));
-			if (entries.length > 0) {
-				const ports = JSON.parse(readFileSync(join(PORTS_DIR, entries[0]), "utf8"));
-				if (Array.isArray(ports.nats) && ports.nats.length > 0) return ports.nats[0];
-			}
-		} catch {}
-		await delay(50);
-	}
-	throw new Error("nats-server never wrote a ports file");
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    try {
+      const entries = readdirSync(PORTS_DIR).filter((f) =>
+        f.endsWith(".ports"),
+      );
+      if (entries.length > 0) {
+        const ports = JSON.parse(
+          readFileSync(join(PORTS_DIR, entries[0]), "utf8"),
+        );
+        if (Array.isArray(ports.nats) && ports.nats.length > 0)
+          return ports.nats[0];
+      }
+    } catch {}
+    await delay(50);
+  }
+  throw new Error("nats-server never wrote a ports file");
 }
 const SERVER_URL = await readBoundUrl();
 console.log(`  (spawned nats-server at ${SERVER_URL})`);
@@ -97,13 +122,17 @@ mkdirSync(NATS_CONTEXT_DIR, { recursive: true });
 const SMOKE_CONTEXT_NAME = `pi-smoke-${process.pid}`;
 const SMOKE_CONTEXT_PATH = join(NATS_CONTEXT_DIR, `${SMOKE_CONTEXT_NAME}.json`);
 writeFileSync(
-	SMOKE_CONTEXT_PATH,
-	JSON.stringify({ url: SERVER_URL, description: "pi smoke ephemeral" }),
+  SMOKE_CONTEXT_PATH,
+  JSON.stringify({
+    url: SERVER_URL,
+    description: "pi smoke ephemeral",
+    ...(AUTHENTICATED ? { creds: ALICE_CREDS } : {}),
+  }),
 );
 process.on("exit", () => {
-	try {
-		rmSync(SMOKE_CONTEXT_PATH, { force: true });
-	} catch {}
+  try {
+    rmSync(SMOKE_CONTEXT_PATH, { force: true });
+  } catch {}
 });
 
 process.env.NATS_CONTEXT = SMOKE_CONTEXT_NAME;
@@ -117,68 +146,77 @@ delete process.env.SYNADIA_OWNER;
 delete process.env.NATS_PI_OWNER;
 delete process.env.SYNADIA_PI_NAME;
 delete process.env.SYNADIA_NAME;
+if (SIGNED) process.env.NATS_SENDER_IDENTITY = "signed";
+else delete process.env.NATS_SENDER_IDENTITY;
+if (STRICT) process.env.NATS_MIN_SENDER_TRUST = "signed";
+else delete process.env.NATS_MIN_SENDER_TRUST;
 
-const { default: channelFactory, HEARTBEAT_INTERVAL_S } = await import(
-	"../extensions/nats-channel.ts"
-);
-const { formatHumanBytes } = await import("@synadia-ai/agents");
+const { default: channelFactory, HEARTBEAT_INTERVAL_S } =
+  await import("../extensions/nats-channel.ts");
+const { Agents, formatHumanBytes, resolveNatsConnectionBundle, verifyAgentId } =
+  await import("@synadia-ai/agents");
 const { DEFAULT_MAX_PAYLOAD } = await import("@synadia-ai/agent-service");
 
 let ok = 0;
 let fail = 0;
 function step(name, fn) {
-	return async () => {
-		try {
-			await fn();
-			console.log(`  ✓ ${name}`);
-			ok++;
-		} catch (e) {
-			console.error(`  ✗ ${name}\n      ${e.message}`);
-			fail++;
-		}
-	};
+  return async () => {
+    try {
+      await fn();
+      console.log(`  ✓ ${name}`);
+      ok++;
+    } catch (e) {
+      console.error(`  ✗ ${name}\n      ${e.message}`);
+      fail++;
+    }
+  };
 }
 
 // ── Mock ExtensionAPI ──────────────────────────────────────────────────────
 const listeners = new Map();
 let pendingSendUserMessage = null;
+let mockIdle = true;
 const mockCtx = {
-	cwd: process.cwd(),
-	isIdle: () => true,
-	ui: {
-		notify: (line, _level) => console.log(`    [notify] ${line}`),
-		setStatus: (_key, _val) => {},
-	},
+  cwd: process.cwd(),
+  isIdle: () => mockIdle,
+  ui: {
+    notify: (line, _level) => console.log(`    [notify] ${line}`),
+    setStatus: (_key, _val) => {},
+  },
 };
 const mockPi = {
-	on(event, cb) {
-		if (!listeners.has(event)) listeners.set(event, []);
-		listeners.get(event).push(cb);
-	},
-	sendUserMessage(text) {
-		pendingSendUserMessage = text;
-	},
-	registerCommand(_name, _spec) {},
+  on(event, cb) {
+    if (!listeners.has(event)) listeners.set(event, []);
+    listeners.get(event).push(cb);
+  },
+  sendUserMessage(text) {
+    pendingSendUserMessage = text;
+  },
+  registerCommand(_name, _spec) {},
 };
 
 function emit(event, ...args) {
-	const cbs = listeners.get(event) ?? [];
-	return Promise.all(cbs.map((cb) => cb(...args, mockCtx)));
+  const cbs = listeners.get(event) ?? [];
+  return Promise.all(cbs.map((cb) => cb(...args, mockCtx)));
 }
 
 // ── Observer NATS connection (separate from the one the extension opens) ──
-const obs = await connect({ servers: SERVER_URL });
+const observerBundle = await resolveNatsConnectionBundle(
+  AUTHENTICATED ? { url: SERVER_URL, creds: ALICE_CREDS } : { url: SERVER_URL },
+  { identity: STRICT ? "signed" : "off" },
+);
+const obs = await connect(observerBundle.connectionOptions);
 
 // Subscribe to heartbeats BEFORE the extension registers — §8.5.
 // v0.3 wildcard: `agents.hb.<agent>.<owner>.<name>`.
 const hbSub = obs.subscribe("agents.hb.*.*.*");
 const heartbeats = [];
 (async () => {
-	for await (const m of hbSub) {
-		try {
-			heartbeats.push(JSON.parse(new TextDecoder().decode(m.data)));
-		} catch {}
-	}
+  for await (const m of hbSub) {
+    try {
+      heartbeats.push(JSON.parse(new TextDecoder().decode(m.data)));
+    } catch {}
+  }
 })();
 
 // ── Boot the extension ────────────────────────────────────────────────────
@@ -189,9 +227,9 @@ await emit("session_start", {});
 await delay(500);
 
 const owner = (process.env.USER ?? "smoke")
-	.replace(/[^a-zA-Z0-9_-]/g, "-")
-	.toLowerCase()
-	.replace(/^-+|-+$/g, "");
+  .replace(/[^a-zA-Z0-9_-]/g, "-")
+  .toLowerCase()
+  .replace(/^-+|-+$/g, "");
 const session = process.env.NATS_SESSION_NAME;
 const expectedSubject = `agents.prompt.pi.${owner}.${session}`;
 const expectedStatusSubject = `agents.status.pi.${owner}.${session}`;
@@ -199,293 +237,526 @@ const expectedStatusSubject = `agents.status.pi.${owner}.${session}`;
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 await step("$SRV.INFO returns spec-shaped service info", async () => {
-	const svcm = new Svcm(obs);
-	const client = svcm.client({ strategy: "stall", maxWait: 1000, maxMessages: 20 });
-	const iter = await client.info("agents");
-	const infos = [];
-	for await (const si of iter) infos.push(si);
-	const mine = infos.find(
-		(si) => si.metadata?.agent === "pi" && si.metadata?.session === session,
-	);
-	assert.ok(mine, `no agents-service instance with session=${session} found`);
-	assert.equal(mine.metadata.agent, "pi");
-	assert.equal(mine.metadata.owner, owner);
-	assert.equal(mine.metadata.protocol_version, "0.3");
-	assert.ok(mine.metadata.session.length > 0);
+  const svcm = new Svcm(obs);
+  const client = svcm.client({
+    strategy: "stall",
+    maxWait: 1000,
+    maxMessages: 20,
+  });
+  const iter = await client.info("agents");
+  const infos = [];
+  for await (const si of iter) infos.push(si);
+  const mine = infos.find(
+    (si) => si.metadata?.agent === "pi" && si.metadata?.session === session,
+  );
+  assert.ok(mine, `no agents-service instance with session=${session} found`);
+  assert.equal(mine.metadata.agent, "pi");
+  assert.equal(mine.metadata.owner, owner);
+  assert.equal(mine.metadata.protocol_version, "0.3");
+  assert.ok(mine.metadata.session.length > 0);
+  if (SIGNED) {
+    assert.match(mine.metadata.user_nkey ?? "", /^U[A-Z2-7]{55}$/);
+    assert.match(mine.metadata.account ?? "", /^A[A-Z2-7]{55}$/);
+    assert.ok(mine.metadata.id_sig, "signed mode must publish id_sig");
+  } else {
+    assert.equal(
+      mine.metadata.user_nkey,
+      undefined,
+      "identity-free mode must not publish a user key",
+    );
+    assert.equal(
+      mine.metadata.account,
+      undefined,
+      "identity-free mode must not publish an account",
+    );
+    assert.equal(
+      mine.metadata.id_sig,
+      undefined,
+      "identity-free mode must not publish id_sig",
+    );
+  }
 
-	const ep = mine.endpoints?.find((e) => e.name === "prompt");
-	assert.ok(ep, "prompt endpoint missing");
-	assert.equal(ep.subject, expectedSubject);
-	assert.equal(ep.queue_group, "agents", "prompt endpoint must register queue_group=agents (spec §3.3)");
-	// max_payload is server-driven (`nc.info.max_payload`), so verify it
-	// matches the §2.1 grammar AND the value our server is advertising.
-	const expectedMaxPayload = obs.info?.max_payload
-		? formatHumanBytes(obs.info.max_payload)
-		: DEFAULT_MAX_PAYLOAD;
-	assert.match(ep.metadata?.max_payload ?? "", /^\d+(B|KB|MB|GB)$/);
-	assert.equal(ep.metadata?.max_payload, expectedMaxPayload);
-	assert.equal(ep.metadata?.attachments_ok, "true");
+  const ep = mine.endpoints?.find((e) => e.name === "prompt");
+  assert.ok(ep, "prompt endpoint missing");
+  assert.equal(ep.subject, expectedSubject);
+  assert.equal(
+    ep.queue_group,
+    "agents",
+    "prompt endpoint must register queue_group=agents (spec §3.3)",
+  );
+  // max_payload is server-driven (`nc.info.max_payload`), so verify it
+  // matches the §2.1 grammar AND the value our server is advertising.
+  const expectedMaxPayload = obs.info?.max_payload
+    ? formatHumanBytes(obs.info.max_payload)
+    : DEFAULT_MAX_PAYLOAD;
+  assert.match(ep.metadata?.max_payload ?? "", /^\d+(B|KB|MB|GB)$/);
+  assert.equal(ep.metadata?.max_payload, expectedMaxPayload);
+  assert.equal(ep.metadata?.attachments_ok, "true");
+  assert.equal(ep.metadata?.min_sender_trust, STRICT ? "signed" : "any");
+  if (SIGNED) assert.equal(verifyAgentId(mine.metadata, ep.subject), true);
 })();
 
-await step("heartbeat published on agents.hb.pi.{owner}.{session}", async () => {
-	const mine = heartbeats.find(
-		(hb) => hb.agent === "pi" && hb.session === session && hb.owner === owner,
-	);
-	assert.ok(mine, "no matching heartbeat received");
-	assert.equal(typeof mine.instance_id, "string");
-	assert.equal(typeof mine.ts, "string");
-	// Assert against the extension's own constant, not a hard-coded number —
-	// the advertised cadence is whatever HEARTBEAT_INTERVAL_S is pinned to
-	// (5s today, 30s if a future change reverts to the SDK default).
-	assert.equal(mine.interval_s, HEARTBEAT_INTERVAL_S);
-})();
+await step(
+  "heartbeat published on agents.hb.pi.{owner}.{session}",
+  async () => {
+    const mine = heartbeats.find(
+      (hb) => hb.agent === "pi" && hb.session === session && hb.owner === owner,
+    );
+    assert.ok(mine, "no matching heartbeat received");
+    assert.equal(typeof mine.instance_id, "string");
+    assert.equal(typeof mine.ts, "string");
+    // Assert against the extension's own constant, not a hard-coded number —
+    // the advertised cadence is whatever HEARTBEAT_INTERVAL_S is pinned to
+    // (5s today, 30s if a future change reverts to the SDK default).
+    assert.equal(mine.interval_s, HEARTBEAT_INTERVAL_S);
+  },
+)();
 
-await step("status endpoint replies with a heartbeat-shaped payload", async () => {
-	const reply = await obs.request(expectedStatusSubject, "", { timeout: 2000 });
-	const body = JSON.parse(new TextDecoder().decode(reply.data));
-	assert.equal(body.agent, "pi");
-	assert.equal(body.owner, owner);
-	assert.equal(body.session, session);
-	assert.equal(typeof body.instance_id, "string");
-	assert.equal(typeof body.ts, "string");
-	assert.equal(body.interval_s, HEARTBEAT_INTERVAL_S);
-})();
+await step(
+  "status endpoint replies with a heartbeat-shaped payload",
+  async () => {
+    const reply = await obs.request(expectedStatusSubject, "", {
+      timeout: 2000,
+    });
+    const body = JSON.parse(new TextDecoder().decode(reply.data));
+    assert.equal(body.agent, "pi");
+    assert.equal(body.owner, owner);
+    assert.equal(body.session, session);
+    assert.equal(typeof body.instance_id, "string");
+    assert.equal(typeof body.ts, "string");
+    assert.equal(body.interval_s, HEARTBEAT_INTERVAL_S);
+  },
+)();
 
 // Helper — consume a stream until terminator, capturing chunks + error.
 async function collectStream(requestSubject, payload) {
-	const inbox = createInbox();
-	const sub = obs.subscribe(inbox);
-	const chunks = [];
-	let error = null;
-	let terminator = null;
-	const done = (async () => {
-		for await (const msg of sub) {
-			const code = msg.headers?.get("Nats-Service-Error-Code");
-			const hasHeaders = msg.headers && [...msg.headers].length > 0;
-			if (code) {
-				error = {
-					code: Number(code),
-					description: msg.headers?.get("Nats-Service-Error") ?? "",
-				};
-				continue;
-			}
-			if (msg.data.byteLength === 0 && !hasHeaders) {
-				terminator = { hasHeaders: false };
-				sub.unsubscribe();
-				return;
-			}
-			chunks.push(new TextDecoder().decode(msg.data));
-		}
-	})();
-	obs.publish(requestSubject, payload, { reply: inbox });
-	await Promise.race([done, delay(3000)]);
-	sub.unsubscribe();
-	return { chunks, error, terminator };
+  const inbox = createInbox();
+  const sub = obs.subscribe(inbox);
+  const chunks = [];
+  let error = null;
+  let terminator = null;
+  const done = (async () => {
+    for await (const msg of sub) {
+      const code = msg.headers?.get("Nats-Service-Error-Code");
+      const hasHeaders = msg.headers && [...msg.headers].length > 0;
+      if (code) {
+        error = {
+          code: Number(code),
+          description: msg.headers?.get("Nats-Service-Error") ?? "",
+        };
+        continue;
+      }
+      if (msg.data.byteLength === 0 && !hasHeaders) {
+        terminator = { hasHeaders: false };
+        sub.unsubscribe();
+        return;
+      }
+      chunks.push(new TextDecoder().decode(msg.data));
+    }
+  })();
+  obs.publish(requestSubject, payload, { reply: inbox });
+  await Promise.race([done, delay(3000)]);
+  sub.unsubscribe();
+  return { chunks, error, terminator };
 }
 
 await step("empty payload → 400 + terminator", async () => {
-	const { chunks, error, terminator } = await collectStream(expectedSubject, "");
-	assert.ok(error, "expected error response");
-	assert.equal(error.code, 400);
-	assert.ok(terminator, "expected empty terminator after error");
-	assert.equal(chunks.length, 0);
+  const { chunks, error, terminator } = await collectStream(
+    expectedSubject,
+    "",
+  );
+  assert.ok(error, "expected error response");
+  assert.equal(error.code, 400);
+  assert.ok(terminator, "expected empty terminator after error");
+  assert.equal(chunks.length, 0);
 })();
 
 await step("invalid base64 in attachment → 400", async () => {
-	// Contains non-base64 characters.
-	const env = JSON.stringify({
-		prompt: "hi",
-		attachments: [{ filename: "x.txt", content: "not base64!!" }],
-	});
-	const { error } = await collectStream(expectedSubject, env);
-	assert.ok(error);
-	assert.equal(error.code, 400);
+  // Contains non-base64 characters.
+  const env = JSON.stringify({
+    prompt: "hi",
+    attachments: [{ filename: "x.txt", content: "not base64!!" }],
+  });
+  const { error } = await collectStream(expectedSubject, env);
+  assert.ok(error);
+  assert.equal(error.code, 400);
 })();
 
-await step("URL-safe base64 in attachment → 400 (strict RFC 4648 §4)", async () => {
-	// `-` and `_` are URL-safe alphabet, forbidden by spec §5.2.
-	const env = JSON.stringify({
-		prompt: "hi",
-		attachments: [{ filename: "x.txt", content: "aGVsbG8-_w==" }],
-	});
-	const { error } = await collectStream(expectedSubject, env);
-	assert.ok(error);
-	assert.equal(error.code, 400);
-})();
+await step(
+  "URL-safe base64 in attachment → 400 (strict RFC 4648 §4)",
+  async () => {
+    // `-` and `_` are URL-safe alphabet, forbidden by spec §5.2.
+    const env = JSON.stringify({
+      prompt: "hi",
+      attachments: [{ filename: "x.txt", content: "aGVsbG8-_w==" }],
+    });
+    const { error } = await collectStream(expectedSubject, env);
+    assert.ok(error);
+    assert.equal(error.code, 400);
+  },
+)();
 
 await step("path-traversal filename → 400", async () => {
-	const env = JSON.stringify({
-		prompt: "hi",
-		attachments: [{ filename: "../../etc/passwd", content: "aGVsbG8=" }],
-	});
-	const { error } = await collectStream(expectedSubject, env);
-	assert.ok(error);
-	assert.equal(error.code, 400);
+  const env = JSON.stringify({
+    prompt: "hi",
+    attachments: [{ filename: "../../etc/passwd", content: "aGVsbG8=" }],
+  });
+  const { error } = await collectStream(expectedSubject, env);
+  assert.ok(error);
+  assert.equal(error.code, 400);
 })();
 
 await step("absolute-path filename → 400", async () => {
-	const env = JSON.stringify({
-		prompt: "hi",
-		attachments: [{ filename: "/etc/passwd", content: "aGVsbG8=" }],
-	});
-	const { error } = await collectStream(expectedSubject, env);
-	assert.ok(error);
-	assert.equal(error.code, 400);
+  const env = JSON.stringify({
+    prompt: "hi",
+    attachments: [{ filename: "/etc/passwd", content: "aGVsbG8=" }],
+  });
+  const { error } = await collectStream(expectedSubject, env);
+  assert.ok(error);
+  assert.equal(error.code, 400);
 })();
 
 await step("malformed JSON → 400 + terminator", async () => {
-	const { error, terminator } = await collectStream(expectedSubject, "{not json");
-	assert.ok(error);
-	assert.equal(error.code, 400);
-	assert.ok(terminator);
+  const { error, terminator } = await collectStream(
+    expectedSubject,
+    "{not json",
+  );
+  assert.ok(error);
+  assert.equal(error.code, 400);
+  assert.ok(terminator);
 })();
 
 await step("JSON envelope missing prompt → 400", async () => {
-	const { error } = await collectStream(expectedSubject, '{"hello":"world"}');
-	assert.ok(error);
-	assert.equal(error.code, 400);
+  const { error } = await collectStream(expectedSubject, '{"hello":"world"}');
+  assert.ok(error);
+  assert.equal(error.code, 400);
 })();
 
-await step("plain-text prompt → ack → response chunks → terminator", async () => {
-	const env = "Hello, world.";
-	pendingSendUserMessage = null;
-	const inbox = createInbox();
-	const sub = obs.subscribe(inbox);
-	const observed = [];
-	let terminatorNoHeaders = false;
-	const done = (async () => {
-		for await (const msg of sub) {
-			const code = msg.headers?.get("Nats-Service-Error-Code");
-			const hasHeaders = msg.headers && [...msg.headers].length > 0;
-			if (code) {
-				observed.push({ kind: "error", code: Number(code) });
-				continue;
-			}
-			if (msg.data.byteLength === 0 && !hasHeaders) {
-				terminatorNoHeaders = true;
-				sub.unsubscribe();
-				return;
-			}
-			const parsed = JSON.parse(new TextDecoder().decode(msg.data));
-			observed.push({ kind: "chunk", ...parsed });
-		}
-	})();
-	obs.publish(expectedSubject, env, { reply: inbox });
+await step(
+  STRICT
+    ? "signed-only admission rejects a headerless prompt before ack"
+    : "plain-text prompt → ack → response chunks → terminator",
+  async () => {
+    const env = "Hello, world.";
+    pendingSendUserMessage = null;
+    if (STRICT) {
+      const { chunks, error, terminator } = await collectStream(
+        expectedSubject,
+        env,
+      );
+      assert.equal(error?.code, 401);
+      assert.equal(
+        chunks.length,
+        0,
+        "identity rejection must happen before ack",
+      );
+      assert.ok(terminator);
+      assert.equal(pendingSendUserMessage, null, "rejected prompt reached PI");
+      return;
+    }
+    const inbox = createInbox();
+    const sub = obs.subscribe(inbox);
+    const observed = [];
+    let terminatorNoHeaders = false;
+    const done = (async () => {
+      for await (const msg of sub) {
+        const code = msg.headers?.get("Nats-Service-Error-Code");
+        const hasHeaders = msg.headers && [...msg.headers].length > 0;
+        if (code) {
+          observed.push({ kind: "error", code: Number(code) });
+          continue;
+        }
+        if (msg.data.byteLength === 0 && !hasHeaders) {
+          terminatorNoHeaders = true;
+          sub.unsubscribe();
+          return;
+        }
+        const parsed = JSON.parse(new TextDecoder().decode(msg.data));
+        observed.push({ kind: "chunk", ...parsed });
+      }
+    })();
+    obs.publish(expectedSubject, env, { reply: inbox });
 
-	// Wait for the extension to inject into our mock PI.
-	for (let i = 0; i < 50 && pendingSendUserMessage === null; i++) await delay(20);
-	assert.equal(pendingSendUserMessage, env);
+    // Wait for the extension to inject into our mock PI.
+    for (let i = 0; i < 50 && pendingSendUserMessage === null; i++)
+      await delay(20);
+    assert.equal(pendingSendUserMessage, env);
 
-	// Simulate PI producing text_delta events, then agent_end.
-	await emit("message_update", {
-		assistantMessageEvent: { type: "text_delta", delta: "Hi " },
-	});
-	await emit("message_update", {
-		assistantMessageEvent: { type: "text_delta", delta: "there!" },
-	});
-	await emit("agent_end", {});
+    // Simulate PI producing text_delta events, then agent_end.
+    await emit("message_update", {
+      assistantMessageEvent: { type: "text_delta", delta: "Hi " },
+    });
+    await emit("message_update", {
+      assistantMessageEvent: { type: "text_delta", delta: "there!" },
+    });
+    await emit("agent_end", {});
 
-	await Promise.race([done, delay(2000)]);
-	sub.unsubscribe();
+    await Promise.race([done, delay(2000)]);
+    sub.unsubscribe();
 
-	assert.ok(terminatorNoHeaders, "stream did not end with empty-no-headers terminator");
+    assert.ok(
+      terminatorNoHeaders,
+      "stream did not end with empty-no-headers terminator",
+    );
 
-	// First observed chunk MUST be status:ack per §6.4.
-	assert.deepEqual(
-		{ type: observed[0]?.type, data: observed[0]?.data },
-		{ type: "status", data: "ack" },
-	);
-	// Subsequent response chunks concatenate to the emitted deltas.
-	const text = observed
-		.filter((o) => o.kind === "chunk" && o.type === "response")
-		.map((o) => o.data)
-		.join("");
-	assert.equal(text, "Hi there!");
-})();
+    // First observed chunk MUST be status:ack per §6.4.
+    assert.deepEqual(
+      { type: observed[0]?.type, data: observed[0]?.data },
+      { type: "status", data: "ack" },
+    );
+    // Subsequent response chunks concatenate to the emitted deltas.
+    const text = observed
+      .filter((o) => o.kind === "chunk" && o.type === "response")
+      .map((o) => o.data)
+      .join("");
+    assert.equal(text, "Hi there!");
+  },
+)();
+
+if (STRICT) {
+  await step(
+    "signed-only admission accepts a connection-bound signed caller",
+    async () => {
+      const signer = observerBundle.signer;
+      assert.ok(
+        signer,
+        "strict smoke bundle did not resolve a connection-bound signer",
+      );
+      const agents = new Agents({
+        nc: obs,
+        identity: { signer, name: "pi-smoke" },
+      });
+      try {
+        const [agent] = await agents.discover({
+          timeoutMs: 1000,
+          filter: { agent: "pi", owner, name: session },
+        });
+        assert.ok(agent, "PI service not discovered for signed prompt");
+        pendingSendUserMessage = null;
+        const stream = await agent.prompt("signed hello");
+        const collecting = (async () => {
+          const events = [];
+          for await (const event of stream) events.push(event);
+          return events;
+        })();
+        for (let i = 0; i < 50 && pendingSendUserMessage === null; i++)
+          await delay(20);
+        assert.equal(pendingSendUserMessage, "signed hello");
+        await emit("message_update", {
+          assistantMessageEvent: {
+            type: "text_delta",
+            delta: "signed response",
+          },
+        });
+        await emit("agent_end", {});
+        const events = await collecting;
+        assert.equal(
+          events
+            .filter((event) => event.type === "response")
+            .map((event) => event.text)
+            .join(""),
+          "signed response",
+        );
+      } finally {
+        await agents.close();
+        signer.wipe?.();
+      }
+    },
+  )();
+}
 
 // Track where the agent stages attachments so we can verify cleanup later.
-const attachmentsSessionDir = join(homedir(), ".pi", "agent", "attachments", session);
+const attachmentsSessionDir = join(
+  homedir(),
+  ".pi",
+  "agent",
+  "attachments",
+  session,
+);
 let stagedPathSeen = null;
 
-await step("valid attachment → file on disk, prompt augmented, stream ok", async () => {
-	const payloadBytes = Buffer.from("hello attachment", "utf8");
-	const content = payloadBytes.toString("base64"); // standard, padded
-	const env = JSON.stringify({
-		prompt: "describe the file",
-		attachments: [{ filename: "hello.txt", content }],
-	});
-	pendingSendUserMessage = null;
+if (!STRICT)
+  await step(
+    "valid attachment → file on disk, prompt augmented, stream ok",
+    async () => {
+      const payloadBytes = Buffer.from("hello attachment", "utf8");
+      const content = payloadBytes.toString("base64"); // standard, padded
+      const env = JSON.stringify({
+        prompt: "describe the file",
+        attachments: [{ filename: "hello.txt", content }],
+      });
+      pendingSendUserMessage = null;
 
-	const inbox = createInbox();
-	const sub = obs.subscribe(inbox);
-	const observed = [];
-	let terminatorNoHeaders = false;
-	const done = (async () => {
-		for await (const msg of sub) {
-			const hasHeaders = msg.headers && [...msg.headers].length > 0;
-			if (msg.data.byteLength === 0 && !hasHeaders) {
-				terminatorNoHeaders = true;
-				sub.unsubscribe();
-				return;
-			}
-			if (hasHeaders) continue;
-			observed.push(JSON.parse(new TextDecoder().decode(msg.data)));
-		}
-	})();
-	obs.publish(expectedSubject, env, { reply: inbox });
+      const inbox = createInbox();
+      const sub = obs.subscribe(inbox);
+      const observed = [];
+      let terminatorNoHeaders = false;
+      const done = (async () => {
+        for await (const msg of sub) {
+          const hasHeaders = msg.headers && [...msg.headers].length > 0;
+          if (msg.data.byteLength === 0 && !hasHeaders) {
+            terminatorNoHeaders = true;
+            sub.unsubscribe();
+            return;
+          }
+          if (hasHeaders) continue;
+          observed.push(JSON.parse(new TextDecoder().decode(msg.data)));
+        }
+      })();
+      obs.publish(expectedSubject, env, { reply: inbox });
 
-	for (let i = 0; i < 100 && pendingSendUserMessage === null; i++) await delay(20);
-	assert.ok(pendingSendUserMessage, "pi.sendUserMessage was not called");
+      for (let i = 0; i < 100 && pendingSendUserMessage === null; i++)
+        await delay(20);
+      assert.ok(pendingSendUserMessage, "pi.sendUserMessage was not called");
 
-	// The prompt handed to PI should start with the [Attachments] block and
-	// contain the original prompt text.
-	assert.match(pendingSendUserMessage, /^\[Attachments available at the following absolute paths\]/);
-	assert.ok(
-		pendingSendUserMessage.endsWith("describe the file"),
-		"original prompt text missing from augmented prompt",
-	);
+      // The prompt handed to PI should start with the [Attachments] block and
+      // contain the original prompt text.
+      assert.match(
+        pendingSendUserMessage,
+        /^\[Attachments available at the following absolute paths\]/,
+      );
+      assert.ok(
+        pendingSendUserMessage.endsWith("describe the file"),
+        "original prompt text missing from augmented prompt",
+      );
 
-	// Extract the staged path from the augmented prompt and verify the bytes
-	// landed correctly on disk.
-	const match = pendingSendUserMessage.match(/^- (\S.*)$/m);
-	assert.ok(match, "no staged path found in augmented prompt");
-	const stagedPath = match[1];
-	stagedPathSeen = stagedPath;
-	assert.ok(existsSync(stagedPath), `staged file missing at ${stagedPath}`);
-	assert.deepEqual(readFileSync(stagedPath), payloadBytes);
-	assert.ok(stagedPath.startsWith(attachmentsSessionDir + "/"), "staged path outside session dir");
-	assert.ok(stagedPath.endsWith("/hello.txt"), "staged filename mismatched");
+      // Extract the staged path from the augmented prompt and verify the bytes
+      // landed correctly on disk.
+      const match = pendingSendUserMessage.match(/^- (\S.*)$/m);
+      assert.ok(match, "no staged path found in augmented prompt");
+      const stagedPath = match[1];
+      stagedPathSeen = stagedPath;
+      assert.ok(existsSync(stagedPath), `staged file missing at ${stagedPath}`);
+      assert.deepEqual(readFileSync(stagedPath), payloadBytes);
+      assert.ok(
+        stagedPath.startsWith(attachmentsSessionDir + "/"),
+        "staged path outside session dir",
+      );
+      assert.ok(
+        stagedPath.endsWith("/hello.txt"),
+        "staged filename mismatched",
+      );
 
-	// Drive a trivial response stream so the cycle completes cleanly.
-	await emit("message_update", {
-		assistantMessageEvent: { type: "text_delta", delta: "ok" },
-	});
-	await emit("agent_end", {});
+      // Drive a trivial response stream so the cycle completes cleanly.
+      await emit("message_update", {
+        assistantMessageEvent: { type: "text_delta", delta: "ok" },
+      });
+      await emit("agent_end", {});
 
-	await Promise.race([done, delay(2000)]);
-	sub.unsubscribe();
-	assert.ok(terminatorNoHeaders, "terminator not observed");
-	// First observed JSON chunk should be the ack.
-	assert.deepEqual(
-		{ type: observed[0]?.type, data: observed[0]?.data },
-		{ type: "status", data: "ack" },
-	);
-})();
+      await Promise.race([done, delay(2000)]);
+      sub.unsubscribe();
+      assert.ok(terminatorNoHeaders, "terminator not observed");
+      // First observed JSON chunk should be the ack.
+      assert.deepEqual(
+        { type: observed[0]?.type, data: observed[0]?.data },
+        { type: "status", data: "ack" },
+      );
+    },
+  )();
 
 // ── Teardown ───────────────────────────────────────────────────────────────
-await emit("session_shutdown", {});
+if (STRICT) {
+  await emit("session_shutdown", {});
+} else {
+  await step(
+    "session_shutdown settles a queued AgentService response",
+    async () => {
+      mockIdle = false;
+      pendingSendUserMessage = null;
+      const collecting = collectStream(
+        expectedSubject,
+        "queued during shutdown",
+      );
+      await delay(100);
+      await emit("session_shutdown", {});
+      const { chunks, error, terminator } = await collecting;
+      assert.deepEqual(JSON.parse(chunks[0]), { type: "status", data: "ack" });
+      assert.equal(error?.code, 500);
+      assert.ok(terminator, "shutdown-settled stream has no terminator");
+      assert.equal(
+        pendingSendUserMessage,
+        null,
+        "queued shutdown prompt reached PI",
+      );
+    },
+  )();
+}
 await delay(200);
 hbSub.unsubscribe();
 await obs.drain();
+observerBundle.wipe();
 
-await step("session_shutdown removes the staged attachments directory", async () => {
-	assert.ok(stagedPathSeen, "no staged path captured in earlier test");
-	assert.equal(
-		existsSync(attachmentsSessionDir),
-		false,
-		`attachments dir ${attachmentsSessionDir} was not cleaned up on session_shutdown`,
-	);
-})();
+if (!STRICT)
+  await step(
+    "session_shutdown removes the staged attachments directory",
+    async () => {
+      assert.ok(stagedPathSeen, "no staged path captured in earlier test");
+      assert.equal(
+        existsSync(attachmentsSessionDir),
+        false,
+        `attachments dir ${attachmentsSessionDir} was not cleaned up on session_shutdown`,
+      );
+    },
+  )();
+
+if (!SIGNED && !STRICT)
+  await step(
+    "session_shutdown cancels an unreachable initial connection",
+    async () => {
+      const offlineContextName = `pi-smoke-offline-${process.pid}`;
+      const offlineContextPath = join(
+        NATS_CONTEXT_DIR,
+        `${offlineContextName}.json`,
+      );
+      writeFileSync(
+        offlineContextPath,
+        JSON.stringify({
+          url: "nats://127.0.0.1:1",
+          description: "unreachable smoke",
+        }),
+      );
+      const previousContext = process.env.NATS_CONTEXT;
+      const offlineListeners = new Map();
+      const offlinePi = {
+        on(event, cb) {
+          if (!offlineListeners.has(event)) offlineListeners.set(event, []);
+          offlineListeners.get(event).push(cb);
+        },
+        sendUserMessage() {},
+        registerCommand() {},
+      };
+      const offlineCtx = {
+        cwd: process.cwd(),
+        isIdle: () => true,
+        ui: { notify() {}, setStatus() {} },
+      };
+      const emitOffline = (event, ...args) =>
+        Promise.all(
+          (offlineListeners.get(event) ?? []).map((cb) =>
+            cb(...args, offlineCtx),
+          ),
+        );
+
+      try {
+        process.env.NATS_CONTEXT = offlineContextName;
+        channelFactory(offlinePi);
+        await emitOffline("session_start", {});
+        await delay(100);
+        const startedAt = Date.now();
+        await Promise.race([
+          emitOffline("session_shutdown", {}),
+          delay(3_500).then(() => {
+            throw new Error("offline connection task did not stop");
+          }),
+        ]);
+        assert.ok(Date.now() - startedAt < 3_500);
+      } finally {
+        if (previousContext === undefined) delete process.env.NATS_CONTEXT;
+        else process.env.NATS_CONTEXT = previousContext;
+        rmSync(offlineContextPath, { force: true });
+      }
+    },
+  )();
 
 console.log(`\n${ok} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
