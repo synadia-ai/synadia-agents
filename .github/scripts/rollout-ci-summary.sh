@@ -2,6 +2,78 @@
 
 set -euo pipefail
 
+fetch_workflow_runs() {
+  local event_name="$1"
+  local target_sha="$2"
+  local -a query_args=(
+    --method GET
+    -f head_sha="$target_sha"
+    -F per_page=100
+  )
+
+  # A rollout PR to main intentionally reuses the release rehearsal that ran
+  # when the exact same SHA was pushed to sdk-release-rollout. Fetch both
+  # events for PR evaluation; workflow_state still prefers a PR run whenever
+  # one exists and permits the push fallback for release rehearsal only.
+  if [[ "$event_name" != "pull_request" ]]; then
+    query_args+=(-f event="$event_name")
+  fi
+
+  gh api "repos/$GITHUB_REPOSITORY/actions/runs" "${query_args[@]}"
+}
+
+workflow_state() {
+  local name="$1"
+  local event_name="$2"
+  local self_run_id="$3"
+  local target_sha="$4"
+
+  jq -r \
+    --arg name "$name" \
+    --arg event "$event_name" \
+    --arg self "$self_run_id" \
+    --arg target "$target_sha" \
+    '
+      def latest: sort_by([.created_at, .run_attempt]) | last;
+
+      ([.workflow_runs[]
+        | select(
+            .head_sha == $target
+            and .name == $name
+            and (.id | tostring) != $self
+            and .event == $event
+          )]
+        | latest) as $primary
+      | if $primary != null then
+          $primary
+        elif $event == "pull_request" and $name == "CI — release rehearsal" then
+          ([.workflow_runs[]
+            | select(
+                .head_sha == $target
+                and .name == $name
+                and (.id | tostring) != $self
+                and .event == "push"
+              )]
+            | latest)
+        else
+          null
+        end
+      | if . == null then
+          "missing"
+        else
+          [.event, .status, (.conclusion // "")] | @tsv
+        end
+    '
+}
+
+# Unit tests source the two functions above without executing the workflow.
+if [[ "${ROLLOUT_CI_SUMMARY_SOURCE_ONLY:-0}" == "1" ]]; then
+  if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+  fi
+  exit 0
+fi
+
 : "${GH_TOKEN:?GH_TOKEN must be set}"
 : "${GITHUB_EVENT_NAME:?GITHUB_EVENT_NAME must be set}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
@@ -141,37 +213,50 @@ fi
 echo "Waiting for rollout workflows on $TARGET_SHA:"
 printf '  - %s\n' "${expected_names[@]}"
 
-deadline=$((SECONDS + 45 * 60))
+completion_timeout_seconds="${ROLLOUT_CI_SUMMARY_COMPLETION_TIMEOUT_SECONDS:-2700}"
+discovery_timeout_seconds="${ROLLOUT_CI_SUMMARY_DISCOVERY_TIMEOUT_SECONDS:-300}"
+poll_seconds="${ROLLOUT_CI_SUMMARY_POLL_SECONDS:-15}"
+deadline=$((SECONDS + completion_timeout_seconds))
+discovery_deadline=$((SECONDS + discovery_timeout_seconds))
 while (( SECONDS < deadline )); do
-  runs_json="$(
-    gh api "repos/$GITHUB_REPOSITORY/actions/runs" --method GET \
-      -f head_sha="$TARGET_SHA" -f event="$GITHUB_EVENT_NAME" -F per_page=100
-  )"
+  runs_json="$(fetch_workflow_runs "$GITHUB_EVENT_NAME" "$TARGET_SHA")"
 
   pending=0
+  missing=0
   failed=0
+  pending_names=()
+  missing_names=()
   for name in "${expected_names[@]}"; do
     state="$(
-      jq -r \
-        --arg name "$name" \
-        --arg self "$GITHUB_RUN_ID" \
-        '[.workflow_runs[]
-          | select(.name == $name and (.id | tostring) != $self)]
-         | sort_by([.created_at, .run_attempt])
-         | last
-         | if . == null then "missing"
-           else [.status, (.conclusion // "")] | @tsv
-           end' <<<"$runs_json"
+      workflow_state \
+        "$name" "$GITHUB_EVENT_NAME" "$GITHUB_RUN_ID" "$TARGET_SHA" \
+        <<<"$runs_json"
     )"
 
     case "$state" in
-      $'completed\tsuccess') ;;
-      $'completed\t'*)
+      $'pull_request\tcompleted\tsuccess'|$'push\tcompleted\tsuccess')
+        if [[
+          "$GITHUB_EVENT_NAME" == "pull_request"
+          && "$name" == "CI — release rehearsal"
+          # The unquoted * intentionally matches the state fields after the event.
+          && "$state" == $'push\t'*
+        ]]; then
+          echo "Accepted the successful same-SHA push run for $name."
+        fi
+        ;;
+      $'pull_request\tcompleted\t'*|$'push\tcompleted\t'*)
         echo "FAILED: $name ($state)"
         failed=1
         ;;
+      missing)
+        pending=$((pending + 1))
+        missing=$((missing + 1))
+        pending_names+=("$name ($state)")
+        missing_names+=("$name")
+        ;;
       *)
         pending=$((pending + 1))
+        pending_names+=("$name ($state)")
         ;;
     esac
   done
@@ -183,11 +268,19 @@ while (( SECONDS < deadline )); do
     echo "All expected rollout workflows succeeded."
     exit 0
   fi
+  if (( missing != 0 && SECONDS >= discovery_deadline )); then
+    echo \
+      "Expected workflow runs did not appear within ${discovery_timeout_seconds} seconds:" \
+      >&2
+    printf '  - %s\n' "${missing_names[@]}" >&2
+    exit 1
+  fi
 
-  echo "$pending workflow(s) not complete yet; checking again in 15 seconds."
-  sleep 15
+  echo "$pending workflow(s) not complete yet; checking again in $poll_seconds seconds."
+  printf '  - %s\n' "${pending_names[@]}"
+  sleep "$poll_seconds"
 done
 
-echo "Timed out waiting for expected rollout workflows:" >&2
-printf '  - %s\n' "${expected_names[@]}" >&2
+echo "Timed out waiting for expected rollout workflows to complete:" >&2
+printf '  - %s\n' "${pending_names[@]}" >&2
 exit 1

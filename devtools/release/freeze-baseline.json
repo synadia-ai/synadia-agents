@@ -1,8 +1,8 @@
 {
   "files": {
     ".github/scripts/rollout-ci-summary.sh": {
-      "sha256": "dda749a6231b2b3f529141de44c38160e015dd5cc2722ee37713146b72bc1cb9",
-      "size": 6077
+      "sha256": "9c2f5ccfc35129af260108ec9076351c3ba8cec0dc3773e836c56630051ef357",
+      "size": 8973
     },
     ".github/workflows/release-python-agent-service.yml": {
       "sha256": "dd4ea202103012f5dcf752cc1f1dadecc1abe573641fab78ffb33127f1f491a1",
@@ -17,8 +17,8 @@
       "size": 5561
     },
     ".github/workflows/release-rehearsal.yml": {
-      "sha256": "4861f44f5b701ae5b50154ee2a9f2445ba4a88f7e2d95e6e573c4651878850ab",
-      "size": 5489
+      "sha256": "b682a38edeb3a55323568aed2718a0823f187d394bbd051872d67979c4e26b6b",
+      "size": 5457
     },
     ".github/workflows/rollout-ci-summary.yml": {
       "sha256": "be74c44ee4ba3ea36470ca73914c8393744c43d9d5e8bf18bd4360cf136aab3e",
