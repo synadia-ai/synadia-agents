@@ -1,74 +1,127 @@
 #!/usr/bin/env bun
 /**
- * End-to-end roundtrip tests. Spawns server.ts as a subprocess, fakes the
- * Claude Code MCP client side, and drives the NATS side directly.
- *
- * Cases covered:
- *   1. basic request → two typed response chunks → terminator
- *   2. JSON envelope with an attachment → file is staged, path reaches Claude
- *   3. large response → server splits into multiple chunks, all under max_payload
+ * Artifact-only end-to-end test. A minimal marketplace-style cache copy gets
+ * only the descriptor and committed bundle, then a fake Claude MCP client and
+ * a NATS caller exercise the complete channel lifecycle.
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { connect } from '@nats-io/transport-node'
-import { readFileSync, rmSync, existsSync } from 'fs'
+import { Agents } from '@synadia-ai/agents'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const OWNER = 'roundtrip'
-const SUBJECT = `agents.prompt.cc.${OWNER}.rt-test`
-const STATE_DIR = '/tmp/rt-test-state'
+const NAME = 'rt-test'
+const SUBJECT = `agents.prompt.cc.${OWNER}.${NAME}`
+const NATS_URL = process.env.NATS_URL ?? 'nats://127.0.0.1:4222'
 const MAX_PAYLOAD = 1024 * 1024
+const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
+const cacheRoot = mkdtempSync(join(tmpdir(), 'claude-plugin-cache-'))
+const stateDir = mkdtempSync(join(tmpdir(), 'claude-channel-state-'))
 
-rmSync(STATE_DIR, { recursive: true, force: true })
-Bun.write(`${STATE_DIR}/config.json`, JSON.stringify({ context: 'localhost' }))
+mkdirSync(join(cacheRoot, '.claude-plugin'), { recursive: true })
+mkdirSync(join(cacheRoot, 'runtime'), { recursive: true })
+copyFileSync(
+  join(sourceRoot, '.claude-plugin', 'plugin.json'),
+  join(cacheRoot, '.claude-plugin', 'plugin.json'),
+)
+copyFileSync(join(sourceRoot, 'runtime', 'server.js'), join(cacheRoot, 'runtime', 'server.js'))
+Bun.write(
+  join(stateDir, 'config.json'),
+  JSON.stringify({ permissions: { mode: 'query' } }),
+)
 
-const nc = await connect({ servers: 'nats://localhost:4222', name: 'rt-test-probe' })
+const nc = await connect({ servers: NATS_URL, name: 'claude-channel-roundtrip-probe' })
+const discovery = new Agents({ nc })
+const childEnv: Record<string, string> = {}
+for (const [key, value] of Object.entries(process.env)) {
+  if (value !== undefined && key !== 'NATS_CONTEXT') childEnv[key] = value
+}
+Object.assign(childEnv, {
+  CLAUDE_CWD: '/tmp/rt-test',
+  NATS_URL,
+  NATS_SESSION_NAME: NAME,
+  NATS_STATE_DIR: stateDir,
+  NATS_SENDER_IDENTITY: 'off',
+  NATS_MIN_SENDER_TRUST: 'any',
+  SYNADIA_CLAUDE_CODE_OWNER: OWNER,
+})
 
 const transport = new StdioClientTransport({
   command: 'bun',
-  args: ['--bun', new URL('../server.ts', import.meta.url).pathname],
-  env: {
-    ...process.env,
-    CLAUDE_CWD: '/tmp/rt-test',
-    NATS_SESSION_NAME: 'rt-test',
-    NATS_STATE_DIR: STATE_DIR,
-    SYNADIA_CLAUDE_CODE_OWNER: OWNER,
-  },
+  args: [join(cacheRoot, 'runtime', 'server.js')],
+  env: childEnv,
 })
-
 const mcp = new Client({ name: 'fake-claude', version: '0.0.1' })
 
 type PromptCase = {
-  replyHandler: (requestId: string, meta: any, content: string) => Promise<void>
+  replyHandler: (requestId: string, meta: Record<string, unknown>, content: string) => Promise<void>
 }
 
-let currentCase: PromptCase | null = null
-mcp.fallbackNotificationHandler = async (n: any) => {
-  if (n.method !== 'notifications/claude/channel') return
-  if (!currentCase) return
-  const { meta, content } = n.params
-  await currentCase.replyHandler(meta.request_id, meta, content)
+let currentCase: PromptCase | undefined
+let permissionResult: ((behavior: string) => void) | undefined
+mcp.fallbackNotificationHandler = async notification => {
+  if (notification.method === 'notifications/claude/channel') {
+    if (!currentCase) return
+    const params = notification.params as {
+      meta: Record<string, unknown>
+      content: string
+    }
+    await currentCase.replyHandler(String(params.meta.request_id), params.meta, params.content)
+  }
+  if (notification.method === 'notifications/claude/channel/permission') {
+    const params = notification.params as { behavior?: string }
+    permissionResult?.(params.behavior ?? '')
+  }
 }
 
 await mcp.connect(transport)
-await new Promise(r => setTimeout(r, 800))
 
-async function collectChunks(reqBody: string | Uint8Array): Promise<
-  Array<{body: string; bytes: number; hasHeaders: boolean}>
-> {
+let discovered: Awaited<ReturnType<Agents['discover']>>[number] | undefined
+for (let attempt = 0; attempt < 20 && !discovered; attempt++) {
+  const found = await discovery.discover({
+    timeoutMs: 100,
+    filter: { agent: 'claude-code', owner: OWNER, name: NAME },
+  })
+  discovered = found[0]
+}
+if (!discovered) throw new Error('bundled plugin did not register from the cache copy')
+if (discovered.identity !== undefined) throw new Error('identity-off plugin registered an identity')
+if (discovered.minSenderTrust !== 'any') throw new Error('default min_sender_trust is not any')
+
+type Collected = { body: string; bytes: number; hasHeaders: boolean }
+async function collectChunks(
+  requestBody: string | Uint8Array,
+  onChunk?: (chunk: Collected) => Promise<void> | void,
+): Promise<Collected[]> {
   const inbox = `_INBOX.rt.${Math.random().toString(36).slice(2, 10)}`
   const sub = nc.subscribe(inbox)
-  const chunks: Array<{body: string; bytes: number; hasHeaders: boolean}> = []
+  const chunks: Collected[] = []
   const collect = (async () => {
-    for await (const m of sub) {
-      const bytes = m.data.byteLength
-      const body = bytes === 0 ? '' : new TextDecoder().decode(m.data)
-      const hasHeaders = !!m.headers
-      chunks.push({ body, bytes, hasHeaders })
-      if (bytes === 0 && !hasHeaders) break
+    for await (const message of sub) {
+      const bytes = message.data.byteLength
+      const chunk = {
+        body: bytes === 0 ? '' : new TextDecoder().decode(message.data),
+        bytes,
+        hasHeaders: !!message.headers,
+      }
+      chunks.push(chunk)
+      await onChunk?.(chunk)
+      if (bytes === 0 && !message.headers) break
     }
   })()
-  nc.publish(SUBJECT, reqBody, { reply: inbox })
+  nc.publish(SUBJECT, requestBody, { reply: inbox })
   await nc.flush()
   const timer = setTimeout(() => sub.unsubscribe(), 15_000)
   await collect.catch(() => undefined)
@@ -77,16 +130,32 @@ async function collectChunks(reqBody: string | Uint8Array): Promise<
 }
 
 let failures = 0
-function fail(msg: string): void {
-  console.error(`  FAIL: ${msg}`)
+function fail(message: string): void {
+  console.error(`  FAIL: ${message}`)
   failures++
 }
 
-// ── Case 1: basic request ───────────────────────────────────────────────
+function parsed(chunk: Collected): Record<string, unknown> {
+  return JSON.parse(chunk.body) as Record<string, unknown>
+}
+
+function assertAck(chunk: Collected | undefined): void {
+  if (!chunk) return fail('missing leading ack')
+  const value = parsed(chunk)
+  if (value.type !== 'status' || value.data !== 'ack') fail('first message is not the leading ack')
+}
+
+console.log('\n[case 1] cached bundle, safe sender exposure, streaming, terminator')
 {
-  console.log('\n[case 1] basic prompt → two response chunks → terminator')
   currentCase = {
-    replyHandler: async (requestId) => {
+    replyHandler: async (requestId, meta, content) => {
+      if (content !== 'hello from the probe') fail('model-visible prompt changed')
+      if ('sender' in meta || 'identity' in meta || 'trust' in meta) {
+        fail('sender identity leaked into model-visible channel metadata')
+      }
+      const info = await mcp.callTool({ name: 'request_info', arguments: { request_id: requestId } })
+      const infoText = info.content[0]?.type === 'text' ? info.content[0].text : ''
+      if (!infoText.includes('(no sender)')) fail('request_info did not expose the classified sender')
       await mcp.callTool({
         name: 'reply',
         arguments: { request_id: requestId, text: 'part one ', done: false },
@@ -98,113 +167,119 @@ function fail(msg: string): void {
     },
   }
   const chunks = await collectChunks('hello from the probe')
-  console.log(`  received ${chunks.length} messages`)
-
-  if (chunks.length !== 3) fail(`expected 3 messages, got ${chunks.length}`)
-  try {
-    const a = JSON.parse(chunks[0]!.body)
-    const b = JSON.parse(chunks[1]!.body)
-    if (a.type !== 'response' || a.data !== 'part one ') fail('chunk 0 shape')
-    if (b.type !== 'response' || b.data !== 'part two') fail('chunk 1 shape')
-  } catch (e) {
-    fail(`chunk parse failed: ${e}`)
-  }
-  const term = chunks[chunks.length - 1]!
-  if (term.bytes !== 0 || term.hasHeaders) fail('terminator must be empty + headerless')
+  if (chunks.length !== 4) fail(`expected ack + 2 responses + terminator, got ${chunks.length}`)
+  assertAck(chunks[0])
+  const first = parsed(chunks[1]!)
+  const second = parsed(chunks[2]!)
+  if (first.type !== 'response' || first.data !== 'part one ') fail('first response shape')
+  if (second.type !== 'response' || second.data !== 'part two') fail('second response shape')
+  const term = chunks.at(-1)!
+  if (term.bytes !== 0 || term.hasHeaders) fail('terminator must be empty and headerless')
 }
 
-// ── Case 2: attachment ──────────────────────────────────────────────────
+console.log('\n[case 2] attachment staging and completion cleanup')
 {
-  console.log('\n[case 2] JSON envelope with an attachment → file staged for Claude')
   const fileBytes = new TextEncoder().encode('hello-attachment-contents\n')
-  const base64 = Buffer.from(fileBytes).toString('base64')
   const envelope = JSON.stringify({
     prompt: 'what is in this file?',
-    attachments: [{ filename: 'note.txt', content: base64 }],
+    attachments: [{ filename: 'note.txt', content: Buffer.from(fileBytes).toString('base64') }],
   })
-
   let stagedPath: string | undefined
   let preReplyContents: string | undefined
   currentCase = {
-    replyHandler: async (requestId, meta, content) => {
-      // Attachment paths arrive as a preamble in the prompt content.
-      const match = /^- (\S.+)$/m.exec(content ?? '')
-      if (match) {
-        stagedPath = match[1]
-        try {
-          preReplyContents = readFileSync(stagedPath, 'utf8')
-        } catch (e) {
-          fail(`staged file not readable before reply: ${e}`)
-        }
-      }
-      await mcp.callTool({
-        name: 'reply',
-        arguments: { request_id: requestId, text: 'ok', done: true },
-      })
+    replyHandler: async (requestId, _meta, content) => {
+      const match = /^- (\S.+)$/m.exec(content)
+      stagedPath = match?.[1]
+      if (stagedPath) preReplyContents = readFileSync(stagedPath, 'utf8')
+      await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'ok' } })
     },
   }
   const chunks = await collectChunks(envelope)
-  if (chunks.length !== 2) fail(`expected 2 messages, got ${chunks.length}`)
-  if (!stagedPath) {
-    fail('no attachment path surfaced in MCP notification')
-  } else {
-    console.log(`  staged at ${stagedPath}`)
-    if (preReplyContents !== 'hello-attachment-contents\n') {
-      fail(`staged contents mismatch: ${JSON.stringify(preReplyContents)}`)
-    }
-    await new Promise(r => setTimeout(r, 200))
-    if (existsSync(stagedPath)) fail('staged file was not cleaned up after done=true')
-  }
+  if (chunks.length !== 3) fail(`expected ack + response + terminator, got ${chunks.length}`)
+  assertAck(chunks[0])
+  if (preReplyContents !== 'hello-attachment-contents\n') fail('staged attachment contents differ')
+  await Bun.sleep(50)
+  if (stagedPath && existsSync(stagedPath)) fail('staged attachment was not cleaned up')
 }
 
-// ── Case 3: large response chunking ─────────────────────────────────────
+console.log('\n[case 3] oversized response splitting')
 {
-  console.log('\n[case 3] oversized response → split into multiple typed chunks')
-  // 1.4 MB of ASCII — larger than max_payload.
   const large = 'x'.repeat(1_400_000)
   currentCase = {
-    replyHandler: async (requestId) => {
-      await mcp.callTool({
-        name: 'reply',
-        arguments: { request_id: requestId, text: large, done: true },
-      })
+    replyHandler: async requestId => {
+      await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: large } })
     },
   }
   const chunks = await collectChunks('give me the payload')
-  console.log(`  received ${chunks.length} messages (including terminator)`)
-
-  // Terminator is last; each prior chunk must be a valid response envelope
-  // and fit within max_payload.
+  assertAck(chunks[0])
   let reconstructed = ''
-  for (let i = 0; i < chunks.length - 1; i++) {
-    const c = chunks[i]!
-    if (c.bytes > MAX_PAYLOAD) fail(`chunk ${i} exceeds max_payload (${c.bytes} > ${MAX_PAYLOAD})`)
-    try {
-      const obj = JSON.parse(c.body)
-      if (obj.type !== 'response') fail(`chunk ${i} type not 'response'`)
-      const text = typeof obj.data === 'string' ? obj.data : obj.data.text
-      reconstructed += text
-    } catch (e) {
-      fail(`chunk ${i} not valid JSON: ${e}`)
-    }
+  for (const chunk of chunks.slice(1, -1)) {
+    if (chunk.bytes > MAX_PAYLOAD) fail(`response exceeds max_payload (${chunk.bytes})`)
+    const value = parsed(chunk)
+    if (value.type !== 'response') fail('non-response chunk in split response')
+    reconstructed += typeof value.data === 'string'
+      ? value.data
+      : String((value.data as { text?: unknown }).text ?? '')
   }
-  if (reconstructed !== large) {
-    fail(`reconstructed length ${reconstructed.length}, expected ${large.length}`)
-  }
-  const term = chunks[chunks.length - 1]!
-  if (term.bytes !== 0 || term.hasHeaders) fail('terminator must be empty + headerless')
+  if (reconstructed !== large) fail('split response did not reconstruct exactly')
 }
 
-// ── cleanup ─────────────────────────────────────────────────────────────
-await mcp.close()
-await nc.drain()
-rmSync(STATE_DIR, { recursive: true, force: true })
+console.log('\n[case 4] permission notification uses a protocol query roundtrip')
+{
+  let permissionBehavior = ''
+  currentCase = {
+    replyHandler: async requestId => {
+      const result = new Promise<string>(resolve => { permissionResult = resolve })
+      await mcp.notification({
+        method: 'notifications/claude/channel/permission_request',
+        params: {
+          request_id: 'permission-1',
+          tool_name: 'Bash',
+          description: 'run a command',
+          input_preview: 'pwd',
+        },
+      })
+      permissionBehavior = await result
+      permissionResult = undefined
+      await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'allowed' } })
+    },
+  }
+  const chunks = await collectChunks('please inspect the directory', chunk => {
+    if (chunk.bytes === 0 || chunk.hasHeaders) return
+    const value = parsed(chunk)
+    if (value.type !== 'query') return
+    const data = value.data as { reply_subject?: string }
+    if (data.reply_subject) nc.publish(data.reply_subject, 'yes')
+  })
+  assertAck(chunks[0])
+  if (permissionBehavior !== 'allow') fail(`permission result was ${permissionBehavior || 'missing'}`)
+  if (!chunks.some(chunk => chunk.body.includes('"type":"query"'))) fail('no query chunk received')
+}
 
-console.log()
-if (failures === 0) {
-  console.log('ALL PASS')
-  process.exit(0)
-} else {
-  console.error(`${failures} FAILURE(S)`)
+console.log('\n[case 5] shutdown settles an open deferred request')
+{
+  currentCase = { replyHandler: async () => undefined }
+  let acknowledge!: () => void
+  const acknowledged = new Promise<void>(resolve => { acknowledge = resolve })
+  const collecting = collectChunks('leave this request open', chunk => {
+    if (chunk.body.includes('"type":"status"')) acknowledge()
+  })
+  await acknowledged
+  await mcp.close()
+  const chunks = await collecting
+  assertAck(chunks[0])
+  if (!chunks.some(chunk => chunk.hasHeaders)) fail('shutdown did not emit an error frame')
+  const term = chunks.at(-1)!
+  if (term.bytes !== 0 || term.hasHeaders) fail('shutdown stream lacks a clean terminator')
+}
+
+await discovery.close()
+await nc.drain()
+rmSync(stateDir, { recursive: true, force: true })
+rmSync(cacheRoot, { recursive: true, force: true })
+
+if (failures > 0) {
+  console.error(`\n${failures} FAILURE(S)`)
   process.exit(1)
 }
+console.log('\nALL PASS')

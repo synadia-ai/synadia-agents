@@ -22,14 +22,14 @@ name: CI — agents/deerflow
 
 on:
   push:
-    branches: [main, sdk-release-rollout]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "agents/deerflow/**"
       - "client-sdk/python/**"
       - "agent-sdk/python/**"
       - ".github/workflows/agents-deerflow-python.yml"
   pull_request:
-    branches: [main, sdk-release-rollout]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "agents/deerflow/**"
       - "client-sdk/python/**"

@@ -1,8 +1,8 @@
 # claude-code-headless
 
-A headless NATS agent host that spawns [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions on demand via the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and exposes each one as a first-class Synadia Agent Protocol for NATS **v0.3** instance (verb-first subjects + `status` endpoint). Built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `ReferenceAgent`).
+A headless NATS agent host that spawns [Claude Code](https://docs.claude.com/en/docs/claude-code) sessions on demand via the [Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk) and exposes each one as a first-class Synadia Agent Protocol for NATS **v0.3** instance (verb-first subjects + `status` endpoint). Built on `@synadia-ai/agents` (caller-side primitives and connection setup) and the production `AgentService` from `@synadia-ai/agent-service`.
 
-Each spawned session registers as its own NATS agent under `agents.prompt.cc-headless.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.cc-headless.<owner>.<name>` (default `name = "control"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
+Each spawned session registers as a logical NATS agent under `agents.prompt.cc-headless.<owner>.<session_id>` — discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.cc-headless.<owner>.<name>` (default `name = "control"`) adds request/reply endpoints for session lifecycle — `spawn`, `stop`, `list` — alongside the protocol-required `prompt` and `status` endpoints.
 
 In short: one process, many Claude Code sessions, all first-class NATS agents.
 
@@ -89,6 +89,8 @@ Optional defaults live in `~/.claude-code-headless/config.json`:
 {
   "context": "localhost",
   "name": "control",
+  "senderIdentity": "off",
+  "minSenderTrust": "any",
   "defaultModel": "claude-sonnet-4-6",
   "defaultPermissionMode": "dontAsk",
   "defaultAllowedTools": ["Read", "Glob", "Grep"],
@@ -102,8 +104,12 @@ Env overrides:
 
 | Variable | Overrides | Default |
 | --- | --- | --- |
+| `NATS_CONTEXT` | NATS CLI context; preferred over `NATS_URL` | config `context` |
+| `NATS_URL` | Direct NATS URL when no context is selected | *(required when no context is configured)* |
 | `SYNADIA_CLAUDE_CODE_HEADLESS_OWNER`, `SYNADIA_OWNER` | Owner subject token; per-agent var wins, then fleet-wide, then the legacy `CLAUDE_CODE_HEADLESS_OWNER` | `$USER` |
 | `SYNADIA_CLAUDE_CODE_HEADLESS_NAME`, `SYNADIA_NAME` | Controller instance name; same chain (legacy: `CLAUDE_CODE_HEADLESS_NAME`) | `control` |
+| `NATS_SENDER_IDENTITY` | Host identity mode: `off` or `signed` | config `senderIdentity`, then `off` |
+| `NATS_MIN_SENDER_TRUST` | Prompt admission policy: `any` or `signed` | config `minSenderTrust`, then `any` |
 | `CLAUDE_CODE_HEADLESS_DEFAULT_MODEL` | Default Claude model id for spawns | `claude-sonnet-4-6` |
 | `CLAUDE_CODE_HEADLESS_DEFAULT_PERMISSION_MODE` | Default permission mode for spawns | `dontAsk` |
 | `CLAUDE_CODE_HEADLESS_DEFAULT_ALLOWED_TOOLS` | Default tool allowlist (comma-separated) | `Read,Glob,Grep` |
@@ -114,6 +120,34 @@ Env overrides:
 Precedence (high → low): CLI flags → env vars → `~/.claude-code-headless/config.json` → built-in defaults.
 
 CLI flag: `--claude-code-path /abs/path/to/claude` (alias `--claude-path`).
+
+### Connection identity and inbound trust
+
+Identity is optional. With the default `senderIdentity: "off"`, startup does
+not perform an identity lookup and the controller and sessions register with
+no identity metadata. This works with token/password authentication and with
+servers that do not permit user-info lookup.
+
+Set `senderIdentity` (or `NATS_SENDER_IDENTITY`) to `"signed"` to register the
+identity authenticated by the selected connection. The selected context must
+contain a user seed (`creds`, `nkey`, or `user_jwt` plus `user_seed`). The
+connection and signer are derived together from one immutable credential
+snapshot; there is no second identity credential. Missing signing material,
+identity lookup failure, or a mismatch with the live NATS user fails startup
+instead of silently downgrading.
+
+`minSenderTrust` is independent. Its default, `"any"`, preserves headerless
+callers. `"signed"` requires a verified signed sender on every controller and
+session **prompt** before acknowledgement and before Claude receives the
+prompt. Status remains classification-only, and the `spawn`/`stop`/`list`
+extension endpoints retain their existing request/reply admission behavior.
+
+The controller and every logical session use one NATS connection. They
+therefore have the same cryptographic user identity even though discovery
+shows separate agent instances and prompt subjects. A session ID is a routing
+and conversation boundary, not proof that a different NATS user acted.
+Classified sender metadata is handled by `AgentService` and is never added to
+the text sent to the Claude model.
 
 ### Claude Code binary
 
@@ -154,14 +188,14 @@ Verb-first throughout — protocol verbs and claude-code-headless extension verb
 ```
 agents.prompt.cc-headless.<owner>.<name>      ← controller prompt endpoint (help text)
 agents.status.cc-headless.<owner>.<name>      ← controller status (replies with heartbeat-shaped payload)
-agents.hb.cc-headless.<owner>.<name>          ← controller heartbeat (30 s)
+agents.hb.cc-headless.<owner>.<name>          ← controller heartbeat (5 s)
 agents.spawn.cc-headless.<owner>.<name>       ← POST JSON → session descriptor
 agents.stop.cc-headless.<owner>.<name>        ← POST { session_id } → { ok: true }
 agents.list.cc-headless.<owner>.<name>        ← (empty) → { sessions: [...] }
 
 agents.prompt.cc-headless.<owner>.<session_id>  ← spawned session prompt
 agents.status.cc-headless.<owner>.<session_id>  ← spawned session status
-agents.hb.cc-headless.<owner>.<session_id>      ← spawned session heartbeat (30 s)
+agents.hb.cc-headless.<owner>.<session_id>      ← spawned session heartbeat (5 s)
 ```
 
 The `cc-headless` token disambiguates this controller (and its spawned sessions) from the regular Claude Code agent at [`agents/claude-code/`](../../agents/claude-code), which uses the `cc` token for the opposite direction (Claude Code as MCP-driven NATS *client*).
@@ -209,6 +243,12 @@ await agents.close();
 await nc.close();
 ```
 
+When the host requires signed senders, construct the caller connection and
+`Agents` client with the same connection-bundle pattern, or set
+`NATS_SENDER_IDENTITY=signed` when using this package's CLI helpers. A raw
+`nats req` has no `Agent-Sender` header and is rejected by a signed-only prompt
+endpoint.
+
 ### Stop
 
 ```bash
@@ -231,9 +271,9 @@ Custom endpoints respond with NATS micro-service error headers (`Nats-Service-Er
 |------|-----------------------------------------------------------------------------------------------|
 | 400  | Bad JSON, missing/invalid cwd, bad session_id, unknown permission_mode, bad allowed_tools     |
 | 404  | `stop` for an unknown session                                                                 |
-| 500  | Claude Agent SDK threw during a prompt turn                                                   |
-
-Session prompt endpoints follow protocol §9.
+Session prompt endpoints follow protocol §9. Handler failures, including
+Claude SDK and session-lifecycle failures, use the protocol's sanitized `500`
+error followed by an empty terminator.
 
 ## CLI helpers
 
@@ -243,7 +283,7 @@ Session prompt endpoints follow protocol §9.
 
 ## Notes
 
-- **Session identity.** The 4th subject token is the session id; `metadata.session` echoes it. Controllers use `name = "control"` by default and sessions carry `metadata.role = "session"`.
+- **Session identity.** The 5th subject token is the session id; `metadata.session` echoes it. Controllers use `name = "control"` by default and sessions carry `metadata.role = "session"`. All controller/session services on the process's shared connection have the same optional cryptographic identity.
 - **Metadata marker.** The controller carries `metadata.role = "controller"` so clients can tell it apart from sessions. The shared `agent: "cc-headless"` token already disambiguates this from the regular `agent: "cc"` (Claude Code as MCP-driven NATS client).
 - **Multiple controllers per host.** On startup the controller probes `$SRV.INFO.agents` and, if its target prompt subject is already claimed, picks the next free `<name>-2`, `<name>-3`, … suffix automatically. So booting a second claude-code-headless with default settings leaves the first as `control` and the second as `control-2` without explicit `--name` flags. (For deterministic naming or two stable controllers side-by-side, still pass `--name` explicitly.)
 - **Serial drain per session.** Per session, prompts are queued and processed one at a time; the Claude Agent SDK's `query()` is one full multi-turn round-trip per call, and concurrent re-entry into the same session would interleave context.
@@ -251,7 +291,7 @@ Session prompt endpoints follow protocol §9.
 - **Lifetime & pruning.** `max_lifetime_s` bounds a session's wall-clock life; pending requests older than 30 min are evicted (active requests are never evicted).
 - **Attachments.** Base64 attachments are decoded to `~/.claude-code-headless/attachments/<session_id>/<uuid>/` and their absolute paths are prepended to the prompt text, matching the staging pattern used by `agents/pi/` and `examples/pi-headless/`.
 - **Tool-call payload sizes.** Tool result outputs are truncated to 4 KB before encoding into a status chunk to stay well under `max_payload`. The truncation marker is `…[truncated]`.
-- **Permission timeout.** A pending §7 permission query is denied after 2 minutes of caller silence, so a vanished UI doesn't park a session forever.
+- **Permission timeout.** A pending §7 permission query uses `PromptResponse.ask()` and is denied after 2 minutes of caller silence, so a vanished UI doesn't park a session forever.
 
 ## Features
 

@@ -58,8 +58,9 @@ registered subject token, uppercased with hyphens turned into underscores — so
 | `SYNADIA_NAME` | all | _(unset)_ | 5th subject token / session, fleet-wide. Used when the per-agent var is unset. Same as `--session-name`. |
 | `NATS_AGENT_NAME` | all | `main` | 5th subject token / session, **legacy alias** (lowest-priority name source). Same as `--session-name`. |
 | `NATS_AGENT_HEARTBEAT_INTERVAL` | all | `30` | Heartbeat cadence in **seconds** (config, not identity — no `SYNADIA_*` form). Same as `--heartbeat-interval`. Lower it (e.g. `2`) for a livelier `05-liveness` demo. `0` is treated as unset → the default. |
-| `NATS_NKEY_SEED_FILE` | all | _(unset)_ | Sender identity: a user nkey **seed file** (`SU…`). Authenticates the connection and signs the registration's `id_sig`. Same as `--nkey`. A file, never an env value holding the seed. |
-| `NATS_CREDS` | all | _(unset)_ | Sender identity: a credentials file (JWT + seed); the identity is read from the JWT. Same as `--creds`. |
+| `NATS_NKEY_SEED_FILE` | all | _(unset)_ | User nkey **seed file** (`SU…`) for the connection. Same as `--nkey`. A file, never an env value holding the seed. |
+| `NATS_CREDS` | all | _(unset)_ | Credentials file (JWT + seed) for the connection. Same as `--creds`. |
+| `NATS_SENDER_IDENTITY` | all | `off` | Outgoing identity mode (`off` / `signed`). Same as `--sender-identity`. Signed mode derives the registration signer from the selected connection credentials. |
 | `REFERENCE_AGENT_MIN_SENDER_TRUST` | `_reference_agent.py` | `any` | `min_sender_trust` advertised on the prompt endpoint (`any` / `signed`). Same as `--min-sender-trust`. |
 | `OLLAMA_URL` | `02`, `04`, `05` | `http://localhost:11434` | Where Ollama is listening. |
 | `OLLAMA_MODEL` | `02`, `04`, `05` | `llama3.2` (`05`: `llama3.1:8b`) | Which Ollama model to prompt. |
@@ -70,17 +71,20 @@ registered subject token, uppercased with hyphens turned into underscores — so
 selected `nats` context (`$NATS_CONTEXT` / `nats context select`). There's no
 silent localhost fallback — pass one of these (the examples below use `--url`).
 
-**Sender identity** (extension): with `--nkey` / `--creds` the agent registers
-`user_nkey` / `account` / `id_sig`, so callers can verify who is behind the
-prompt subject; without them host identity is off and no own-identity lookup or
-registration metadata is produced.
+**Sender identity** (extension): connection credentials and identity mode are
+independent. `--nkey` / `--creds` authenticate URL-mode connections; contexts
+carry their own authentication. Add `--sender-identity signed` to register
+`user_nkey` / `account` / `id_sig`. The SDK connection-bundle helper derives
+the signer from the exact same credential snapshot used for NATS. With the
+default `off`, connection authentication still works but no own-identity lookup
+or registration metadata is produced.
 Every incoming prompt is classified before the ack and the handler sees
 `stream.sender`; the reference agent echoes it as ` sender: <id> (<trust
 class>)` and prints its own identity on the line after the ready marker:
 
 ```sh
 uv run python examples/_reference_agent.py --url nats://127.0.0.1:4222 \
-  --nkey ~/alice.nk --min-sender-trust signed
+  --nkey ~/alice.nk --sender-identity signed --min-sender-trust signed
 # reference agent listening on agents.prompt.demo-agent.<owner>.example
 # identity: $G.UAWW… (min_sender_trust=signed)
 ```

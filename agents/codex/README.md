@@ -73,6 +73,20 @@ codex-agent doctor --mode managed --owner local --session main
 
 The doctor reports `codex --version`, NATS source, computed prompt subject, max-payload source, permission-callback mode, and redaction checks. Local-only values such as credentials, `CODEX_HOME`, endpoints, endpoint auth, and raw thread ids are redacted.
 
+Sender identity is separately configurable from incoming trust:
+
+| CLI | Environment | TOML | Default |
+| --- | --- | --- | --- |
+| `--sender-identity off\|signed` | `NATS_SENDER_IDENTITY` | `[nats].sender_identity` | `off` |
+| `--min-sender-trust any\|signed` | `NATS_MIN_SENDER_TRUST` | `[agent].min_sender_trust` | `any` |
+
+Signed mode uses the SDK connection-bundle helper to derive the signer from
+the exact context or URL-mode credentials used to connect. There is no second
+identity credential. Manager mode intentionally keeps one NATS connection, so
+all exposed logical Codex sessions share that connection's cryptographic
+identity; their distinct subjects and names are routing identities, not proof
+of distinct NATS users.
+
 ## Session manager mode
 
 Manager mode is opt-in and registry-driven. It exposes only Codex app-server endpoints you explicitly configure with `--manager-endpoints`, `SYNADIA_CODEX_MANAGER_ENDPOINTS`, `[manager].endpoints`, or the single `--endpoint`/`SYNADIA_CODEX_ENDPOINT` value. There is no ambient desktop scan.
@@ -134,9 +148,9 @@ Type `rescan` in the manager terminal only when you want to force reconciliation
 
 `SYNADIA_CODEX_ENDPOINT_AUTH` / `--endpoint-auth` is a single shared token applied to every configured manager endpoint. If different endpoints need different auth tokens, construct an `EndpointRegistry` programmatically and provide per-entry tokens.
 
-For each endpoint, the manager reconciles `thread/loaded/list` and `thread/list`, hides no-turn ephemeral loaded sessions by default, and requires both `thread/read` and `thread/resume` before registering a promptable NATS identity. It derives a safe public session token for each private Codex thread; that token is the last segment in subjects such as `agents.prompt.codex.local.<session-token>`.
+For each endpoint, the manager reconciles `thread/loaded/list` and `thread/list`, hides no-turn ephemeral loaded sessions by default, and requires both `thread/read` and `thread/resume` before registering a promptable logical NATS agent. It derives a safe public session token for each private Codex thread; that token is the last segment in subjects such as `agents.prompt.codex.local.<session-token>`.
 
-Every eligible session gets its own `AgentService` with separate prompt, status, and heartbeat subjects. Prompt routing is session-scoped: one public session cannot receive another session's text, events, or status payloads. If an exposed private session disappears from inventory, the manager marks it stale, stops its service after the configured grace interval, flushes NATS, and reuses the same public session token if the same private session reappears.
+Every eligible session gets its own `AgentService` with separate prompt, status, and heartbeat subjects. These are distinct routing and conversation identities, but every service managed by this process uses the same NATS connection and therefore the same cryptographic connection identity. Prompt routing is session-scoped: one public session cannot receive another session's text, events, or status payloads. If an exposed private session disappears from inventory, the manager marks it stale, stops its service after the configured grace interval, flushes NATS, and reuses the same public session token if the same private session reappears.
 
 ## NATS CLI examples
 
@@ -194,7 +208,7 @@ This harness creates a scoped temporary `delete-me` directory, asks live Codex t
 
 The live harness proves `item/commandExecution/requestApproval` approve/deny behavior against a real Codex app-server. `item/fileChange/requestApproval` uses the same accept/decline/cancel decision response shape and is routed through the same harness handler, but should only be claimed as live-tested when that exact method appears in `approvalMethods`. It does not prove `item/permissions/requestApproval` unless that exact method appears in `approvalMethods`; for that permission-grant method, the adapter follows the Codex schema and uses an explicit empty grant object for deny/cancel.
 
-The app-server lifecycle smoke initializes a real `codex app-server --listen stdio://` inside an isolated temporary `CODEX_HOME`; it proves the real Codex process and JSON-RPC initialize/initialized boundary without sending a model prompt. The fake-runtime smoke uses a deterministic fake app-server process to prove prompt/stream framing, text-delta streaming, managed lifecycle, and no empty response chunks without spending model tokens or requiring credentials. `smoke:codex-runtime` intentionally runs both checks so the final ladder contains real app-server process evidence plus deterministic fake-runtime prompt/stream evidence. Permission smokes use the same deterministic fake app-server process to prove default-deny permission handling. The session-manager smoke uses an explicit Unix-socket endpoint fixture to prove two eligible current sessions become separate discoverable NATS identities, duplicate inventory rows do not double-register, ineligible ephemeral no-turn sessions stay private, prompts are isolated, and public protocol surfaces stay redacted. The future-watch smoke starts with no exposed sessions, registers one future eligible thread exactly once, keeps a future non-eligible thread private, proves manual `rescan` idempotence, and verifies endpoint loss marks stale then removes the service.
+The app-server lifecycle smoke initializes a real `codex app-server --listen stdio://` inside an isolated temporary `CODEX_HOME`; it proves the real Codex process and JSON-RPC initialize/initialized boundary without sending a model prompt. The fake-runtime smoke uses a deterministic fake app-server process to prove prompt/stream framing, text-delta streaming, managed lifecycle, and no empty response chunks without spending model tokens or requiring credentials. `smoke:codex-runtime` intentionally runs both checks so the final ladder contains real app-server process evidence plus deterministic fake-runtime prompt/stream evidence. Permission smokes use the same deterministic fake app-server process to prove default-deny permission handling. The session-manager smoke uses an explicit Unix-socket endpoint fixture to prove two eligible current sessions become separate discoverable logical NATS agents on one shared connection identity, duplicate inventory rows do not double-register, ineligible ephemeral no-turn sessions stay private, prompts are isolated, and public protocol surfaces stay redacted. The future-watch smoke starts with no exposed sessions, registers one future eligible thread exactly once, keeps a future non-eligible thread private, proves manual `rescan` idempotence, and verifies endpoint loss marks stale then removes the service.
 
 ## Troubleshooting
 

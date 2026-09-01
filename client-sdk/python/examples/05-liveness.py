@@ -22,10 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from examples._connect_cli import (
     add_connection_flags,
     add_identity_flags,
-    connect_from_cli,
-    identity_from_cli,
+    open_agents_from_cli,
 )
-from synadia_ai.agents import Agents, HeartbeatPayload
+from synadia_ai.agents import HeartbeatPayload
 
 
 def _make_listener(identity: str) -> Callable[[HeartbeatPayload], None]:
@@ -41,8 +40,8 @@ async def main() -> None:
     add_identity_flags(parser)
     args = parser.parse_args()
 
-    nc = await connect_from_cli(args)
-    agents = Agents(nc=nc, identity=identity_from_cli(args))
+    session = await open_agents_from_cli(args)
+    agents = session.agents
     stop = asyncio.Event()
 
     def _on_signal(_sig: int, _frame: FrameType | None) -> None:
@@ -81,8 +80,7 @@ async def main() -> None:
         for unsub in unsubscribers:
             with contextlib.suppress(Exception):
                 unsub()
-        await agents.close()
-        await nc.close()
+        await session.close()
 
 
 if __name__ == "__main__":

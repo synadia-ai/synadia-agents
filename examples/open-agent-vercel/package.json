@@ -6,7 +6,8 @@
   "description": "Run @synadia-ai/open-agent's bridge against @vercel/sandbox — proves the inbound bridge works behind any Sandbox impl.",
   "scripts": {
     "start": "bun run src/main.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test test/config.test.ts"
   },
   "dependencies": {
     "@nats-io/nats-core": "^3.4.0",

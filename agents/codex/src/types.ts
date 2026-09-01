@@ -5,6 +5,7 @@ export interface NatsConfig {
   readonly url?: string;
   readonly context?: string;
   readonly creds?: string;
+  readonly senderIdentity?: "off" | "signed";
 }
 
 export interface AgentConfig {
@@ -13,6 +14,7 @@ export interface AgentConfig {
   readonly subjectToken: "codex";
   readonly heartbeatIntervalS: number;
   readonly keepaliveIntervalS: number;
+  readonly minSenderTrust?: "any" | "signed";
 }
 
 export interface CodexConfig {

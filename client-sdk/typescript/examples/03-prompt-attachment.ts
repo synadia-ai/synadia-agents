@@ -17,16 +17,13 @@
 // Or with npm: swap `bun run` for `npx tsx`.
 
 import { argv, exit, stdout } from "node:process";
-import { connect as natsConnect } from "@nats-io/transport-node";
 import {
-  Agents,
   AttachmentsNotSupportedError,
-  loadContextOptions,
   NatsAgentError,
-  parseNatsUrl,
   PayloadTooLargeError,
   type ResponseAttachment,
 } from "@synadia-ai/agents";
+import { openExampleAgents } from "./_connection";
 
 async function main(): Promise<void> {
   const attachmentPath = argv[2];
@@ -35,19 +32,15 @@ async function main(): Promise<void> {
     exit(1);
   }
 
-  const opts = process.env["NATS_CONTEXT"]
-    ? await loadContextOptions(process.env["NATS_CONTEXT"])
-    : process.env["NATS_URL"]
-      ? parseNatsUrl(process.env["NATS_URL"])
-      : { servers: "nats://127.0.0.1:4222" };
-  const nc = await natsConnect(opts);
-  const agents = new Agents({ nc });
+  const connection = await openExampleAgents();
+  const { agents } = connection;
 
   try {
     const found = await agents.discover();
     if (found.length === 0) {
       console.error("no agents reachable — start the reference agent first");
-      exit(2);
+      process.exitCode = 2;
+      return;
     }
 
     const chosen = found[0]!;
@@ -80,19 +73,20 @@ async function main(): Promise<void> {
     } catch (err) {
       if (err instanceof AttachmentsNotSupportedError) {
         console.error("\nthis agent does not accept attachments (attachments_ok=false)");
-        exit(3);
+        process.exitCode = 3;
+        return;
       }
       if (err instanceof PayloadTooLargeError) {
         console.error(
           `\npayload is too large: ${err.actual} bytes > agent's ${err.limit} byte limit`,
         );
-        exit(4);
+        process.exitCode = 4;
+        return;
       }
       throw err;
     }
   } finally {
-    await agents.close();
-    await nc.close();
+    await connection.close();
   }
 }
 

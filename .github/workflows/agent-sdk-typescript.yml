@@ -2,7 +2,7 @@ name: CI — agent-sdk/typescript
 
 on:
   push:
-    branches: [main, sdk-release-rollout]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "agent-sdk/typescript/**"
       - "client-sdk/typescript/**"
@@ -37,16 +37,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # The host's tsconfig path-aliases `@synadia-ai/agents` to caller
-      # source; tsc therefore needs the caller's transitive deps
-      # (`@nats-io/*`) resolvable from caller's checkout. Install both.
-      - name: Install caller deps
+      # The host's typecheck path-aliases `@synadia-ai/agents` to caller
+      # source, while its declaration build deliberately resolves the caller's
+      # built declarations. Install and build the caller before the host.
+      - name: Install and build caller package
         working-directory: client-sdk/typescript
-        run: npm install
+        run: |
+          npm install
+          npm run build
       - run: npm install
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run format:check
+      - run: npm run build
+      - name: Example connection-bundle tests
+        run: npx vitest run --config examples/_vitest.config.ts
 
   test-node:
     name: Node ${{ matrix.node }} on ${{ matrix.os }}

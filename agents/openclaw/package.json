@@ -65,7 +65,7 @@
     "@synadia-ai/agents": "file:../../client-sdk/typescript"
   },
   "peerDependencies": {
-    "openclaw": ""
+    "openclaw": ">=2026.5.4 <2027"
   },
   "peerDependenciesMeta": {
     "openclaw": {

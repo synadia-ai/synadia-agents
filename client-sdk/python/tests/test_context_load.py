@@ -417,6 +417,11 @@ def test_parse_url_hostless_url_rejected() -> None:
         parse_nats_url("nats://")
 
 
+def test_parse_url_whitespace_in_host_rejected() -> None:
+    with pytest.raises(NatsContextError, match="whitespace in host"):
+        parse_nats_url("not a nats url")
+
+
 def test_parse_url_ipv6_host_rebracketed() -> None:
     """``urlparse`` strips IPv6 brackets — we must put them back."""
     opts = parse_nats_url("nats://[::1]:4222")

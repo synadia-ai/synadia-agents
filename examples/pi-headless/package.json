@@ -41,6 +41,8 @@
     "start": "bun run src/index.ts",
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --banner:js='#!/usr/bin/env node' --outfile=dist/index.js && chmod +x dist/index.js",
     "typecheck": "tsc --noEmit",
+    "test": "bun test test/config.test.ts",
+    "test:smoke": "bun test/identity-smoke.mjs && PI_HEADLESS_SMOKE_SIGNED=1 bun test/identity-smoke.mjs && PI_HEADLESS_SMOKE_STRICT=1 bun test/identity-smoke.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {

@@ -3,14 +3,15 @@
 Resolves a connection exactly like the numbered examples do (``--context``,
 ``--url``, ``$NATS_URL``, the selected context), optionally with a
 signer (``--nkey`` / ``--creds``, or ``$NATS_NKEY_SEED_FILE`` /
-``$NATS_CREDS``), then asks ``Agents.self_id()`` and prints what the
-SDK would put into every ``Agent-Sender`` header — or the error that
-explains why it would send none.
+``$NATS_CREDS``). Pass ``--sender-identity signed`` to derive the signer
+from that same connection snapshot. The script asks ``Agents.self_id()``
+and prints the result or the error that explains why identity is unavailable.
 
 Usage::
 
-    uv run python scripts/whoami.py --url nats://127.0.0.1:4222 --nkey ~/alice.nk
-    uv run python scripts/whoami.py --context ngs            # creds from the context
+    uv run python scripts/whoami.py --url nats://127.0.0.1:4222 \
+        --nkey ~/alice.nk --sender-identity signed
+    uv run python scripts/whoami.py --context ngs --sender-identity signed
     uv run python scripts/whoami.py --url nats://127.0.0.1:4222   # no-auth → NoIdentityError
 
 Exit code 0 when an identity was resolved, 1 when the connection has no
@@ -31,37 +32,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from examples._connect_cli import (
     add_connection_flags,
     add_identity_flags,
-    connect_from_cli,
-    identity_from_cli,
+    open_agents_from_cli,
 )
 
-from synadia_ai.agents import Agents, IdentityError
+from synadia_ai.agents import IdentityError
 
 
 async def _run(args: argparse.Namespace) -> int:
-    nc = await connect_from_cli(args)
+    session = await open_agents_from_cli(args)
+    connection = session.connection
     try:
-        identity = identity_from_cli(args)
-        agents = Agents(nc=nc, identity=identity)
+        signer = connection.signer
+        from_jwt = signer is not None and signer.jwt
+        source = "credentials JWT" if from_jwt else "$SYS.REQ.USER.INFO"
+        print(f"signer:   {signer if signer is not None else 'none (identity off)'}")
+        print(f"source:   {source}")
         try:
-            signer = identity.signer if identity is not None else None
-            from_jwt = signer is not None and signer.jwt
-            source = "credentials JWT" if from_jwt else "$SYS.REQ.USER.INFO"
-            print(f"signer:   {signer if signer is not None else 'none (unsigned claims only)'}")
-            print(f"source:   {source}")
-            try:
-                id = await agents.self_id()
-            except IdentityError as exc:
-                print(f"identity: none — {exc}")
-                return 1
-            print(f"identity: {id}")
-            print(f"account:  {id.account}")
-            print(f"user:     {id.user}")
-            return 0
-        finally:
-            await agents.close()
+            id = await session.agents.self_id()
+        except IdentityError as exc:
+            print(f"identity: none — {exc}")
+            return 1
+        print(f"identity: {id}")
+        print(f"account:  {id.account}")
+        print(f"user:     {id.user}")
+        return 0
     finally:
-        await nc.close()
+        await session.close()
 
 
 def main() -> int:

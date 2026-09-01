@@ -24,13 +24,13 @@
 // Prereqs: a local Ollama with a tool-capable model:
 //   ollama pull llama3.1:8b
 //
-// Connection resolution (same as the other agents):
-//   $NATS_CONTEXT > $NATS_URL > nats://127.0.0.1:4222
+// Connection and optional signed registration use the shared atomic bundle in
+// `_connection.ts`; see 01-echo.ts or README.md for env precedence.
 
-import { connect as natsConnect, type NatsConnection } from "@nats-io/transport-node";
+import type { NatsConnection } from "@nats-io/transport-node";
 import { Svcm, type ServiceMsg } from "@nats-io/services";
-import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
+import { openExampleNatsConnection, waitForTermination } from "./_connection";
 
 const MODEL = process.env["OLLAMA_MODEL"] ?? "llama3.1:8b";
 const OLLAMA_URL = process.env["OLLAMA_URL"] ?? "http://localhost:11434";
@@ -166,82 +166,81 @@ async function* chatStream(messages: ChatMessage[]): AsyncGenerator<string> {
 }
 
 async function main(): Promise<void> {
-  const opts = process.env["NATS_CONTEXT"]
-    ? await loadContextOptions(process.env["NATS_CONTEXT"])
-    : process.env["NATS_URL"]
-      ? parseNatsUrl(process.env["NATS_URL"])
-      : { servers: "nats://127.0.0.1:4222" };
-  const nc = await natsConnect(opts);
+  const connection = await openExampleNatsConnection();
+  const { nc } = connection;
+  let service: AgentService | undefined;
 
-  // Start the microservice the agent's tool will call. In production this is a
-  // separate process somewhere on the network — here it just shares `nc`.
-  await startSensorService(nc);
+  try {
+    // Start the microservice the agent's tool will call. In production this is a
+    // separate process somewhere on the network — here it just shares `nc`.
+    await startSensorService(nc);
 
-  // Identity and heartbeat cadence are env-overridable (see 01-echo.ts).
-  const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
-  const service = new AgentService({
-    nc,
-    agent: "tools",
-    owner:
-      process.env["SYNADIA_TOOLS_OWNER"] ??
-      process.env["SYNADIA_OWNER"] ??
-      process.env["NATS_AGENT_OWNER"] ??
-      process.env["USER"] ??
-      "anon",
-    name:
-      process.env["SYNADIA_TOOLS_NAME"] ??
-      process.env["SYNADIA_NAME"] ??
-      process.env["NATS_AGENT_NAME"] ??
-      "main",
-    ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
-    description: "LLM agent with a read_sensor tool backed by a NATS microservice",
-  });
+    // Identity and heartbeat cadence are env-overridable (see 01-echo.ts).
+    const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
+    service = new AgentService({
+      nc,
+      agent: "tools",
+      owner:
+        process.env["SYNADIA_TOOLS_OWNER"] ??
+        process.env["SYNADIA_OWNER"] ??
+        process.env["NATS_AGENT_OWNER"] ??
+        process.env["USER"] ??
+        "anon",
+      name:
+        process.env["SYNADIA_TOOLS_NAME"] ??
+        process.env["SYNADIA_NAME"] ??
+        process.env["NATS_AGENT_NAME"] ??
+        "main",
+      ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
+      ...(connection.signer ? { identity: { signer: connection.signer } } : {}),
+      description: "LLM agent with a read_sensor tool backed by a NATS microservice",
+    });
 
-  service.onPrompt(async (envelope, response) => {
-    const messages: ChatMessage[] = [{ role: "user", content: envelope.prompt }];
+    service.onPrompt(async (envelope, response) => {
+      const messages: ChatMessage[] = [{ role: "user", content: envelope.prompt }];
 
-    // Round 1 — does the model want a tool? (non-streamed, for clean tool_calls)
-    const decision = await chat(messages);
-    messages.push(decision);
+      // Round 1 — does the model want a tool? (non-streamed, for clean tool_calls)
+      const decision = await chat(messages);
+      messages.push(decision);
 
-    // Run whatever tools the model asked for, appending each result to the
-    // conversation. (One round is plenty for this demo; a fuller agent would
-    // loop until the model stops requesting tools.)
-    for (const call of decision.tool_calls ?? []) {
-      const result = await runTool(nc, call.function.name, call.function.arguments);
-      // No tool_call_id: Ollama's /api/chat doesn't return tool-call ids and
-      // correlates each result to its call by order. (OpenAI-style APIs return
-      // an `id` per call that the result must echo back as `tool_call_id` — and
-      // there you'd also need the assistant message, pushed above as `decision`,
-      // to carry the matching `tool_calls`.)
-      messages.push({ role: "tool", content: result });
-    }
+      // Run whatever tools the model asked for, appending each result to the
+      // conversation. (One round is plenty for this demo; a fuller agent would
+      // loop until the model stops requesting tools.)
+      for (const call of decision.tool_calls ?? []) {
+        const result = await runTool(nc, call.function.name, call.function.arguments);
+        // No tool_call_id: Ollama's /api/chat doesn't return tool-call ids and
+        // correlates each result to its call by order. (OpenAI-style APIs return
+        // an `id` per call that the result must echo back as `tool_call_id` — and
+        // there you'd also need the assistant message, pushed above as `decision`,
+        // to carry the matching `tool_calls`.)
+        messages.push({ role: "tool", content: result });
+      }
 
-    // No tool needed → round 1 was already the answer.
-    if (!decision.tool_calls?.length) {
-      await response.send(decision.content);
-      return;
-    }
+      // No tool needed → round 1 was already the answer.
+      if (!decision.tool_calls?.length) {
+        await response.send(decision.content);
+        return;
+      }
 
-    // Round 2 — the model now has the sensor reading; stream its final answer.
-    for await (const token of chatStream(messages)) {
-      await response.send(token);
-    }
-  });
+      // Round 2 — the model now has the sensor reading; stream its final answer.
+      for await (const token of chatStream(messages)) {
+        await response.send(token);
+      }
+    });
 
-  await service.start();
-  console.log(`tools agent listening on ${service.subject.prompt}`);
-  console.log(`sensor service on '${SENSOR_SUBJECT}', model '${MODEL}' at ${OLLAMA_URL}`);
-  console.log("press Ctrl+C to stop");
-
-  const shutdown = async (): Promise<void> => {
+    await service.start();
+    console.log(`tools agent listening on ${service.subject.prompt}`);
+    console.log(`sensor service on '${SENSOR_SUBJECT}', model '${MODEL}' at ${OLLAMA_URL}`);
+    console.log("press Ctrl+C to stop");
+    await waitForTermination();
     console.log("\nshutting down…");
-    await service.stop();
-    await nc.close();
-    process.exit(0);
-  };
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
+  } finally {
+    try {
+      await service?.stop();
+    } finally {
+      await connection.close();
+    }
+  }
 }
 
 void main().catch((err: unknown) => {

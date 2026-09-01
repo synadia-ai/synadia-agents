@@ -181,12 +181,15 @@ What to know:
 - **A trusted server over TLS is a precondition** of identity: the NATS
   handshake signs a server-chosen nonce with the same seed that signs
   `Agent-Sender`.
-- The reference agent takes `--nkey` / `--creds` (`$NATS_NKEY_SEED_FILE`
-  / `$NATS_CREDS` — a file, never an environment value holding the seed)
-  and `--min-sender-trust` (`$REFERENCE_AGENT_MIN_SENDER_TRUST`), prints
+- The reference agent takes connection credentials via `--nkey` / `--creds`
+  (`$NATS_NKEY_SEED_FILE` / `$NATS_CREDS`) and enables identity separately
+  with `--sender-identity signed` (`$NATS_SENDER_IDENTITY`). It uses one
+  connection bundle for authentication and signing. With
+  `--min-sender-trust` (`$REFERENCE_AGENT_MIN_SENDER_TRUST`) it prints
   `identity: <id> (min_sender_trust=…)` after its ready line and appends
   ` sender: <id> (<trust class>)` to the echo when a sender was
-  classified. The ladder examples take the same `--nkey` / `--creds`.
+  classified. The ladder examples use the same credential and identity-mode
+  flags.
 
 `SenderGate` / `NonceCache` (`synadia_ai.agent_service.identity`) expose
 the same classification for hand-rolled services; the codec itself

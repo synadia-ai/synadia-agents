@@ -20,14 +20,16 @@
 // implementation decoded.
 //
 // Sender identity: `$NATS_NKEY_SEED_FILE` (a user seed file, `SU…`) or
-// `$NATS_CREDS` (a credentials file) authenticates the connection — a file,
-// not an env value, so nothing spawned inherits the seed. With `--signed`
+// `$NATS_CREDS` / `$NATS_CREDENTIALS` (a credentials file) authenticates the
+// connection. These are file paths, not seed values in env, so nothing spawned
+// inherits the seed. With `--signed`
 // the same file also signs the `Agent-Sender` header on the prompt, and a
 // first line `{"type":"identity","id":"<account>.<user>"}` precedes the
 // chunks (it is not counted in `done.chunks`). Without `--signed` the probe
 // sends **no** `Agent-Sender` at all (not even an unsigned claim), so the
 // two modes are exactly "verified" and "absent" at the receiver. `--signed`
-// without a seed / creds file is a usage error.
+// without a seed / creds file is a usage error. The signer comes only from
+// the shared connection bundle's immutable credential snapshot.
 //
 // Mid-stream queries are printed but not answered (the stream then stalls
 // until `--timeout-s`); the reference agents never ask any.
@@ -36,24 +38,13 @@
 // nats://127.0.0.1:4222. Deliberately no $NATS_CONTEXT — a probe run from a
 // test must not pick up the developer's selected context.
 
-import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
-import { credsAuthenticator, nkeyAuthenticator } from "@nats-io/nats-core";
-import { connect as natsConnect, type NodeConnectionOptions } from "@nats-io/transport-node";
-import {
-  Agents,
-  parseNatsUrl,
-  ServiceError,
-  signerFromCreds,
-  signerFromSeed,
-  type SenderSigner,
-  type StreamMessage,
-} from "@synadia-ai/agents";
+import { ServiceError, type StreamMessage } from "@synadia-ai/agents";
+import { exampleConnectionSource, hasSignerCredential, openExampleAgents } from "./_connection";
 
 const USAGE =
   "usage: _run-client-probe.ts --agent <agent> --owner <owner> --prompt <text> [--timeout-s <seconds>] [--signed]";
 const DEFAULT_TIMEOUT_S = "10";
-const enc = new TextEncoder();
 
 interface ProbeArgs {
   readonly agent: string;
@@ -107,33 +98,6 @@ function parseCli(): ProbeArgs | null {
   return { agent, owner, prompt, timeoutMs: seconds * 1_000, signed };
 }
 
-/**
- * Connection options plus the signer the same credential yields. The seed
- * / creds file authenticates the connection whenever it is set; the
- * signer is only *used* with `--signed`.
- */
-async function connectionAndSigner(): Promise<{
-  readonly opts: NodeConnectionOptions;
-  readonly signer: SenderSigner | undefined;
-}> {
-  const opts: NodeConnectionOptions = process.env["NATS_URL"]
-    ? parseNatsUrl(process.env["NATS_URL"])
-    : { servers: "nats://127.0.0.1:4222" };
-  const seedFile = process.env["NATS_NKEY_SEED_FILE"];
-  const credsFile = process.env["NATS_CREDS"];
-  if (seedFile) {
-    const seed = (await readFile(seedFile, "utf8")).trim();
-    opts.authenticator = nkeyAuthenticator(enc.encode(seed));
-    return { opts, signer: signerFromSeed(seed) };
-  }
-  if (credsFile) {
-    const creds = await readFile(credsFile, "utf8");
-    opts.authenticator = credsAuthenticator(enc.encode(creds));
-    return { opts, signer: signerFromCreds(creds) };
-  }
-  return { opts, signer: undefined };
-}
-
 function toLine(msg: StreamMessage): Record<string, unknown> {
   switch (msg.type) {
     case "response":
@@ -149,19 +113,19 @@ async function main(): Promise<number> {
   const args = parseCli();
   if (!args) return 64;
 
-  const { opts, signer } = await connectionAndSigner();
-  if (args.signed && !signer) {
-    fail(`--signed needs NATS_NKEY_SEED_FILE or NATS_CREDS\n${USAGE}`);
+  const source = exampleConnectionSource({ allowContext: false });
+  if (args.signed && !hasSignerCredential(source)) {
+    fail(`--signed needs NATS_NKEY_SEED_FILE, NATS_CREDS, or NATS_CREDENTIALS\n${USAGE}`);
     return 64;
   }
 
-  const nc = await natsConnect(opts);
-  const agents = new Agents({
-    nc,
-    // `--signed`: sign every request. Otherwise explicitly keep identity
-    // disabled so this probe continues to exercise the headerless path.
-    identity: args.signed && signer ? { signer } : { sendUnsignedClaim: false },
+  const connection = await openExampleAgents({
+    source,
+    // The helper omits Agents.identity entirely in off mode, preserving the
+    // probe's exact headerless path. Signed mode uses only the bundle signer.
+    identity: args.signed ? "signed" : "off",
   });
+  const { agents } = connection;
   try {
     if (args.signed) emit({ type: "identity", id: await agents.selfId() });
     const [agent] = await agents.discover({ filter: { agent: args.agent, owner: args.owner } });
@@ -180,8 +144,7 @@ async function main(): Promise<number> {
     emit({ type: "done", chunks });
     return 0;
   } finally {
-    await agents.close();
-    await nc.close();
+    await connection.close();
   }
 }
 

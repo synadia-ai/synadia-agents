@@ -2,14 +2,14 @@ name: CI — Python identity workbook
 
 on:
   push:
-    branches: [main, sdk-release-rollout]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "examples/identity-workbook/python/**"
       - "client-sdk/python/**"
       - "agent-sdk/python/**"
       - ".github/workflows/python-identity-workbook.yml"
   pull_request:
-    branches: [main, sdk-release-rollout]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "examples/identity-workbook/python/**"
       - "client-sdk/python/**"

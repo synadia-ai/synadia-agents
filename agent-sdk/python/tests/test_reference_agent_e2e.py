@@ -5,7 +5,8 @@ Exercises the example-specific behaviour that no other test covers:
 * prompt is echoed back with the configured prefix
 * inbound attachment filenames are appended to the echo text
 * attachments are written to disk under ``--save-attachments-to-dir``
-* ``--nkey`` + ``--min-sender-trust signed``: the agent prints its identity
+* ``--nkey`` + ``--sender-identity signed`` + ``--min-sender-trust signed``:
+  the agent prints its identity
   after the ready marker, registers a verifying ``id_sig``, refuses
   unsigned callers and appends the formatted sender to the echo
 
@@ -195,7 +196,7 @@ async def test_reference_agent_echoes_prefix_and_saves_attachment(
         await agents.close()
 
 
-# --- sender identity: --nkey + --min-sender-trust signed ---------------------------
+# --- sender identity: one nkey connection bundle + explicit signed mode ------------
 
 
 @pytest.fixture
@@ -211,7 +212,14 @@ async def py_reference_agent_signed(
         save_dir=tmp_path / "attach",
         prefix="py-ref: ",
         session_name="pyref-signed",
-        extra_args=("--nkey", str(seed_file), "--min-sender-trust", "signed"),
+        extra_args=(
+            "--nkey",
+            str(seed_file),
+            "--sender-identity",
+            "signed",
+            "--min-sender-trust",
+            "signed",
+        ),
     )
     await proc.start()
     try:

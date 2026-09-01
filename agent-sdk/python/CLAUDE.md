@@ -269,41 +269,43 @@ state only; the caller is responsible for `nc.close()`.
 
 ```python
 import nats
-from synadia_ai.agents import load_context_options
-from synadia_ai.agent_service import AgentService
+from synadia_ai.agents import resolve_nats_connection_bundle
+from synadia_ai.agent_service import AgentService, ServiceIdentity
 
-# 1. Direct URL(s) — caller drives nats-py directly.
-nc = await nats.connect(servers="nats://127.0.0.1:4222")
+# One complete connection source. Direct mode may additionally supply
+# creds= or nkey=; context mode supplies its own URL/auth/TLS settings.
+bundle = resolve_nats_connection_bundle(
+    context="prod",  # or url="nats://127.0.0.1:4222"
+    identity="signed",  # omit for the identity-free default
+)
+nc = await nats.connect(**bundle.connection_options)
 
-# 2. Load a `nats` CLI context (~/.config/nats/context/<name>.json) and
-#    splat its kwargs into nats.connect. Pass `"current"` to honour
-#    $NATS_CONTEXT → the `context.txt` pointer written by
-#    `nats context select`.
-nc = await nats.connect(**load_context_options("prod"))
-nc = await nats.connect(**load_context_options("current"))
-
-# Then in either case:
 service = AgentService(
     nc=nc,
     agent="my-runtime",   # REQUIRED, no default — see §2 rule above.
     owner="my-tenant",
     session_name="default",
     handler=my_prompt_handler,
+    identity=ServiceIdentity(signer=bundle.signer) if bundle.signer else None,
 )
 await service.start()
+
+# On shutdown: stop the service, close NATS, then wipe the bundle.
+await service.stop()
+await nc.close()
+bundle.wipe()
 ```
 
-`load_context_options` lives in `synadia-ai-agents` and is re-used
-verbatim — same precedence rules (`creds` > `nkey` > `user_jwt` >
-`user`+`password` > `token`; `nkey` is a seed-file path whose seed
-line is passed as `nkeys_seed_str`), same unsupported-field surface
-(TLS triple, `nsc://...` URLs raise `NatsContextError`). The SDK
-itself does NOT read `NATS_URL`; that stays an `examples/`-only
-convenience. The host's own identity is configured separately, on
-`AgentService(identity=ServiceIdentity(signer=…))` — the SDK never
-reads the seed out of the connection; `examples/_connect_cli.py` shows
-the pairing: `--nkey` / `--creds` feed both `nats.connect` and the
-signer (`signer_from_cli`).
+`resolve_nats_connection_bundle` lives in `synadia-ai-agents` and is
+the required high-level seam for examples and integrations. It resolves
+one complete context or direct URL/credential source into connection
+options and, only when `identity="signed"` is requested, a signer from
+that same immutable credential snapshot. The SDK itself does not read
+`NATS_URL`; that remains an examples-only convenience translated into
+helper inputs. Never compose `load_context_options` with a separate
+`signer_from_*` read in an integration: `examples/_connect_cli.py`
+demonstrates bundle ownership, connection-before-wipe cleanup, and
+passing `bundle.signer` to `ServiceIdentity` when present.
 
 ### Examples vs scripts
 

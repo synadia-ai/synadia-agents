@@ -459,6 +459,10 @@ def _parse_single_nats_url(part: str, *, original: str) -> dict[str, Any]:
         )
     if not parsed.hostname:
         raise NatsContextError(f"NATS URL {_redact_nats_url(original)!r} is missing a host")
+    if any(ch.isspace() for ch in parsed.hostname):
+        raise NatsContextError(
+            f"invalid NATS URL {_redact_nats_url(original)!r}: whitespace in host"
+        )
 
     # Reconstruct the server URL without userinfo. Re-bracket IPv6 hosts —
     # urlparse strips the brackets but `nats-py` (and most other tools)

@@ -1,20 +1,34 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
-import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/core";
-import type { NatsAccountConfig, ResolvedNatsAccount } from "./types.js";
-import { loadNatsContextFromFile } from "./nats/context-loader.js";
+import type {
+  NatsAccountConfig,
+  ResolvedNatsAccount,
+  SenderIdentityMode,
+  SenderTrustMode,
+} from "./types.js";
+
+// OpenClaw's canonical default account id. Kept local so account resolution
+// and its tests remain usable when the optional host peer is not installed.
+const DEFAULT_ACCOUNT_ID = "default";
 
 function getNatsConfig(cfg: OpenClawConfig): Record<string, unknown> {
-  return (cfg as Record<string, unknown>).channels as Record<string, unknown> ?? {};
+  return (
+    ((cfg as Record<string, unknown>).channels as Record<string, unknown>) ?? {}
+  );
 }
 
 function getNatsChannelConfig(cfg: OpenClawConfig): Record<string, unknown> {
   const channels = getNatsConfig(cfg);
-  return (channels as Record<string, unknown>).nats as Record<string, unknown> ?? {};
+  return (
+    ((channels as Record<string, unknown>).nats as Record<string, unknown>) ??
+    {}
+  );
 }
 
 function getAccounts(cfg: OpenClawConfig): Record<string, NatsAccountConfig> {
   const nats = getNatsChannelConfig(cfg);
-  return (nats as Record<string, Record<string, NatsAccountConfig>>).accounts ?? {};
+  return (
+    (nats as Record<string, Record<string, NatsAccountConfig>>).accounts ?? {}
+  );
 }
 
 // Dedup env-override log lines so the many `currentValue` callbacks in the
@@ -26,7 +40,14 @@ const loggedEnvOverrides = new Set<string>();
 
 function applyEnvOverride(
   resolved: ResolvedNatsAccount,
-  field: "url" | "agentName" | "description" | "owner" | "credentials",
+  field:
+    | "url"
+    | "agentName"
+    | "description"
+    | "owner"
+    | "credentials"
+    | "senderIdentity"
+    | "minSenderTrust",
   configValue: string | undefined,
   envValue: string | undefined,
   accountId: string,
@@ -34,7 +55,7 @@ function applyEnvOverride(
   redact = false,
 ): void {
   if (envValue === undefined) return;
-  resolved[field] = envValue;
+  (resolved as unknown as Record<string, unknown>)[field] = envValue;
   const key = `${accountId}:${envName}`;
   if (loggedEnvOverrides.has(key)) return;
   loggedEnvOverrides.add(key);
@@ -44,7 +65,24 @@ function applyEnvOverride(
   const suffix = changed
     ? `config=${show(configValue)} → env=${show(envValue)}`
     : `matches config (${show(envValue)})`;
-  console.warn(`[nats] env override ${envName} (account=${accountId}): ${suffix}`);
+  console.warn(
+    `[nats] env override ${envName} (account=${accountId}): ${suffix}`,
+  );
+}
+
+function resolveSenderIdentity(
+  value: unknown,
+  source: string,
+): SenderIdentityMode {
+  if (value === undefined || value === "") return "off";
+  if (value === "off" || value === "signed") return value;
+  throw new Error(`${source} must be "off" or "signed"`);
+}
+
+function resolveSenderTrust(value: unknown, source: string): SenderTrustMode {
+  if (value === undefined || value === "") return "any";
+  if (value === "any" || value === "signed") return value;
+  throw new Error(`${source} must be "any" or "signed"`);
 }
 
 // First defined entry from an ordered list of env var names. Identity vars
@@ -64,7 +102,11 @@ function firstDefinedEnv(
 export function listNatsAccountIds(cfg: OpenClawConfig): string[] {
   const ids = Object.keys(getAccounts(cfg));
   const result = ids.length > 0 ? ids : [DEFAULT_ACCOUNT_ID];
-  const nameEnv = firstDefinedEnv("SYNADIA_OPENCLAW_NAME", "SYNADIA_NAME", "NATS_AGENT_NAME");
+  const nameEnv = firstDefinedEnv(
+    "SYNADIA_OPENCLAW_NAME",
+    "SYNADIA_NAME",
+    "NATS_AGENT_NAME",
+  );
   console.log(
     `[nats] listAccountIds: ${JSON.stringify(result)} (config keys: ${ids.length}, name env: ${
       nameEnv ? `${nameEnv.name}=${nameEnv.value}` : "unset"
@@ -98,42 +140,27 @@ export function resolveNatsAccount(
     agentName: raw.agentName ?? "",
     description: raw.description ?? "",
     credentials: raw.credentials,
+    context: raw.context,
+    // Validate the final values after env overrides have been applied.
+    senderIdentity: (raw.senderIdentity ?? "off") as SenderIdentityMode,
+    minSenderTrust: (raw.minSenderTrust ?? "any") as SenderTrustMode,
     owner,
     config: raw,
+    // Replaced below after the atomic source has been selected.
+    connectionSource: { url: "nats://demo.nats.io" },
   };
 
-  // ── config.context (wizard-selected NATS CLI context) ────────────────
-  // Apply BEFORE per-field env vars so a deployer's `NATS_URL` /
-  // `NATS_CREDENTIALS` can still override an individual field of the
-  // wizard-chosen context. `$NATS_CONTEXT` (handled below) still wins
-  // over everything.
-  if (raw.context) {
-    try {
-      const ctx = loadNatsContextFromFile(raw.context);
-      resolved.url = ctx.url;
-      if (ctx.credentials) resolved.credentials = ctx.credentials;
-    } catch (err) {
-      console.warn(
-        `[nats] config.context="${raw.context}" failed to load — falling back to per-field config: ${(err as Error).message}`,
-      );
-    }
-  }
-
   // Environment variable overrides (for Docker/container deployments).
-  // Per-field env vars apply first; $NATS_CONTEXT is then applied LAST so
-  // it acts as a single source of truth for url + credentials when set
-  // (otherwise $NATS_CREDENTIALS could silently win over context creds and
-  // produce a confusing url-from-context-creds-from-elsewhere split that
-  // fails opaquely at connect time).
+  // A context is one atomic connection/auth source. Direct URL/credentials
+  // env vars select the direct source as a unit rather than splicing values
+  // into a context. $NATS_CONTEXT then wins over that direct source.
   //
   // Resolution order (matches pi-headless + agents/pi):
   //   1. $NATS_CONTEXT       — env-var NATS CLI context file (highest)
-  //   2. $NATS_URL           — raw URL
-  //   3. $NATS_CREDENTIALS   — overrides config creds field ($NATS_CREDS is
-  //                            accepted as an alias when it is unset)
-  //   4. config.context      — wizard-selected NATS CLI context file
-  //   5. account config (`url`, `credentials`)
-  //   6. built-in default    — `demo.nats.io` (set in connection.ts)
+  //   2. direct env (`$NATS_URL` / `$NATS_CREDENTIALS`) plus direct config
+  //   3. config.context      — when no direct env override is present
+  //   4. account config (`url`, `credentials`)
+  //   5. built-in default    — `demo.nats.io`
   //
   // Identity tokens (owner / agentName) follow the SYNADIA_* convention
   // shared across agents/*: per-agent var (SYNADIA_OPENCLAW_*) > fleet-wide
@@ -142,20 +169,63 @@ export function resolveNatsAccount(
   const env = process.env;
 
   // ── Per-field env overrides (lower precedence than $NATS_CONTEXT) ──────
-  // Pass `resolved.*` (not `raw.*`) for url/credentials so the override
-  // log reflects the actual prior value being replaced — including the
-  // case where `config.context` already expanded it. Logging `raw.url` /
-  // `raw.credentials` would read `<unset>` even when the prior value was
-  // sourced from a context file, which misleads debugging.
-  applyEnvOverride(resolved, "url", resolved.url, env.NATS_URL, id, "NATS_URL");
-  const nameEnv = firstDefinedEnv("SYNADIA_OPENCLAW_NAME", "SYNADIA_NAME", "NATS_AGENT_NAME");
-  if (nameEnv) {
-    applyEnvOverride(resolved, "agentName", raw.agentName, nameEnv.value, id, nameEnv.name);
+  const directEnvSelected =
+    env.NATS_URL !== undefined ||
+    env.NATS_CREDENTIALS !== undefined ||
+    env.NATS_CREDS !== undefined;
+  if (directEnvSelected && resolved.context) {
+    console.warn(
+      `[nats] direct connection env overrides config.context atomically (account=${id})`,
+    );
+    resolved.context = undefined;
   }
-  applyEnvOverride(resolved, "description", raw.description, env.NATS_DESCRIPTION, id, "NATS_DESCRIPTION");
-  const ownerEnv = firstDefinedEnv("SYNADIA_OPENCLAW_OWNER", "SYNADIA_OWNER", "NATS_OWNER", "NATS_ORG");
+  applyEnvOverride(
+    resolved,
+    "url",
+    resolved.url,
+    env.NATS_URL,
+    id,
+    "NATS_URL",
+    true,
+  );
+  const nameEnv = firstDefinedEnv(
+    "SYNADIA_OPENCLAW_NAME",
+    "SYNADIA_NAME",
+    "NATS_AGENT_NAME",
+  );
+  if (nameEnv) {
+    applyEnvOverride(
+      resolved,
+      "agentName",
+      raw.agentName,
+      nameEnv.value,
+      id,
+      nameEnv.name,
+    );
+  }
+  applyEnvOverride(
+    resolved,
+    "description",
+    raw.description,
+    env.NATS_DESCRIPTION,
+    id,
+    "NATS_DESCRIPTION",
+  );
+  const ownerEnv = firstDefinedEnv(
+    "SYNADIA_OPENCLAW_OWNER",
+    "SYNADIA_OWNER",
+    "NATS_OWNER",
+    "NATS_ORG",
+  );
   if (ownerEnv) {
-    applyEnvOverride(resolved, "owner", raw.owner ?? raw.org, ownerEnv.value, id, ownerEnv.name);
+    applyEnvOverride(
+      resolved,
+      "owner",
+      raw.owner ?? raw.org,
+      ownerEnv.value,
+      id,
+      ownerEnv.name,
+    );
   }
   // NATS_CREDENTIALS deliberately wins over the NATS_CREDS alias here —
   // it's openclaw's incumbent var, so existing deployments see zero change
@@ -163,34 +233,74 @@ export function resolveNatsAccount(
   // accepted spelling is shared, not the tie-break order.)
   const credsEnv = firstDefinedEnv("NATS_CREDENTIALS", "NATS_CREDS");
   if (credsEnv) {
-    applyEnvOverride(resolved, "credentials", resolved.credentials, credsEnv.value, id, credsEnv.name, true);
+    applyEnvOverride(
+      resolved,
+      "credentials",
+      resolved.credentials,
+      credsEnv.value,
+      id,
+      credsEnv.name,
+      true,
+    );
   }
+  applyEnvOverride(
+    resolved,
+    "senderIdentity",
+    raw.senderIdentity,
+    env.NATS_SENDER_IDENTITY,
+    id,
+    "NATS_SENDER_IDENTITY",
+  );
+  applyEnvOverride(
+    resolved,
+    "minSenderTrust",
+    raw.minSenderTrust,
+    env.NATS_MIN_SENDER_TRUST,
+    id,
+    "NATS_MIN_SENDER_TRUST",
+  );
 
   // ── $NATS_CONTEXT (highest precedence) ───────────────────────────────
-  // Applied LAST so it wins over $NATS_URL and $NATS_CREDENTIALS — a
-  // deployer who set $NATS_CONTEXT meant it as the single source of
-  // truth. Failures are logged and downgraded so the gateway falls back
-  // to whatever the per-field env / config resolved instead of crashing.
+  // Applied LAST so it wins over $NATS_URL and $NATS_CREDENTIALS as the
+  // complete source. Resolution failures are startup errors: silently
+  // falling back could connect under a different identity than requested.
   if (env.NATS_CONTEXT) {
-    try {
-      const ctx = loadNatsContextFromFile(env.NATS_CONTEXT);
-      applyEnvOverride(resolved, "url", resolved.url, ctx.url, id, "NATS_CONTEXT");
-      if (ctx.credentials) {
-        applyEnvOverride(
-          resolved,
-          "credentials",
-          resolved.credentials,
-          ctx.credentials,
-          id,
-          "NATS_CONTEXT",
-          true,
-        );
-      }
-    } catch (err) {
-      console.warn(
-        `[nats] $NATS_CONTEXT="${env.NATS_CONTEXT}" failed to load — falling back to NATS_URL/config: ${(err as Error).message}`,
-      );
-    }
+    const previous = resolved.context;
+    resolved.context = env.NATS_CONTEXT;
+    resolved.url = "";
+    resolved.credentials = undefined;
+    const changed = previous !== env.NATS_CONTEXT;
+    console.warn(
+      `[nats] env override NATS_CONTEXT (account=${id}): ${
+        changed
+          ? `config=${previous || "<unset>"} → env=${env.NATS_CONTEXT}`
+          : "matches config"
+      }`,
+    );
+  }
+
+  resolved.senderIdentity = resolveSenderIdentity(
+    resolved.senderIdentity,
+    env.NATS_SENDER_IDENTITY !== undefined
+      ? "NATS_SENDER_IDENTITY"
+      : `channels.nats.accounts.${id}.senderIdentity`,
+  );
+  resolved.minSenderTrust = resolveSenderTrust(
+    resolved.minSenderTrust,
+    env.NATS_MIN_SENDER_TRUST !== undefined
+      ? "NATS_MIN_SENDER_TRUST"
+      : `channels.nats.accounts.${id}.minSenderTrust`,
+  );
+
+  if (resolved.context) {
+    resolved.connectionSource = { context: resolved.context };
+  } else if (resolved.credentials) {
+    resolved.connectionSource = {
+      url: resolved.url || "nats://demo.nats.io",
+      creds: resolved.credentials,
+    };
+  } else {
+    resolved.connectionSource = { url: resolved.url || "nats://demo.nats.io" };
   }
 
   // Spec §2 requires a 4-token subject. Default the owner token rather than

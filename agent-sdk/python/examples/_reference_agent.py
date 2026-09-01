@@ -25,9 +25,10 @@ Flags::
     --heartbeat-interval SECONDS    default 5 (matches TS ref agent)
     --description TEXT              service description
     --context NAME / --url URL      shared connection flags
-    --nkey SEED_FILE / --creds FILE sender identity: authenticates the connection and
-                                    signs the registration's ``id_sig``
+    --nkey SEED_FILE / --creds FILE connection credentials
                                     (default: $NATS_NKEY_SEED_FILE / $NATS_CREDS)
+    --sender-identity off|signed    derive registration identity from those same
+                                    credentials (default: $NATS_SENDER_IDENTITY, else off)
     --min-sender-trust any|signed   what the prompt endpoint requires of callers
                                     (default: $REFERENCE_AGENT_MIN_SENDER_TRUST, else any)
 
@@ -59,7 +60,6 @@ from examples._connect_cli import (
     add_connection_flags,
     add_identity_flags,
     connect_from_cli,
-    signer_from_cli,
 )
 from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
@@ -143,7 +143,12 @@ async def main() -> None:
         save_dir.mkdir(parents=True, exist_ok=True)
         log.info("saving inbound attachments to %s", save_dir.resolve())
 
-    nc = await connect_from_cli(args)
+    try:
+        connection = await connect_from_cli(args)
+    except (OSError, IdentityError) as exc:
+        print(f"cannot open the NATS connection bundle: {exc}", file=sys.stderr)
+        sys.exit(2)
+    nc = connection.nc
 
     # Single conversation memory — under v0.3 this service registration
     # serves a single session (the 5th subject token), so one bucket suffices.
@@ -178,24 +183,30 @@ async def main() -> None:
         await stream.send(echoed)
 
     try:
-        signer = signer_from_cli(args)
-    except (OSError, IdentityError) as exc:
-        print(f"cannot build the signer from --nkey / --creds: {exc}", file=sys.stderr)
-        await nc.close()
-        sys.exit(2)
-
-    agent = AgentService(
-        agent=args.agent,
-        owner=args.owner,
-        session_name=args.session_name,
-        nc=nc,
-        description=args.description,
-        heartbeat_interval_s=args.heartbeat_interval,
-        identity=ServiceIdentity(signer=signer) if signer is not None else None,
-        min_sender_trust=args.min_sender_trust,
-    )
-    agent.on_prompt(handler)
-    await agent.start()
+        agent = AgentService(
+            agent=args.agent,
+            owner=args.owner,
+            session_name=args.session_name,
+            nc=nc,
+            description=args.description,
+            heartbeat_interval_s=args.heartbeat_interval,
+            identity=(
+                ServiceIdentity(signer=connection.signer) if connection.signer is not None else None
+            ),
+            min_sender_trust=args.min_sender_trust,
+        )
+    except BaseException:
+        await connection.close()
+        raise
+    try:
+        agent.on_prompt(handler)
+        await agent.start()
+    except BaseException:
+        try:
+            await agent.stop()
+        finally:
+            await connection.close()
+        raise
 
     print(f"reference agent listening on {agent.subject.prompt}")
     # Its own line, after the ready marker (the marker line is scraped verbatim).
@@ -216,8 +227,10 @@ async def main() -> None:
         await stop.wait()
     finally:
         print("\nshutting down…")
-        await agent.stop()
-        await nc.close()
+        try:
+            await agent.stop()
+        finally:
+            await connection.close()
 
 
 if __name__ == "__main__":

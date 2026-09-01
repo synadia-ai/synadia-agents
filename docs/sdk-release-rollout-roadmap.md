@@ -1,7 +1,7 @@
 # SDK identity and tracing release roadmap
 
 - Status: active; implementation contracts resolved, release prerequisites tracked below
-- Last updated: 2026-08-31
+- Last updated: 2026-09-01
 - Integration branch: `sdk-release-rollout`
 - Scope: TypeScript and Python caller/host SDKs, sender identity, optional tracing, provided
   integrations, examples, and release operations
@@ -103,8 +103,9 @@ merging shared-branch feature work; complete the remaining operational items bef
       reviewed, clean release commits on the integration branch may be tagged/published,
       then the exact commits are reconciled into `main` after aging.
 - [ ] Locate the real cooldown policy and record its exact duration, covered ecosystems,
-      enforcement points, and package-specific exception syntax. Do not proceed based on the
-      assumed seven-day value.
+      enforcement points, and package-specific exception syntax. Do not proceed to registry
+      publication based on the assumed seven-day value. This is a pre-publication input, not a
+      blocker for integration implementation, clean staging tooling, or local artifact rehearsal.
 - [ ] Complete the package/release DAG, including internal `file:` edges, published headless
       examples, external integrations, and private examples used as release evidence.
 - [ ] Replace dirty-tree or rebuild-on-publish flows with the clean, build-once artifact process in
@@ -164,9 +165,9 @@ context.
       credentials once and return connection options plus an optional signer from the same
       snapshot. Identity-free mode remains the default; signed mode fails if the selected
       connection credentials cannot sign. The bundle owns cleanup after the connection closes.
-- [ ] Require every provided integration and release-consuming example to use those helpers; do not
+- [x] Require every provided integration and release-consuming example to use those helpers; do not
       copy context, credentials, seed, authenticator, or signer resolution into integrations.
-- [ ] Remove or reject independently selectable connection and identity credentials in integration
+- [x] Remove or reject independently selectable connection and identity credentials in integration
       CLIs, environment variables, config files, and plugin settings.
 - [x] Require live-connection binding before every signed send or registration path can become
       usable. If equality cannot be established, fail signed identity without affecting an
@@ -174,6 +175,13 @@ context.
 - [x] Never interpret an Alice-authenticated connection plus a Bob signer as Bob identity. Delegated
       identity, if ever designed, is a separate protocol feature outside this rollout.
 - [ ] Test coordinated credential rotation without retaining or logging old credential material.
+
+The 2026-09-01 branch audit found no integration or release-example code that directly loads a
+context/creds/seed, constructs an authenticator, or derives a signer. The sole test-harness bypass
+found in PI was replaced with one connection bundle. Lifecycle tests now distinguish retryable
+connection owners, which retain the bundle until a successful close, from process-level runners
+that expose no retry handle, which perform a best-effort close and then guarantee the bundle is
+wiped.
 
 ### Registry release contract
 
@@ -198,7 +206,9 @@ contract:
 - [ ] If a quieter aging window is desired, manually delete only the generated GitHub Release entry
       after verifying PyPI publication. Keep the version tag and PyPI artifacts intact, and recreate
       the release entry from the same tag/digests at cutover if wanted.
-- [ ] Use explicit `npm publish --tag next` commands and record pre/post dist-tags and digests.
+- [ ] Publish each already-built, approved tarball with explicit
+      `npm publish <approved.tgz> --tag next`; record pre/post dist-tags and digests. Never publish
+      from a source directory that can rerun a lifecycle build.
 - [ ] At cutover, add `latest` for first-publish packages and move it for existing packages; verify
       the exact digest in both cases.
 
@@ -228,7 +238,7 @@ connection.
       supplied nats-py connection exposes no reconnect epoch to the SDK. Revalidate the live
       connection/signer binding for each signed send or registration until reliable invalidation is
       available.
-- [ ] Derive connection and signer inputs from one immutable credential snapshot in integrations;
+- [x] Derive connection and signer inputs from one immutable credential snapshot in integrations;
       redact all credential material.
 - [ ] Test seed, credentials, context, same-user/different-account JWTs, mismatched credentials,
       multiple clients/services sharing one connection, reconnect, and credential rotation.
@@ -238,7 +248,7 @@ connection.
 ### Caller SDKs
 
 - [x] TypeScript and Python caller unit and integration identity suites pass.
-- [ ] Direct TypeScript-caller to Python-host and Python-caller to TypeScript-host tests cover
+- [x] Direct TypeScript-caller to Python-host and Python-caller to TypeScript-host tests cover
       signed, unsigned, and headerless prompts.
 - [x] Discovery treats a service without `min_sender_trust` as legacy-compatible.
 - [x] A permissive target remains callable when identity discovery is unavailable.
@@ -362,16 +372,19 @@ Every shipped integration must support both modes from the same released version
 | Eve | `AgentService` | npm, first publish | signer/trust; lock/artifact smoke | [ ] |
 | Flue | `AgentService` | npm, first publish | signer/trust; add missing CI coverage | [ ] |
 | DeerFlow | Python `AgentService` | PyPI, existing | signer/trust; SDK-triggered CI; lock/artifact smoke | [ ] |
-| OpenClaw | hand-rolled service | npm, existing | full migration; add lock; constrain peer and SDK refs | [ ] |
-| PI | hand-rolled service | npm, existing | full migration; add lock; constrain peer and SDK refs | [ ] |
-| Claude Code channel | hand-rolled service | marketplace package manifest | full migration; remove mutable runtime install | [ ] |
+| OpenClaw | `AgentService` channel | npm, existing | validate completed migration; add release lock; exact SDK refs; artifact smoke | [ ] |
+| PI | `AgentService` extension | npm, existing | validate completed migration and deferred prompt lifecycle; add release lock; exact SDK refs | [ ] |
+| Claude Code channel | bundled `AgentService` runtime | marketplace package manifest | validate completed migration; exact SDK/lock; verify committed runtime; marketplace install | [ ] |
 | Claude Code plugin descriptor | marketplace metadata | versioned marketplace | sync `plugin.json` with package manifest; smoke marketplace install | [ ] |
 | PI headless controller | multi-session host | npm, existing | shared identity docs; exact dependencies; artifact smoke | [ ] |
 | Claude Code headless controller | multi-session host | npm, existing | shared identity docs; remove `latest`; artifact smoke | [ ] |
 | Hermes (`synadia-ai/hermes-nats-gateway`) | external Python host | external gate | pin canonical repo/SHA; signer plumbing; artifact evidence | [ ] |
 
-The Claude Code marketplace descriptor is currently version `0.4.0` while its package manifest is
-`0.5.1`; the release must select one coordinated version and validate both installation channels.
+The prior Claude Code descriptor mismatch is corrected: the branch package manifest and plugin
+descriptor both currently read `0.5.1`. Because the marketplace contents have changed, release
+preparation must choose a new unique version, update both files together, rebuild/verify the
+committed runtime, and validate the marketplace installation path. Equality at the branch version
+does not complete those release gates.
 
 ### Private/source release consumers
 
@@ -394,7 +407,7 @@ For every applicable inventory row:
 - [ ] Record identity-free startup/prompt and signed registration/inbound-prompt evidence.
 - [ ] Record prompt rejection before ack/handler for invalid identity, without secret-bearing logs.
 - [ ] Verify no identity configuration remains a valid, documented configuration.
-- [ ] Plumb signer/trust settings from an immutable connection credential snapshot where supported.
+- [x] Plumb signer/trust settings from an immutable connection credential snapshot where supported.
 - [ ] Cover both CLI and installed-plugin/runtime paths.
 - [ ] Test real runtime behavior and clean artifact-only installation.
 - [ ] Declare exact compatible internal versions; no monorepo `file:` or editable source counts as
@@ -479,7 +492,55 @@ Any artifact-byte change requires a new version and age clock.
       gate from those files.
 - [ ] Define whether the freeze includes downstream deployment repositories and record their SHAs.
 
+#### Release-manifest audit snapshot (2026-09-01)
+
+This audit describes the active branch-development tree. Local SDK and editable Python references
+are expected inputs at this stage, but none of the conditions below may appear in release proof or
+published artifacts.
+
+- OpenClaw and PI have no committed lock. Their local SDK cycle can hang Bun, so create and verify
+  their immutable release locks only after staged manifests select exact registry SDK versions.
+- PI headless has a stale lock root: its direct `@earendil-works/pi-ai` dependency is absent while
+  an older transitive PI AI version remains resolved. Select a compatible exact version and refresh
+  the release lock.
+- ACP, Grok, Codex, OpenCode, Eve, Flue, and PI headless directly declare
+  `@types/bun: "latest"`; the Eve CI job also selects `bun-version: latest`. Pin or explicitly
+  approve them before freezing the graph. Current direct manifests have no empty or `*` peer
+  ranges: OpenClaw now uses `openclaw >=2026.5.4 <2027`, and PI uses
+  `@earendil-works/pi-coding-agent >=0.84.0 <0.85.0`.
+- Eve, Flue, OpenClaw, PI, Claude Code, and both published headless packages have local TypeScript
+  SDK refs; Grok has a local ACP ref. ACP, Codex, and OpenCode still select the previously published
+  SDK through broad `^0.5.2` ranges. Release staging must replace every internal edge with the exact
+  candidate version and regenerate the corresponding lock.
+- DeerFlow's branch lock correctly resolves the two local Python SDKs as editable sources, but its
+  staged release inputs must remove `[tool.uv.sources]`, select exact registry SDK versions, and run
+  with `uv sync --locked`. Its unconstrained `hatchling` build requirement must also be frozen or
+  supplied by an equivalently immutable build environment.
+- Flue has no npm `files` allowlist and currently packs tests, `bun.lock`, and `tsconfig.json`.
+  Several first-publish packages omit a package-local license, and OpenCode omits its changelog from
+  the tarball. The artifact allowlist/license review must resolve or explicitly approve each shape.
+- Current integration CI mixes behavioral and package evidence: PI, OpenClaw, and Claude Code pack
+  manifests after absolute tarball-path rewrites; Eve and Flue inspect manifests containing local
+  refs; ACP, Codex, and OpenCode test branch tarballs but inspect old registry ranges; Grok has no
+  pack proof; the headless workflow now typechecks, tests, builds, and inspects local-source
+  packages but still lacks artifact-only installation. These jobs remain useful branch-development
+  evidence but cannot satisfy release-artifact gates.
+- Current changed, already-published versions cannot be reused: the TypeScript SDK pair is still
+  `0.5.2`, OpenClaw and PI are `0.5.6`, PI headless is `0.5.5`, Claude Code headless is `0.5.4`, and
+  DeerFlow is `0.2.0`. The Claude marketplace pair is currently `0.5.1` and must move together.
+  ACP, Grok, Codex, OpenCode, Eve, and Flue were absent from npm at audit time, but registry and tag
+  uniqueness must be queried again immediately before versions are finalized.
+
+- [ ] Replace the misleading package checks above with clean staged-manifest validation and
+      artifact-only installation of the exact packed bytes.
+- [ ] Close every missing/stale-lock, mutable-direct-input, artifact-allowlist, and version-collision
+      item from this snapshot before registry publication.
+
 ### Cooldown exception
+
+The measured policy and its enforcing configuration are required before this exception is enabled
+or any candidate is uploaded. Their absence does not pause branch implementation or exact local
+artifact rehearsal.
 
 Preferred approach:
 

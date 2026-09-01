@@ -11,20 +11,25 @@ Two scenarios — pass the mode as the first positional argument:
   down    Expects no compliant agent. At DEBUG level, asserts discover()
           returns [] and emits a discovery debug record.
 
-Requires `nats-server` reachable at `$NATS_URL` (default
-`nats://127.0.0.1:4222`). Does not spawn the server itself.
+Uses the numbered examples' connection and optional signed-identity flags.
+It does not spawn the server itself.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
-import os
 import sys
+from pathlib import Path
 
-import nats
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from synadia_ai.agents import Agents
+from examples._connect_cli import (
+    add_connection_flags,
+    add_identity_flags,
+    open_agents_from_cli,
+)
 
 
 class _ListHandler(logging.Handler):
@@ -36,8 +41,8 @@ class _ListHandler(logging.Handler):
         self.records.append(record)
 
 
-async def _run(mode: str) -> int:
-    expect_agent = mode == "up"
+async def _run(args: argparse.Namespace) -> int:
+    expect_agent = args.mode == "up"
     level = logging.INFO if expect_agent else logging.DEBUG
 
     root = logging.getLogger("synadia_ai.agents")
@@ -49,47 +54,43 @@ async def _run(mode: str) -> int:
     # Also stream to stderr so the operator sees what's happening live.
     logging.basicConfig(level=level, format="%(name)s %(levelname)s %(message)s")
 
-    url = os.environ.get("NATS_URL", "nats://127.0.0.1:4222")
-    nc = await nats.connect(url)
+    session = await open_agents_from_cli(args)
     try:
-        agents = Agents(nc=nc)
-        try:
-            timeout = 1.0 if expect_agent else 0.3
-            found = await agents.discover(timeout=timeout)
-            print(f"[smoke:{mode}] discover(timeout={timeout}) -> {len(found)} agent(s)")
-        finally:
-            await agents.close()
+        timeout = 1.0 if expect_agent else 0.3
+        found = await session.agents.discover(timeout=timeout)
+        print(f"[smoke:{args.mode}] discover(timeout={timeout}) -> {len(found)} agent(s)")
     finally:
-        await nc.close()
+        await session.close()
 
     discovery_records = [r for r in captured.records if r.name == "synadia_ai.agents.discovery"]
     print(
-        f"[smoke:{mode}] synadia_ai.agents.discovery records: "
+        f"[smoke:{args.mode}] synadia_ai.agents.discovery records: "
         f"{[(r.levelname, r.getMessage()) for r in discovery_records]}"
     )
 
     if expect_agent:
         if not found:
-            print(f"[smoke:{mode}] FAIL: expected ≥1 agent, got 0")
+            print(f"[smoke:{args.mode}] FAIL: expected ≥1 agent, got 0")
             return 1
         if any(r.levelno >= logging.INFO for r in discovery_records):
-            print(f"[smoke:{mode}] FAIL: success path emitted >=INFO records")
+            print(f"[smoke:{args.mode}] FAIL: success path emitted >=INFO records")
             return 1
-        print(f"[smoke:{mode}] OK")
+        print(f"[smoke:{args.mode}] OK")
         return 0
 
     if found:
-        print(f"[smoke:{mode}] FAIL: expected 0 agents, got {len(found)}")
+        print(f"[smoke:{args.mode}] FAIL: expected 0 agents, got {len(found)}")
         return 1
-    print(f"[smoke:{mode}] OK")
+    print(f"[smoke:{args.mode}] OK")
     return 0
 
 
 def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in {"up", "down"}:  # noqa: PLR2004
-        print("usage: smoke_ping.py {up|down}", file=sys.stderr)
-        return 2
-    return asyncio.run(_run(sys.argv[1]))
+    parser = argparse.ArgumentParser(description="Smoke Agents.discover against a live server.")
+    parser.add_argument("mode", choices=("up", "down"))
+    add_connection_flags(parser)
+    add_identity_flags(parser)
+    return asyncio.run(_run(parser.parse_args()))
 
 
 if __name__ == "__main__":
