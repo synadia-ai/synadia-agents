@@ -59,9 +59,9 @@ jobs:
       - name: Lint release tool
         run: |
           uv run --project client-sdk/python --locked ruff check \
-            devtools/release/release.py devtools/release/tests/test_release.py
+            devtools/release/release.py devtools/release/tests
           uv run --project client-sdk/python --locked ruff format --check \
-            devtools/release/release.py devtools/release/tests/test_release.py
+            devtools/release/release.py devtools/release/tests
 
       - name: Verify frozen dependency inputs
         run: python3 devtools/release/release.py freeze check
