@@ -63,6 +63,7 @@ from synadia_ai.agents import (
     StatusChunk,
     TraceOptions,
     TraceScope,
+    active_trace,
     bind_active_trace,
     decode,
     format_sender,
@@ -172,6 +173,25 @@ class PromptStream:
         self._request = request
         self._nc = nc
         self._sender = sender
+
+    def trace_headers(self) -> dict[str, str]:
+        """Headers for every model request this execution issues.
+
+        An agent stamps these on each completion request so the model
+        proxy files the call under the right thread and tree without
+        seeing any NATS traffic. Hierarchy is the edge records' job, so
+        the proxy needs no parent or tool-call header.
+
+        ``{}`` when the prompt was untraced, so harness code needs no
+        plumbing and degrades to nothing.
+        """
+        scope = active_trace()
+        if scope is None:
+            return {}
+        return {
+            "X-Synadia-Thread-ID": scope.thread_id,
+            "X-Synadia-Root-ID": scope.root_id,
+        }
 
     @property
     def sender(self) -> SenderInfo | None:
