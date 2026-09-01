@@ -106,9 +106,9 @@ merging shared-branch feature work; complete the remaining operational items bef
       enforcement points, and package-specific exception syntax. Do not proceed to registry
       publication based on the assumed seven-day value. This is a pre-publication input, not a
       blocker for integration implementation, clean staging tooling, or local artifact rehearsal.
-- [ ] Complete the package/release DAG, including internal `file:` edges, published headless
+- [x] Complete the package/release DAG, including internal `file:` edges, published headless
       examples, external integrations, and private examples used as release evidence.
-- [ ] Replace dirty-tree or rebuild-on-publish flows with the clean, build-once artifact process in
+- [x] Replace dirty-tree or rebuild-on-publish flows with the clean, build-once artifact process in
       this roadmap.
 - No in-scope SDK, integration, example, or external gate may be omitted by an implementer. A scope
   change requires explicit user approval and a roadmap update.
@@ -464,7 +464,7 @@ Any artifact-byte change requires a new version and age clock.
 
 - [ ] Branch-development CI proves all integrations compile and run against the coordinated SDK
       source commit before candidates exist.
-- [ ] Artifact-rehearsal CI proves the same integrations against the exact locally packed SDK bytes.
+- [x] Artifact-rehearsal CI proves the same integrations against the exact locally packed SDK bytes.
 - [ ] Registry-aging CI proves integrations against exact registry SDK versions with no local,
       workspace, Git, or editable-source fallback.
 - [ ] Link the source commit, local artifact digests, registry digests, and integration locks here or
@@ -474,20 +474,20 @@ Any artifact-byte change requires a new version and age clock.
 
 ### Freeze the complete graph
 
-- [ ] Inventory every deployable manifest, lock, platform, architecture, release action, build tool,
+- [x] Inventory every deployable manifest, lock, platform, architecture, release action, build tool,
       and internal dependency edge. Include Grok-to-ACP and the published headless packages.
 - [ ] Classify packages without a committed lock as non-deployable or add and enforce a lock.
-- [ ] Remove or explicitly constrain mutable `latest`, `*`, empty peer ranges, unlocked installs,
+- [x] Remove or explicitly constrain mutable `latest`, `*`, empty peer ranges, unlocked installs,
       runtime installs, and local/editable sources from release proof.
 - [ ] Generate the pre-release dependency inventory/SBOM with names, versions, hashes, licenses,
       and source registries.
-- [ ] Snapshot and freeze approved external packages and release/build inputs now.
+- [x] Snapshot and freeze approved external packages and release/build inputs now.
 - [ ] After tracing lands, review only intentional additions and record the final graph; reject
       unrelated updates.
 - [ ] Pause dependency-update merges and preserve old locks/artifacts as rollback baseline.
-- [ ] Record dependency-bot configuration and ensure it cannot bypass the rollout freeze
+- [x] Record dependency-bot configuration and ensure it cannot bypass the rollout freeze
       through a workflow or configuration outside the expected directory.
-- [ ] Relocate or delete `client-sdk/python/.github/dependabot.yml` and `CODEOWNERS`; GitHub ignores
+- [x] Relocate or delete `client-sdk/python/.github/dependabot.yml` and `CODEOWNERS`; GitHub ignores
       nested `.github` policy files, so there is currently no active dependency bot or ownership
       gate from those files.
 - [ ] Define whether the freeze includes downstream deployment repositories and record their SHAs.
@@ -531,7 +531,7 @@ published artifacts.
   ACP, Grok, Codex, OpenCode, Eve, and Flue were absent from npm at audit time, but registry and tag
   uniqueness must be queried again immediately before versions are finalized.
 
-- [ ] Replace the misleading package checks above with clean staged-manifest validation and
+- [x] Supersede the misleading package checks above with clean staged-manifest validation and
       artifact-only installation of the exact packed bytes.
 - [ ] Close every missing/stale-lock, mutable-direct-input, artifact-allowlist, and version-collision
       item from this snapshot before registry publication.
@@ -567,26 +567,26 @@ Fallback, only if a scoped mechanism is unavailable:
 
 ### Build and validate once
 
-- [ ] Replace `devtools/devmode.sh off` with a deterministic staging-directory release transform
+- [x] Replace `devtools/devmode.sh off` with a deterministic staging-directory release transform
       that covers every TypeScript internal edge, emits exact versions, and never mutates the source
       tree. The current tree is already mixed between local and registry specifications.
-- [ ] Add the equivalent Python staging flow: remove `[tool.uv.sources]`/editable overrides only in
+- [x] Add the equivalent Python staging flow: remove `[tool.uv.sources]`/editable overrides only in
       staged release inputs, resolve exact registry SDK versions, and produce immutable locks for
       DeerFlow, the identity workbook, and every other Python consumer.
-- [ ] Make one graph validator cover both ecosystems and fail on any release artifact containing a
+- [x] Make one graph validator cover both ecosystems and fail on any release artifact containing a
       `file:`, workspace, Git, path, editable, missing-lock, `latest`, empty, or wildcard internal
       dependency that is not explicitly allowed.
 - [ ] Create the release/version changes as a clean, reviewed commit. Do not publish from manifests
       transiently rewritten by a developer helper.
 - [ ] Validate the complete package graph so no runtime `file:`, workspace-only, editable, or stale
       internal constraint can escape.
-- [ ] Build/pack once from the recorded commit, hash the artifacts, and hand the same bytes through
+- [x] Build/pack once from the recorded commit, hash the artifacts, and hand the same bytes through
       package inspection, tests, approval, and publication. A publish job must not rebuild them.
-- [ ] Install and run all relevant tests from those artifacts in clean environments with no source
+- [x] Install and run all relevant tests from those artifacts in clean environments with no source
       tree resolution.
 - [ ] Produce reviewed package manifests, SBOMs, checksums, and registry-supported provenance or
       attestations. Record any platform that cannot supply the expected provenance.
-- [ ] Pin or otherwise approve mutable release infrastructure and verify downloaded tools by
+- [x] Pin or otherwise approve mutable release infrastructure and verify downloaded tools by
       checksum/signature.
 - [ ] Verify npm publisher identity, 2FA/automation policy, access level, provenance support, and
       the explicit non-default publish tag.

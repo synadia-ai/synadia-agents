@@ -18,7 +18,7 @@
       "role": "publishable",
       "layer": 1,
       "lock": "client-sdk/typescript/bun.lock",
-      "lock_phase": "source",
+      "lock_phase": "registry",
       "internal_edges": [],
       "stage_remove": ["devDependencies:@synadia-ai/agent-service"],
       "build": ["npm", "run", "build"],

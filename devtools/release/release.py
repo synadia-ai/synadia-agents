@@ -1023,10 +1023,25 @@ def artifact_record(stage: Path, files: list[Path], kind: str) -> dict[str, Any]
     }
 
 
-def build_npm(stage: Path, plan_path: Path, output: Path) -> None:
-    validate_stage(stage, plan_path, require_registry_locks=False)
+def build_npm(
+    stage: Path,
+    plan_path: Path,
+    output: Path,
+    package_ids: set[str] | None = None,
+) -> None:
     plan = read_json(plan_path)
     marker = read_json(stage / STAGE_MARKER)
+    phase = marker["phase"]
+    if phase == "rehearsal" and package_ids is not None:
+        fail("rehearsal npm builds always exercise the complete artifact graph")
+    if phase == "candidate" and (package_ids is None or len(package_ids) != 1):
+        fail("candidate npm builds require exactly one --package-id")
+    validate_stage(
+        stage,
+        plan_path,
+        require_registry_locks=phase == "candidate",
+        required_lock_ids=package_ids,
+    )
     ensure_empty_output(output)
     env = os.environ.copy()
     env["SOURCE_DATE_EPOCH"] = str(marker["source_epoch"])
@@ -1035,29 +1050,29 @@ def build_npm(stage: Path, plan_path: Path, output: Path) -> None:
     env["npm_config_package_lock"] = "false"
     tarballs: dict[str, Path] = {}
 
-    entries = sorted(
-        (entry for entry in plan["npm"] if entry["role"] == "publishable"),
-        key=lambda item: (item["layer"], item["id"]),
-    )
+    entries = select_publishable_entries(plan, "npm", package_ids)
     entries_by_name = {entry["name"]: entry for entry in entries}
     for entry in entries:
         directory = stage / package_dir(entry)
         manifest_path = directory / "package.json"
         manifest_before_install = manifest_path.read_bytes()
-        internal = [
-            str(tarballs[name]) for name in internal_closure(entry, entries_by_name)
-        ]
-        install = [
-            "npm",
-            "install",
-            "--no-save",
-            "--ignore-scripts",
-            "--no-package-lock",
-            "--no-audit",
-            "--no-fund",
-            "--include=dev",
-            *internal,
-        ]
+        if phase == "candidate":
+            install = ["bun", "install", "--frozen-lockfile", "--ignore-scripts"]
+        else:
+            internal = [
+                str(tarballs[name]) for name in internal_closure(entry, entries_by_name)
+            ]
+            install = [
+                "npm",
+                "install",
+                "--no-save",
+                "--ignore-scripts",
+                "--no-package-lock",
+                "--no-audit",
+                "--no-fund",
+                "--include=dev",
+                *internal,
+            ]
         run(install, cwd=directory, env=env)
         if manifest_path.read_bytes() != manifest_before_install:
             fail(f"dependency install mutated staged manifest for {entry['id']}")
@@ -1222,9 +1237,18 @@ def build_python(
     output: Path,
     package_ids: set[str] | None = None,
 ) -> None:
-    validate_stage(stage, plan_path, require_registry_locks=False)
     plan = read_json(plan_path)
     marker = read_json(stage / STAGE_MARKER)
+    if marker["phase"] == "candidate" and (
+        package_ids is None or len(package_ids) != 1
+    ):
+        fail("candidate Python builds require exactly one --package-id")
+    validate_stage(
+        stage,
+        plan_path,
+        require_registry_locks=marker["phase"] == "candidate",
+        required_lock_ids=package_ids,
+    )
     ensure_empty_output(output)
     env = os.environ.copy()
     env["SOURCE_DATE_EPOCH"] = str(marker["source_epoch"])
@@ -1420,6 +1444,7 @@ def parser() -> argparse.ArgumentParser:
     npm = commands.add_parser("build-npm")
     npm.add_argument("--stage", type=Path, required=True)
     npm.add_argument("--output", type=Path, required=True)
+    npm.add_argument("--package-id", action="append")
 
     python = commands.add_parser("build-python")
     python.add_argument("--stage", type=Path, required=True)
@@ -1474,7 +1499,12 @@ def main(argv: list[str] | None = None) -> int:
                 repo, plan_path, args.baseline.resolve(), write=args.action == "write"
             )
         elif args.command == "build-npm":
-            build_npm(args.stage.resolve(), plan_path, args.output.resolve())
+            build_npm(
+                args.stage.resolve(),
+                plan_path,
+                args.output.resolve(),
+                set(args.package_id) if args.package_id is not None else None,
+            )
         elif args.command == "build-python":
             build_python(
                 args.stage.resolve(),

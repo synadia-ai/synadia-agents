@@ -20,6 +20,9 @@ It never rewrites the checkout and it never publishes on its own.
   explicit reviewed change.
 - `python-build-constraints.txt` freezes and hashes the isolated Python build
   backend.
+- `.github/workflows/release-rehearsal.yml` runs both complete artifact graphs
+  for every rollout PR that changes a release input. It uploads evidence only;
+  it has no registry credentials or publication step.
 
 ## Rehearsal
 
@@ -47,7 +50,15 @@ python3 devtools/release/release.py build-npm \
   --stage "$stage" --output "$(dirname "$stage")/npm-artifacts"
 python3 devtools/release/release.py build-python \
   --stage "$stage" --output "$(dirname "$stage")/python-artifacts"
+python3 devtools/release/release.py verify-python-artifacts \
+  --record "$(dirname "$stage")/python-artifacts/artifacts.json" \
+  --artifacts "$(dirname "$stage")/python-artifacts"
 ```
+
+The artifact inspectors enforce npm file allowlists and executable bin modes,
+strict Python sdist roots, package metadata name/version consistency, required
+licenses, the public-terminology boundary, and a seed-shaped secret check.
+Python sdists are built first and wheels are built from those sdists.
 
 Rehearsal proves exact local artifact compatibility. The private
 `open-agent-vercel` evidence project explicitly retains its private
@@ -87,8 +98,39 @@ sources, unresolved cooldown configuration, and non-exact internal edges:
 
 ```sh
 python3 devtools/release/release.py publication-preflight \
-  --stage /absolute/path/to/candidate-stage
+  --stage /absolute/path/to/candidate-stage \
+  --package-id py-caller
 ```
+
+Use the package IDs and topological layers in `plan.json`. Preflight may be
+scoped to the package being uploaded, because downstream registry locks cannot
+exist until their exact prerequisites have been uploaded. Omitting
+`--package-id` validates every final lock.
+
+Candidate artifact builds are deliberately one package at a time. Unlike the
+all-local rehearsal, npm candidate builds require the selected package's
+registry-only lock and run `bun install --frozen-lockfile --ignore-scripts`
+before building:
+
+```sh
+python3 devtools/release/release.py build-npm \
+  --stage /absolute/path/to/candidate-stage \
+  --package-id ts-caller \
+  --output /absolute/path/to/ts-caller-artifacts
+```
+
+The Python tag workflows use the same package IDs (`py-caller`, `py-host`, and
+`deerflow`). Each workflow source-tests all supported Python versions, builds
+one sdist and one wheel exactly once, uploads them, downloads and install-tests
+both forms, then downloads and digest-checks the same files in the trusted
+publishing job. The publishing job never checks out a different commit and
+never runs a build command.
+
+The global Python cutoff continues to constrain external dependencies. Names in
+`python_internal_exclusions` receive only a package-scoped date override, and
+only when they are an internal edge of the package under test. Remove those
+names before exit-aging proof. npm's corresponding scoped exception must be
+filled from the real enforcing policy rather than inferred here.
 
 Bun's minimum-age setting applies only during new resolution; it does not
 re-check versions already present in a lock. Therefore exit-aging proof must
