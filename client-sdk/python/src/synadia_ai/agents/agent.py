@@ -122,6 +122,19 @@ def random_thread_id() -> str:
     return secrets.token_hex(THREAD_ID_HEX_LEN // 2)
 
 
+TOOL_CALL_ID_MAX = 256
+
+
+def valid_tool_call_id(tool_call_id: str) -> bool:
+    # This isn't intended as strict validation. It's just a basic
+    # pass to avoid obvious garbage gets into the tracing system.
+    return 0 < len(tool_call_id) <= TOOL_CALL_ID_MAX
+
+
+def _emit_edge_record(thread_id: str, tool_call_id: str | None) -> None:
+    pass
+
+
 class Agent:
     """A live handle returned by :meth:`Agents.discover`.
 
@@ -265,6 +278,7 @@ class Agent:
         max_wait_s: float | None = None,
         subject: str | None = None,
         sub: str | None = None,
+        tool_call_id: str | None = None,
     ) -> AsyncIterator[StreamMessage]:
         """Send a prompt and return an async iterator of streamed messages.
 
@@ -293,6 +307,9 @@ class Agent:
         :class:`ValueError` synchronously — there is no "no limit"
         sentinel, since an unbounded prompt stream is the exact failure
         mode this ceiling exists to prevent.
+
+        ``tool_call_id`` is the ID of the model tool call this prompt
+        serves, used to label the trace edge when tracing is enabled.
 
         §5.4 pre-publish validation runs synchronously before any wire I/O.
         Failures raise:
@@ -355,8 +372,13 @@ class Agent:
                 f"max_wait_s must be > 0 (got {max_wait_s!r}); pass None to use the default."
             )
 
+        # Tracing is best-effort and shouldn't stop an agent from
+        # sending out a prompt. Invalid tools are just ignored.
+        if tool_call_id is not None and not valid_tool_call_id(tool_call_id):
+            tool_call_id = None
+
         # If tracing is enabled, mint a thread ID for this prompt
-        thread_id = None
+        thread_id: str | None = None
         if self._trace:
             thread_id = random_thread_id()
 
@@ -382,6 +404,11 @@ class Agent:
                 attachments=list(attachments) if attachments else None,
                 thread_id=thread_id,
             )
+
+        # We do this after constructing the envelope to allow
+        # overriding fields
+        if self._trace and thread_id is not None:
+            _emit_edge_record(thread_id, tool_call_id)
 
         # §5.4: local validation happens synchronously BEFORE any wire I/O.
         # Raising here means callers don't even allocate a reply subject.
