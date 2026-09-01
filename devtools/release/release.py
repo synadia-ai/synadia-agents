@@ -1258,6 +1258,11 @@ def build_python(
         if len(new_wheels) != 1:
             fail(f"expected one new wheel for {entry['id']}, found {new_wheels}")
         by_id[entry["id"]] = [sdist, new_wheels[0]]
+    uv_gitignore = output / ".gitignore"
+    if uv_gitignore.exists():
+        if uv_gitignore.read_bytes() != b"*":
+            fail(f"unexpected uv output marker content: {uv_gitignore}")
+        uv_gitignore.unlink()
     files = [*output.glob("*.whl"), *output.glob("*.tar.gz")]
     for entry in entries:
         for artifact in by_id[entry["id"]]:
