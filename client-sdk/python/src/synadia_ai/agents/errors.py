@@ -230,6 +230,8 @@ class SenderSignatureRequiredError(IdentityError):
             "identity.signer is configured"
         )
         self.subject = subject
+        self.code = 401
+        self.description = "signature required"
 
 
 class SenderVerificationError(IdentityError):

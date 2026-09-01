@@ -234,6 +234,24 @@ async def test_sign_emits_second_precision_ts_nuid_nonce_and_86_char_sig(
     assert len(h.nonce) == NUID_LENGTH
     assert len(h.sig) == SIGNATURE_LENGTH
     assert h.sub == SUBJECT
+    rendered = repr(h)
+    assert h.nonce not in rendered
+    assert h.sig not in rendered
+    assert "nonce=" not in rendered
+    assert "sig=" not in rendered
+    verified = verify_sender_header(h, SUBJECT, PAYLOAD, mode="live")
+    assert isinstance(verified, VerifiedSender)
+    assert h.nonce not in repr(verified)
+    assert h.sig not in repr(verified)
+    log_view = h.to_log_dict()
+    assert log_view["nonce"] == "[redacted]"
+    assert log_view["sig"] == "[redacted]"
+    assert h.nonce not in json.dumps(log_view)
+    assert h.sig not in json.dumps(log_view)
+    # Explicit wire serialization is the only SDK-provided representation
+    # that contains the proof fields.
+    assert h.nonce in serialize_sender_header(h)
+    assert h.sig in serialize_sender_header(h)
     other = await _signed(alice, alice_id)
     assert other.nonce != h.nonce  # fresh nonce per call
 
@@ -314,8 +332,13 @@ async def test_rejects_bad_v(
 
 
 def test_rejects_non_json_non_object_and_oversize(alice: NkeySigner) -> None:
-    with pytest.raises(MalformedSenderHeaderError, match="not valid JSON"):
-        parse_sender_header("not json")
+    secret = '"nonce":"nonce-secret","sig":"signature-secret"'
+    with pytest.raises(MalformedSenderHeaderError, match="not valid JSON") as exc_info:
+        parse_sender_header("{" + secret)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert "nonce-secret" not in str(exc_info.value)
+    assert "signature-secret" not in repr(exc_info.value)
     with pytest.raises(MalformedSenderHeaderError, match="not a JSON object"):
         parse_sender_header("[1]")
     big = f'{{"v":1,"account":"$G","user":"{alice.public_key}","pad":"{"x" * 2100}"}}'

@@ -352,15 +352,14 @@ class SenderGate:
         if self._accept_sender is not None:
             try:
                 accepted = await _call_hook(self._accept_sender, sender)
-            except Exception as exc:
+            except Exception:
                 # Hook exceptions are application-controlled and may contain
                 # credentials, header values, or other secrets. Log only the
-                # exception type; neither its message nor traceback is safe.
+                # a generic marker; neither its type, message, nor traceback is safe.
                 log.error(
-                    "accept_sender hook raised on %s (sender %s; error %s); request not served",
+                    "accept_sender hook raised on %s (sender %s); request not served",
                     msg.subject,
                     format_sender(sender),
-                    type(exc).__name__,
                 )
                 # The generic text: the wire must not disclose that a hook exists.
                 return SenderAdmission(

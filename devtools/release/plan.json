@@ -22,7 +22,9 @@
       "internal_edges": [],
       "stage_remove": ["devDependencies:@synadia-ai/agent-service"],
       "build": ["npm", "run", "build"],
-      "import_smoke": ["@synadia-ai/agents", "@synadia-ai/agents/errors"]
+      "import_smoke": ["@synadia-ai/agents", "@synadia-ai/agents/errors"],
+      "node_import_smoke": ["@synadia-ai/agents", "@synadia-ai/agents/errors"],
+      "node_require_smoke": ["@synadia-ai/agents", "@synadia-ai/agents/errors"]
     },
     {
       "id": "ts-host",
@@ -34,7 +36,9 @@
       "lock_phase": "registry",
       "internal_edges": ["@synadia-ai/agents"],
       "build": ["npm", "run", "build"],
-      "import_smoke": ["@synadia-ai/agent-service", "@synadia-ai/agent-service/testing"]
+      "import_smoke": ["@synadia-ai/agent-service", "@synadia-ai/agent-service/testing"],
+      "node_import_smoke": ["@synadia-ai/agent-service", "@synadia-ai/agent-service/testing"],
+      "node_require_smoke": ["@synadia-ai/agent-service", "@synadia-ai/agent-service/testing"]
     },
     {
       "id": "acp",

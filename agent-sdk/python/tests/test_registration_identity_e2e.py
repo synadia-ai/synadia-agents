@@ -27,7 +27,7 @@ from synadia_ai.agents import (
     signer_from_seed,
     verify_agent_id,
 )
-from synadia_ai.agents.identity import IDENTITY_METADATA_KEYS
+from synadia_ai.agents.identity import IDENTITY_METADATA_KEYS, base64url_encode
 
 from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
 
@@ -40,6 +40,16 @@ if TYPE_CHECKING:
 AGENT = "reg-id"
 OWNER = "pytest-reg"
 SERVICE_LOGGER = "synadia_ai.agent_service.service"
+OTHER_ACCOUNT = "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL"
+
+
+def _fake_jwt(payload: dict[str, object]) -> str:
+    def b64(value: object) -> str:
+        return base64url_encode(json.dumps(value, separators=(",", ":")).encode())
+
+    header = b64({"typ": "JWT", "alg": "ed25519-nkey"})
+    signature = base64url_encode(bytes(64))
+    return f"{header}.{b64(payload)}.{signature}"
 
 
 async def _echo(envelope: Envelope, stream: PromptStream) -> None:
@@ -203,6 +213,44 @@ async def test_a_foreign_signer_makes_start_raise_identity_mismatch(
     with pytest.raises(IdentityMismatchError):
         await service.start()
     assert service.identity is None
+
+
+async def test_same_user_credentials_from_a_different_account_are_rejected(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    identity_keys: dict[str, NkeyUser],
+) -> None:
+    host = await connect_nkey_user(nats_server_nkey, "alice")
+    signer = signer_from_seed(
+        identity_keys["alice"].seed,
+        _fake_jwt(
+            {
+                "sub": identity_keys["alice"].public,
+                "iss": OTHER_ACCOUNT,
+                "nats": {"type": "user"},
+            }
+        ),
+    )
+    service = AgentService(
+        agent=AGENT,
+        owner=OWNER,
+        session_name="same-user-different-account",
+        nc=host,
+        heartbeat_interval_s=1,
+        identity=ServiceIdentity(signer=signer),
+    )
+    service.on_prompt(_echo)
+    try:
+        with pytest.raises(IdentityMismatchError) as exc_info:
+            await service.start()
+        error = exc_info.value
+        assert error.signer_public_key == identity_keys["alice"].public
+        assert error.identity_user == identity_keys["alice"].public
+        assert error.identity_account == "$G"
+        assert error.signer_account == OTHER_ACCOUNT
+        assert service.identity is None
+    finally:
+        signer.wipe()
 
 
 async def test_t0_omitted_identity_starts_without_lookup_or_identity_metadata(

@@ -139,18 +139,14 @@ What to know:
 - **Only the incoming request is signed.** Prompt responses and mid-stream
   query replies are not independently authenticated; do not attribute a
   query reply to the original prompt sender.
-- **`account_token_position`** is for a service behind an export that
-  inserts the caller's account token (`account_token_position`, the
-  ScratchPad shape): the receiver checks the token against the header's
-  `account` and accepts `sub` with the token removed. The inserted token
-  is a server stamp only on a **closed** endpoint. Note that
-  `AgentService` hosts five-token `agents.{verb}.a.o.n` subjects, which
-  such an export turns into six-token arrivals its subscription never
-  sees — the option is validated and honoured by the classifier, but
-  hosting *behind* such an export today means a hand-rolled service on
-  the wildcard subject calling `verify_sender_header(…,
-  account_token_position=…)` or a `SenderGate` (see
-  `test_signed_wrappers_e2e.py` in the client package).
+- **Account-token insertion requires a hand-rolled wildcard service.** An
+  export with `account_token_position` turns AgentService's fixed
+  five-token subject into a six-token arrival its subscription cannot
+  receive, so AgentService deliberately exposes no such option. Use
+  `SenderGate(account_token_position=…)` or
+  `verify_sender_header(…, account_token_position=…)` on the wildcard
+  subscription; the inserted token is a server stamp only on a **closed**
+  endpoint (see `test_signed_wrappers_e2e.py` in the client package).
 - **Cross-account callers** need the deployment's help: export the prompt
   subject with `response_type: stream` (a response is many messages —
   without it every reply after the first is dropped silently), export
@@ -173,8 +169,8 @@ What to know:
   server's. With it on, a verified header whose signed `account` /
   `user` disagree with a present stamp is refused (`401`), a present but
   unparseable stamp is refused, an absent stamp is compared to nothing,
-  and agreement on `acc` — or the `account_token_position` cross-check —
-  surfaces as `stream.sender.account_attested is True` (`format_sender`
+  and agreement on `acc` surfaces as
+  `stream.sender.account_attested is True` (`format_sender`
   → `(verified)`). Claims are never cross-checked. On an open endpoint
   (the typical NGS account where peers call each other) leave it off: a
   peer can write that header, and the mode would attest a forgery.

@@ -173,6 +173,9 @@ def test_creds_snapshot_drives_callbacks_and_optional_public_signer(tmp_path: Pa
     bundle.wipe()
     with pytest.raises(IdentityError, match="wiped"):
         signature_cb("after-close")
+    with pytest.raises(IdentityError, match="wiped"):
+        jwt_cb()
+    assert bundle.signer.jwt is None
 
     off = resolve_nats_connection_bundle(url="nats://localhost:4222", creds=bob_source)
     assert off.signer is None
@@ -436,6 +439,9 @@ async def test_creds_callbacks_survive_file_rotation_and_real_reconnect(tmp_path
                     connected_url = nc.connected_url
                     assert connected_url is not None and connected_url.port == second.port
                     await nc.flush()
+                    assert (await agents.self_id()).user == bundle.signer.public_key
+                    signed = await agents.sign_sender("events.reconnected", b"after reconnect")
+                    assert '"sig"' in signed
                 finally:
                     await agents.close()
             finally:
@@ -447,6 +453,56 @@ async def test_creds_callbacks_survive_file_rotation_and_real_reconnect(tmp_path
             second.stop()
     finally:
         first.stop()
+
+
+async def test_credentials_rotate_only_after_old_connection_closes_and_bundle_wipes(
+    tmp_path: Path,
+) -> None:
+    if find_nats_server() is None:
+        pytest.skip("nats-server not on PATH — connection-bundle rotation test skipped")
+
+    server = start_server(tmp_path / "logs", config_path=identity_fixture("operator/operator.conf"))
+    creds = tmp_path / "current.creds"
+    try:
+        creds.write_text(
+            identity_fixture("operator/alice.creds").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        alice_bundle = resolve_nats_connection_bundle(
+            url=server.url, creds=creds, identity="signed"
+        )
+        alice_expected = identity_from_jwt(alice_bundle.signer.jwt or "")
+        alice_nc = await nats.connect(**alice_bundle.connection_options)
+        alice_agents = Agents(nc=alice_nc, identity=Identity(signer=alice_bundle.signer))
+        assert await alice_agents.self_id() == alice_expected
+        await alice_agents.close()
+        await alice_nc.close()
+        alice_bundle.wipe()
+        assert alice_bundle.signer.jwt is None
+        assert "user_jwt_cb" not in alice_bundle.connection_options
+        with pytest.raises(IdentityError, match="wiped"):
+            alice_bundle.signer.sign(b"retired")
+
+        creds.write_text(
+            identity_fixture("operator/bob.creds").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        bob_bundle = resolve_nats_connection_bundle(url=server.url, creds=creds, identity="signed")
+        bob_expected = identity_from_jwt(bob_bundle.signer.jwt or "")
+        bob_nc = await nats.connect(**bob_bundle.connection_options)
+        bob_agents = Agents(nc=bob_nc, identity=Identity(signer=bob_bundle.signer))
+        try:
+            assert await bob_agents.self_id() == bob_expected
+            assert bob_expected != alice_expected
+            signed = await bob_agents.sign_sender("events.rotated", b"after rotation")
+            assert '"sig"' in signed
+        finally:
+            await bob_agents.close()
+            await bob_nc.close()
+            bob_bundle.wipe()
+        assert bob_bundle.signer.jwt is None
+    finally:
+        server.stop()
 
 
 def test_public_bundle_type_is_exported() -> None:

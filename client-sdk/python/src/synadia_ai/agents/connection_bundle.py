@@ -268,10 +268,12 @@ def _creds_connection_options(signer: NkeySigner) -> dict[str, Any]:
     if jwt is None:  # pragma: no cover - internal invariant
         signer.wipe()
         raise IdentityError("credentials snapshot did not contain a user JWT")
-    jwt_bytes = jwt.encode("utf-8")
 
     def user_jwt_cb() -> bytes:
-        return jwt_bytes
+        current = signer.jwt
+        if current is None:
+            raise IdentityError("credentials snapshot has been wiped")
+        return current.encode("utf-8")
 
     def signature_cb(nonce: str) -> bytes:
         return base64.b64encode(signer.sign(nonce.encode("utf-8")))

@@ -82,7 +82,10 @@ async def test_status_carries_a_verified_header_over_an_empty_payload(
     assert seen.sender.id == AgentId.new("$G", alice.public)
     assert seen.sender.header.sub == STATUS_SUBJECT
     assert seen.sender.name == "probe"
-    recorder.write_json("status.json", {"header": seen.header, "sha256_empty": SHA256_EMPTY_HEX})
+    recorder.write_json(
+        "status.json",
+        {"signed_header_present": seen.header is not None, "sha256_empty": SHA256_EMPTY_HEX},
+    )
     # Without a signer: a claim; the probe is answered all the same.
     hb = await Agent(caller, _info(), identity=Identity()).status()
     assert hb.instance_id == "inst-42"

@@ -94,6 +94,19 @@ describe("signerFromSeed", () => {
     expect(() => s.sign(enc.encode("x"))).toThrow(/wiped/);
   });
 
+  it("drops a credentials JWT when wiped", () => {
+    const jwt = fakeJwt({
+      sub: user.getPublicKey(),
+      iss: account.getPublicKey(),
+      nats: { type: "user" },
+    });
+    const s = signerFromCreds(credsText(jwt, seed));
+    expect(s.jwt).toBe(jwt);
+    s.wipe?.();
+    expect(s.jwt).toBeUndefined();
+    expect(() => s.sign(enc.encode("x"))).toThrow(/wiped/);
+  });
+
   it("wipes an owned canonical seed when JWT validation fails", () => {
     const canonicalSeed = normalizeUserSeed(seed);
     expect(() => signerFromCanonicalSeedAndJwt(canonicalSeed, "malformed-jwt")).toThrow(

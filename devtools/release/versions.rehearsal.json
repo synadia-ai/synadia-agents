@@ -14,8 +14,8 @@
     "@synadia-ai/nats-pi-headless": "0.5.6-rehearsal.0",
     "@synadia-ai/grok-nats-channel": "0.1.0-rehearsal.0",
     "claude-channel-nats": "0.5.2-rehearsal.0",
-    "synadia-ai-agents": "0.8.0.dev0",
-    "synadia-ai-agent-service": "0.5.0.dev0",
-    "synadia-ai-nats-deerflow-channel": "0.3.0.dev0"
+    "synadia-ai-agents": "0.8.0+rehearsal.0",
+    "synadia-ai-agent-service": "0.5.0+rehearsal.0",
+    "synadia-ai-nats-deerflow-channel": "0.3.0+rehearsal.0"
   }
 }

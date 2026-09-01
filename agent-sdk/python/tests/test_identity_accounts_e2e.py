@@ -11,10 +11,13 @@ for the disagreeing field, which never reaches the wire.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import nats
 import pytest
 from synadia_ai.agents import (
     AgentId,
@@ -33,6 +36,7 @@ from synadia_ai.agents import (
 )
 
 from synadia_ai.agent_service import AgentService, PromptStream, ServiceIdentity
+from tests.harness.nats_server import find_nats_server, identity_fixture, start_server
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -269,3 +273,59 @@ async def test_without_operator_attested_the_stamp_is_never_read(
         assert isinstance(s, VerifiedSender) and s.id == alice_id and not s.account_attested
     finally:
         await host.stop()
+
+
+async def test_closed_import_attests_caller_and_rejects_same_account_direct_publish(
+    tmp_path: Path,
+    identity_keys: dict[str, NkeyUser],
+) -> None:
+    if find_nats_server() is None:
+        pytest.skip("nats-server not on PATH — closed-import test skipped")
+
+    server = start_server(tmp_path / "logs", config_path=identity_fixture("closed-import.conf"))
+    errors: list[Exception] = []
+
+    async def error_cb(error: Exception) -> None:
+        errors.append(error)
+
+    host_nc = await nats.connect(server.url, nkeys_seed_str=identity_keys["carol"].seed)
+    attacker_nc = await nats.connect(
+        server.url,
+        nkeys_seed_str=identity_keys["alice"].seed,
+        error_cb=error_cb,
+    )
+    caller_nc = await nats.connect(server.url, nkeys_seed_str=identity_keys["bob"].seed)
+    service, seen = await _host(
+        host_nc,
+        agent="closed-svc",
+        session_name="host",
+        signer_seed=identity_keys["carol"].seed,
+        operator_attested=True,
+    )
+    agents = Agents(
+        nc=caller_nc,
+        identity=Identity(signer=signer_from_seed(identity_keys["bob"].seed)),
+    )
+    try:
+        found = await agents.discover(timeout=1.0, filter=DiscoverFilter(agent="closed-svc"))
+        assert len(found) == 1
+        await _drain(found[0].prompt("hi"))
+        sender = seen.senders[-1]
+        assert isinstance(sender, VerifiedSender)
+        assert sender.id == AgentId.new("APP", identity_keys["bob"].public)
+        assert sender.account_attested is True
+
+        await attacker_nc.publish(service.subject.prompt, PAYLOAD)
+        await attacker_nc.flush()
+        deadline = asyncio.get_running_loop().time() + 1.0
+        while not errors and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        assert errors
+        assert "permissions violation for publish" in str(errors[0]).lower()
+    finally:
+        await agents.close()
+        await service.stop()
+        await host_nc.close()
+        await attacker_nc.close()
+        await caller_nc.close()
+        server.stop()

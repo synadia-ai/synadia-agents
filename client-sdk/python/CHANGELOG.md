@@ -10,6 +10,13 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
+- `SenderSignatureRequiredError` exposes stable `code` (`401`),
+  `description` (`"signature required"`), and `subject` attributes for
+  handling local signed-target preflight failures without parsing a message.
+- `AgentSenderHeader.to_log_dict()` provides a structured-log view with
+  `nonce` and `sig` redacted. Those proof fields remain directly readable for
+  signing and wire serialization; generic dataclass reflection such as
+  `dataclasses.asdict()` must not be used for logging this type.
 - `resolve_nats_connection_bundle(...)` snapshots a selected `nats` CLI
   context or direct URL plus `.creds` / nkey connection source exactly once.
   `identity="off"` is the default and exposes no signer;

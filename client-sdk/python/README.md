@@ -165,8 +165,10 @@ What to know:
 - An endpoint that
   declares `min_sender_trust: signed` fails early with
   `SenderSignatureRequiredError` at call time when no signer is
-  configured, and with the `self_id()` error on the first iteration when
-  the identity is unavailable.
+  configured. The error exposes stable `code` (`401`), `description`
+  (`"signature required"`), and `subject` attributes, so callers do not
+  need to parse its message. With a signer, an unavailable identity raises
+  the `self_id()` error on the first iteration.
 - **Cost.** Each identity-bearing request performs a live
   `$SYS.REQ.USER.INFO` lookup (2 s timeout at most; a permission violation
   fails at once), because nats-py exposes no reconnect generation that

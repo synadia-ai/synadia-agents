@@ -189,6 +189,67 @@ class ValidationTests(unittest.TestCase):
         entry["smoke_waiver"] = "host-loaded extension"
         release.validate_plan(plan)
 
+    def test_npm_sdk_artifact_smoke_covers_bun_node_esm_and_node_cjs(self) -> None:
+        entries = [
+            {
+                "import_smoke": ["example-sdk"],
+                "node_import_smoke": ["example-sdk"],
+                "node_require_smoke": ["example-sdk"],
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            commands: list[list[str]] = []
+
+            def capture(command: list[str], **_: object) -> str:
+                commands.append(command)
+                return ""
+
+            with mock.patch.object(release, "run", side_effect=capture):
+                release.smoke_npm_imports(entries, Path(temporary), {})
+
+        self.assertEqual(
+            commands,
+            [
+                ["bun", "-e", 'await import("example-sdk")'],
+                [
+                    "node",
+                    "--input-type=module",
+                    "-e",
+                    'await import("example-sdk")',
+                ],
+                ["node", "-e", 'require("example-sdk")'],
+            ],
+        )
+
+    def test_identity_off_smokes_delegate_random_port_selection_to_nats(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('spawn("nats-server", ["-a", "127.0.0.1", "-p", "-1"]', source)
+        self.assertIn('["nats-server", "-a", "127.0.0.1", "-p", "-1"]', source)
+        self.assertNotIn('import { createServer } from "node:net"', source)
+        self.assertNotIn('"-p", "0"', source)
+        self.assertNotIn("probe.bind", source)
+        self.assertNotIn("server.stderr.read()", source)
+
+    def test_public_artifact_scan_rejects_seeds_jwts_tokens_and_source_paths(
+        self,
+    ) -> None:
+        jwt = (
+            b"eyJ0eXAiOiJKV1QifQ."
+            b"eyJzdWIiOiJVQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQSIsImlzcyI6IkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIn0."
+            + b"A"
+            * 64
+        )
+        samples = [
+            b"SU" + b"A" * 56,
+            jwt,
+            b"npm_" + b"a" * 32,
+            b"/home/runner/work/repo/package/src/index.ts",
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample[:20]):
+                with self.assertRaises(release.ReleaseError):
+                    release.inspect_public_text(Path("artifact.tgz"), "member", sample)
+
     def test_tampered_artifact_fails_record_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

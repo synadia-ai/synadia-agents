@@ -30,7 +30,7 @@ export interface SenderSigner {
    * The user JWT, when the signer came from a credentials file. Live
    * connection binding compares its user and account with `$SYS.REQ.USER.INFO`.
    */
-  readonly jwt?: string;
+  readonly jwt?: string | undefined;
   /** ed25519 signature over `data`. May be async (HSM / KMS signers). */
   sign(data: Uint8Array): Uint8Array | Promise<Uint8Array>;
   /** Clear the key material; later `sign()` calls fail. Optional for custom signers. */
@@ -44,13 +44,17 @@ const BEGIN_SEED_REGEX = /^-+BEGIN USER NKEY SEED-+$/;
 
 class NkeySigner implements SenderSigner {
   #kp: KeyPair | null;
+  #jwt: string | undefined;
   readonly publicKey: string;
-  readonly jwt?: string;
 
   constructor(kp: KeyPair, jwt: string | undefined) {
     this.#kp = kp;
     this.publicKey = kp.getPublicKey();
-    if (jwt !== undefined) this.jwt = jwt;
+    this.#jwt = jwt;
+  }
+
+  get jwt(): string | undefined {
+    return this.#jwt;
   }
 
   sign(data: Uint8Array): Uint8Array {
@@ -61,6 +65,7 @@ class NkeySigner implements SenderSigner {
   wipe(): void {
     this.#kp?.clear();
     this.#kp = null;
+    this.#jwt = undefined;
   }
 
   toJSON(): { publicKey: string } {
