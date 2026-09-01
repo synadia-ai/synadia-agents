@@ -943,9 +943,9 @@ def build_npm(stage: Path, plan_path: Path, output: Path) -> None:
                 env=env,
             )
         for entry in entries:
-            for binary in entry.get("bin_smoke", []):
+            for binary, arguments in entry.get("bin_smoke", {}).items():
                 run(
-                    ["bun", str(harness / "node_modules/.bin" / binary), "--help"],
+                    ["bun", str(harness / "node_modules/.bin" / binary), *arguments],
                     cwd=harness,
                     env=env,
                 )

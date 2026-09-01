@@ -47,7 +47,7 @@
       "stage_license_from": "LICENSE",
       "build": null,
       "import_smoke": ["@synadia-ai/acp-nats-channel"],
-      "bin_smoke": ["acp-agent"]
+      "bin_smoke": {"acp-agent": ["--help"]}
     },
     {
       "id": "codex",
@@ -61,7 +61,7 @@
       "stage_license_from": "LICENSE",
       "build": null,
       "import_smoke": ["@synadia-ai/codex-nats-channel"],
-      "bin_smoke": ["codex-agent"]
+      "bin_smoke": {"codex-agent": ["--help"]}
     },
     {
       "id": "opencode",
@@ -75,7 +75,7 @@
       "stage_license_from": "LICENSE",
       "build": null,
       "import_smoke": ["@synadia-ai/opencode-nats-channel", "@synadia-ai/opencode-nats-channel/opencode-plugin"],
-      "bin_smoke": ["opencode-agent"]
+      "bin_smoke": {"opencode-agent": ["help"]}
     },
     {
       "id": "eve",
@@ -88,7 +88,7 @@
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
       "stage_license_from": "LICENSE",
       "build": null,
-      "bin_smoke": ["eve-agent"]
+      "bin_smoke": {"eve-agent": ["help"]}
     },
     {
       "id": "flue",
@@ -101,7 +101,7 @@
       "internal_edges": ["@synadia-ai/agents", "@synadia-ai/agent-service"],
       "stage_license_from": "LICENSE",
       "build": null,
-      "bin_smoke": ["flue-nats-channel"]
+      "bin_smoke": {"flue-nats-channel": ["help"]}
     },
     {
       "id": "openclaw",
@@ -161,7 +161,7 @@
       "stage_license_from": "LICENSE",
       "build": null,
       "import_smoke": ["@synadia-ai/grok-nats-channel"],
-      "bin_smoke": ["grok-agent"]
+      "bin_smoke": {"grok-agent": ["help"]}
     },
     {
       "id": "claude-marketplace",
