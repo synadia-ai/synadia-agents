@@ -46,7 +46,8 @@ let unsignedAgents: Agents | undefined
 
 try {
   await server.start({ configPath: identityFixture('operator/operator.conf') })
-  const contextDir = join(testHome, '.config', 'nats', 'context')
+  const configHome = join(testHome, '.config', 'nats')
+  const contextDir = join(configHome, 'context')
   mkdirSync(contextDir, { recursive: true })
   await Bun.write(join(contextDir, 'alice.json'), JSON.stringify({
     url: server.url,
@@ -60,6 +61,7 @@ try {
   Object.assign(childEnv, {
     HOME: testHome,
     CLAUDE_CWD: '/tmp/signed-host',
+    NATS_CONFIG_HOME: configHome,
     NATS_CONTEXT: 'alice',
     NATS_SESSION_NAME: NAME,
     NATS_STATE_DIR: stateDir,
