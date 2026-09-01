@@ -80,10 +80,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Replay rejection details omit raw nonces, and `acceptSender` hook failures
   log only a fixed safe marker rather than application-controlled exception
   names or messages.
-- `AgentService` and `ReferenceAgent` no longer expose the unusable
-  `accountTokenPosition` option: their fixed five-token subscriptions cannot
-  receive the inserted six-token subject. The supported capability remains
-  on `SenderGate` and `verifySenderHeader` for hand-rolled wildcard services.
+- **BREAKING (pre-1.0):** `AgentService` and `ReferenceAgent` no longer expose
+  the unusable `accountTokenPosition` option: their fixed five-token
+  subscriptions cannot receive the inserted six-token subject. Applications
+  that need an account token in a remapped subject must use a hand-rolled
+  wildcard service with `SenderGate({ accountTokenPosition: … })` or call
+  `verifySenderHeader(…, { accountTokenPosition: … })` directly.
 - Unexpected handler, status, and classification failures use generic wire
   descriptions and fixed log markers; application-controlled exception names,
   messages, and stacks are never emitted by the SDK.

@@ -243,8 +243,13 @@ async def test_sign_emits_second_precision_ts_nuid_nonce_and_86_char_sig(
     assert isinstance(verified, VerifiedSender)
     assert h.nonce not in repr(verified)
     assert h.sig not in repr(verified)
-    # Explicit wire serialization remains the only representation that
-    # contains the proof fields.
+    log_view = h.to_log_dict()
+    assert log_view["nonce"] == "[redacted]"
+    assert log_view["sig"] == "[redacted]"
+    assert h.nonce not in json.dumps(log_view)
+    assert h.sig not in json.dumps(log_view)
+    # Explicit wire serialization is the only SDK-provided representation
+    # that contains the proof fields.
     assert h.nonce in serialize_sender_header(h)
     assert h.sig in serialize_sender_header(h)
     other = await _signed(alice, alice_id)

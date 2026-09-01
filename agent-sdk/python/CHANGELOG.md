@@ -18,8 +18,21 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 - A configured host signer is bound to the live connection's user and
   account with an uncached lookup. Every binding failure aborts `start()` and
   never downgrades the registration.
-- Replay rejection details omit raw nonces. Acceptance-hook failures log only
-  the exception type, not an application-controlled message or traceback.
+- Replay rejection details omit raw nonces. Acceptance-hook failures use only
+  a fixed safe marker, never an application-controlled exception type, message,
+  or traceback.
+- **BREAKING (pre-1.0):** `AgentService` no longer exposes the unusable
+  `account_token_position` option: its fixed five-token subscription cannot
+  receive the inserted six-token subject. Applications that need an account
+  token in a remapped subject must use a hand-rolled wildcard service with
+  `SenderGate(account_token_position=…)` or call
+  `verify_sender_header(…, account_token_position=…)` directly.
+- Unexpected handler, status, and classification failures use generic wire
+  descriptions and fixed safe log markers. These paths intentionally omit
+  exception types, messages, and tracebacks because application frames can
+  retain secrets. Operator log alerts must not depend on those tracebacks;
+  applications that need private diagnostics should capture and redact them
+  in their own instrumentation.
 
 ## [0.5.0] - 2026-08-29
 
@@ -90,13 +103,6 @@ test runs the TS client probe signed against this host.
   Defaults `DEFAULT_MIN_SENDER_TRUST`, `DEFAULT_REPLAY_WINDOW_S`,
   `DEFAULT_NONCE_CACHE_MAX_ENTRIES`; `AcceptSenderHook`,
   `SenderRejection`, `SenderAdmission`, `ServiceIdentity` exported.
-- `AgentService` no longer exposes the unusable `account_token_position`
-  option: its fixed five-token subscription cannot receive the inserted
-  six-token subject. The supported capability remains on `SenderGate` and
-  `verify_sender_header` for hand-rolled wildcard services.
-- Unexpected handler, status, and classification failures use generic wire
-  descriptions and fixed log markers; application-controlled exception types,
-  messages, and tracebacks are never emitted by the SDK.
 - **Examples** — `examples/_connect_cli.py` gained `--nkey` / `--creds`
   (`$NATS_NKEY_SEED_FILE` / `$NATS_CREDS`; a file, never an environment
   value holding the seed) and `signer_from_cli`; `_reference_agent.py`

@@ -119,7 +119,9 @@ _SENSITIVE_HEADERS = frozenset(
         "agent-sender",
         "authorization",
         "cookie",
-        "nats-msg-id",  # publish_signed uses the sender nonce
+        # publish_signed copies the sender nonce into Nats-Msg-Id; preserve
+        # presence for de-duplication evidence, never the raw proof value.
+        "nats-msg-id",
         "nats-request-info",  # share:true stamps may contain a complete user JWT
         "proxy-authorization",
         "set-cookie",

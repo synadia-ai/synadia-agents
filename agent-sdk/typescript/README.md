@@ -84,9 +84,7 @@ For runtime-dynamic registration, use the `.service` getter as an escape hatch:
 
 ```ts
 await service.start();
-service.service.addEndpoint("late-bound", {
-  /* … */
-});
+service.service.addEndpoint("late-bound", {/* … */});
 ```
 
 The getter throws if accessed before `start()`, and direct calls bypass `extraEndpoints`'s duplicate-name guard — prefer the declarative form.

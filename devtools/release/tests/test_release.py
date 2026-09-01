@@ -221,6 +221,15 @@ class ValidationTests(unittest.TestCase):
             ],
         )
 
+    def test_identity_off_smokes_delegate_random_port_selection_to_nats(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('spawn("nats-server", ["-a", "127.0.0.1", "-p", "-1"]', source)
+        self.assertIn('["nats-server", "-a", "127.0.0.1", "-p", "-1"]', source)
+        self.assertNotIn('import { createServer } from "node:net"', source)
+        self.assertNotIn('"-p", "0"', source)
+        self.assertNotIn("probe.bind", source)
+        self.assertNotIn("server.stderr.read()", source)
+
     def test_public_artifact_scan_rejects_seeds_jwts_tokens_and_source_paths(
         self,
     ) -> None:

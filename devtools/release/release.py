@@ -1302,42 +1302,47 @@ def smoke_npm_imports(
     if any(entry.get("id") == "ts-host" for entry in entries):
         script = r"""
 import { spawn } from "node:child_process";
-import { createServer } from "node:net";
 import { connect } from "@nats-io/transport-node";
 import { Agents } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
 
-const port = await new Promise((resolve, reject) => {
-  const probe = createServer();
-  probe.once("error", reject);
-  probe.listen(0, "127.0.0.1", () => {
-    const address = probe.address();
-    if (!address || typeof address === "string") return reject(new Error("no free port"));
-    probe.close(() => resolve(address.port));
-  });
-});
-const url = `nats://127.0.0.1:${port}`;
-const server = spawn("nats-server", ["-a", "127.0.0.1", "-p", String(port)], {
+// NATS uses -1 (not 0, which means 4222) for an OS-assigned random port.
+const server = spawn("nats-server", ["-a", "127.0.0.1", "-p", "-1"], {
   stdio: ["ignore", "ignore", "pipe"],
 });
 let stderr = "";
-server.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+const announcedUrl = new Promise((resolve, reject) => {
+  let settled = false;
+  const fail = (error) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    reject(error);
+  };
+  const timeout = setTimeout(
+    () => fail(new Error(`nats-server did not announce a client port; ${stderr}`)),
+    5000,
+  );
+  server.once("error", fail);
+  server.once("exit", (code, signal) => {
+    fail(new Error(`nats-server exited before listening (${code ?? signal}); ${stderr}`));
+  });
+  server.stderr.on("data", (chunk) => {
+    stderr = `${stderr}${chunk.toString()}`.slice(-16384);
+    const match = stderr.match(/Listening for client connections on 127\.0\.0\.1:(\d+)/);
+    if (settled || match === null) return;
+    settled = true;
+    clearTimeout(timeout);
+    resolve(`nats://127.0.0.1:${match[1]}`);
+  });
+});
 let host;
 let caller;
 let service;
 let agents;
 try {
-  let lastError;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try {
-      host = await connect({ servers: url, reconnect: false, timeout: 250 });
-      break;
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  }
-  if (!host) throw new Error(`nats-server did not start: ${lastError}; ${stderr}`);
+  const url = await announcedUrl;
+  host = await connect({ servers: url, reconnect: false, timeout: 1000 });
   caller = await connect({ servers: url, reconnect: false });
   let sender = "unset";
   service = new AgentService({
@@ -1364,7 +1369,7 @@ try {
   await service?.stop();
   await caller?.close();
   await host?.close();
-  if (server.exitCode === null) {
+  if (server.exitCode === null && server.pid !== undefined) {
     server.kill("SIGTERM");
     await new Promise((resolve) => server.once("exit", resolve));
   }
@@ -1463,7 +1468,7 @@ def smoke_python_identity_off(
         return
     script = r"""
 import asyncio
-import socket
+import re
 import subprocess
 
 import nats
@@ -1471,30 +1476,49 @@ from synadia_ai.agents import Agents, DiscoverFilter
 from synadia_ai.agent_service import AgentService
 
 async def main():
-    probe = socket.socket()
-    probe.bind(("127.0.0.1", 0))
-    port = probe.getsockname()[1]
-    probe.close()
     server = subprocess.Popen(
-        ["nats-server", "-a", "127.0.0.1", "-p", str(port)],
+        # NATS uses -1 (not 0, which means 4222) for an OS-assigned random port.
+        ["nats-server", "-a", "127.0.0.1", "-p", "-1"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
     )
     host = caller = service = agents = None
     try:
-        url = f"nats://127.0.0.1:{port}"
-        last_error = None
-        for _ in range(100):
+        if server.stderr is None:
+            raise RuntimeError("nats-server stderr pipe is unavailable")
+        stderr_tail = []
+        deadline = asyncio.get_running_loop().time() + 5
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                detail = "".join(stderr_tail)
+                raise RuntimeError(
+                    f"nats-server did not announce a client port; {detail}"
+                )
             try:
-                host = await nats.connect(url, allow_reconnect=False, connect_timeout=0.25)
+                line = await asyncio.wait_for(
+                    asyncio.to_thread(server.stderr.readline), timeout=remaining
+                )
+            except TimeoutError as error:
+                detail = "".join(stderr_tail)
+                raise RuntimeError(
+                    f"nats-server did not announce a client port; {detail}"
+                ) from error
+            if not line:
+                detail = "".join(stderr_tail)
+                raise RuntimeError(
+                    f"nats-server exited before announcing a client port; {detail}"
+                )
+            stderr_tail.append(line)
+            stderr_tail = stderr_tail[-40:]
+            match = re.search(
+                r"Listening for client connections on 127\.0\.0\.1:(\d+)", line
+            )
+            if match is not None:
+                url = f"nats://127.0.0.1:{match.group(1)}"
                 break
-            except Exception as error:
-                last_error = error
-                await asyncio.sleep(0.025)
-        if host is None:
-            detail = server.stderr.read() if server.stderr else ""
-            raise RuntimeError(f"nats-server did not start: {last_error}; {detail}")
+        host = await nats.connect(url, allow_reconnect=False, connect_timeout=1)
         caller = await nats.connect(url, allow_reconnect=False)
         seen = ["unset"]
         service = AgentService(

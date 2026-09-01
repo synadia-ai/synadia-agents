@@ -469,26 +469,18 @@ jobs:
           bun run build
           tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
           echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
-      # Bundle reproducibility belongs to Claude's committed local-link graph.
-      # Build the current SDKs first so those links expose dist on a clean
-      # runner, then verify with the pinned Bun before rewriting Claude's
-      # manifest to branch-local tarballs. Keep file: directories as links.
-      - name: Verify committed runtime bundle
-        working-directory: agents/claude-code
-        run: |
-          npm install --install-links=false --no-package-lock --no-audit --no-fund
-          bun run build
-          git diff --exit-code -- runtime/server.js
-          bun run verify:bundle
       # The committed branch manifest intentionally keeps local SDK links for
-      # development. CI substitutes the exact packed branch bytes, avoiding
-      # Bun's cyclic file-link resolver and exercising the publishable shape.
-      - name: Install dependencies from packed SDKs
+      # development. The runtime bundle is committed from the exact packed SDK
+      # artifacts, so CI must reproduce and verify it from that same graph.
+      - name: Install packed SDKs and verify committed runtime bundle
         working-directory: agents/claude-code
         run: |
           npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
           npm pkg set "dependencies.@synadia-ai/agent-service=file:$AGENT_SDK_TGZ"
           npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          git diff --exit-code -- runtime/server.js
+          bun run verify:bundle
       - name: Validate plugin descriptors
         run: |
           node -e "JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json', 'utf8'))"
