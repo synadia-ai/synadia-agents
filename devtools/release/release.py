@@ -494,6 +494,11 @@ def stage_release(
     temp = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
     try:
         safe_extract_git_archive(repo, sha, temp)
+        for relative in plan.get("stage_remove_files", []):
+            target = temp / relative
+            if not target.is_file():
+                fail(f"staged removal target is missing: {target}")
+            target.unlink()
         for entry in plan["npm"]:
             path = temp / entry["path"]
             manifest = read_json(path)
@@ -660,6 +665,9 @@ def validate_stage(
         fail("stage marker has no version map")
     if marker.get("plan_sha256") != sha256_file(plan_path):
         fail("stage was created with a different release plan")
+    for relative in plan.get("stage_remove_files", []):
+        if (root / relative).exists():
+            fail(f"staged removal target remains: {relative}")
 
     npm_names = {entry["name"] for entry in plan["npm"]}
     for entry in plan["npm"]:

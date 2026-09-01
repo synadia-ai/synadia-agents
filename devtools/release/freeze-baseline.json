@@ -141,8 +141,8 @@
       "size": 390
     },
     "devtools/release/plan.json": {
-      "sha256": "31e9f3f5c0d5dc2b3d73a1e97789486c7ecddcc837394d0b5f03020f87701a57",
-      "size": 10250
+      "sha256": "0c2ef1aef067fda58d9004fb741824fd7cee336bbf16c6d3891411707b796679",
+      "size": 10246
     },
     "devtools/release/python-build-constraints.txt": {
       "sha256": "f414ac60a696061f1080ee2b0e2f067dcadb3314ff5dbaee2489bd14c225ab8d",
@@ -153,8 +153,8 @@
       "size": 173
     },
     "devtools/release/release.py": {
-      "sha256": "689954eeb0e127a8f2fcf5311176442d14a969212c452e8d3064d8465bd64640",
-      "size": 57761
+      "sha256": "f65555368711178c9f32685fcdf1eb1e668bb1e6a9a447b10af5960a73611e84",
+      "size": 58149
     },
     "devtools/release/versions.json": {
       "sha256": "53ca98a878887284a94b0fab92d7e51c348a16682e03c65609f2d307e454fd21",

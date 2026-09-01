@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "stage_remove_files": [".gitignore"],
   "toolchain": {
     "node": "22.22.3",
     "npm": "10.9.8",
@@ -260,7 +261,6 @@
       "lock": "agents/deerflow/uv.lock",
       "internal_edges": ["synadia-ai-agents", "synadia-ai-agent-service"],
       "stage_license_from": "LICENSE",
-      "stage_remove_files": [".gitignore"],
       "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "examples", "pyproject.toml", "src"]
     },
     {
