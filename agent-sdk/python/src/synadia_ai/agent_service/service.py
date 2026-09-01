@@ -61,8 +61,11 @@ from synadia_ai.agents import (
     ResponseChunk,
     SenderResolver,
     StatusChunk,
+    TraceScope,
+    bind_active_trace,
     decode,
     format_sender,
+    random_thread_id,
 )
 from synadia_ai.agents.identity import (
     DEFAULT_RESOLVE_TTL_S,
@@ -141,6 +144,12 @@ DEFAULT_ATTACHMENTS_OK = True
 # this keep-alive cadence, and disabling keep-alive does NOT disable the
 # leading ack.
 DEFAULT_KEEPALIVE_INTERVAL_S: float = 30.0
+
+
+def _adopt_or_mint_trace(envelope: Envelope) -> TraceScope:
+    thread_id = envelope.thread_id or random_thread_id()
+    root_id = envelope.root_id or thread_id
+    return TraceScope(thread_id, root_id)
 
 
 class PromptStream:
@@ -694,7 +703,10 @@ class AgentService:
                 )
 
             try:
-                await handler(envelope, stream)
+                # Place thread_id and root_id in the context storage
+                # to allow clients used as tools to reache them
+                with bind_active_trace(_adopt_or_mint_trace(envelope)):
+                    await handler(envelope, stream)
             except ProtocolError as exc:
                 log.warning(
                     "prompt handler rejected protocol input on %s: %s",

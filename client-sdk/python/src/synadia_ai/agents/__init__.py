@@ -149,6 +149,15 @@ from .identity import (
 )
 from .messages import Chunk, QueryChunk, ResponseChunk, StatusChunk
 from .subjects import AgentSubject
+from .trace import (
+    THREAD_ID_HEX_LEN,
+    TOOL_CALL_ID_MAX,
+    TraceScope,
+    active_trace,
+    bind_active_trace,
+    random_thread_id,
+    valid_tool_call_id,
+)
 
 __all__ = [
     "AGENT_ID_SIGNED_INPUT_TAG",
@@ -177,6 +186,8 @@ __all__ = [
     "SIGNATURE_REQUIRED_DESCRIPTION",
     "STATUS_ENDPOINT_NAME",
     "STATUS_QUEUE_GROUP",
+    "THREAD_ID_HEX_LEN",
+    "TOOL_CALL_ID_MAX",
     "USER_INFO_SUBJECT",
     "Agent",
     "AgentId",
@@ -229,9 +240,12 @@ __all__ = [
     "StreamMaxWaitExceededError",
     "StreamMessage",
     "StreamStalledError",
+    "TraceScope",
     "ValidationError",
     "VerifiedSender",
     "VerifyMode",
+    "active_trace",
+    "bind_active_trace",
     "build_agent_info",
     "build_claim_header",
     "build_signed_input",
@@ -249,6 +263,7 @@ __all__ = [
     "parse_nats_url",
     "parse_sender_header",
     "peek_self_id",
+    "random_thread_id",
     "read_context_file",
     "read_sender_header_value",
     "refresh_self_id",
@@ -262,6 +277,7 @@ __all__ = [
     "signer_from_creds",
     "signer_from_creds_file",
     "signer_from_seed",
+    "valid_tool_call_id",
     "verify_agent_id",
     "verify_sender",
     "verify_sender_header",

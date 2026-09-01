@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import secrets
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
@@ -43,6 +42,7 @@ from .heartbeat import HeartbeatPayload
 from .identity.agent_id import AgentId
 from .identity.options import Identity, plan_sender_header, sender_header_bound
 from .messages import QueryChunk, ResponseChunk, StatusChunk, decode_chunk
+from .trace import _emit_edge_record, random_thread_id, valid_tool_call_id
 from .validation import (
     assert_attachments_allowed,
     assert_prompt_non_empty,
@@ -78,9 +78,6 @@ DEFAULT_STREAM_INACTIVITY_TIMEOUT_S: float = 60.0
 DEFAULT_PROMPT_MAX_WAIT_S: float = 600.0
 
 
-THREAD_ID_HEX_LEN = 32
-
-
 @dataclass(frozen=True)
 class Query:
     """A mid-stream question from the agent (§7).
@@ -114,25 +111,6 @@ class Query:
 
 StreamMessage: TypeAlias = ResponseChunk | StatusChunk | Query
 """One item yielded by :meth:`Agent.prompt`'s async iterator."""
-
-
-def random_thread_id() -> str:
-    # Thread IDs don't need to be secure and any random generator will suffice.
-    # Still, using secrets.token_hex() doesn't cost us much.
-    return secrets.token_hex(THREAD_ID_HEX_LEN // 2)
-
-
-TOOL_CALL_ID_MAX = 256
-
-
-def valid_tool_call_id(tool_call_id: str) -> bool:
-    # This isn't intended as strict validation. It's just a basic
-    # pass to avoid obvious garbage gets into the tracing system.
-    return 0 < len(tool_call_id) <= TOOL_CALL_ID_MAX
-
-
-def _emit_edge_record(thread_id: str, tool_call_id: str | None) -> None:
-    pass
 
 
 class Agent:

@@ -75,8 +75,8 @@ class Envelope(BaseModel):
     non-compliant peer rides this unknown-field bag instead of surfacing
     as a first-class attribute.
 
-    The thread_id field is NOT part of v0.3 but is part of the SDK's
-    tracing extension.
+    The thread_id and root_id fields are NOT part of v0.3 but are part
+    of the SDK's tracing extension.
     """
 
     model_config = ConfigDict(extra="allow", frozen=True)
@@ -85,6 +85,7 @@ class Envelope(BaseModel):
     attachments: list[Attachment] | None = None
 
     thread_id: str | None = None
+    root_id: str | None = None
 
 
 def encode(envelope: Envelope) -> bytes:
