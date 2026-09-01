@@ -110,6 +110,8 @@ merging shared-branch feature work; complete the remaining operational items bef
       examples, external integrations, and private examples used as release evidence.
 - [x] Replace dirty-tree or rebuild-on-publish flows with the clean, build-once artifact process in
       this roadmap.
+- Release graph, freeze, artifact, and build-once workflow implementation:
+  [PR #191](https://github.com/synadia-ai/synadia-agents/pull/191).
 - No in-scope SDK, integration, example, or external gate may be omitted by an implementer. A scope
   change requires explicit user approval and a roadmap update.
 
