@@ -375,6 +375,7 @@ class Agent:
         thread_id: str | None = None
         root_id: str | None = None
         parent_id: str | None = None
+        turn_count_hint = 0
         if trace_options is not None:
             thread_id = random_thread_id()
             ambient = active_trace()
@@ -384,6 +385,7 @@ class Agent:
             else:
                 root_id = ambient.root_id
                 parent_id = ambient.thread_id
+                turn_count_hint = ambient.model_calls[0]
 
         if isinstance(text, Envelope):
             merged_attachments: list[Attachment] | None
@@ -423,7 +425,7 @@ class Agent:
         ):
             edge_publish = (
                 trace_options.edge_subject,
-                build_edge_record(thread_id, parent_id, root_id, tool_call_id),
+                build_edge_record(thread_id, parent_id, root_id, tool_call_id, turn_count_hint),
             )
 
         # §5.4: local validation happens synchronously BEFORE any wire I/O.

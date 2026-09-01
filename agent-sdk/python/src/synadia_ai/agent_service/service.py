@@ -184,10 +184,14 @@ class PromptStream:
 
         ``{}`` when the prompt was untraced, so harness code needs no
         plumbing and degrades to nothing.
+
+        Each call counts against this execution: the running total is
+        recorded on the edge of any thread it spawns afterwards.
         """
         scope = active_trace()
         if scope is None:
             return {}
+        scope.model_calls[0] += 1
         return {
             "X-Synadia-Thread-ID": scope.thread_id,
             "X-Synadia-Root-ID": scope.root_id,

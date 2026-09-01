@@ -6,11 +6,11 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Bump every time you change the trace record schema
 # (be sure the TypeScript SDK is updated in lockstep)
-EDGE_RECORD_VERSION = 1
+EDGE_RECORD_VERSION = 2
 
 # Default subject edge records are published to — the tenant-side short
 # form; the account's import qualifies it.
@@ -37,6 +37,11 @@ TOOL_CALL_ID_MAX = 256
 class TraceScope:
     thread_id: str
     root_id: str
+    # How many times this execution has stamped trace headers on a model
+    # request. Deliberately a mutable cell inside a frozen scope: a task
+    # spawned inside the handler gets a copy of the context but shares
+    # this object, so its model calls count against the same execution.
+    model_calls: list[int] = field(default_factory=lambda: [0])
 
 
 # The binding carries the service's tracing configuration alongside the
@@ -91,7 +96,12 @@ def build_edge_record(
     parent_id: str | None,
     root_id: str,
     tool_call_id: str | None,
+    turn_count_hint: int,
 ) -> bytes:
+    # `turn_count_hint` says where in the spawning thread this subprompt
+    # went out: turns completed when it was spawned, 0 on a root (nothing
+    # spawned it). A position marker, not a total — turns the parent takes
+    # after its last spawn are recorded nowhere.
     record = {
         "version": EDGE_RECORD_VERSION,
         "record_id": random_thread_id(),
@@ -100,5 +110,6 @@ def build_edge_record(
         "parent_id": parent_id,
         "root_id": root_id,
         "tool_call_id": tool_call_id,
+        "turn_count_hint": turn_count_hint,
     }
     return json.dumps(record, separators=(",", ":")).encode("utf-8")
