@@ -61,6 +61,7 @@ from synadia_ai.agents import (
     ResponseChunk,
     SenderResolver,
     StatusChunk,
+    TraceOptions,
     TraceScope,
     bind_active_trace,
     decode,
@@ -330,6 +331,7 @@ class AgentService:
         accept_sender: AcceptSenderHook | None = None,
         resolve_ttl_s: float = DEFAULT_RESOLVE_TTL_S,
         operator_attested: bool = False,
+        trace: TraceOptions | None = None,
     ) -> None:
         if heartbeat_interval_s <= 0:
             raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.3)")
@@ -353,6 +355,9 @@ class AgentService:
         self._effective_max_payload_value = max_payload
         self._attachments_ok = attachments_ok
         self._keepalive_interval_s = keepalive_interval_s
+        # Observability: handed down to clients used inside prompt handlers.
+        # The service itself never writes trace records.
+        self._trace = trace
         self._prompt_handler: PromptHandler | None = None
         self._service: Service | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -705,7 +710,7 @@ class AgentService:
             try:
                 # Place thread_id and root_id in the context storage
                 # to allow clients used as tools to reache them
-                with bind_active_trace(_adopt_or_mint_trace(envelope)):
+                with bind_active_trace(_adopt_or_mint_trace(envelope), self._trace):
                     await handler(envelope, stream)
             except ProtocolError as exc:
                 log.warning(

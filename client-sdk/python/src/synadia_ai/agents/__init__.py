@@ -260,6 +260,7 @@ __all__ = [
     "expected_sender_header_bytes",
     "format_sender",
     "format_sender_timestamp",
+    "inherited_trace_options",
     "load_context_options",
     "max_sender_header_bytes",
     "normalize_account_token_position",

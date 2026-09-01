@@ -39,20 +39,39 @@ class TraceScope:
     root_id: str
 
 
-_active_trace: ContextVar[TraceScope | None] = ContextVar("synadia_active_trace", default=None)
+# The binding carries the service's tracing configuration alongside the
+# ids, so an agent configured once passes tracing down to every client it
+# uses inside the handler.
+@dataclass(frozen=True, slots=True)
+class _TraceBinding:
+    scope: TraceScope
+    options: TraceOptions | None
+
+
+_active_binding: ContextVar[_TraceBinding | None] = ContextVar("synadia_active_trace", default=None)
 
 
 @contextmanager
-def bind_active_trace(trace_scope: TraceScope) -> Iterator[None]:
-    token = _active_trace.set(trace_scope)
+def bind_active_trace(
+    trace_scope: TraceScope, options: TraceOptions | None = None
+) -> Iterator[None]:
+    token = _active_binding.set(_TraceBinding(trace_scope, options))
     try:
         yield
     finally:
-        _active_trace.reset(token)
+        _active_binding.reset(token)
 
 
 def active_trace() -> TraceScope | None:
-    return _active_trace.get()
+    binding = _active_binding.get()
+    return binding.scope if binding is not None else None
+
+
+def inherited_trace_options() -> TraceOptions | None:
+    # Tracing configuration handed down by the enclosing AgentService.
+    # None when the service has none, or outside a handler.
+    binding = _active_binding.get()
+    return binding.options if binding is not None else None
 
 
 def random_thread_id() -> str:

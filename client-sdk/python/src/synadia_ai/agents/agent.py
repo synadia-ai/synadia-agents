@@ -46,6 +46,7 @@ from .trace import (
     TraceOptions,
     active_trace,
     build_edge_record,
+    inherited_trace_options,
     random_thread_id,
     valid_tool_call_id,
 )
@@ -366,11 +367,15 @@ class Agent:
         if tool_call_id is not None and not valid_tool_call_id(tool_call_id):
             tool_call_id = None
 
+        # Effective configuration: this handle's own, else the one handed
+        # down by the enclosing AgentService, else tracing is off.
+        trace_options = self._trace if self._trace is not None else inherited_trace_options()
+
         # If tracing is enabled, mint a thread ID for this prompt
         thread_id: str | None = None
         root_id: str | None = None
         parent_id: str | None = None
-        if self._trace is not None:
+        if trace_options is not None:
             thread_id = random_thread_id()
             ambient = active_trace()
             if ambient is None:
@@ -411,13 +416,13 @@ class Agent:
         # needs an await, so it happens in _prompt_stream.
         edge_publish: tuple[str, bytes] | None = None
         if (
-            self._trace is not None
-            and self._trace.edge_subject is not None
+            trace_options is not None
+            and trace_options.edge_subject is not None
             and thread_id is not None
             and root_id is not None
         ):
             edge_publish = (
-                self._trace.edge_subject,
+                trace_options.edge_subject,
                 build_edge_record(thread_id, parent_id, root_id, tool_call_id),
             )
 
