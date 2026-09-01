@@ -58,7 +58,6 @@ import {
   IDENTITY_METADATA_KEYS,
   MIN_SENDER_TRUST_KEY,
   newInbox,
-  normalizeAccountTokenPosition,
   normalizeResolveTtlMs,
   parseHumanBytes,
   PROMPT_ENDPOINT_NAME,
@@ -229,18 +228,6 @@ export interface AgentServiceOptions {
    */
   readonly replayWindowMs?: number;
   /**
-   * 1-based position of the caller's account token the server inserts
-   * into the arrival subject when this agent sits behind a service export
-   * with `account_token_position`. Precondition: the inserted token is a
-   * server stamp only on a **closed** endpoint. Note `AgentService` hosts
-   * five-token `agents.{verb}.a.o.n` subjects, which such an export turns
-   * into six-token arrivals its subscription never sees — the option is
-   * validated and passed to classification for a future subject override;
-   * today a service behind such an export uses `verifySenderHeader` on its
-   * own subscription.
-   */
-  readonly accountTokenPosition?: number;
-  /**
    * Acceptance hook — runs for every classified `prompt` request (never
    * for `status`), after classification and before the ack. `false` for a
    * verified sender → `403`; for a claimed / absent one → `401`; a throw →
@@ -262,8 +249,8 @@ export interface AgentServiceOptions {
    * server's stamp). The SDK cannot verify that promise. With it on, a
    * verified header whose signed `account` / `user` disagree with the
    * stamp is refused (`401`), a present but unparseable stamp is refused,
-   * and agreement on `acc` — or the `accountTokenPosition` cross-check —
-   * surfaces as `sender.accountAttested === true` (`formatSender` then
+   * and agreement on `acc` surfaces as
+   * `sender.accountAttested === true` (`formatSender` then
    * renders `(verified)`). An absent stamp is compared to nothing.
    * Unsigned claims are never cross-checked.
    */
@@ -452,7 +439,6 @@ export class AgentService {
     if (!(replayWindowMs > 0)) {
       throw new Error("AgentService: replayWindowMs must be > 0");
     }
-    const accountTokenPosition = normalizeAccountTokenPosition(options.accountTokenPosition);
     const resolveTtlMs = normalizeResolveTtlMs(options.resolveTtlMs);
     if (options.operatorAttested !== undefined && typeof options.operatorAttested !== "boolean") {
       throw new Error("AgentService: operatorAttested must be a boolean");
@@ -473,7 +459,6 @@ export class AgentService {
     this.#gate = new SenderGate({
       minSenderTrust,
       replayWindowMs,
-      ...(accountTokenPosition !== undefined ? { accountTokenPosition } : {}),
       ...(options.acceptSender !== undefined ? { acceptSender: options.acceptSender } : {}),
       logger: this.#logger,
       operatorAttested: options.operatorAttested ?? false,
@@ -756,10 +741,13 @@ export class AgentService {
         this.#options.session !== undefined ? { session: this.#options.session } : {},
       );
       msg.respond(encodeHeartbeatPayload(payload));
-    } catch (err) {
+    } catch {
+      this.#logger.error("status handler failed", {
+        subject: msg.subject,
+        error: "exception",
+      });
       try {
-        const desc = err instanceof Error ? err.message : String(err);
-        msg.respondError(500, sanitizeErrorDesc(`status handler error: ${desc}`));
+        msg.respondError(500, "status handler error");
       } catch {
         /* connection may already be gone */
       }
@@ -799,10 +787,10 @@ export class AgentService {
         return;
       }
       sender = admission.sender;
-    } catch (err) {
+    } catch {
       this.#logger.error("sender classification failed", {
         subject: msg.subject,
-        error: err instanceof Error ? err.message : String(err),
+        error: "exception",
       });
       try {
         msg.respondError(500, "sender classification error");
@@ -869,6 +857,10 @@ export class AgentService {
       // Stop keep-alive BEFORE the §9 error frame so an ack chunk can't
       // race in between the error and the terminator.
       stopKeepalive();
+      this.#logger.error("prompt handler failed", {
+        subject: msg.subject,
+        error: "exception",
+      });
       try {
         const desc = err instanceof Error ? err.message : String(err);
         const isProtocolError =
@@ -877,7 +869,7 @@ export class AgentService {
           err instanceof ProtocolError || (err instanceof Error && err.name === "ProtocolError");
         msg.respondError(
           isProtocolError ? 400 : 500,
-          sanitizeErrorDesc(isProtocolError ? desc : `handler error: ${desc}`),
+          isProtocolError ? sanitizeErrorDesc(desc) : "handler error",
         );
       } catch {
         /* connection may already be gone */

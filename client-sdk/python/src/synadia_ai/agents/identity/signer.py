@@ -104,10 +104,11 @@ class NkeySigner:
         return bytes(self._kp.sign(data))
 
     def wipe(self) -> None:
-        """Clear the key material; later :meth:`sign` calls fail."""
+        """Clear key and credentials-JWT material; later :meth:`sign` calls fail."""
         if self._kp is not None:
             self._kp.wipe()
             self._kp = None
+        self._jwt = None
 
     def __repr__(self) -> str:
         return f"SenderSigner({self._public_key})"

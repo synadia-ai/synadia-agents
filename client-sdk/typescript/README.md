@@ -163,6 +163,11 @@ zeros retained credential bytes and removes auth/TLS fields from the options.
 What to know:
 
 - **Identity is opt-in.** Omit `identity` for no lookup and no header. Pass `identity: {}` explicitly for an unsigned claim, or set `sendUnsignedClaim: false` to perform no automatic identity work. An unsigned claim discloses your user NKEY to the receiver.
+- A target that requires a signed sender fails locally with
+  `SenderSignatureRequiredError` when no signer is configured. Its stable
+  `code` (`401`), `description` (`"signature required"`), and `subject`
+  fields let callers handle it like the equivalent service refusal without
+  parsing the message.
 - **Use the connection's credentials.** The SDK cannot extract a private seed from an already-open connection. Prefer `resolveNatsConnectionBundle` to bind connection authentication and signing to one read. The lower-level `signerFromSeed` / `signerFromCreds` helpers remain available for externally managed connections and HSM/KMS adapters, where the caller must guarantee the signer represents that exact connection. Before a signed send, the SDK compares the signer's user and account with live `$SYS.REQ.USER.INFO`; a mismatch or unavailable binding fails and never downgrades to unsigned or headerless delivery.
 - **Cost.** Identity lookup has a 2 s timeout. TypeScript memoises by connection and public identity-source fingerprint, clears all entries on reconnect, negative-caches failures for 30 s, and never lets an unsigned lookup satisfy a signer's validation. A signed header is ~400 bytes and counts against `max_payload` (header framing included — `PayloadTooLargeError.headerBytes`).
 - **Behind a service import that remaps the subject** — an export that inserts the caller's account token (`account_token_position`), or a `to:` / `local_subject` rename by your own account — discovery reports the exporter's subject, which you cannot publish to. Pass `prompt(text, { subject })` / `status({ subject })` with the local name; the receiver strips an inserted token by itself. Only for a rename by **your own** account also pass `sub: agent.promptEndpoint.subject` (sign the exporter's subject). `signSender` / `publishSigned` / `requestSigned` take the same `sub` option.

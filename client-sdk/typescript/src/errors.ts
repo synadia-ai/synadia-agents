@@ -216,7 +216,12 @@ export class MalformedSenderHeaderError extends IdentityError {
 
 /** The endpoint declares `min_sender_trust: signed` and no signer is configured. */
 export class SenderSignatureRequiredError extends IdentityError {
-  constructor(subject: string) {
+  /** Wire-equivalent status for callers that handle local and service refusals uniformly. */
+  readonly code = 401 as const;
+  /** Wire-equivalent generic description; contains no target or credential material. */
+  readonly description = "signature required" as const;
+
+  constructor(public readonly subject: string) {
     super(
       `${subject} requires a signed Agent-Sender header (min_sender_trust=signed) but no ` +
         `identity.signer is configured`,

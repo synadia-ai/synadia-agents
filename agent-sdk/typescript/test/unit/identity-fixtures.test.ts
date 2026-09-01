@@ -49,6 +49,7 @@ const EXPECTED_USERS_PER_CONF: Readonly<Record<string, ReadonlyArray<string>>> =
   "nkey-deny-sys.conf": ["alice"],
   "accounts.conf": ["alice", "bob", "carol", "dave", "erin"],
   "account-token-position.conf": ["alice", "bob", "dave"],
+  "closed-import.conf": ["alice", "bob", "carol"],
 };
 
 const ALL_USERS = ["alice", "bob", "carol", "dave", "erin"];

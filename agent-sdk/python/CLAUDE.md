@@ -504,8 +504,8 @@ them to success or frustrates them.
   `AgentService` classifies every prompt before the ack (`SenderGate`
   / `NonceCache` in `agent_service/identity.py` over the shared
   codec), exposes `PromptStream.sender`, takes `identity` /
-  `min_sender_trust` / `replay_window_s` / `account_token_position` /
-  `accept_sender` / `resolve_ttl_s` / `operator_attested`, registers
+  `min_sender_trust` / `replay_window_s` / `accept_sender` /
+  `resolve_ttl_s` / `operator_attested`, registers
   `user_nkey` / `account` / `id_sig` and always `min_sender_trust`,
   and flushes at the end of `start()`. The reverse interop test runs
   the TS probe with `--signed`; the reference agent gained `--nkey` /

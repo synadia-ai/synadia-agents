@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- `SenderSignatureRequiredError` exposes stable `code` (`401`),
+  `description` (`"signature required"`), and `subject` fields for handling
+  local signed-target preflight failures without parsing an error message.
 - `resolveNatsConnectionBundle(source, { identity: "off" | "signed" })`
   resolves a NATS CLI context, direct `creds` file, direct `nkey` seed file,
   or bare URL into connection options and, only in signed mode, a

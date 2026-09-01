@@ -59,8 +59,17 @@ FORBIDDEN_PUBLIC_TEXT = (
     b"synadia-agent-fabric",
 )
 NKEY_SEED_PATTERN = re.compile(rb"\bS[UAONC][A-Z2-7]{54,60}\b")
+JWT_CANDIDATE_PATTERN = re.compile(
+    rb"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{20,})(?![A-Za-z0-9_-])"
+)
+PUBLISH_TOKEN_PATTERN = re.compile(
+    rb"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{20,}|pypi-[A-Za-z0-9_-]{20,})\b"
+)
+ABSOLUTE_SOURCE_PATH_PATTERN = re.compile(
+    rb"(?:/Users/[^\s\"']+|/home/(?:runner|[^/\s]+)/(?:work|src)/[^\s\"']+|[A-Za-z]:\\(?:Users|work|src)\\[^\s\"']+)"
+)
 PUBLIC_TEXT_SCAN_CHUNK = 1024 * 1024
-PUBLIC_TEXT_SCAN_OVERLAP = 128
+PUBLIC_TEXT_SCAN_OVERLAP = 4096
 
 
 class ReleaseError(RuntimeError):
@@ -179,6 +188,16 @@ def validate_plan(plan: dict[str, Any]) -> None:
                     f"npm publishable {entry['id']} needs an artifact runtime "
                     "smoke or an explicit smoke_waiver"
                 )
+            for smoke_key in (
+                "import_smoke",
+                "node_import_smoke",
+                "node_require_smoke",
+            ):
+                smoke_values = entry.get(smoke_key, [])
+                if not isinstance(smoke_values, list) or not all(
+                    isinstance(value, str) and value for value in smoke_values
+                ):
+                    fail(f"{entry['id']} {smoke_key} must be a list of module names")
 
     excluded_paths: set[str] = set()
     for entry in plan.get("excluded_manifests", []):
@@ -922,6 +941,23 @@ def inspect_public_text(artifact: Path, member: str, data: bytes) -> None:
             fail(f"private product terminology in {artifact.name}: {member}")
     if NKEY_SEED_PATTERN.search(data):
         fail(f"possible NKEY seed in {artifact.name}: {member}")
+    if PUBLISH_TOKEN_PATTERN.search(data):
+        fail(f"possible registry or source-control token in {artifact.name}: {member}")
+    if ABSOLUTE_SOURCE_PATH_PATTERN.search(data):
+        fail(f"absolute source path in {artifact.name}: {member}")
+    for candidate in JWT_CANDIDATE_PATTERN.finditer(data):
+        payload = candidate.group(2)
+        try:
+            decoded = base64.urlsafe_b64decode(payload + b"=" * (-len(payload) % 4))
+            claims = json.loads(decoded)
+        except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if (
+            isinstance(claims, dict)
+            and isinstance(claims.get("sub"), str)
+            and isinstance(claims.get("iss"), str)
+        ):
+            fail(f"possible JWT credential in {artifact.name}: {member}")
 
 
 def inspect_public_stream(
@@ -1209,15 +1245,7 @@ def build_npm(
             cwd=harness,
             env=env,
         )
-        imports = [
-            module for entry in entries for module in entry.get("import_smoke", [])
-        ]
-        for module in imports:
-            run(
-                ["bun", "-e", f"await import({json.dumps(module)})"],
-                cwd=harness,
-                env=env,
-            )
+        smoke_npm_imports(entries, harness, env)
         for entry in entries:
             for binary, arguments in entry.get("bin_smoke", {}).items():
                 run(
@@ -1240,6 +1268,113 @@ def build_npm(
         overwrite=False,
     )
     print(f"built and artifact-tested {len(files)} npm tarballs")
+
+
+def smoke_npm_imports(
+    entries: list[dict[str, Any]], harness: Path, env: dict[str, str]
+) -> None:
+    """Import exact installed artifacts in every runtime/loader they promise."""
+    for entry in entries:
+        for module in entry.get("import_smoke", []):
+            run(
+                ["bun", "-e", f"await import({json.dumps(module)})"],
+                cwd=harness,
+                env=env,
+            )
+        for module in entry.get("node_import_smoke", []):
+            run(
+                [
+                    "node",
+                    "--input-type=module",
+                    "-e",
+                    f"await import({json.dumps(module)})",
+                ],
+                cwd=harness,
+                env=env,
+            )
+        for module in entry.get("node_require_smoke", []):
+            run(
+                ["node", "-e", f"require({json.dumps(module)})"],
+                cwd=harness,
+                env=env,
+            )
+
+    if any(entry.get("id") == "ts-host" for entry in entries):
+        script = r"""
+import { spawn } from "node:child_process";
+import { createServer } from "node:net";
+import { connect } from "@nats-io/transport-node";
+import { Agents } from "@synadia-ai/agents";
+import { AgentService } from "@synadia-ai/agent-service";
+
+const port = await new Promise((resolve, reject) => {
+  const probe = createServer();
+  probe.once("error", reject);
+  probe.listen(0, "127.0.0.1", () => {
+    const address = probe.address();
+    if (!address || typeof address === "string") return reject(new Error("no free port"));
+    probe.close(() => resolve(address.port));
+  });
+});
+const url = `nats://127.0.0.1:${port}`;
+const server = spawn("nats-server", ["-a", "127.0.0.1", "-p", String(port)], {
+  stdio: ["ignore", "ignore", "pipe"],
+});
+let stderr = "";
+server.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+let host;
+let caller;
+let service;
+let agents;
+try {
+  let lastError;
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      host = await connect({ servers: url, reconnect: false, timeout: 250 });
+      break;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  if (!host) throw new Error(`nats-server did not start: ${lastError}; ${stderr}`);
+  caller = await connect({ servers: url, reconnect: false });
+  let sender = "unset";
+  service = new AgentService({
+    nc: host,
+    agent: "artifact-smoke",
+    owner: "release",
+    name: "identity-off",
+    heartbeatIntervalS: 30,
+    keepaliveIntervalS: null,
+  });
+  service.onPrompt(async (_envelope, response) => {
+    sender = response.sender;
+    await response.send("ok");
+  });
+  await service.start();
+  if (service.identity !== undefined) throw new Error("identity-off host registered identity");
+  agents = new Agents({ nc: caller });
+  const found = await agents.discover({ timeoutMs: 1000, filter: { agent: "artifact-smoke" } });
+  if (found.length !== 1) throw new Error(`artifact host discovery returned ${found.length}`);
+  for await (const _ of await found[0].prompt("hello")) { /* drain */ }
+  if (sender !== undefined) throw new Error("headerless artifact prompt exposed a sender");
+} finally {
+  await agents?.close();
+  await service?.stop();
+  await caller?.close();
+  await host?.close();
+  if (server.exitCode === null) {
+    server.kill("SIGTERM");
+    await new Promise((resolve) => server.once("exit", resolve));
+  }
+}
+"""
+        run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=harness,
+            env=env,
+        )
 
 
 def python_cooldown_args(
@@ -1313,8 +1448,99 @@ def smoke_python_artifacts(
                         cwd=harness,
                         env=env,
                     )
+                smoke_python_identity_off(entries, python, harness, env)
             finally:
                 shutil.rmtree(harness, ignore_errors=True)
+
+
+def smoke_python_identity_off(
+    entries: list[dict[str, Any]],
+    python: Path,
+    harness: Path,
+    env: dict[str, str],
+) -> None:
+    if not any(entry.get("import") == "synadia_ai.agent_service" for entry in entries):
+        return
+    script = r"""
+import asyncio
+import socket
+import subprocess
+
+import nats
+from synadia_ai.agents import Agents, DiscoverFilter
+from synadia_ai.agent_service import AgentService
+
+async def main():
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    server = subprocess.Popen(
+        ["nats-server", "-a", "127.0.0.1", "-p", str(port)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    host = caller = service = agents = None
+    try:
+        url = f"nats://127.0.0.1:{port}"
+        last_error = None
+        for _ in range(100):
+            try:
+                host = await nats.connect(url, allow_reconnect=False, connect_timeout=0.25)
+                break
+            except Exception as error:
+                last_error = error
+                await asyncio.sleep(0.025)
+        if host is None:
+            detail = server.stderr.read() if server.stderr else ""
+            raise RuntimeError(f"nats-server did not start: {last_error}; {detail}")
+        caller = await nats.connect(url, allow_reconnect=False)
+        seen = ["unset"]
+        service = AgentService(
+            agent="artifact-smoke",
+            owner="release",
+            session_name="identity-off",
+            nc=host,
+            heartbeat_interval_s=30,
+            keepalive_interval_s=None,
+        )
+        async def echo(_envelope, stream):
+            seen[0] = stream.sender
+            await stream.send("ok")
+        service.on_prompt(echo)
+        await service.start()
+        if service.identity is not None:
+            raise RuntimeError("identity-off host registered identity")
+        agents = Agents(nc=caller)
+        found = await agents.discover(
+            timeout=1.0, filter=DiscoverFilter(agent="artifact-smoke")
+        )
+        if len(found) != 1:
+            raise RuntimeError(f"artifact host discovery returned {len(found)}")
+        async for _ in found[0].prompt("hello"):
+            pass
+        if seen[0] is not None:
+            raise RuntimeError("headerless artifact prompt exposed a sender")
+    finally:
+        if agents is not None:
+            await agents.close()
+        if service is not None:
+            await service.stop()
+        if caller is not None:
+            await caller.close()
+        if host is not None:
+            await host.close()
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait(timeout=5)
+
+asyncio.run(main())
+"""
+    run([str(python), "-c", script], cwd=harness, env=env)
 
 
 def build_python(

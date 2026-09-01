@@ -213,7 +213,18 @@ describe.skipIf(!bin)("identity T0 — no auth", () => {
       filter: { agent: "t0-agent", name: service.subject.name },
     });
     expect(agent!.minSenderTrust).toBe("signed");
-    expect(() => agent!.prompt("hi")).toThrow(SenderSignatureRequiredError);
+    let required: unknown;
+    try {
+      agent!.prompt("hi");
+    } catch (err) {
+      required = err;
+    }
+    expect(required).toBeInstanceOf(SenderSignatureRequiredError);
+    expect(required).toMatchObject({
+      code: 401,
+      description: "signature required",
+      subject: service.subject.prompt,
+    });
 
     const signing = new Agents({
       nc,

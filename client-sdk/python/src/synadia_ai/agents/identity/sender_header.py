@@ -99,8 +99,8 @@ class AgentSenderHeader:
     name: str | None = None
     sub: str | None = None
     ts: str | None = None
-    nonce: str | None = None
-    sig: str | None = None
+    nonce: str | None = field(default=None, repr=False)
+    sig: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,8 +296,15 @@ def parse_sender_header(value: str) -> AgentSenderHeader | None:  # noqa: PLR091
         raise MalformedSenderHeaderError(f"value exceeds {MAX_SENDER_HEADER_VALUE_BYTES} bytes")
     try:
         parsed = json.loads(value)
-    except ValueError as exc:
-        raise MalformedSenderHeaderError("not valid JSON") from exc
+        parse_failed = False
+    except ValueError:
+        # JSONDecodeError retains the entire source document on `.doc`.
+        # Raise only after leaving the except block so neither `__cause__`
+        # nor `__context__` retains a raw nonce or signature.
+        parsed = None
+        parse_failed = True
+    if parse_failed:
+        raise MalformedSenderHeaderError("not valid JSON")
     if not isinstance(parsed, dict):
         raise MalformedSenderHeaderError("not a JSON object")
     o: dict[str, object] = parsed

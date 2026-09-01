@@ -3,6 +3,7 @@
 // and verification outcomes without a server.
 
 import { readFile } from "node:fs/promises";
+import { inspect } from "node:util";
 import { headers } from "@nats-io/nats-core";
 import { describe, expect, it } from "vitest";
 import { identityFixture } from "../../harness/nats-server.js";
@@ -111,6 +112,17 @@ describe("signSenderHeader", () => {
     expect(h.nonce).toHaveLength(22);
     expect(h.sig).toMatch(/^[A-Za-z0-9_-]{86}$/);
     expect(h.sub).toBe(SUBJECT);
+    const structured = JSON.stringify(h);
+    expect(structured).toContain('"nonce":"[redacted]"');
+    expect(structured).toContain('"sig":"[redacted]"');
+    expect(structured).not.toContain(h.nonce!);
+    expect(structured).not.toContain(h.sig!);
+    expect(inspect(h)).not.toContain(h.nonce!);
+    expect(inspect(h)).not.toContain(h.sig!);
+    expect(Object.keys(h)).not.toContain("nonce");
+    expect(Object.keys(h)).not.toContain("sig");
+    expect(serializeSenderHeader(h)).toContain(h.nonce!);
+    expect(serializeSenderHeader(h)).toContain(h.sig!);
   });
 
   it("fresh nonce per call", async () => {

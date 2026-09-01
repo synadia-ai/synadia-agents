@@ -25,7 +25,6 @@ from synadia_ai.agents import (
     DiscoverFilter,
     Envelope,
     Identity,
-    IdentityError,
     ProtocolError,
     ResponseChunk,
     SenderSignatureRequiredError,
@@ -518,9 +517,6 @@ def test_option_validation() -> None:
         make(min_sender_trust="verified")
     with pytest.raises(ValueError, match="replay_window_s"):
         make(replay_window_s=0)
-    with pytest.raises(IdentityError, match="account_token_position"):
-        make(account_token_position=0)
-    assert make(account_token_position=2).operator_attested is False
     with pytest.raises(ValueError, match="resolve_ttl_s"):
         make(resolve_ttl_s=-1)
     assert make(resolve_ttl_s=0).min_sender_trust == "any"

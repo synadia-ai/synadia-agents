@@ -17,8 +17,8 @@
       "size": 5561
     },
     ".github/workflows/release-rehearsal.yml": {
-      "sha256": "5ce6dfe2ae8a95825e7b07e62228b92a77f0d956427b40f1cbb080e383ba5deb",
-      "size": 4250
+      "sha256": "4861f44f5b701ae5b50154ee2a9f2445ba4a88f7e2d95e6e573c4651878850ab",
+      "size": 5489
     },
     ".github/workflows/rollout-ci-summary.yml": {
       "sha256": "be74c44ee4ba3ea36470ca73914c8393744c43d9d5e8bf18bd4360cf136aab3e",
@@ -141,8 +141,8 @@
       "size": 390
     },
     "devtools/release/plan.json": {
-      "sha256": "f154c3f039214edf486658c759b0b4cb73648a125d573e3368d2d86d0d83123e",
-      "size": 10873
+      "sha256": "ec71671bbe24c72c65ed5229bdc1830d7e9f6e0fa016b54e862b23c8c1e50a45",
+      "size": 11225
     },
     "devtools/release/python-build-constraints.txt": {
       "sha256": "f414ac60a696061f1080ee2b0e2f067dcadb3314ff5dbaee2489bd14c225ab8d",
@@ -153,16 +153,16 @@
       "size": 173
     },
     "devtools/release/release.py": {
-      "sha256": "fbb4ba7411ba31adb5ca583c7f915b83ac72b6c55000700d93fddd74b063d0f6",
-      "size": 64384
+      "sha256": "36f1e94470eaafe33f73163c0e699c3241c93ebc58f41cf3600145fb0122d32d",
+      "size": 72416
     },
     "devtools/release/versions.json": {
       "sha256": "53ca98a878887284a94b0fab92d7e51c348a16682e03c65609f2d307e454fd21",
       "size": 699
     },
     "devtools/release/versions.rehearsal.json": {
-      "sha256": "2c58c21afbb2e755226e67109ac13d67312727ce55fe36fb9a7a48c0beea4e55",
-      "size": 918
+      "sha256": "8713b93e48af97d77c1af10eb97c659c27a9d3bca0a5997a5409d0cdaef0b268",
+      "size": 939
     },
     "examples/agent-web-ui/bun.lock": {
       "sha256": "c5ca71ba0f72b4e2436b181ff98bce2e9a15eb179656e0c5aa01601fe6cd0282",

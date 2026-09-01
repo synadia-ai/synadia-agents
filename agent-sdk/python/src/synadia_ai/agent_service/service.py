@@ -293,14 +293,6 @@ class AgentService:
       advertises the extension), never on ``status``.
     - ``replay_window_s`` (default 30): the ``ts`` skew and the nonce
       set's horizon; entries expire at ``ts + window``.
-    - ``account_token_position``: 1-based position of the caller's
-      account token an export inserts (``account_token_position``). Note
-      that this service hosts five-token ``agents.{verb}.a.o.n``
-      subjects, which such an export turns into six-token arrivals the
-      subscription never sees — the option is validated and honoured by
-      the classifier; hosting *behind* such an export today means a
-      hand-rolled service on the wildcard subject calling
-      :func:`~synadia_ai.agents.verify_sender_header`.
     - ``accept_sender``: the acceptance hook (see
       :data:`~synadia_ai.agent_service.AcceptSenderHook`).
     - ``resolve_ttl_s`` (default 10): TTL of the ``$SRV.INFO`` index
@@ -326,7 +318,6 @@ class AgentService:
         identity: ServiceIdentity | None = None,
         min_sender_trust: MinSenderTrust = DEFAULT_MIN_SENDER_TRUST,
         replay_window_s: float = DEFAULT_REPLAY_WINDOW_S,
-        account_token_position: int | None = None,
         accept_sender: AcceptSenderHook | None = None,
         resolve_ttl_s: float = DEFAULT_RESOLVE_TTL_S,
         operator_attested: bool = False,
@@ -358,8 +349,8 @@ class AgentService:
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._heartbeat_stop = asyncio.Event()
         # Sender identity: the gate validates `min_sender_trust`,
-        # `replay_window_s`, `account_token_position` and `operator_attested`
-        # eagerly; the resolver behind `sender.resolve()` enumerates
+        # `replay_window_s` and `operator_attested` eagerly; the resolver
+        # behind `sender.resolve()` enumerates
         # `$SRV.INFO.agents` on this connection (account-local).
         # Preserve omission: inbound sender classification remains active, but
         # the host performs no own-identity lookup or registration disclosure.
@@ -369,7 +360,6 @@ class AgentService:
         self._gate = SenderGate(
             min_sender_trust=min_sender_trust,
             replay_window_s=replay_window_s,
-            account_token_position=account_token_position,
             accept_sender=accept_sender,
             operator_attested=operator_attested,
             resolver=self._resolver.resolve,
@@ -594,16 +584,17 @@ class AgentService:
             )
             data = payload.model_dump_json().encode("utf-8")
             await request.respond(data)
-        except Exception as exc:
+        except Exception:
             # A respond() failure (broker dropped, request torn down, encode
             # error in a future richer payload) MUST surface as a §9.1 error
             # to the caller, not silently propagate into nats-py's framework
             # — mirroring _on_prompt_request's explicit error path.
-            log.exception("status handler failed on %s", request.subject)
+            log.error(
+                "status handler failed on %s (exception)",
+                request.subject,
+            )
             with contextlib.suppress(Exception):
-                await request.respond_error(
-                    "500", _sanitize_error_desc(f"status handler error: {exc}")
-                )
+                await request.respond_error("500", "status handler error")
 
     async def _admit_prompt(self, request: Request) -> tuple[bool, SenderInfo | None]:
         """Run the sender gate; answer the §9 error frame on a refusal.
@@ -618,7 +609,10 @@ class AgentService:
         try:
             admission = await self._gate.admit_prompt(request)
         except Exception:
-            log.exception("sender classification failed on %s", request.subject)
+            log.error(
+                "sender classification failed on %s (exception)",
+                request.subject,
+            )
             with contextlib.suppress(Exception):
                 await request.respond_error("500", "sender classification error")
             return (False, None)
@@ -683,7 +677,10 @@ class AgentService:
             try:
                 await request.respond(encode_chunk(StatusChunk(status="ack")))
             except Exception:
-                log.exception("failed to emit leading ack on %s", request.subject)
+                log.error(
+                    "failed to emit leading ack on %s (exception)",
+                    request.subject,
+                )
 
             stream = PromptStream(request, self._nc, sender=sender)
             handler = self._prompt_handler
@@ -707,15 +704,18 @@ class AgentService:
                 await _stop_keepalive(keepalive_task)
                 keepalive_task = None
                 await request.respond_error("400", _sanitize_error_desc(str(exc)))
-            except Exception as exc:
-                log.exception("prompt handler raised on %s", request.subject)
+            except Exception:
+                log.error(
+                    "prompt handler raised on %s (exception)",
+                    request.subject,
+                )
                 # Stop keep-alive BEFORE the §9 error frame so the keepalive
                 # task can't race an ack chunk in between error(500) and the
                 # §6.5 terminator emitted in the outer `finally`. Ditto in
                 # the success path right below.
                 await _stop_keepalive(keepalive_task)
                 keepalive_task = None
-                await request.respond_error("500", _sanitize_error_desc(f"handler error: {exc}"))
+                await request.respond_error("500", "handler error")
             else:
                 await _stop_keepalive(keepalive_task)
                 keepalive_task = None
@@ -732,7 +732,10 @@ class AgentService:
             try:
                 await request.respond(b"")
             except Exception:
-                log.exception("failed to emit stream terminator on %s", request.subject)
+                log.error(
+                    "failed to emit stream terminator on %s (exception)",
+                    request.subject,
+                )
 
 
 async def _stop_keepalive(task: asyncio.Task[None] | None) -> None:
@@ -765,7 +768,10 @@ async def _keepalive_loop(request: Request, interval_s: float) -> None:
             # An emit failure (broker dropped, request reply already torn down,
             # etc.) is best-effort — log and stop. The terminator path will
             # fail loudly enough on its own if the request is truly dead.
-            log.exception("keepalive emit failed on %s", request.subject)
+            log.error(
+                "keepalive emit failed on %s (exception)",
+                request.subject,
+            )
             return
 
 

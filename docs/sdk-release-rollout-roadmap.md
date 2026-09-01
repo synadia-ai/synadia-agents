@@ -1,6 +1,6 @@
 # SDK identity and tracing release roadmap
 
-- Status: active; implementation contracts resolved, release prerequisites tracked below
+- Status: active; identity implementation complete, tracing and release execution remain
 - Last updated: 2026-09-01
 - Integration branch: `sdk-release-rollout`
 - Scope: TypeScript and Python caller/host SDKs, sender identity, optional tracing, provided
@@ -10,6 +10,10 @@ This is the persistent source of truth for the coordinated SDK rollout. Check an
 the evidence is linked here or in the relevant pull request or tracking issue. This file is public:
 use product-neutral language, role-based operational details where practical, and no private
 specification or launch links.
+
+Checkboxes under implementation sections mean code/test work. Checkboxes under sections explicitly
+labelled **release execution** mean the future registry run, not skipped SDK work. Conditional
+rollback instructions are ordinary bullets because they are procedures, not incomplete tasks.
 
 The rollout has five non-negotiable outcomes:
 
@@ -47,7 +51,8 @@ The rollout has five non-negotiable outcomes:
       ([PR #188](https://github.com/synadia-ai/synadia-agents/pull/188)).
 - [ ] The optional tracing feature is merged and its release gate is complete.
 - [ ] All intended SDK and integration artifacts are published through the recorded registry contract.
-- [ ] Every provided integration and release-consuming example is assessed.
+- [x] Every provided integration and release-consuming example is assessed; in-repository identity
+      plumbing is complete ([PR #190](https://github.com/synadia-ai/synadia-agents/pull/190)).
 - [ ] Public repository and packed-artifact terminology audits pass.
 - [ ] Every released artifact satisfies the normal dependency cooldown with no exception active.
 
@@ -178,7 +183,10 @@ context.
       explicitly identity-free path.
 - [x] Never interpret an Alice-authenticated connection plus a Bob signer as Bob identity. Delegated
       identity, if ever designed, is a separate protocol feature outside this rollout.
-- [ ] Test coordinated credential rotation without retaining or logging old credential material.
+- [x] Test real reconnect and coordinated rotation in both languages. The immutable credential
+      snapshot remains available while its connection can reconnect; rotation closes the old
+      connection, wipes its bundle (seed, authenticator callbacks, and credentials JWT), then
+      resolves and binds the replacement snapshot. No credential material is rendered or logged.
 
 The 2026-09-01 branch audit found no integration or release-example code that directly loads a
 context/creds/seed, constructs an authenticator, or derives a signer. The sole test-harness bypass
@@ -207,9 +215,9 @@ contract:
   npm.
 
 - [ ] Make every rollout manifest and lock select exact new internal versions while aging.
-- [ ] If a quieter aging window is desired, manually delete only the generated GitHub Release entry
-      after verifying PyPI publication. Keep the version tag and PyPI artifacts intact, and recreate
-      the release entry from the same tag/digests at cutover if wanted.
+- Optional reminder: if a quieter aging window is desired, manually delete only the generated
+  GitHub Release entry after verifying PyPI publication. Keep the version tag and PyPI artifacts
+  intact, and recreate the release entry from the same tag/digests at cutover if wanted.
 - [ ] Publish each already-built, approved tarball with explicit
       `npm publish <approved.tgz> --tag next`; record pre/post dist-tags and digests. Never publish
       from a source directory that can rerun a lifecycle build.
@@ -244,8 +252,9 @@ connection.
       available.
 - [x] Derive connection and signer inputs from one immutable credential snapshot in integrations;
       redact all credential material.
-- [ ] Test seed, credentials, context, same-user/different-account JWTs, mismatched credentials,
-      multiple clients/services sharing one connection, reconnect, and credential rotation.
+- [x] Test seed, credentials, context, same-user/different-account JWTs, mismatched credentials,
+      multiple clients/services sharing one connection, real reconnect followed by a signed
+      operation, and close/wipe/re-resolve credential rotation in TypeScript and Python.
 - [x] A configured signer mismatch is a typed/actionable error in both languages and never silently
       downgrades to unsigned or headerless operation.
 
@@ -256,13 +265,16 @@ connection.
       signed, unsigned, and headerless prompts.
 - [x] Discovery treats a service without `min_sender_trust` as legacy-compatible.
 - [x] A permissive target remains callable when identity discovery is unavailable.
-- [ ] A strict target without a configured signer fails with an inspectable error code and
+- [x] A strict target without a configured signer fails with an inspectable error code and
       description in both languages, not only a parsed message string.
 - [x] Signed payload sizing includes all NATS header framing and remains under broker limits.
 - [x] Unknown and duplicate identity headers fail according to the documented policy.
 - [x] Intended public identity types and helpers are exported from documented package paths.
-- [ ] Identity crypto libraries remain normal SDK dependencies for this release; prove that an
-      identity-free import/start path works in every supported runtime without configuration.
+- [x] Identity crypto libraries remain normal SDK dependencies for this release. Source suites
+      prove identity-free behavior across supported Node, Bun, and Python runtimes; exact npm
+      artifacts are imported through Bun, Node ESM, and Node CJS, and exact host artifacts perform
+      a broker-backed identity-free start/prompt smoke in Node and Python 3.11-3.13. Browser is not
+      a shipped SDK runtime in this release.
 
 ### AgentService SDKs
 
@@ -276,10 +288,15 @@ connection.
       malformed, stale, or replayed identity.
 - [x] Registration without a usable connection identity follows the recorded host-default contract.
 - [x] A configured host signer registers a verifiable `id_sig` only after connection binding.
-- [ ] Raw nonces, seeds, credentials, signatures, JWTs, and authentication headers never appear in
-      structured or rendered logs, rejection details, or exceptions. Add explicit redaction tests.
-- [ ] Service imports, account-token placement, `sub` overrides, renamed/closed exports, request-info
-      stamps, and operator-attested behavior are exercised or the unsupported capability is removed.
+- [x] Raw nonces, seeds, credentials, signatures, JWTs, and authentication headers never appear in
+      structured or rendered logs, rejection details, or exception graphs. Explicit tests cover
+      parsed/header representations, unexpected application exceptions, wire errors, captured
+      logs, and recursively redacted evidence artifacts.
+- [x] Service imports without `share`, renamed imports with explicit signed `sub`, request-info
+      stamps, and operator-attested behavior are exercised through production AgentService in both
+      languages. A genuinely closed export fixture proves the broker rejects same-account direct
+      publishes. The unusable AgentService account-token-position option is removed; the supported
+      low-level `SenderGate`/verifier capability remains tested for hand-rolled wildcard services.
 
 ### Security vocabulary and protocol boundaries
 
@@ -347,13 +364,16 @@ Teach neutral concepts such as **sender identity**, **signed sender**, `Agent-Se
 - [x] Ensure protocol-mapping documents are self-contained or link only to approved public specs.
 - [ ] Audit the **entire public repository**, generated docs, source maps, changelogs, release notes,
       package metadata, fixtures, and source docstrings for private terminology and links.
-- [ ] Reconcile stale integration documentation with the capabilities actually shipped by
-      `AgentService`, including extension-endpoint support used by headless controllers.
-- [ ] Inspect npm tarballs and both Python wheels **and sdists**, not only the source tree.
-- [ ] Fail closed with package-content allowlists and scan artifacts for credentials, seeds, tokens,
-      private links, source paths, and unintended files.
+- [x] Reconcile integration/release documentation with the capabilities actually shipped by
+      `AgentService`, including extension-endpoint support, ordinary registry dependencies (no
+      `bundleDependencies`), and the committed runtime paths used by headless controllers.
+- [x] Local rehearsal inspects npm tarballs and both Python wheels **and sdists**, installs the exact
+      bytes outside the source tree, and exercises each supported loader/runtime.
+- [x] Package-content validation fails closed on declared npm file sets and Python distribution
+      roots, forbidden files/local references, NKEY seeds, JWT credentials, publisher tokens,
+      absolute source paths, and private terminology/links.
 - [ ] Record a zero-hit terminology result and reviewed artifact manifests here or in the relevant
-      pull request.
+      candidate pull request. This is final-artifact release evidence, not SDK implementation.
 
 ## Workstream D: integration compatibility and inventory
 
@@ -367,22 +387,25 @@ Every shipped integration must support both modes from the same released version
 
 ### Publishable and external integrations
 
-| Integration/artifact | Shape | Release classification | Required work | Status |
-| --- | --- | --- | --- | --- |
-| ACP | `AgentService` | npm, first publish | signer/trust plumbing; exact SDK; lock/artifact smoke | [ ] |
-| Grok Build | ACP front door | npm, first publish | inherit ACP; include Grok-to-ACP dependency edge | [ ] |
-| Codex | `AgentService`, manager | npm, first publish | signer/trust; document shared connection identity | [ ] |
-| OpenCode | `AgentService` | npm, first publish | signer/trust; installed-plugin path | [ ] |
-| Eve | `AgentService` | npm, first publish | signer/trust; lock/artifact smoke | [ ] |
-| Flue | `AgentService` | npm, first publish | signer/trust; add missing CI coverage | [ ] |
-| DeerFlow | Python `AgentService` | PyPI, existing | signer/trust; SDK-triggered CI; lock/artifact smoke | [ ] |
-| OpenClaw | `AgentService` channel | npm, existing | validate completed migration; add release lock; exact SDK refs; artifact smoke | [ ] |
-| PI | `AgentService` extension | npm, existing | validate completed migration and deferred prompt lifecycle; add release lock; exact SDK refs | [ ] |
-| Claude Code channel | bundled `AgentService` runtime | marketplace package manifest | validate completed migration; exact SDK/lock; verify committed runtime; marketplace install | [ ] |
-| Claude Code plugin descriptor | marketplace metadata | versioned marketplace | sync `plugin.json` with package manifest; smoke marketplace install | [ ] |
-| PI headless controller | multi-session host | npm, existing | shared identity docs; exact dependencies; artifact smoke | [ ] |
-| Claude Code headless controller | multi-session host | npm, existing | shared identity docs; remove `latest`; artifact smoke | [ ] |
-| Hermes (`synadia-ai/hermes-nats-gateway`) | external Python host | external gate | pin canonical repo/SHA; signer plumbing; artifact evidence | [ ] |
+The table separates completed source/identity work from future candidate/registry evidence. “Pending
+artifact” does not mean the integration skipped SDK adaptation.
+
+| Integration/artifact | Shape | Source/identity state | Release evidence |
+| --- | --- | --- | --- |
+| ACP | `AgentService`; npm first publish | complete | pending artifact/registry |
+| Grok Build | ACP front door; npm first publish | complete; dependency edge recorded | pending artifact/registry |
+| Codex | `AgentService`, shared-connection manager; npm first publish | complete and documented | pending artifact/registry |
+| OpenCode | `AgentService`; npm first publish | complete | pending installed-plugin artifact |
+| Eve | `AgentService`; npm first publish | complete | pending artifact/registry |
+| Flue | `AgentService`; npm first publish | complete; CI added | pending artifact/registry |
+| DeerFlow | Python `AgentService`; existing PyPI package | complete; SDK-triggered CI added | pending artifact/registry |
+| OpenClaw | `AgentService` channel; existing npm package | complete | pending immutable lock/artifact |
+| PI | `AgentService` extension; existing npm package | complete, including deferred lifecycle | pending immutable lock/artifact |
+| Claude Code channel | bundled `AgentService` runtime; marketplace | complete; committed runtime rebuilt/verified with SDK changes | pending marketplace artifact/install |
+| Claude Code plugin descriptor | marketplace metadata | manifest versions currently aligned | pending next unique version/install |
+| PI headless controller | shared-connection host; existing npm package | complete and documented | pending immutable artifact |
+| Claude Code headless controller | shared-connection host; existing npm package | complete and documented | pending immutable artifact |
+| Hermes (`synadia-ai/hermes-nats-gateway`) | external Python host | external adaptation gate pending | pending pinned SHA/artifact evidence |
 
 The prior Claude Code descriptor mismatch is corrected: the branch package manifest and plugin
 descriptor both currently read `0.5.1`. Because the marketplace contents have changed, release
@@ -395,28 +418,31 @@ does not complete those release gates.
 Private packages still provide compatibility evidence and must install packed/registry artifacts,
 not monorepo source shortcuts.
 
-| Consumer | Primary role | Status |
-| --- | --- | --- |
-| open-agent | AgentService integration | [ ] |
-| open-agent-vercel | host/example | [ ] |
-| DSPy | TypeScript/Bun host/example | [ ] |
-| DSPy research agent | TypeScript/Bun host/example | [ ] |
-| Durable agents | host/example | [ ] |
-| Agent web UI | caller-facing application | [ ] |
-| Python identity workbook | cross-agent/caller acceptance | [ ] |
-| Reference agents and ladders | protocol examples | [ ] |
+| Consumer | Primary role | Source/identity state | Release evidence |
+| --- | --- | --- | --- |
+| open-agent | AgentService integration | complete | pending artifact |
+| open-agent-vercel | host/example | complete | pending artifact |
+| DSPy | TypeScript/Bun host/example | complete | pending artifact |
+| DSPy research agent | TypeScript/Bun host/example | complete | pending artifact |
+| Durable agents | host/example | complete | pending artifact |
+| Agent web UI | caller-facing application | complete | pending artifact |
+| Python identity workbook | cross-agent/caller acceptance | complete | pending exact registry SDK run |
+| Reference agents and ladders | protocol examples | complete | pending exact registry SDK run |
 
-For every applicable inventory row:
+Branch/source implementation gates for every in-repository row:
 
-- [ ] Record identity-free startup/prompt and signed registration/inbound-prompt evidence.
-- [ ] Record prompt rejection before ack/handler for invalid identity, without secret-bearing logs.
-- [ ] Verify no identity configuration remains a valid, documented configuration.
+- [x] Record identity-free startup/prompt and signed registration/inbound-prompt evidence.
+- [x] Record prompt rejection before ack/handler for invalid identity, without secret-bearing logs.
+- [x] Verify no identity configuration remains a valid, documented configuration.
 - [x] Plumb signer/trust settings from an immutable connection credential snapshot where supported.
-- [ ] Cover both CLI and installed-plugin/runtime paths.
-- [ ] Test real runtime behavior and clean artifact-only installation.
+- [x] Cover applicable CLI and installed-plugin/runtime paths in source CI.
+
+Candidate/registry evidence still to execute for every applicable release row:
+
+- [ ] Test the exact final candidate artifact in the real runtime and clean installation path.
 - [ ] Declare exact compatible internal versions; no monorepo `file:` or editable source counts as
       release proof.
-- [ ] Record artifact SHA, environment, CI run, time, and reviewer for every applicable row.
+- [ ] Record artifact SHA, environment, CI run, time, and reviewer.
 
 Hand-rolled hosts require full service registration, prompt admission before acknowledgement,
 status classification, replay behavior, sender exposure, logging/redaction, and error semantics.
@@ -438,11 +464,11 @@ rollout, Codex and the PI/Claude headless controllers keep their shared connecti
 are logical agent instances under one connection identity, not independent cryptographic agents.
 No per-session credential or connection setting is added.
 
-- [ ] Inventory Codex, PI/Claude headless controllers, and all other shared-connection managers.
-- [ ] Document the shared-identity model without treating names, subjects, trace IDs, or first-match
+- [x] Inventory Codex, PI/Claude headless controllers, and all other shared-connection managers.
+- [x] Document the shared-identity model without treating names, subjects, trace IDs, or first-match
       reverse lookup as cryptographic session identity.
-- [ ] Correct descriptions that call each logical session an independently identified agent.
-- [ ] Treat independently credentialed per-session identities as a future explicit architecture,
+- [x] Correct descriptions that call each logical session an independently identified agent.
+- [x] Treat independently credentialed per-session identities as a future explicit architecture,
       not part of this release.
 
 ### Two-stage SDK consumption by integrations
@@ -466,7 +492,7 @@ exception, repeat immutable registry installs, reconcile the exact release commi
 move the recorded npm dist-tags, and perform the recorded Python adoption/announcement step.
 Any artifact-byte change requires a new version and age clock.
 
-- [ ] Branch-development CI proves all integrations compile and run against the coordinated SDK
+- [x] Branch-development CI proves all integrations compile and run against the coordinated SDK
       source commit before candidates exist.
 - [x] Artifact-rehearsal CI proves the same integrations against the exact locally packed SDK bytes.
 - [ ] Registry-aging CI proves integrations against exact registry SDK versions with no local,
@@ -560,12 +586,24 @@ Fallback, only if a scoped mechanism is unavailable:
 
 ### Immutable installation
 
-- [ ] Bun uses committed locks and `bun install --frozen-lockfile`/the approved immutable equivalent.
-- [ ] uv uses committed locks and `uv sync --locked`.
-- [ ] npm packages are tested from exact packed tarballs without workspace/file resolution.
-- [ ] Python packages are tested from exact wheel and sdist artifacts without editable/source
-      overrides.
-- [ ] Registry integrity hashes are verified; builds/tests cannot rewrite locks; CI rejects drift.
+Implemented local rehearsal guarantees:
+
+- [x] npm packages are installed from exact packed tarballs outside the source/staging tree, with no
+      workspace/file fallback; SDK artifacts cover Bun import, Node ESM/CJS import, and a
+      broker-backed identity-free host/caller round trip.
+- [x] Python packages are installed from exact wheel and sdist artifacts without editable/source
+      overrides for Python 3.11-3.13; exact host artifacts run the same broker-backed identity-free
+      round trip.
+- [x] Staged manifests are immutable across install/build, artifacts are hashed, and CI rejects
+      staged graph or package-content drift.
+
+Registry-candidate **release execution** gates:
+
+- [ ] Bun uses committed candidate locks and `bun install --frozen-lockfile`/the approved immutable
+      equivalent.
+- [ ] uv uses committed candidate locks and `uv sync --locked`.
+- [ ] Registry integrity hashes match the already-approved artifact digests; builds/tests cannot
+      rewrite locks and CI rejects drift.
 
 ## Workstream F: clean artifacts, release DAG, and provenance
 
@@ -582,8 +620,9 @@ Fallback, only if a scoped mechanism is unavailable:
       dependency that is not explicitly allowed.
 - [ ] Create the release/version changes as a clean, reviewed commit. Do not publish from manifests
       transiently rewritten by a developer helper.
-- [ ] Validate the complete package graph so no runtime `file:`, workspace-only, editable, or stale
-      internal constraint can escape.
+- [x] Validate the complete staged package graph so no runtime `file:`, workspace-only, editable,
+      or stale internal constraint can escape. Final candidate values and locks remain release
+      execution gates below.
 - [x] Build/pack once from the recorded commit, hash the artifacts, and hand the same bytes through
       package inspection, tests, approval, and publication. A publish job must not rebuild them.
 - [x] Install and run all relevant tests from those artifacts in clean environments with no source
@@ -617,32 +656,33 @@ Fallback, only if a scoped mechanism is unavailable:
 
 ## Compatibility acceptance matrix
 
-Run applicable rows in both language directions and against exact release artifacts.
+Source proof and final-candidate proof are deliberately separate. The first column shows SDK work;
+the second remains open until the exact final registry bytes are exercised during release execution.
 
-| Endpoint/configuration | Expected outcome | Proof |
-| --- | --- | --- |
-| Legacy/headerless caller -> new default prompt endpoint | accepted; sender absent | [ ] |
-| New caller with identity omitted -> legacy agent | no lookup/header; accepted | [ ] |
-| New caller with identity omitted -> new default agent | no lookup/header; accepted | [ ] |
-| Explicit unsigned claim -> new default prompt endpoint | accepted as claimed, never signature-valid | [ ] |
-| Signed caller -> new default prompt endpoint | accepted as signature-valid | [ ] |
-| Signed caller -> signed-only prompt endpoint | accepted as signature-valid | [ ] |
-| Headerless/unsigned -> signed-only prompt endpoint | typed/actionable rejection | [ ] |
-| Invalid/replayed/stale identity -> prompt endpoint | rejected before ack/handler | [ ] |
-| Invalid/replayed/stale identity -> status endpoint | classified but status remains compatible | [ ] |
-| Password/token connection -> new default agent | identity-free operation | [ ] |
-| NKEY without discovery permission -> default agent | approved identity-free behavior | [ ] |
-| Explicit mismatched seed/credentials signer | clear failure; no signed send/register or downgrade | [ ] |
-| Second signer/client on cached shared connection | independently validated; no cached bypass | [ ] |
-| TypeScript reconnect/credential rotation | signer-keyed cache invalidates and rebinds | [ ] |
-| Python reconnect/credential rotation | no stale settled identity; next identity-bearing operation revalidates | [ ] |
-| Signature-valid sender without operator attestation | user valid; account remains claimed/unattested | [ ] |
-| Matching operator-attested sender | user valid and `accountAttested=true` | [ ] |
-| Operator-attested user/account mismatch | prompt rejected before ack/handler | [ ] |
-| New caller -> old extension-ignoring agent | prompt/stream compatibility | [ ] |
-| Midstream query/reply | documented as unsigned; no inherited sender authorization | [ ] |
-| Trace context plus identity | trace is untrusted; combined headers bounded; auth unchanged | [ ] |
-| No trace configuration | byte-for-byte legacy wire behavior | [ ] |
+| Endpoint/configuration | Expected outcome | Source proof | Final artifact proof |
+| --- | --- | --- | --- |
+| Legacy/headerless caller -> new default prompt endpoint | accepted; sender absent | [x] | [ ] |
+| New caller with identity omitted -> legacy agent | no lookup/header; accepted | [x] | [ ] |
+| New caller with identity omitted -> new default agent | no lookup/header; accepted | [x] | [ ] |
+| Explicit unsigned claim -> new default prompt endpoint | accepted as claimed, never signature-valid | [x] | [ ] |
+| Signed caller -> new default prompt endpoint | accepted as signature-valid | [x] | [ ] |
+| Signed caller -> signed-only prompt endpoint | accepted as signature-valid | [x] | [ ] |
+| Headerless/unsigned -> signed-only prompt endpoint | typed/actionable rejection | [x] | [ ] |
+| Invalid/replayed/stale identity -> prompt endpoint | rejected before ack/handler | [x] | [ ] |
+| Invalid/replayed/stale identity -> status endpoint | classified but status remains compatible | [x] | [ ] |
+| Password/token connection -> new default agent | identity-free operation | [x] | [ ] |
+| NKEY without discovery permission -> default agent | approved identity-free behavior | [x] | [ ] |
+| Explicit mismatched seed/credentials signer | clear failure; no signed send/register or downgrade | [x] | [ ] |
+| Second signer/client on cached shared connection | independently validated; no cached bypass | [x] | [ ] |
+| TypeScript reconnect/credential rotation | signer-keyed cache invalidates and rebinds | [x] | [ ] |
+| Python reconnect/credential rotation | no stale settled identity; next identity-bearing operation revalidates | [x] | [ ] |
+| Signature-valid sender without operator attestation | user valid; account remains claimed/unattested | [x] | [ ] |
+| Matching operator-attested sender on a closed import | user valid and `accountAttested=true` | [x] | [ ] |
+| Operator-attested user/account mismatch | prompt rejected before ack/handler | [x] | [ ] |
+| New caller -> old extension-ignoring agent | prompt/stream compatibility | [x] | [ ] |
+| Midstream query/reply | documented as unsigned; no inherited sender authorization | [x] | [ ] |
+| Trace context plus identity | trace is untrusted; combined headers bounded; auth unchanged | [ ] | [ ] |
+| No trace configuration | byte-for-byte legacy wire behavior | [ ] | [ ] |
 
 Additional parser and concurrency coverage includes unknown/duplicate headers, concurrent sessions,
 multi-instance replay boundaries, service import/account-token cases, malicious trace/baggage input,
@@ -700,19 +740,19 @@ Triggers include identity-free regression, signer/connection-binding failure, se
 unexpected dependency change, provenance mismatch, partial publish/tag movement, trace data leak, or a
 material integration failure.
 
-- [ ] Stop publication, tag movement, deployment, and announcements; record the incident.
-- [ ] Restore prior npm dist-tags by recorded digest and previous manifests/locks in reverse
+- Stop publication, tag movement, deployment, and announcements; record the incident.
+- Restore prior npm dist-tags by recorded digest and previous manifests/locks in reverse
       dependency order.
-- [ ] For a failed first-publish npm package, remove or redirect only its `next` tag and deprecate the
+- For a failed first-publish npm package, remove or redirect only its `next` tag and deprecate the
       bad version as appropriate; there is no prior `latest` or artifact to restore.
-- [ ] For Python, apply the pre-approved yank/constraint/rollback plan, recognizing that yanks do
+- For Python, apply the pre-approved yank/constraint/rollback plan, recognizing that yanks do
       not remove files and exact pins may still install them.
-- [ ] Correct or mark affected repository releases and disable compromised publisher credentials or
+- Correct or mark affected repository releases and disable compromised publisher credentials or
       environments when applicable.
-- [ ] Redeploy preserved previous artifacts and remove rollout cooldown exceptions if abandoned.
-- [ ] Never overwrite or republish a version; fix forward with a new version and age clock.
-- [ ] Communicate affected versions, exposure, mitigation, and safe versions.
-- [ ] Retain failure evidence, artifact hashes, logs with secrets removed, and required retests.
+- Redeploy preserved previous artifacts and remove rollout cooldown exceptions if abandoned.
+- Never overwrite or republish a version; fix forward with a new version and age clock.
+- Communicate affected versions, exposure, mitigation, and safe versions.
+- Retain failure evidence, artifact hashes, logs with secrets removed, and required retests.
 
 ## Evidence
 

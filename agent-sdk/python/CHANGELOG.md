@@ -57,16 +57,13 @@ test runs the TS client probe signed against this host.
 - **`AgentService` options** — `identity=ServiceIdentity(signer=…)`
   (the host's own signer; the host never sends `Agent-Sender`, so no
   display name), `min_sender_trust` (`"any"` default / `"signed"`),
-  `replay_window_s` (30), `account_token_position` (1-based; validated
-  and honoured by the classifier — note the five-token hosting limit in
-  the README), `accept_sender` (the acceptance hook: `False` → `403` for
+  `replay_window_s` (30), `accept_sender` (the acceptance hook: `False` → `403` for
   a verified sender, `401 signature required` for a claimed / absent
   one; a raise → `500 server error`, logged, never served; sync or
   async), `resolve_ttl_s`, `operator_attested` (off by default — the
   `Nats-Request-Info` cross-check of a *closed* endpoint: a present
   stamp that disagrees with the signed `account` / `user`, or a stamp
-  the server would not write, → `401`; agreement on `acc` — or the
-  `account_token_position` cross-check — sets
+  the server would not write, → `401`; agreement on `acc` sets
   `sender.account_attested`, rendered `(verified)`). Properties
   `identity` (the registered `AgentId`, `None` without one),
   `min_sender_trust`, `operator_attested`, `instance_id`.
@@ -93,6 +90,13 @@ test runs the TS client probe signed against this host.
   Defaults `DEFAULT_MIN_SENDER_TRUST`, `DEFAULT_REPLAY_WINDOW_S`,
   `DEFAULT_NONCE_CACHE_MAX_ENTRIES`; `AcceptSenderHook`,
   `SenderRejection`, `SenderAdmission`, `ServiceIdentity` exported.
+- `AgentService` no longer exposes the unusable `account_token_position`
+  option: its fixed five-token subscription cannot receive the inserted
+  six-token subject. The supported capability remains on `SenderGate` and
+  `verify_sender_header` for hand-rolled wildcard services.
+- Unexpected handler, status, and classification failures use generic wire
+  descriptions and fixed log markers; application-controlled exception types,
+  messages, and tracebacks are never emitted by the SDK.
 - **Examples** — `examples/_connect_cli.py` gained `--nkey` / `--creds`
   (`$NATS_NKEY_SEED_FILE` / `$NATS_CREDS`; a file, never an environment
   value holding the seed) and `signer_from_cli`; `_reference_agent.py`
