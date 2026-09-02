@@ -42,7 +42,11 @@ class TraceScope:
     # Deliberately a mutable cell inside a frozen scope: a task spawned
     # inside the handler gets a copy of the context but shares this
     # object, so its turns count against the same execution.
-    turn_count_hint: list[int] = field(default_factory=lambda: [0])
+    # Excluded from equality and hashing: a frozen dataclass advertises
+    # itself as hashable, and a mutable field would make hash() raise. It
+    # is running state, not identity — two scopes naming the same
+    # execution are the same scope whatever their counters read.
+    turn_count_hint: list[int] = field(default_factory=lambda: [0], compare=False)
 
 
 # The binding carries the service's tracing configuration alongside the
