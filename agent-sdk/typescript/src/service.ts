@@ -48,6 +48,7 @@ import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceHandler, type ServiceMsg } from "@nats-io/services";
 
 import {
+  activeTrace,
   agentIdAccount,
   agentIdUser,
   AgentSubject,
@@ -328,6 +329,26 @@ export class PromptResponse {
     this.#msg = msg;
     this.#nc = nc;
     this.sender = sender;
+  }
+
+  /**
+   * Headers for every model request this execution issues.
+   *
+   * An agent stamps these on each completion request so the model proxy
+   * files the call under the right thread and tree without seeing any
+   * NATS traffic. Hierarchy is the edge records' job, so the proxy needs
+   * no parent or tool-call header.
+   *
+   * `{}` when the prompt was untraced, so harness code needs no plumbing
+   * and degrades to nothing.
+   */
+  traceHeaders(): Record<string, string> {
+    const scope = activeTrace();
+    if (scope === undefined) return {};
+    return {
+      "X-Synadia-Thread-ID": scope.threadId,
+      "X-Synadia-Root-ID": scope.rootId,
+    };
   }
 
   /**
