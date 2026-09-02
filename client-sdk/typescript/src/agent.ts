@@ -200,10 +200,10 @@ export class Agent {
     // If tracing is enabled, mint a thread ID for this prompt and inherit
     // the root and parent from the ambient trace (a root when none is bound).
     const lineage = trace !== undefined ? mintLineage() : undefined;
+    let edge: (() => Promise<void>) | undefined;
     if (lineage !== undefined) {
-      // Publish the edge before the prompt goes out, so an observer sees
-      // the node before it runs. Fire-and-forget and fail-open — a failed
-      // publish never fails the prompt.
+      // The edge goes out immediately before the prompt, so an observer
+      // sees the node before it runs.
       const edgeSubject =
         trace?.edgeSubject === undefined ? DEFAULT_EDGE_SUBJECT : trace.edgeSubject;
       // Consumers ignore unsigned records, so publishing without a signer
@@ -213,16 +213,17 @@ export class Agent {
       if (edgeSubject !== null && !identity?.signer) {
         warnEdgesUnsigned(this.#nc);
       } else if (edgeSubject !== null) {
-        void this.#publishEdge(
-          edgeSubject,
-          buildEdgeRecord(
-            lineage.threadId,
-            lineage.parentId ?? null,
-            lineage.rootId,
-            toolCallId,
-            lineage.turnCountHint,
-          ),
+        // Built here, where the ambient trace is still the caller's, but
+        // published at publish time — a prompt that never goes out (never
+        // iterated, or rejected by validation below) publishes no edge.
+        const record = buildEdgeRecord(
+          lineage.threadId,
+          lineage.parentId ?? null,
+          lineage.rootId,
+          toolCallId,
+          lineage.turnCountHint,
         );
+        edge = (): Promise<void> => this.#publishEdge(edgeSubject, record);
       }
     }
 
@@ -240,7 +241,7 @@ export class Agent {
         connLimit,
         headerBound,
       );
-      return this.#buildStream(envelope, subject, sub, requireSigned, opts);
+      return this.#buildStream(envelope, subject, sub, requireSigned, opts, edge);
     }
 
     // With attachments: load files, then check max_payload on the final encoded size.
@@ -253,7 +254,7 @@ export class Agent {
         connLimit,
         headerBound,
       );
-      return this.#buildStream(envelope, subject, sub, requireSigned, opts);
+      return this.#buildStream(envelope, subject, sub, requireSigned, opts, edge);
     })();
   }
 
@@ -263,6 +264,7 @@ export class Agent {
     sub: string,
     requireSigned: boolean,
     opts: PromptOptions,
+    edge: (() => Promise<void>) | undefined,
   ): Promise<PromptStream> {
     // Encode once; the header (when signed) covers exactly these bytes.
     const payload = encodeEnvelope(envelope);
@@ -289,6 +291,7 @@ export class Agent {
       ...(identityEnabled
         ? { buildHeaders: () => this.#headersAtPublish(sub, requireSigned, payload) }
         : {}),
+      ...(edge ? { beforePublish: edge } : {}),
       inactivityTimeoutMs: opts.inactivityTimeoutMs ?? this.#defaultInactivityTimeoutMs,
       maxWaitMs: opts.maxWaitMs ?? DEFAULT_PROMPT_MAX_WAIT_MS,
       signal,
@@ -348,8 +351,7 @@ export class Agent {
    * is not a rename, so no `sub` override is needed. Consumers verify in
    * stored mode.
    *
-   * Fire-and-forget and fail-open — tracing never blocks, slows or fails
-   * a prompt.
+   * Fail-open — a failed publish never fails the prompt.
    */
   async #publishEdge(subject: string, record: BuiltEdgeRecord): Promise<void> {
     try {

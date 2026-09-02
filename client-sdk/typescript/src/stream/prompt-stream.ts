@@ -57,6 +57,13 @@ export interface PromptStreamOptions {
    * → no headers.
    */
   readonly buildHeaders?: () => Promise<MsgHdrs | undefined>;
+  /**
+   * Runs once at publish time, immediately before the request goes out.
+   * Used for the observability edge record, so an observer sees the node
+   * before it runs — and so a prompt that is never iterated, or that
+   * fails validation, publishes no edge at all.
+   */
+  readonly beforePublish?: () => Promise<void>;
   readonly inactivityTimeoutMs: number;
   readonly maxWaitMs: number;
   readonly signal?: AbortSignal;
@@ -67,6 +74,7 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
   readonly #requestSubject: string;
   readonly #payload: Uint8Array;
   readonly #buildHeaders: (() => Promise<MsgHdrs | undefined>) | undefined;
+  readonly #beforePublish: (() => Promise<void>) | undefined;
   readonly #inactivityTimeoutMs: number;
   readonly #maxWaitMs: number;
   readonly #signal: AbortSignal | undefined;
@@ -79,6 +87,7 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
     this.#requestSubject = options.subject;
     this.#payload = options.payload;
     this.#buildHeaders = options.buildHeaders;
+    this.#beforePublish = options.beforePublish;
     this.#inactivityTimeoutMs = options.inactivityTimeoutMs;
     this.#maxWaitMs = options.maxWaitMs;
     this.#signal = options.signal;
@@ -111,6 +120,7 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
     // transport-node / Bun ws) all return a `QueuedIterator<Msg>` whose
     // `.stop()` is the only way to bail out early without waiting for
     // `maxWait` to expire. Cast at the boundary.
+    if (this.#beforePublish) await this.#beforePublish();
     // Headers are built here — at publish time — so a signed
     // `Agent-Sender` carries a fresh `ts` and nonce.
     const hdrs = this.#buildHeaders ? await this.#buildHeaders() : undefined;
