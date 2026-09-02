@@ -115,12 +115,22 @@ export function randomThreadId(): string {
   return out;
 }
 
+/** Longest accepted tool call id, in Unicode code points. */
 export const TOOL_CALL_ID_MAX = 256;
+
+// A surrogate half with no partner: not a Unicode scalar value, so it has
+// no UTF-8 form. `JSON.stringify` would escape it while Python could not
+// encode the record at all, and the two SDKs must write the same bytes.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
 export function validToolCallId(toolCallId: string): boolean {
   // This isn't intended as strict validation. It's just a basic
   // pass to avoid obvious garbage gets into the tracing system.
-  return toolCallId.length > 0 && toolCallId.length <= TOOL_CALL_ID_MAX;
+  // Counted in code points — not UTF-16 units — so the Python SDK, whose
+  // `len()` counts code points, accepts exactly the same ids.
+  if (LONE_SURROGATE.test(toolCallId)) return false;
+  const codePoints = Array.from(toolCallId).length;
+  return codePoints > 0 && codePoints <= TOOL_CALL_ID_MAX;
 }
 
 /** One built edge record: its wire bytes and the id that de-duplicates it. */

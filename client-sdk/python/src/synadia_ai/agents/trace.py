@@ -31,6 +31,7 @@ class TraceOptions:
 
 
 THREAD_ID_HEX_LEN = 32
+#: Longest accepted tool call id, in Unicode code points.
 TOOL_CALL_ID_MAX = 256
 
 _THREAD_ID_RE = re.compile(rf"[0-9a-f]{{{THREAD_ID_HEX_LEN}}}")
@@ -107,7 +108,17 @@ def random_thread_id() -> str:
 def valid_tool_call_id(tool_call_id: str) -> bool:
     # This isn't intended as strict validation. It's just a basic
     # pass to avoid obvious garbage gets into the tracing system.
-    return 0 < len(tool_call_id) <= TOOL_CALL_ID_MAX
+    # `len()` counts code points, which is what the TypeScript SDK counts
+    # too, so the two accept exactly the same ids.
+    if not 0 < len(tool_call_id) <= TOOL_CALL_ID_MAX:
+        return False
+    # A lone surrogate has no UTF-8 form: the record could not be encoded,
+    # and TypeScript rejects it for the same reason.
+    try:
+        tool_call_id.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def build_edge_record(
@@ -135,4 +146,6 @@ def build_edge_record(
         "tool_call_id": tool_call_id,
         "turn_count_hint": turn_count_hint,
     }
-    return record_id, json.dumps(record, separators=(",", ":")).encode("utf-8")
+    # `ensure_ascii=False`: `JSON.stringify` writes non-ASCII text raw, and
+    # the two SDKs must write byte-identical records.
+    return record_id, json.dumps(record, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
