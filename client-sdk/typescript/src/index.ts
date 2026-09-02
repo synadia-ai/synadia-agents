@@ -243,8 +243,12 @@ export { base64UrlDecode, base64UrlEncode, sha256, sha256Hex } from "./identity/
 // Observability tracing (opt-in)
 export {
   DEFAULT_EDGE_SUBJECT,
+  EDGE_RECORD_VERSION,
   THREAD_ID_HEX_LEN,
+  TOOL_CALL_ID_MAX,
+  buildEdgeRecord,
   randomThreadId,
+  validToolCallId,
   type TraceOptions,
 } from "./trace.js";
 

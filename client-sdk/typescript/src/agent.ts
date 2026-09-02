@@ -20,7 +20,7 @@ import {
   serializeSenderHeader,
 } from "./identity/sender-header.js";
 import { combineAbortSignals } from "./internal/abort.js";
-import { randomThreadId, type TraceOptions } from "./trace.js";
+import { buildEdgeRecord, randomThreadId, validToolCallId, type TraceOptions } from "./trace.js";
 import { STATUS_ENDPOINT_NAME } from "./internal/service-name.js";
 import { normalizeAttachments } from "./prompt/attachments.js";
 import { encodedEnvelopeSize, encodeEnvelope, type RequestEnvelope } from "./prompt/envelope.js";
@@ -175,9 +175,18 @@ export class Agent {
     // size is re-checked once the identity is known.
     const headerBound = identity?.mayAttachHeader() ? maxSenderHeaderBytes(sub, identity.name) : 0;
 
+    // Tracing is best-effort and shouldn't stop an agent from sending out
+    // a prompt. Invalid tools are just ignored.
+    const toolCallId =
+      opts.toolCallId !== undefined && validToolCallId(opts.toolCallId) ? opts.toolCallId : null;
+
     // If tracing is enabled, mint a thread ID for this prompt. It starts
     // its own tree until an ambient trace can be inherited.
     const lineage = this.#trace !== undefined ? mintLineage() : undefined;
+    if (lineage !== undefined) {
+      // Only built here — publishing it comes later in the series.
+      buildEdgeRecord(lineage.threadId, null, lineage.rootId, toolCallId);
+    }
 
     // Fast path: text-only — max_payload check is sync.
     if (!hasAttachments) {

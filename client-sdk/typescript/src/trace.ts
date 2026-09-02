@@ -7,6 +7,10 @@
 // adopted by the receiving service. `rootId` has the same shape — it IS a
 // thread ID, the tree's first execution.
 
+// Bump every time you change the trace record schema
+// (be sure the Python SDK is updated in lockstep)
+export const EDGE_RECORD_VERSION = 1;
+
 /** Default subject edge records are published to — the tenant-side short
  * form; the account's import qualifies it to `TRACE.{account}.edges`. */
 export const DEFAULT_EDGE_SUBJECT = "TRACE.edges";
@@ -35,4 +39,31 @@ export function randomThreadId(): string {
   let out = "";
   for (const b of bytes) out += b.toString(16).padStart(2, "0");
   return out;
+}
+
+export const TOOL_CALL_ID_MAX = 256;
+
+export function validToolCallId(toolCallId: string): boolean {
+  // This isn't intended as strict validation. It's just a basic
+  // pass to avoid obvious garbage gets into the tracing system.
+  return toolCallId.length > 0 && toolCallId.length <= TOOL_CALL_ID_MAX;
+}
+
+/** One edge record, ready to publish. */
+export function buildEdgeRecord(
+  threadId: string,
+  parentId: string | null,
+  rootId: string,
+  toolCallId: string | null,
+): Uint8Array {
+  const record = {
+    version: EDGE_RECORD_VERSION,
+    record_id: randomThreadId(),
+    ts: Math.floor(Date.now() / 1000),
+    thread_id: threadId,
+    parent_id: parentId,
+    root_id: rootId,
+    tool_call_id: toolCallId,
+  };
+  return new TextEncoder().encode(JSON.stringify(record));
 }
