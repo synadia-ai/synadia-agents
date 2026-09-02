@@ -17,7 +17,13 @@ EDGE_RECORD_VERSION = 2
 # form; the account's import qualifies it.
 DEFAULT_EDGE_SUBJECT = "TRACE.edges"
 
-_SUBJECT_FORBIDDEN = re.compile(r"[\s\x00]")
+# Spelled out rather than `\s`, which means different things in the two
+# languages: JavaScript's includes U+FEFF and Python's does not, Python's
+# includes the C0 separators and JavaScript's does not. An explicit class
+# is the only way the two SDKs reject exactly the same subjects.
+_SUBJECT_FORBIDDEN = re.compile(
+    "[\x00-\x20\x7f\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +50,9 @@ class TraceOptions:
             if not token:
                 raise ValueError(f"edge_subject {subject!r} must not contain an empty token")
             if _SUBJECT_FORBIDDEN.search(token):
-                raise ValueError(f"edge_subject {subject!r} must not contain whitespace or NUL")
+                raise ValueError(
+                    f"edge_subject {subject!r} must not contain whitespace or control characters"
+                )
             if "*" in token or ">" in token:
                 raise ValueError(f"edge_subject {subject!r} must not contain wildcards")
 

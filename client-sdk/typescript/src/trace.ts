@@ -36,6 +36,13 @@ export interface TraceOptions {
   readonly edgeSubject?: string | null;
 }
 
+// Spelled out rather than `\s`, which means different things in the two
+// languages: JavaScript's includes U+FEFF and Python's does not, Python's
+// includes the C0 separators and JavaScript's does not. An explicit class
+// is the only way the two SDKs reject exactly the same subjects.
+const SUBJECT_FORBIDDEN =
+  /[\u0000-\u0020\u007f\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/;
+
 /**
  * Throws {@link NatsAgentError} when `options.edgeSubject` names a subject
  * that can never be published to: empty, an empty token, whitespace or
@@ -55,7 +62,7 @@ export function assertValidTraceOptions(options: TraceOptions | undefined): void
   if (subject.length === 0) reject("must not be empty");
   for (const token of subject.split(".")) {
     if (token.length === 0) reject("must not contain an empty token");
-    if (/[\s\0]/.test(token)) reject("must not contain whitespace or NUL");
+    if (SUBJECT_FORBIDDEN.test(token)) reject("must not contain whitespace or control characters");
     if (token.includes("*") || token.includes(">")) reject("must not contain wildcards");
   }
 }
