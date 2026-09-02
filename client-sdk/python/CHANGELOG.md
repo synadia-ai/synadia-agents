@@ -17,8 +17,9 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   to `TraceOptions.edge_subject` (default `DEFAULT_EDGE_SUBJECT`, `None`
   for propagate-only) immediately before the prompt goes out — and only
   then: a prompt that is never iterated, fails validation, or whose header
-  cannot be built publishes no edge. `prompt(..., tool_call_id=...)` labels
-  the edge. Omitted, prompts stay byte-identical to protocol 0.3. An
+  cannot be built publishes no edge. The record names its writer in
+  `agent` (`{account}.{user}`, the identity that signs it).
+  `prompt(..., tool_call_id=...)` labels the edge. Omitted, prompts stay byte-identical to protocol 0.3. An
   explicit `Envelope` may override the minted lineage, except that
   forwarding the envelope a handler received spawns a new thread rather
   than reusing its parent's. Exports: `TraceOptions`, `TraceScope`,

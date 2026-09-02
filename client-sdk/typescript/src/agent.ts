@@ -26,7 +26,6 @@ import {
   buildEdgeRecord,
   DEFAULT_EDGE_SUBJECT,
   inheritedTraceOptions,
-  type BuiltEdgeRecord,
   randomThreadId,
   validToolCallId,
   type TraceOptions,
@@ -221,11 +220,14 @@ export class Agent {
         // planned — and a prompt that never goes out (never iterated, or
         // rejected by validation below) publishes no edge.
         const { threadId, parentId, rootId, turnCountHint } = lineage;
-        edge = (): Promise<void> =>
-          this.#publishEdge(
-            edgeSubject,
-            buildEdgeRecord(threadId, parentId ?? null, rootId, toolCallId, turnCountHint),
-          );
+        const plan: EdgePlan = {
+          threadId,
+          parentId: parentId ?? null,
+          rootId,
+          toolCallId,
+          turnCountHint,
+        };
+        edge = (): Promise<void> => this.#publishEdge(edgeSubject, plan);
       }
     }
 
@@ -346,19 +348,28 @@ export class Agent {
   }
 
   /**
-   * Publish one signed edge record.
+   * Build and publish one signed edge record.
    *
    * The signature covers the short-form subject the record is published
    * to: per the identity design a remap that only drops the account token
    * is not a rename, so no `sub` override is needed. Consumers verify in
-   * stored mode.
+   * stored mode. The record's `agent` is the identity the header plan
+   * resolved — the same one that signs it — so body and header agree.
    *
    * Fail-open — a failed publish never fails the prompt.
    */
-  async #publishEdge(subject: string, record: BuiltEdgeRecord): Promise<void> {
+  async #publishEdge(subject: string, edge: EdgePlan): Promise<void> {
     try {
       const plan = await this.#planHeader(subject, true);
       if (!plan) throw new SenderSignatureRequiredError(subject);
+      const record = buildEdgeRecord(
+        plan.id,
+        edge.threadId,
+        edge.parentId,
+        edge.rootId,
+        edge.toolCallId,
+        edge.turnCountHint,
+      );
       const hdrs = await this.#headersFor(plan, record.payload);
       hdrs.set(MSG_ID_HEADER, record.recordId);
       this.#nc.publish(subject, record.payload, { headers: hdrs });
@@ -400,6 +411,20 @@ function warnEdgesUnsigned(nc: NatsConnection): void {
       "edge records are not published (consumers ignore unsigned records). " +
       "Pass identity: { signer } to sign them.",
   );
+}
+
+/**
+ * What `prompt()` decided to record; built into a record at publish time.
+ * The lineage is fixed when the prompt is planned — when the ambient trace
+ * is still the caller's — but the record's `ts` and `agent` are resolved
+ * immediately before the publish.
+ */
+interface EdgePlan {
+  readonly threadId: string;
+  readonly parentId: string | null;
+  readonly rootId: string;
+  readonly toolCallId: string | null;
+  readonly turnCountHint: number;
 }
 
 // The thread ID names this prompt's execution. Inside a prompt handler the

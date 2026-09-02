@@ -170,8 +170,9 @@ class _EdgePlan:
 
     The lineage is fixed when the prompt is planned — that is when the
     ambient trace is still the caller's — but the record's ``ts`` must say
-    when the prompt actually went out, so the bytes are produced by
-    :meth:`Agent._publish_edge` immediately before the publish.
+    when the prompt actually went out and its ``agent`` is whoever signs
+    it, so the bytes are produced by :meth:`Agent._publish_edge`
+    immediately before the publish.
     """
 
     subject: str
@@ -720,24 +721,27 @@ class Agent:
         The signature covers the short-form subject the record is
         published to: per the identity design a remap that only drops the
         account token is not a rename, so no ``sub`` override is needed.
-        Consumers verify in stored mode.
+        Consumers verify in stored mode. The record's ``agent`` is the
+        identity the header plan resolved — the same one that signs it —
+        so body and header agree.
 
         Fail-open — tracing never fails a prompt.
         """
         subject = edge_publish.subject
         try:
+            plan = await plan_sender_header(
+                self._sender_identity, self._nc, subject, require_signed=True
+            )
+            if plan is None:  # pragma: no cover — guarded in _plan_edge
+                raise SenderSignatureRequiredError(subject)
             record_id, payload = build_edge_record(
+                plan.id,
                 edge_publish.thread_id,
                 edge_publish.parent_id,
                 edge_publish.root_id,
                 edge_publish.tool_call_id,
                 edge_publish.turn_count_hint,
             )
-            plan = await plan_sender_header(
-                self._sender_identity, self._nc, subject, require_signed=True
-            )
-            if plan is None:  # pragma: no cover — guarded in _plan_edge
-                raise SenderSignatureRequiredError(subject)
             headers = await plan.build_headers(payload)
             headers[_MSG_ID_HEADER] = record_id
             await self._nc.publish(subject, payload, headers=headers)

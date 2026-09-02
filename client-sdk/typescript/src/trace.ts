@@ -14,10 +14,11 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { NatsAgentError } from "./errors.js";
+import type { AgentId } from "./identity/agent-id.js";
 
 // Bump every time you change the trace record schema
 // (be sure the Python SDK is updated in lockstep)
-export const EDGE_RECORD_VERSION = 2;
+export const EDGE_RECORD_VERSION = 3;
 
 /** Default subject edge records are published to — the tenant-side short
  * form; the account's import qualifies it to `TRACE.{account}.edges`. */
@@ -175,8 +176,14 @@ export interface BuiltEdgeRecord {
  * One edge record, ready to publish. The record id comes back alongside
  * the payload: the publisher stamps it as `Nats-Msg-Id` so a stream
  * de-duplicates a record it already stored.
+ *
+ * `agent` is the writer — the caller that spawned the thread, the parent
+ * side of the edge — in canonical `{account}.{user}` form. It is the same
+ * identity that signs the record's `Agent-Sender` header, so a consumer
+ * can cross-check the body against the verified header.
  */
 export function buildEdgeRecord(
+  agent: AgentId,
   threadId: string,
   parentId: string | null,
   rootId: string,
@@ -192,6 +199,7 @@ export function buildEdgeRecord(
     version: EDGE_RECORD_VERSION,
     record_id: recordId,
     ts: Math.floor(Date.now() / 1000),
+    agent,
     thread_id: threadId,
     parent_id: parentId,
     root_id: rootId,

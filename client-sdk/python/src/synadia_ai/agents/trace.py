@@ -8,10 +8,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .identity.agent_id import AgentId
 
 # Bump every time you change the trace record schema
 # (be sure the TypeScript SDK is updated in lockstep)
-EDGE_RECORD_VERSION = 2
+EDGE_RECORD_VERSION = 3
 
 # Default subject edge records are published to — the tenant-side short
 # form; the account's import qualifies it.
@@ -149,6 +153,7 @@ def valid_tool_call_id(tool_call_id: str) -> bool:
 
 
 def build_edge_record(
+    agent: AgentId,
     thread_id: str,
     parent_id: str | None,
     root_id: str,
@@ -157,6 +162,11 @@ def build_edge_record(
 ) -> tuple[str, bytes]:
     # Returns the record id alongside the payload: the publisher stamps it
     # as Nats-Msg-Id so a stream de-duplicates a record it already stored.
+    #
+    # `agent` is the writer — the caller that spawned the thread, the
+    # parent side of the edge — in canonical `{account}.{user}` form. It is
+    # the same identity that signs the record's Agent-Sender header, so a
+    # consumer can cross-check the body against the verified header.
     #
     # `turn_count_hint` says where in the spawning thread this subprompt
     # went out: turns completed when it was spawned, 0 on a root (nothing
@@ -167,6 +177,7 @@ def build_edge_record(
         "version": EDGE_RECORD_VERSION,
         "record_id": record_id,
         "ts": int(time.time()),
+        "agent": str(agent),
         "thread_id": thread_id,
         "parent_id": parent_id,
         "root_id": root_id,
