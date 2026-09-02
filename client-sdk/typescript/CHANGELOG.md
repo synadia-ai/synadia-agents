@@ -15,6 +15,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Observability tracing (opt-in).** `new Agents({ nc, trace })` — or an
+  `AgentService` handing its options down — makes every `prompt()` mint a
+  thread id, carry `thread_id` / `root_id` in the envelope, and publish a
+  signed edge record (`buildEdgeRecord`, `EDGE_RECORD_VERSION`) to
+  `trace.edgeSubject` (default `DEFAULT_EDGE_SUBJECT`, `null` for
+  propagate-only) immediately before the prompt goes out — and only then:
+  a prompt that is never iterated, fails validation, or whose header
+  cannot be built publishes no edge. `PromptOptions.toolCallId` labels the
+  edge. Omitted, prompts stay byte-identical to protocol 0.3. Exports:
+  `TraceOptions`, `TraceScope`, `activeTrace`, `bindActiveTrace`,
+  `inheritedTraceOptions`, `randomThreadId`, `isThreadId`,
+  `validToolCallId`, `assertValidTraceOptions`.
+  - Lineage read from the wire is untrusted, bounded input: a `thread_id`
+    or `root_id` that is not a string of `THREAD_ID_HEX_LEN` lowercase hex
+    characters is a malformed envelope (`ProtocolError`); an empty string
+    or `null` is absent.
+  - An `edgeSubject` that can never be published to (empty, wildcard,
+    whitespace) is rejected at construction with `NatsAgentError`.
 - `SenderSignatureRequiredError` exposes stable `code` (`401`),
   `description` (`"signature required"`), and `subject` fields for handling
   local signed-target preflight failures without parsing an error message.

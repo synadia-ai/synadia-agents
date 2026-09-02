@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Observability tracing (opt-in).** `AgentServiceOptions.trace` hands
+  tracing down to every `@synadia-ai/agents` client used inside a prompt
+  handler. The service adopts the caller's `thread_id` / `root_id` (or
+  mints a root when it opted in) and binds them as the ambient trace for
+  the handler; `PromptResponse.traceHeaders()` returns the
+  `X-Synadia-Thread-ID` / `X-Synadia-Root-ID` headers to stamp on each
+  model request (`{}` when untraced). The service itself writes no trace
+  record. A malformed lineage id on the envelope is a `400`; a `trace`
+  whose `edgeSubject` can never be published to is rejected at
+  construction.
 - **Sender identity (the sender-identity extension).** `AgentService`
   classifies every `prompt` request before the §6.4 ack: a malformed
   `Agent-Sender` header → `400`; a failing signature, replayed nonce,
