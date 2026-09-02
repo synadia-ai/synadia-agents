@@ -303,7 +303,7 @@ function randomId(): string {
 // service writes no trace record either way.
 function adoptOrMintTrace(envelope: RequestEnvelope): TraceScope {
   const threadId = envelope.threadId ?? randomThreadId();
-  return { threadId, rootId: envelope.rootId ?? threadId, modelCalls: { count: 0 } };
+  return { threadId, rootId: envelope.rootId ?? threadId, turnCountHint: 0 };
 }
 
 /**
@@ -348,7 +348,7 @@ export class PromptResponse {
   traceHeaders(): Record<string, string> {
     const scope = activeTrace();
     if (scope === undefined) return {};
-    scope.modelCalls.count += 1;
+    scope.turnCountHint += 1;
     return {
       "X-Synadia-Thread-ID": scope.threadId,
       "X-Synadia-Root-ID": scope.rootId,

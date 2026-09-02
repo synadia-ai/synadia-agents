@@ -37,11 +37,12 @@ TOOL_CALL_ID_MAX = 256
 class TraceScope:
     thread_id: str
     root_id: str
-    # How many times this execution has stamped trace headers on a model
-    # request. Deliberately a mutable cell inside a frozen scope: a task
-    # spawned inside the handler gets a copy of the context but shares
-    # this object, so its model calls count against the same execution.
-    model_calls: list[int] = field(default_factory=lambda: [0])
+    # Where in this execution any thread it spawns next was sent out: how
+    # many times it has stamped trace headers on a model request so far.
+    # Deliberately a mutable cell inside a frozen scope: a task spawned
+    # inside the handler gets a copy of the context but shares this
+    # object, so its turns count against the same execution.
+    turn_count_hint: list[int] = field(default_factory=lambda: [0])
 
 
 # The binding carries the service's tracing configuration alongside the

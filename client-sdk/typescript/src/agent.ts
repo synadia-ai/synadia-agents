@@ -414,6 +414,6 @@ function mintLineage(): {
     threadId,
     rootId: ambient.rootId,
     parentId: ambient.threadId,
-    turnCountHint: ambient.modelCalls.count,
+    turnCountHint: ambient.turnCountHint,
   };
 }

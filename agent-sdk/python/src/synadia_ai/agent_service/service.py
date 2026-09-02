@@ -191,7 +191,7 @@ class PromptStream:
         scope = active_trace()
         if scope is None:
             return {}
-        scope.model_calls[0] += 1
+        scope.turn_count_hint[0] += 1
         return {
             "X-Synadia-Thread-ID": scope.thread_id,
             "X-Synadia-Root-ID": scope.root_id,

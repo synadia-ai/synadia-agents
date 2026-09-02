@@ -42,12 +42,13 @@ export interface TraceScope {
   /** The tree's root thread ID, inherited unchanged; equals `threadId` on a root. */
   readonly rootId: string;
   /**
-   * How many times this execution has stamped trace headers on a model
-   * request. Deliberately a mutable cell inside a readonly scope: work
-   * spawned inside the handler shares this object, so its model calls
-   * count against the same execution.
+   * Where in this execution any thread it spawns next was sent out: how
+   * many times it has stamped trace headers on a model request so far.
+   * Deliberately mutable and shared — work spawned inside the handler
+   * holds the same scope object, so its turns count against this
+   * execution.
    */
-  readonly modelCalls: { count: number };
+  turnCountHint: number;
 }
 
 // The binding carries the service's tracing configuration alongside the

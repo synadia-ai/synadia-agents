@@ -396,7 +396,7 @@ class Agent:
             else:
                 root_id = ambient.root_id
                 parent_id = ambient.thread_id
-                turn_count_hint = ambient.model_calls[0]
+                turn_count_hint = ambient.turn_count_hint[0]
 
         if isinstance(text, Envelope):
             merged_attachments: list[Attachment] | None
