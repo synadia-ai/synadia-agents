@@ -146,8 +146,16 @@ def _override_lineage(
     neither this thread nor any ancestor of it. Inside a handler
     (``parent_id`` set) the ambient root wins: the overridden thread is
     still part of that tree.
+
+    An envelope naming this execution's own thread is the incoming
+    envelope being forwarded — the most natural relay code hands what it
+    received straight to a sub-agent. Forwarding spawns a thread, it does
+    not continue one: honouring that id would file the sub-agent's
+    execution under its parent's thread, collapsing the two into one and
+    recording an edge from a thread to itself. So the minted thread stands
+    and the envelope's id remains what it already is: the parent.
     """
-    if envelope.thread_id is not None:
+    if envelope.thread_id is not None and envelope.thread_id != parent_id:
         thread_id = envelope.thread_id
         if envelope.root_id is None and parent_id is None:
             root_id = thread_id
