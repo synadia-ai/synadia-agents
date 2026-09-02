@@ -250,6 +250,7 @@ export {
   bindActiveTrace,
   buildEdgeRecord,
   inheritedTraceOptions,
+  isThreadId,
   randomThreadId,
   validToolCallId,
   type BuiltEdgeRecord,

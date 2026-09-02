@@ -9,6 +9,7 @@
 
 import { utf8ByteLength } from "../bytes.js";
 import { ProtocolError } from "../errors.js";
+import { isThreadId, THREAD_ID_HEX_LEN } from "../trace.js";
 
 export interface RequestAttachment {
   readonly filename: string;
@@ -135,7 +136,16 @@ function decodeLineageField(
   // An empty id names nothing. Treating it as absent keeps a receiver
   // from adopting "" as a thread and filing every child under it — and
   // keeps both SDKs reading the same wire the same way.
-  return value === "" ? {} : { [field]: value };
+  if (value === "") return {};
+  // Untrusted, bounded input: the id is adopted verbatim and later stamped
+  // on the agent's model requests as a header value, so anything not
+  // shaped like a minted id (a CRLF, a megabyte of garbage) is malformed.
+  if (!isThreadId(value)) {
+    throw new ProtocolError(
+      `envelope \`${wireName}\` must be ${THREAD_ID_HEX_LEN} lowercase hex characters`,
+    );
+  }
+  return { [field]: value };
 }
 
 export function decodeEnvelope(data: Uint8Array): RequestEnvelope {

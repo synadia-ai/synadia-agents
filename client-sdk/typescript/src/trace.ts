@@ -92,6 +92,19 @@ export function inheritedTraceOptions(): TraceOptions | undefined {
 /** Length in hex characters of a thread ID — 128 bits. */
 export const THREAD_ID_HEX_LEN = 32;
 
+const THREAD_ID_RE = new RegExp(`^[0-9a-f]{${THREAD_ID_HEX_LEN}}$`);
+
+/**
+ * `true` iff `value` has the shape of a thread ID: exactly
+ * {@link THREAD_ID_HEX_LEN} lowercase hex characters. Ids arriving on the
+ * wire are untrusted input that ends up in the headers an agent stamps on
+ * its model requests, so a receiver adopts nothing that is not shaped
+ * exactly like what the SDKs mint.
+ */
+export function isThreadId(value: string): boolean {
+  return THREAD_ID_RE.test(value);
+}
+
 export function randomThreadId(): string {
   // Thread IDs don't need to be secure and any random generator will
   // suffice. Still, using crypto.getRandomValues() doesn't cost us much.

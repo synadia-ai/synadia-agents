@@ -29,6 +29,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from .errors import ProtocolError
+from .trace import THREAD_ID_HEX_LEN, is_thread_id
 
 
 class Attachment(BaseModel):
@@ -94,7 +95,16 @@ class Envelope(BaseModel):
         # receiver from adopting "" as a thread and filing every child
         # under it — and keeps both SDKs reading the same wire the same
         # way.
-        return value or None
+        if not value:
+            return None
+        # Untrusted, bounded input: the id is adopted verbatim and later
+        # stamped on the agent's model requests as a header value, so
+        # anything not shaped like a minted id (a CRLF, a megabyte of
+        # garbage) is malformed — a 400 at the receiver, like any other
+        # wrongly-shaped field.
+        if not is_thread_id(value):
+            raise ValueError(f"must be {THREAD_ID_HEX_LEN} lowercase hex characters")
+        return value
 
 
 def encode(envelope: Envelope) -> bytes:

@@ -160,6 +160,7 @@ from .trace import (
     bind_active_trace,
     build_edge_record,
     inherited_trace_options,
+    is_thread_id,
     random_thread_id,
     valid_tool_call_id,
 )
@@ -266,6 +267,7 @@ __all__ = [
     "format_sender",
     "format_sender_timestamp",
     "inherited_trace_options",
+    "is_thread_id",
     "load_context_options",
     "max_sender_header_bytes",
     "normalize_account_token_position",

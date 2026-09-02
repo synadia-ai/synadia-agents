@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 from collections.abc import Iterator
@@ -31,6 +32,19 @@ class TraceOptions:
 
 THREAD_ID_HEX_LEN = 32
 TOOL_CALL_ID_MAX = 256
+
+_THREAD_ID_RE = re.compile(rf"[0-9a-f]{{{THREAD_ID_HEX_LEN}}}")
+
+
+def is_thread_id(value: str) -> bool:
+    """``True`` iff ``value`` has the shape of a thread ID.
+
+    Exactly :data:`THREAD_ID_HEX_LEN` lowercase hex characters. Ids arriving
+    on the wire are untrusted input that ends up in the headers an agent
+    stamps on its model requests, so a receiver adopts nothing that is not
+    shaped exactly like what the SDKs mint.
+    """
+    return _THREAD_ID_RE.fullmatch(value) is not None
 
 
 @dataclass(frozen=True, slots=True)
