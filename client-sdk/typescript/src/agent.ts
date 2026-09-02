@@ -20,7 +20,14 @@ import {
   serializeSenderHeader,
 } from "./identity/sender-header.js";
 import { combineAbortSignals } from "./internal/abort.js";
-import { buildEdgeRecord, randomThreadId, validToolCallId, type TraceOptions } from "./trace.js";
+import {
+  activeTrace,
+  buildEdgeRecord,
+  DEFAULT_EDGE_SUBJECT,
+  randomThreadId,
+  validToolCallId,
+  type TraceOptions,
+} from "./trace.js";
 import { STATUS_ENDPOINT_NAME } from "./internal/service-name.js";
 import { normalizeAttachments } from "./prompt/attachments.js";
 import { encodedEnvelopeSize, encodeEnvelope, type RequestEnvelope } from "./prompt/envelope.js";
@@ -180,17 +187,31 @@ export class Agent {
     const toolCallId =
       opts.toolCallId !== undefined && validToolCallId(opts.toolCallId) ? opts.toolCallId : null;
 
-    // If tracing is enabled, mint a thread ID for this prompt. It starts
-    // its own tree until an ambient trace can be inherited.
+    // If tracing is enabled, mint a thread ID for this prompt and inherit
+    // the root and parent from the ambient trace (a root when none is bound).
     const lineage = this.#trace !== undefined ? mintLineage() : undefined;
     if (lineage !== undefined) {
-      // Only built here — publishing it comes later in the series.
-      buildEdgeRecord(lineage.threadId, null, lineage.rootId, toolCallId);
+      // Publish the edge before the prompt goes out, so an observer sees
+      // the node before it runs. Fire-and-forget and fail-open — a failed
+      // publish never fails the prompt.
+      const edgeSubject =
+        this.#trace?.edgeSubject === undefined ? DEFAULT_EDGE_SUBJECT : this.#trace.edgeSubject;
+      if (edgeSubject !== null) {
+        this.#publishEdge(
+          edgeSubject,
+          buildEdgeRecord(lineage.threadId, lineage.parentId ?? null, lineage.rootId, toolCallId),
+        );
+      }
     }
+
+    // The envelope carries only what the receiver must inherit; the parent
+    // stays in the edge record and never transits the child.
+    const envLineage =
+      lineage !== undefined ? { threadId: lineage.threadId, rootId: lineage.rootId } : undefined;
 
     // Fast path: text-only — max_payload check is sync.
     if (!hasAttachments) {
-      const envelope: RequestEnvelope = { prompt: text, ...lineage };
+      const envelope: RequestEnvelope = { prompt: text, ...envLineage };
       assertWithinMaxPayload(
         encodedEnvelopeSize(envelope),
         this.promptEndpoint,
@@ -203,7 +224,7 @@ export class Agent {
     // With attachments: load files, then check max_payload on the final encoded size.
     return (async (): Promise<PromptStream> => {
       const attachments = await normalizeAttachments(attachmentInputs);
-      const envelope: RequestEnvelope = { prompt: text, attachments, ...lineage };
+      const envelope: RequestEnvelope = { prompt: text, attachments, ...envLineage };
       assertWithinMaxPayload(
         encodedEnvelopeSize(envelope),
         this.promptEndpoint,
@@ -297,6 +318,15 @@ export class Agent {
     return h;
   }
 
+  /** Fire-and-forget: tracing never blocks, slows or fails a prompt. */
+  #publishEdge(subject: string, payload: Uint8Array): void {
+    try {
+      this.#nc.publish(subject, payload);
+    } catch (err) {
+      console.warn(`@synadia-ai/agents: failed to publish edge record on ${subject}`, err);
+    }
+  }
+
   async #headersAtPublish(
     sub: string,
     requireSigned: boolean,
@@ -314,9 +344,12 @@ export class Agent {
   }
 }
 
-// The thread ID names this prompt's execution; until an ambient trace can
-// be inherited, every prompt starts its own tree.
-function mintLineage(): { threadId: string; rootId: string } {
+// The thread ID names this prompt's execution. Inside a prompt handler the
+// ambient trace supplies the tree root and this prompt's parent; with none
+// bound, the prompt starts its own tree.
+function mintLineage(): { threadId: string; rootId: string; parentId?: string } {
   const threadId = randomThreadId();
-  return { threadId, rootId: threadId };
+  const ambient = activeTrace();
+  if (ambient === undefined) return { threadId, rootId: threadId };
+  return { threadId, rootId: ambient.rootId, parentId: ambient.threadId };
 }
