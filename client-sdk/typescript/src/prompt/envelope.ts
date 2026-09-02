@@ -113,6 +113,27 @@ export function encodeBase64(bytes: Uint8Array): string {
  * or unsafe filenames (path separators, `..`, NUL, absolute paths). Agent
  * services translate this into a `Nats-Service-Error-Code: 400` response.
  */
+/**
+ * One lineage field, absent when the key is missing or `null`.
+ *
+ * A present-but-not-a-string value is a malformed envelope (400), the same
+ * as any other wrongly-typed field — and the same as the Python SDK, which
+ * rejects it too. Silently dropping it would make the receiver mint a
+ * fresh root and file the execution under a tree of its own.
+ */
+function decodeLineageField(
+  obj: Record<string, unknown>,
+  wireName: string,
+  field: "threadId" | "rootId",
+): Record<string, string> {
+  const value = obj[wireName];
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "string") {
+    throw new ProtocolError(`envelope \`${wireName}\` must be a string`);
+  }
+  return { [field]: value };
+}
+
 export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
   // §5.3: a zero-byte request payload is invalid.
   if (data.length === 0) {
@@ -156,11 +177,9 @@ export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
 
   // Lineage rides through untouched: the agent service adopts it, and a
   // caller that never enabled tracing sees neither field.
-  const threadId = obj["thread_id"];
-  const rootId = obj["root_id"];
   const lineage = {
-    ...(typeof threadId === "string" ? { threadId } : {}),
-    ...(typeof rootId === "string" ? { rootId } : {}),
+    ...decodeLineageField(obj, "thread_id", "threadId"),
+    ...decodeLineageField(obj, "root_id", "rootId"),
   };
 
   const rawAttachments = obj["attachments"];
