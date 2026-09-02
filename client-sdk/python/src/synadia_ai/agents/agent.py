@@ -22,6 +22,7 @@ import contextlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
+from weakref import WeakSet
 
 import pydantic
 
@@ -64,6 +65,16 @@ log = get_logger(__name__)
 
 _SERVICE_ERROR_CODE_HEADER = "Nats-Service-Error-Code"
 _SERVICE_ERROR_HEADER = "Nats-Service-Error"
+
+# Set to the record id so a stream de-duplicates a record it already
+# stored. Same string as agents.NATS_MSG_ID_HEADER, spelled again here
+# because agents.py imports this module.
+_MSG_ID_HEADER = "Nats-Msg-Id"
+
+# Connections already warned that their edge records go nowhere. One
+# warning per connection: a per-prompt log would itself be a way for
+# observability to disturb an agent.
+_warned_unsigned: WeakSet[NATSClient] = WeakSet()
 
 # Default `Agent.status()` request timeout — 2 seconds (mirrors the TS
 # SDK's DEFAULT_STATUS_TIMEOUT_MS).
@@ -414,19 +425,15 @@ class Agent:
             )
 
         # We do this after constructing the envelope to allow
-        # overriding fields. Only the record is built here — the publish
-        # needs an await, so it happens in _prompt_stream.
-        edge_publish: tuple[str, bytes] | None = None
-        if (
-            trace_options is not None
-            and trace_options.edge_subject is not None
-            and thread_id is not None
-            and root_id is not None
-        ):
-            edge_publish = (
-                trace_options.edge_subject,
-                build_edge_record(thread_id, parent_id, root_id, tool_call_id, turn_count_hint),
+        # overriding fields. Only the record is built here — signing and
+        # the publish need an await, so they happen in _prompt_stream.
+        edge_publish = (
+            self._plan_edge(
+                trace_options, thread_id, parent_id, root_id, tool_call_id, turn_count_hint
             )
+            if trace_options is not None and thread_id is not None and root_id is not None
+            else None
+        )
 
         # §5.4: local validation happens synchronously BEFORE any wire I/O.
         # Raising here means callers don't even allocate a reply subject.
@@ -624,6 +631,64 @@ class Agent:
         if self._close_event is not None and self._close_event.is_set():
             raise ProtocolError(f"prompt stream cancelled: owning Agents is closed (reply={reply})")
 
+    def _plan_edge(
+        self,
+        trace_options: TraceOptions,
+        thread_id: str,
+        parent_id: str | None,
+        root_id: str,
+        tool_call_id: str | None,
+        turn_count_hint: int,
+    ) -> tuple[str, bytes, str] | None:
+        """The subject, record and record id to publish, or ``None`` for nothing.
+
+        Split out of :meth:`prompt` only to keep that method within
+        ruff's statement budget.
+        """
+        if trace_options.edge_subject is None:
+            return None
+        # Consumers ignore unsigned records, so publishing without a
+        # signer would be pure waste: warn once per connection and skip.
+        # Minting and envelope lineage need no identity and still happen,
+        # so downstream agents that do have one keep tracing.
+        identity = self._sender_identity
+        if identity is None or identity.signer is None:
+            if self._nc not in _warned_unsigned:
+                _warned_unsigned.add(self._nc)
+                log.warning(
+                    "tracing is enabled but no identity signer is configured; edge "
+                    "records are not published (consumers ignore unsigned records). "
+                    "Pass identity=Identity(signer=...) to sign them."
+                )
+            return None
+        record_id, payload = build_edge_record(
+            thread_id, parent_id, root_id, tool_call_id, turn_count_hint
+        )
+        return trace_options.edge_subject, payload, record_id
+
+    async def _publish_edge(self, edge_publish: tuple[str, bytes, str]) -> None:
+        """Publish one signed edge record.
+
+        The signature covers the short-form subject the record is
+        published to: per the identity design a remap that only drops the
+        account token is not a rename, so no ``sub`` override is needed.
+        Consumers verify in stored mode.
+
+        Fail-open — tracing never fails a prompt.
+        """
+        subject, payload, record_id = edge_publish
+        try:
+            plan = await plan_sender_header(
+                self._sender_identity, self._nc, subject, require_signed=True
+            )
+            if plan is None:  # pragma: no cover — guarded in _plan_edge
+                raise SenderSignatureRequiredError(subject)
+            headers = await plan.build_headers(payload)
+            headers[_MSG_ID_HEADER] = record_id
+            await self._nc.publish(subject, payload, headers=headers)
+        except Exception:
+            log.exception("failed to publish edge record on %s", subject)
+
     async def _stream_prompt(
         self,
         encoded: bytes,
@@ -633,7 +698,7 @@ class Agent:
         subject: str,
         sub: str,
         require_signed: bool,
-        edge_publish: tuple[str, bytes] | None = None,
+        edge_publish: tuple[str, bytes, str] | None = None,
     ) -> AsyncIterator[StreamMessage]:
         # Pre-flight: refuse outright if the owning Agents is already
         # closed. This catches the "called prompt() after close()" case
@@ -683,13 +748,9 @@ class Agent:
             self._raise_if_closed()
 
             # Observability: publish the edge before the prompt goes out, so
-            # an observer sees the node before it runs. Fail-open — a failed
-            # publish never fails the prompt.
+            # an observer sees the node before it runs.
             if edge_publish is not None:
-                try:
-                    await self._nc.publish(edge_publish[0], edge_publish[1])
-                except Exception:
-                    log.exception("failed to publish edge record on %s", edge_publish[0])
+                await self._publish_edge(edge_publish)
 
             # Signed at publish time so `ts` / nonce are fresh even when the
             # caller iterates late; the signature covers exactly `encoded`.

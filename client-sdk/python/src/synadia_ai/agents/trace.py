@@ -97,14 +97,18 @@ def build_edge_record(
     root_id: str,
     tool_call_id: str | None,
     turn_count_hint: int,
-) -> bytes:
+) -> tuple[str, bytes]:
+    # Returns the record id alongside the payload: the publisher stamps it
+    # as Nats-Msg-Id so a stream de-duplicates a record it already stored.
+    #
     # `turn_count_hint` says where in the spawning thread this subprompt
     # went out: turns completed when it was spawned, 0 on a root (nothing
     # spawned it). A position marker, not a total — turns the parent takes
     # after its last spawn are recorded nowhere.
+    record_id = random_thread_id()
     record = {
         "version": EDGE_RECORD_VERSION,
-        "record_id": random_thread_id(),
+        "record_id": record_id,
         "ts": int(time.time()),
         "thread_id": thread_id,
         "parent_id": parent_id,
@@ -112,4 +116,4 @@ def build_edge_record(
         "tool_call_id": tool_call_id,
         "turn_count_hint": turn_count_hint,
     }
-    return json.dumps(record, separators=(",", ":")).encode("utf-8")
+    return record_id, json.dumps(record, separators=(",", ":")).encode("utf-8")
