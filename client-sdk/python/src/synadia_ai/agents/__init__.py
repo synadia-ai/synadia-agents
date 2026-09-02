@@ -157,6 +157,7 @@ from .trace import (
     TraceScope,
     active_trace,
     bind_active_trace,
+    inherited_trace_options,
     random_thread_id,
     valid_tool_call_id,
 )
