@@ -64,6 +64,26 @@ async def test_overridden_thread_id_stays_in_the_ambient_tree(nc: NATSClient) ->
     assert sent["root_id"] == AMBIENT_ROOT
 
 
+async def test_forwarding_the_incoming_envelope_spawns_a_new_thread(nc: NATSClient) -> None:
+    """A relay hands the envelope it received straight to a sub-agent. That
+    envelope names this execution's own thread; a subprompt filed under it
+    would collapse two executions into one, so the minted thread stands."""
+    scope = TraceScope(AMBIENT_THREAD, AMBIENT_ROOT)
+    incoming = Envelope(prompt="hi", thread_id=AMBIENT_THREAD, root_id=AMBIENT_ROOT)
+    with bind_active_trace(scope, None):
+        sent = await _send(nc, incoming)
+    assert sent["thread_id"] != AMBIENT_THREAD, "sub-agent filed under its parent's thread"
+    assert sent["root_id"] == AMBIENT_ROOT
+
+
+async def test_forwarding_an_envelope_with_only_the_thread_spawns_too(nc: NATSClient) -> None:
+    scope = TraceScope(AMBIENT_THREAD, AMBIENT_ROOT)
+    with bind_active_trace(scope, None):
+        sent = await _send(nc, Envelope(prompt="hi", thread_id=AMBIENT_THREAD))
+    assert sent["thread_id"] != AMBIENT_THREAD
+    assert sent["root_id"] == AMBIENT_ROOT
+
+
 async def test_overridden_root_id_is_honoured(nc: NATSClient) -> None:
     sent = await _send(nc, Envelope(prompt="hi", root_id=ROOT))
     assert sent["root_id"] == ROOT
