@@ -303,7 +303,7 @@ function randomId(): string {
 // service writes no trace record either way.
 function adoptOrMintTrace(envelope: RequestEnvelope): TraceScope {
   const threadId = envelope.threadId ?? randomThreadId();
-  return { threadId, rootId: envelope.rootId ?? threadId };
+  return { threadId, rootId: envelope.rootId ?? threadId, modelCalls: { count: 0 } };
 }
 
 /**
@@ -341,10 +341,14 @@ export class PromptResponse {
    *
    * `{}` when the prompt was untraced, so harness code needs no plumbing
    * and degrades to nothing.
+   *
+   * Each call counts against this execution: the running total is
+   * recorded on the edge of any thread it spawns afterwards.
    */
   traceHeaders(): Record<string, string> {
     const scope = activeTrace();
     if (scope === undefined) return {};
+    scope.modelCalls.count += 1;
     return {
       "X-Synadia-Thread-ID": scope.threadId,
       "X-Synadia-Root-ID": scope.rootId,

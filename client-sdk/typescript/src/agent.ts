@@ -208,7 +208,13 @@ export class Agent {
       if (edgeSubject !== null) {
         this.#publishEdge(
           edgeSubject,
-          buildEdgeRecord(lineage.threadId, lineage.parentId ?? null, lineage.rootId, toolCallId),
+          buildEdgeRecord(
+            lineage.threadId,
+            lineage.parentId ?? null,
+            lineage.rootId,
+            toolCallId,
+            lineage.turnCountHint,
+          ),
         );
       }
     }
@@ -356,9 +362,19 @@ export class Agent {
 // The thread ID names this prompt's execution. Inside a prompt handler the
 // ambient trace supplies the tree root and this prompt's parent; with none
 // bound, the prompt starts its own tree.
-function mintLineage(): { threadId: string; rootId: string; parentId?: string } {
+function mintLineage(): {
+  threadId: string;
+  rootId: string;
+  parentId?: string;
+  turnCountHint: number;
+} {
   const threadId = randomThreadId();
   const ambient = activeTrace();
-  if (ambient === undefined) return { threadId, rootId: threadId };
-  return { threadId, rootId: ambient.rootId, parentId: ambient.threadId };
+  if (ambient === undefined) return { threadId, rootId: threadId, turnCountHint: 0 };
+  return {
+    threadId,
+    rootId: ambient.rootId,
+    parentId: ambient.threadId,
+    turnCountHint: ambient.modelCalls.count,
+  };
 }

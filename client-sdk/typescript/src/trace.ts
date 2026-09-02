@@ -16,7 +16,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 // Bump every time you change the trace record schema
 // (be sure the Python SDK is updated in lockstep)
-export const EDGE_RECORD_VERSION = 1;
+export const EDGE_RECORD_VERSION = 2;
 
 /** Default subject edge records are published to — the tenant-side short
  * form; the account's import qualifies it to `TRACE.{account}.edges`. */
@@ -41,6 +41,13 @@ export interface TraceScope {
   readonly threadId: string;
   /** The tree's root thread ID, inherited unchanged; equals `threadId` on a root. */
   readonly rootId: string;
+  /**
+   * How many times this execution has stamped trace headers on a model
+   * request. Deliberately a mutable cell inside a readonly scope: work
+   * spawned inside the handler shares this object, so its model calls
+   * count against the same execution.
+   */
+  readonly modelCalls: { count: number };
 }
 
 // The binding carries the service's tracing configuration alongside the
@@ -108,7 +115,12 @@ export function buildEdgeRecord(
   parentId: string | null,
   rootId: string,
   toolCallId: string | null,
+  turnCountHint: number,
 ): Uint8Array {
+  // `turnCountHint` says where in the spawning thread this subprompt went
+  // out: turns completed when it was spawned, 0 on a root (nothing spawned
+  // it). A position marker, not a total — turns the parent takes after its
+  // last spawn are recorded nowhere.
   const record = {
     version: EDGE_RECORD_VERSION,
     record_id: randomThreadId(),
@@ -117,6 +129,7 @@ export function buildEdgeRecord(
     parent_id: parentId,
     root_id: rootId,
     tool_call_id: toolCallId,
+    turn_count_hint: turnCountHint,
   };
   return new TextEncoder().encode(JSON.stringify(record));
 }
