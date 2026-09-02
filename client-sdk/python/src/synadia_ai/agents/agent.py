@@ -131,6 +131,31 @@ StreamMessage: TypeAlias = ResponseChunk | StatusChunk | Query
 """One item yielded by :meth:`Agent.prompt`'s async iterator."""
 
 
+def _override_lineage(
+    envelope: Envelope,
+    thread_id: str | None,
+    root_id: str | None,
+    parent_id: str | None,
+) -> tuple[str | None, str | None]:
+    """Let an explicit ``Envelope`` override the minted lineage.
+
+    The pair travels together on the wire, so an overridden thread with no
+    root of its own starts its own tree — exactly as a minted one does, and
+    exactly as the agent service does when it adopts an ID-less envelope.
+    Splicing the minted root onto it instead would name a root that is
+    neither this thread nor any ancestor of it. Inside a handler
+    (``parent_id`` set) the ambient root wins: the overridden thread is
+    still part of that tree.
+    """
+    if envelope.thread_id is not None:
+        thread_id = envelope.thread_id
+        if envelope.root_id is None and parent_id is None:
+            root_id = thread_id
+    if envelope.root_id is not None:
+        root_id = envelope.root_id
+    return thread_id, root_id
+
+
 class Agent:
     """A live handle returned by :meth:`Agents.discover`.
 
@@ -406,9 +431,7 @@ class Agent:
             else:
                 merged_attachments = list(text.attachments) if text.attachments else None
 
-            # Allow the user to override thread_id
-            thread_id = text.thread_id or thread_id
-            root_id = text.root_id or root_id
+            thread_id, root_id = _override_lineage(text, thread_id, root_id, parent_id)
 
             envelope = Envelope(
                 prompt=text.prompt,
