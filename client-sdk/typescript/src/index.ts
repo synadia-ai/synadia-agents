@@ -249,6 +249,7 @@ export {
   activeTrace,
   bindActiveTrace,
   buildEdgeRecord,
+  inheritedTraceOptions,
   randomThreadId,
   validToolCallId,
   type TraceOptions,

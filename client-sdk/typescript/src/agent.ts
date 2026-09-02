@@ -24,6 +24,7 @@ import {
   activeTrace,
   buildEdgeRecord,
   DEFAULT_EDGE_SUBJECT,
+  inheritedTraceOptions,
   randomThreadId,
   validToolCallId,
   type TraceOptions,
@@ -119,7 +120,11 @@ export class Agent {
     return this.#nc;
   }
 
-  /** `true` iff tracing was enabled on this handle. */
+  /**
+   * `true` iff tracing was enabled on this handle. Inherited tracing (from
+   * an enclosing agent service) is resolved per call, so this reports only
+   * the handle's own configuration.
+   */
   get tracingEnabled(): boolean {
     return this.#trace !== undefined;
   }
@@ -187,15 +192,19 @@ export class Agent {
     const toolCallId =
       opts.toolCallId !== undefined && validToolCallId(opts.toolCallId) ? opts.toolCallId : null;
 
+    // Effective configuration: this handle's own, else the one handed down
+    // by the enclosing agent service, else tracing is off.
+    const trace = this.#trace ?? inheritedTraceOptions();
+
     // If tracing is enabled, mint a thread ID for this prompt and inherit
     // the root and parent from the ambient trace (a root when none is bound).
-    const lineage = this.#trace !== undefined ? mintLineage() : undefined;
+    const lineage = trace !== undefined ? mintLineage() : undefined;
     if (lineage !== undefined) {
       // Publish the edge before the prompt goes out, so an observer sees
       // the node before it runs. Fire-and-forget and fail-open — a failed
       // publish never fails the prompt.
       const edgeSubject =
-        this.#trace?.edgeSubject === undefined ? DEFAULT_EDGE_SUBJECT : this.#trace.edgeSubject;
+        trace?.edgeSubject === undefined ? DEFAULT_EDGE_SUBJECT : trace.edgeSubject;
       if (edgeSubject !== null) {
         this.#publishEdge(
           edgeSubject,

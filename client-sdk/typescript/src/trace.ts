@@ -43,20 +43,42 @@ export interface TraceScope {
   readonly rootId: string;
 }
 
-const storage = new AsyncLocalStorage<TraceScope>();
+// The binding carries the service's tracing configuration alongside the
+// ids, so an agent configured once passes tracing down to every client it
+// uses inside the handler.
+interface TraceBinding {
+  readonly scope: TraceScope;
+  readonly options: TraceOptions | undefined;
+}
+
+const storage = new AsyncLocalStorage<TraceBinding>();
 
 /**
  * Run `fn` with `scope` as the ambient execution (used by the agent
- * service). AsyncLocalStorage restores the previous scope on exit, so
- * nothing leaks into the next request.
+ * service). AsyncLocalStorage restores the previous binding on exit, so
+ * nothing leaks into the next request. `options`, when given, is the
+ * service's tracing configuration and is inherited by clients used
+ * inside `fn`.
  */
-export function bindActiveTrace<T>(scope: TraceScope, fn: () => T): T {
-  return storage.run(scope, fn);
+export function bindActiveTrace<T>(
+  scope: TraceScope,
+  fn: () => T,
+  options: TraceOptions | undefined = undefined,
+): T {
+  return storage.run({ scope, options }, fn);
 }
 
 /** The ambient {@link TraceScope}, or `undefined` outside a bound handler. */
 export function activeTrace(): TraceScope | undefined {
-  return storage.getStore();
+  return storage.getStore()?.scope;
+}
+
+/**
+ * Tracing configuration handed down by the enclosing agent service.
+ * `undefined` when the service has none, or outside a handler.
+ */
+export function inheritedTraceOptions(): TraceOptions | undefined {
+  return storage.getStore()?.options;
 }
 
 /** Length in hex characters of a thread ID — 128 bits. */

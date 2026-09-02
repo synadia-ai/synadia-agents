@@ -80,6 +80,7 @@ import {
   type RequestEnvelope,
   type SenderInfo,
   type SenderSigner,
+  type TraceOptions,
   type TraceScope,
 } from "@synadia-ai/agents";
 
@@ -181,6 +182,14 @@ export interface AgentServiceOptions {
    * cadence). Defaults to 30.
    */
   readonly keepaliveIntervalS?: number | null;
+  /**
+   * Observability tracing handed down to clients used inside prompt
+   * handlers (opt-in). The service itself never writes trace records; it
+   * always adopts or mints the execution's `(thread, root)` and binds it
+   * as the ambient trace. Passing this makes a nested `Agent.prompt()`
+   * with no configuration of its own trace the calls it spawns.
+   */
+  readonly trace?: TraceOptions;
   /** Extra metadata keys merged into the service metadata (forward-compat). */
   readonly extraMetadata?: Readonly<Record<string, string>>;
   /**
@@ -865,7 +874,11 @@ export class AgentService {
     try {
       // Place threadId and rootId in the ambient context so clients used
       // as tools can reach them.
-      await bindActiveTrace(adoptOrMintTrace(envelope), () => handler(envelope, response));
+      await bindActiveTrace(
+        adoptOrMintTrace(envelope),
+        () => handler(envelope, response),
+        this.#options.trace,
+      );
     } catch (err) {
       // Stop keep-alive BEFORE the §9 error frame so an ack chunk can't
       // race in between the error and the terminator.
