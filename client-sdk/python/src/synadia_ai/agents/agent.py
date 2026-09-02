@@ -156,6 +156,24 @@ def _override_lineage(
     return thread_id, root_id
 
 
+@dataclass(frozen=True, slots=True)
+class _EdgePlan:
+    """What :meth:`Agent.prompt` decided to record; built into a record at publish time.
+
+    The lineage is fixed when the prompt is planned — that is when the
+    ambient trace is still the caller's — but the record's ``ts`` must say
+    when the prompt actually went out, so the bytes are produced by
+    :meth:`Agent._publish_edge` immediately before the publish.
+    """
+
+    subject: str
+    thread_id: str
+    parent_id: str | None
+    root_id: str
+    tool_call_id: str | None
+    turn_count_hint: int
+
+
 class Agent:
     """A live handle returned by :meth:`Agents.discover`.
 
@@ -448,8 +466,8 @@ class Agent:
             )
 
         # We do this after constructing the envelope to allow
-        # overriding fields. Only the record is built here — signing and
-        # the publish need an await, so they happen in _prompt_stream.
+        # overriding fields. Only the plan is made here — the record,
+        # signing and the publish happen in _stream_prompt, at publish time.
         edge_publish = (
             self._plan_edge(
                 trace_options, thread_id, parent_id, root_id, tool_call_id, turn_count_hint
@@ -662,8 +680,8 @@ class Agent:
         root_id: str,
         tool_call_id: str | None,
         turn_count_hint: int,
-    ) -> tuple[str, bytes, str] | None:
-        """The subject, record and record id to publish, or ``None`` for nothing.
+    ) -> _EdgePlan | None:
+        """The edge to publish, or ``None`` for nothing.
 
         Split out of :meth:`prompt` only to keep that method within
         ruff's statement budget.
@@ -684,13 +702,12 @@ class Agent:
                     "Pass identity=Identity(signer=...) to sign them."
                 )
             return None
-        record_id, payload = build_edge_record(
-            thread_id, parent_id, root_id, tool_call_id, turn_count_hint
+        return _EdgePlan(
+            trace_options.edge_subject, thread_id, parent_id, root_id, tool_call_id, turn_count_hint
         )
-        return trace_options.edge_subject, payload, record_id
 
-    async def _publish_edge(self, edge_publish: tuple[str, bytes, str]) -> None:
-        """Publish one signed edge record.
+    async def _publish_edge(self, edge_publish: _EdgePlan) -> None:
+        """Build and publish one signed edge record.
 
         The signature covers the short-form subject the record is
         published to: per the identity design a remap that only drops the
@@ -699,8 +716,15 @@ class Agent:
 
         Fail-open — tracing never fails a prompt.
         """
-        subject, payload, record_id = edge_publish
+        subject = edge_publish.subject
         try:
+            record_id, payload = build_edge_record(
+                edge_publish.thread_id,
+                edge_publish.parent_id,
+                edge_publish.root_id,
+                edge_publish.tool_call_id,
+                edge_publish.turn_count_hint,
+            )
             plan = await plan_sender_header(
                 self._sender_identity, self._nc, subject, require_signed=True
             )
@@ -721,7 +745,7 @@ class Agent:
         subject: str,
         sub: str,
         require_signed: bool,
-        edge_publish: tuple[str, bytes, str] | None = None,
+        edge_publish: _EdgePlan | None = None,
     ) -> AsyncIterator[StreamMessage]:
         # Pre-flight: refuse outright if the owning Agents is already
         # closed. This catches the "called prompt() after close()" case

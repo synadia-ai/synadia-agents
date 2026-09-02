@@ -215,17 +215,17 @@ export class Agent {
       if (edgeSubject !== null && !identity?.signer) {
         warnEdgesUnsigned(this.#nc);
       } else if (edgeSubject !== null) {
-        // Built here, where the ambient trace is still the caller's, but
-        // published at publish time — a prompt that never goes out (never
-        // iterated, or rejected by validation below) publishes no edge.
-        const record = buildEdgeRecord(
-          lineage.threadId,
-          lineage.parentId ?? null,
-          lineage.rootId,
-          toolCallId,
-          lineage.turnCountHint,
-        );
-        edge = (): Promise<void> => this.#publishEdge(edgeSubject, record);
+        // Lineage is captured here, where the ambient trace is still the
+        // caller's. The record itself is built at publish time, so its
+        // `ts` says when the prompt actually went out — not when it was
+        // planned — and a prompt that never goes out (never iterated, or
+        // rejected by validation below) publishes no edge.
+        const { threadId, parentId, rootId, turnCountHint } = lineage;
+        edge = (): Promise<void> =>
+          this.#publishEdge(
+            edgeSubject,
+            buildEdgeRecord(threadId, parentId ?? null, rootId, toolCallId, turnCountHint),
+          );
       }
     }
 
