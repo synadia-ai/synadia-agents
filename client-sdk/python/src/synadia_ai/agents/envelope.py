@@ -26,7 +26,7 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from .errors import ProtocolError
 
@@ -86,6 +86,15 @@ class Envelope(BaseModel):
 
     thread_id: str | None = None
     root_id: str | None = None
+
+    @field_validator("thread_id", "root_id")
+    @classmethod
+    def _empty_lineage_is_absent(cls, value: str | None) -> str | None:
+        # An empty id names nothing. Treating it as absent keeps a
+        # receiver from adopting "" as a thread and filing every child
+        # under it — and keeps both SDKs reading the same wire the same
+        # way.
+        return value or None
 
 
 def encode(envelope: Envelope) -> bytes:

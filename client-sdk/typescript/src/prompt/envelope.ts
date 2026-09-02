@@ -119,7 +119,8 @@ export function encodeBase64(bytes: Uint8Array): string {
  * A present-but-not-a-string value is a malformed envelope (400), the same
  * as any other wrongly-typed field — and the same as the Python SDK, which
  * rejects it too. Silently dropping it would make the receiver mint a
- * fresh root and file the execution under a tree of its own.
+ * fresh root and file the execution under a tree of its own. An empty
+ * string is absent, again matching Python.
  */
 function decodeLineageField(
   obj: Record<string, unknown>,
@@ -131,7 +132,10 @@ function decodeLineageField(
   if (typeof value !== "string") {
     throw new ProtocolError(`envelope \`${wireName}\` must be a string`);
   }
-  return { [field]: value };
+  // An empty id names nothing. Treating it as absent keeps a receiver
+  // from adopting "" as a thread and filing every child under it — and
+  // keeps both SDKs reading the same wire the same way.
+  return value === "" ? {} : { [field]: value };
 }
 
 export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
