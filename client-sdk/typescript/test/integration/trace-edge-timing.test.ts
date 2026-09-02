@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import { connect, nkeyAuthenticator } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
@@ -62,6 +62,9 @@ describe.skipIf(!bin)("edge record timing", () => {
     await nc.close();
     await server.stop();
   });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   function tracedAgent(agentInfo = info()): Agent {
     return new Agent(
@@ -107,6 +110,45 @@ describe.skipIf(!bin)("edge record timing", () => {
 
     await tracedAgent().prompt("hi"); // returned, never iterated
     await new Promise((r) => setTimeout(r, 400));
+    expect(seen.length).toBe(0);
+  });
+
+  it("is not published when the request header cannot be built at publish time", async () => {
+    const seen: unknown[] = [];
+    const edges = nc.subscribe("TRACE.edges");
+    void (async () => {
+      for await (const _m of edges) seen.push(1);
+    })();
+    await nc.flush();
+
+    // The prompt's header is planned twice: once in `prompt()` (the exact
+    // size re-check) and again at publish time, immediately before the
+    // request goes out — a reconnect in between can invalidate the
+    // identity. Fail only the publish-time plan for the prompt subject; the
+    // edge record's own plan (another subject) is left alone so the edge
+    // WOULD go out if it were published first.
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- called with an explicit `this` below
+    const real = IdentityContext.prototype.plan;
+    let promptPlans = 0;
+    vi.spyOn(IdentityContext.prototype, "plan").mockImplementation(async function (
+      this: IdentityContext,
+      sub: string,
+      requireSigned: boolean,
+    ) {
+      if (sub === SUBJECT && ++promptPlans === 2) throw new Error("identity lost on reconnect");
+      return real.call(this, sub, requireSigned);
+    });
+
+    const s = await tracedAgent().prompt("hi");
+    await expect(
+      (async () => {
+        for await (const _m of s) {
+          /* drain */
+        }
+      })(),
+    ).rejects.toThrow("identity lost on reconnect");
+    await new Promise((r) => setTimeout(r, 400));
+    expect(promptPlans).toBe(2);
     expect(seen.length).toBe(0);
   });
 

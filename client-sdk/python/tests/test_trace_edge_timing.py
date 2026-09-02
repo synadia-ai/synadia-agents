@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from synadia_ai.agents import Agent, Identity, PayloadTooLargeError, TraceOptions, signer_from_seed
+from synadia_ai.agents.identity.options import SenderHeaderPlan
 from tests.test_prompt_max_wait import _make_agent_info
 
 if TYPE_CHECKING:
@@ -74,6 +75,40 @@ async def test_no_edge_when_the_stream_is_never_iterated(
     await _sub(nc, "TRACE.edges", order, "edge")
     agent = await _traced(nc, identity_keys["alice"])
     agent.prompt("hi")  # never iterated
+    await asyncio.sleep(0.3)
+    assert order == [], order
+
+
+async def test_no_edge_when_the_prompt_header_cannot_be_built(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    identity_keys: dict[str, NkeyUser],
+    evidence_for: EvidenceFor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prompt's header is signed at publish time, immediately before
+    the request goes out, and signing can fail. Fail it for the prompt
+    payload only — the edge record's own header is left alone, so the edge
+    WOULD go out if it were published first."""
+    nc = await connect_nkey_user(nats_server_nkey, "alice")
+    await evidence_for(nc)
+    order: list[str] = []
+    await _sub(nc, "TRACE.edges", order, "edge")
+    await _sub(nc, SUBJECT, order, "prompt", reply=True)
+
+    real = SenderHeaderPlan.build_headers
+
+    async def failing(self: SenderHeaderPlan, payload: bytes) -> dict[str, str]:
+        if payload.startswith(b'{"prompt"'):
+            raise RuntimeError("signer unavailable")
+        return await real(self, payload)
+
+    monkeypatch.setattr(SenderHeaderPlan, "build_headers", failing)
+
+    agent = await _traced(nc, identity_keys["alice"])
+    with pytest.raises(RuntimeError, match="signer unavailable"):
+        async for _ in agent.prompt("hi"):
+            pass
     await asyncio.sleep(0.3)
     assert order == [], order
 
