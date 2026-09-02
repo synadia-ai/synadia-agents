@@ -770,14 +770,18 @@ class Agent:
             # rather than firing a request whose reply we won't consume.
             self._raise_if_closed()
 
+            # Signed at publish time so `ts` / nonce are fresh even when the
+            # caller iterates late; the signature covers exactly `encoded`.
+            # Built BEFORE the edge record goes out: signing can still fail,
+            # and an edge record is a claim that a prompt was sent, so
+            # nothing may be published until that claim is certain.
+            headers = await plan.build_headers(encoded) if plan is not None else None
+
             # Observability: publish the edge before the prompt goes out, so
             # an observer sees the node before it runs.
             if edge_publish is not None:
                 await self._publish_edge(edge_publish)
 
-            # Signed at publish time so `ts` / nonce are fresh even when the
-            # caller iterates late; the signature covers exactly `encoded`.
-            headers = await plan.build_headers(encoded) if plan is not None else None
             await self._nc.publish(subject, encoded, reply=reply, headers=headers)
 
             while True:
