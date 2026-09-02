@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import json
 
-from synadia_ai.agents import TOOL_CALL_ID_MAX, build_edge_record, valid_tool_call_id
+from synadia_ai.agents import TOOL_CALL_ID_MAX, AgentId, build_edge_record, valid_tool_call_id
 
 THREAD = "a" * 32
+# `alice` from test-fixtures/identity/keys.json — any real user NKEY does.
+AGENT = AgentId.new("ACME", "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT")
 
 
 def test_accepts_an_ordinary_id() -> None:
@@ -40,7 +42,7 @@ def test_rejects_a_lone_surrogate_half() -> None:
 
 
 def test_the_record_writes_a_non_ascii_id_raw() -> None:
-    _, payload = build_edge_record(THREAD, None, THREAD, "call_é🙂", 0)
+    _, payload = build_edge_record(AGENT, THREAD, None, THREAD, "call_é🙂", 0)
     assert b'"tool_call_id":"call_\xc3\xa9\xf0\x9f\x99\x82"' in payload
     assert b"\\u" not in payload
     assert json.loads(payload)["tool_call_id"] == "call_é🙂"

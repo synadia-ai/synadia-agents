@@ -38,6 +38,8 @@ from synadia_ai.agents import (
     ResponseChunk,
     TraceOptions,
     is_thread_id,
+    parse_sender_header,
+    read_sender_header_value,
     signer_from_seed,
 )
 from tests.test_interop_e2e import TSSDK_DIR, _interop_prereqs_missing
@@ -231,6 +233,11 @@ async def test_traced_python_caller_publishes_edges_while_talking_to_an_untraced
         assert record["thread_id"] == thread, "the edge names the thread the host adopted"
         assert record["parent_id"] is None
         assert "Agent-Sender" in (edges[0].headers or {}), "edge records are signed"
+        sender = parse_sender_header(read_sender_header_value(edges[0].headers) or "")
+        assert sender is not None
+        # The body names the same writer the signed header attests.
+        assert record["agent"] == f"{sender.account}.{sender.user}"
+        assert sender.user == alice.public
 
 
 @pytest.mark.skipif(

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { newAgentId } from "../../src/identity/agent-id.js";
 import { buildEdgeRecord, TOOL_CALL_ID_MAX, validToolCallId } from "../../src/trace.js";
 
 const THREAD = "a".repeat(32);
+// `alice` from test-fixtures/identity/keys.json — any real user NKEY does.
+const AGENT = newAgentId("ACME", "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT");
 
 /**
  * Both SDKs label an edge with the tool call id a caller passes, and both
@@ -39,9 +42,29 @@ describe("validToolCallId", () => {
 
 describe("buildEdgeRecord", () => {
   it("writes a non-ASCII tool call id raw, as Python does", () => {
-    const { payload } = buildEdgeRecord(THREAD, null, THREAD, "call_é🙂", 0);
+    const { payload } = buildEdgeRecord(AGENT, THREAD, null, THREAD, "call_é🙂", 0);
     const text = new TextDecoder().decode(payload);
     expect(text).toContain('"tool_call_id":"call_é🙂"');
     expect(text).not.toContain("\\u");
+  });
+
+  it("names its writer in canonical {account}.{user} form", () => {
+    const { payload } = buildEdgeRecord(AGENT, THREAD, null, THREAD, null, 0);
+    const record = JSON.parse(new TextDecoder().decode(payload)) as Record<string, unknown>;
+    expect(record["agent"]).toBe(
+      `ACME.${"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT"}`,
+    );
+    // The writer sits where the design's table puts it: after `ts`, before the ids.
+    expect(Object.keys(record)).toEqual([
+      "version",
+      "record_id",
+      "ts",
+      "agent",
+      "thread_id",
+      "parent_id",
+      "root_id",
+      "tool_call_id",
+      "turn_count_hint",
+    ]);
   });
 });

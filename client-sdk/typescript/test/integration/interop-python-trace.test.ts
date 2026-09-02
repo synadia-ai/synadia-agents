@@ -6,7 +6,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect, nkeyAuthenticator } from "@nats-io/transport-node";
 import type { Msg, NatsConnection } from "@nats-io/nats-core";
-import { Agents, isThreadId, signerFromSeed, type Agent } from "../../src/index.js";
+import {
+  Agents,
+  isThreadId,
+  parseSenderHeader,
+  readSenderHeaderValue,
+  signerFromSeed,
+  type Agent,
+} from "../../src/index.js";
 import {
   findNatsServerBinary,
   identityFixture,
@@ -230,7 +237,11 @@ describe.skipIf(!bin || !uvAvailable)("tracing interop with Python hosts (nkey)"
       const record = JSON.parse(dec.decode(edges[0]!.data)) as Record<string, unknown>;
       expect(record["thread_id"]).toBe(seen.thread);
       expect(record["parent_id"]).toBeNull();
-      expect(edges[0]!.headers?.get("Agent-Sender")).toBeTruthy();
+      const sender = parseSenderHeader(readSenderHeaderValue(edges[0]!.headers) ?? "");
+      expect(sender).not.toBeNull();
+      // The body names the same writer the signed header attests.
+      expect(record["agent"]).toBe(`${sender!.account}.${sender!.user}`);
+      expect(sender!.user).toBe(ALICE.public);
     } finally {
       await host.stop();
     }
