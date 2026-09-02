@@ -24,6 +24,8 @@ from tests.test_interop_e2e import TSSDK_DIR, _interop_prereqs_missing
 THREAD = "a" * 32
 PARENT = "b" * 32
 ROOT = "c" * 32
+# Non-ASCII, with an astral character: `JSON.stringify` writes it raw.
+UNICODE_CALL = "call_é🙂"
 
 # The two volatile fields: a fresh id per record, and wall-clock seconds.
 _RECORD_ID = re.compile(r'"record_id":"[0-9a-f]{32}"')
@@ -37,13 +39,18 @@ def _normalise(payload: bytes) -> str:
 
 
 def _typescript_records() -> list[str]:
-    """Ask the TS SDK for the same two records."""
+    """Ask the TS SDK for the same three records."""
+    # The id goes into the script as JSON, so it is plain ASCII on stdin
+    # and the JS parser rebuilds the same string.
+    unicode_call = json.dumps(UNICODE_CALL)
     script = (
         'import { buildEdgeRecord, EDGE_RECORD_VERSION } from "./src/trace.js";'
         "const d = new TextDecoder();"
         f'const nested = buildEdgeRecord("{THREAD}", "{PARENT}", "{ROOT}", "call_1", 7);'
         "console.log(d.decode(nested.payload));"
         f'console.log(d.decode(buildEdgeRecord("{THREAD}", null, "{THREAD}", null, 0).payload));'
+        f'const uni = buildEdgeRecord("{THREAD}", "{PARENT}", "{ROOT}", {unicode_call}, 1);'
+        "console.log(d.decode(uni.payload));"
         "console.log(String(EDGE_RECORD_VERSION));"
     )
     out = subprocess.run(
@@ -62,13 +69,15 @@ def _typescript_records() -> list[str]:
 
 @pytest.mark.skipif(_interop_prereqs_missing() is not None, reason="TS SDK unavailable")
 def test_edge_records_are_byte_identical_across_sdks() -> None:
-    ts_nested, ts_root, ts_version = _typescript_records()
+    ts_nested, ts_root, ts_unicode, ts_version = _typescript_records()
 
     py_nested = _normalise(build_edge_record(THREAD, PARENT, ROOT, "call_1", 7)[1])
     py_root = _normalise(build_edge_record(THREAD, None, THREAD, None, 0)[1])
+    py_unicode = _normalise(build_edge_record(THREAD, PARENT, ROOT, UNICODE_CALL, 1)[1])
 
     assert _normalise(ts_nested.encode()) == py_nested
     assert _normalise(ts_root.encode()) == py_root
+    assert _normalise(ts_unicode.encode()) == py_unicode, "non-ASCII ids are escaped differently"
     assert int(ts_version) == EDGE_RECORD_VERSION, (
         "the two SDKs disagree on the edge record schema version"
     )
@@ -76,7 +85,7 @@ def test_edge_records_are_byte_identical_across_sdks() -> None:
 
 @pytest.mark.skipif(_interop_prereqs_missing() is not None, reason="TS SDK unavailable")
 def test_edge_record_keys_are_in_the_same_order() -> None:
-    ts_nested, _, _ = _typescript_records()
+    ts_nested, _, _, _ = _typescript_records()
     py_nested = build_edge_record(THREAD, PARENT, ROOT, "call_1", 7)[1]
     assert list(json.loads(ts_nested)) == list(json.loads(py_nested))
 
