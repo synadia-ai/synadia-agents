@@ -46,7 +46,8 @@ async def _send(nc: NATSClient, envelope: Envelope) -> dict[str, str]:
     async for _ in agent.prompt(envelope):
         pass
     await asyncio.sleep(0.1)
-    return json.loads(seen[0].data)
+    parsed: dict[str, str] = json.loads(seen[0].data)
+    return parsed
 
 
 async def test_overridden_thread_id_roots_itself(nc: NATSClient) -> None:
