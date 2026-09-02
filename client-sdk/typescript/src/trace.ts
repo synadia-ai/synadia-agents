@@ -2,10 +2,17 @@
 // agent service. Mirrors `synadia_ai/agents/trace.py` in the Python SDK;
 // the two must stay wire-identical.
 //
+// The ambient binding is what lets a client used as a tool inside a
+// prompt handler inherit lineage with no plumbing through user code:
+// AsyncLocalStorage flows into awaited work and into tasks created inside
+// the bound scope (Node and Bun alike).
+//
 // A thread ID names one prompt execution: minted by the caller at
 // `prompt()` time, 128-bit random as 32 lowercase hex characters, and
 // adopted by the receiving service. `rootId` has the same shape — it IS a
 // thread ID, the tree's first execution.
+
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // Bump every time you change the trace record schema
 // (be sure the Python SDK is updated in lockstep)
@@ -26,6 +33,30 @@ export interface TraceOptions {
    * — mint IDs and forward lineage, but publish no edge records.
    */
   readonly edgeSubject?: string | null;
+}
+
+/** Identity of the prompt execution running in the current async context. */
+export interface TraceScope {
+  /** This execution's own thread ID — the parent of any thread it spawns. */
+  readonly threadId: string;
+  /** The tree's root thread ID, inherited unchanged; equals `threadId` on a root. */
+  readonly rootId: string;
+}
+
+const storage = new AsyncLocalStorage<TraceScope>();
+
+/**
+ * Run `fn` with `scope` as the ambient execution (used by the agent
+ * service). AsyncLocalStorage restores the previous scope on exit, so
+ * nothing leaks into the next request.
+ */
+export function bindActiveTrace<T>(scope: TraceScope, fn: () => T): T {
+  return storage.run(scope, fn);
+}
+
+/** The ambient {@link TraceScope}, or `undefined` outside a bound handler. */
+export function activeTrace(): TraceScope | undefined {
+  return storage.getStore();
 }
 
 /** Length in hex characters of a thread ID — 128 bits. */

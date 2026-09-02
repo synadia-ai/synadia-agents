@@ -51,6 +51,7 @@ import {
   agentIdAccount,
   agentIdUser,
   AgentSubject,
+  bindActiveTrace,
   decodeEnvelope,
   encodeBase64,
   formatHumanBytes,
@@ -63,6 +64,7 @@ import {
   PROMPT_ENDPOINT_NAME,
   PROMPT_QUEUE_GROUP,
   ProtocolError,
+  randomThreadId,
   SDK_PROTOCOL_VERSION,
   selfId,
   SenderResolver,
@@ -78,6 +80,7 @@ import {
   type RequestEnvelope,
   type SenderInfo,
   type SenderSigner,
+  type TraceScope,
 } from "@synadia-ai/agents";
 
 import { buildHeartbeatPayload, encodeHeartbeatPayload } from "./heartbeat/payload.js";
@@ -283,6 +286,14 @@ export type PromptHandler = (
 /** A "non-empty subset of `crypto.randomUUID()`-style tokens" — used for query ids. */
 function randomId(): string {
   return crypto.randomUUID().replace(/-/g, "");
+}
+
+// Adopt the caller's (thread, root) when the envelope carries lineage, or
+// mint a root for an ID-less envelope (a CLI, or a plain 0.3 caller). The
+// service writes no trace record either way.
+function adoptOrMintTrace(envelope: RequestEnvelope): TraceScope {
+  const threadId = envelope.threadId ?? randomThreadId();
+  return { threadId, rootId: envelope.rootId ?? threadId };
 }
 
 /**
@@ -852,7 +863,9 @@ export class AgentService {
     };
 
     try {
-      await handler(envelope, response);
+      // Place threadId and rootId in the ambient context so clients used
+      // as tools can reach them.
+      await bindActiveTrace(adoptOrMintTrace(envelope), () => handler(envelope, response));
     } catch (err) {
       // Stop keep-alive BEFORE the §9 error frame so an ack chunk can't
       // race in between the error and the terminator.

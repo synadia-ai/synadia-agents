@@ -246,10 +246,13 @@ export {
   EDGE_RECORD_VERSION,
   THREAD_ID_HEX_LEN,
   TOOL_CALL_ID_MAX,
+  activeTrace,
+  bindActiveTrace,
   buildEdgeRecord,
   randomThreadId,
   validToolCallId,
   type TraceOptions,
+  type TraceScope,
 } from "./trace.js";
 
 // Logging
