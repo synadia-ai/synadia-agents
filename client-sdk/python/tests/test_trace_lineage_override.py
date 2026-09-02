@@ -74,3 +74,10 @@ async def test_both_overridden_are_honoured(nc: NATSClient) -> None:
     sent = await _send(nc, Envelope(prompt="hi", thread_id=THREAD, root_id=ROOT))
     assert sent["thread_id"] == THREAD
     assert sent["root_id"] == ROOT
+
+
+async def test_empty_lineage_is_absent(nc: NATSClient) -> None:
+    """An empty id names nothing; the prompt mints its own instead."""
+    sent = await _send(nc, Envelope(prompt="hi", thread_id="", root_id=""))
+    assert sent["thread_id"] not in ("", THREAD)
+    assert sent["root_id"] == sent["thread_id"]

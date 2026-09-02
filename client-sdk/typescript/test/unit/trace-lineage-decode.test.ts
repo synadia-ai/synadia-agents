@@ -20,9 +20,15 @@ describe("envelope lineage decoding", () => {
     expect(env.rootId).toBe(ROOT);
   });
 
-  it("treats absent and null alike", () => {
-    expect(decodeEnvelope(raw('{"prompt":"x"}')).threadId).toBeUndefined();
-    expect(decodeEnvelope(raw('{"prompt":"x","thread_id":null}')).threadId).toBeUndefined();
+  it.each([
+    ["absent", '{"prompt":"x"}'],
+    ["null", '{"prompt":"x","thread_id":null}'],
+    // An empty id names nothing, so the receiver must mint rather than
+    // adopt "" and file every child under it. Python normalises the same
+    // way, so the two SDKs read this wire alike.
+    ["an empty string", '{"prompt":"x","thread_id":""}'],
+  ])("treats %s as no lineage", (_label, body) => {
+    expect(decodeEnvelope(raw(body)).threadId).toBeUndefined();
   });
 
   it("reads one field without the other", () => {
