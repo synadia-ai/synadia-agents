@@ -25,6 +25,7 @@ import {
   buildEdgeRecord,
   DEFAULT_EDGE_SUBJECT,
   inheritedTraceOptions,
+  type BuiltEdgeRecord,
   randomThreadId,
   validToolCallId,
   type TraceOptions,
@@ -205,8 +206,14 @@ export class Agent {
       // publish never fails the prompt.
       const edgeSubject =
         trace?.edgeSubject === undefined ? DEFAULT_EDGE_SUBJECT : trace.edgeSubject;
-      if (edgeSubject !== null) {
-        this.#publishEdge(
+      // Consumers ignore unsigned records, so publishing without a signer
+      // would be pure waste: warn once per connection and skip. Minting and
+      // envelope lineage need no identity and still happen, so downstream
+      // agents that do have one keep tracing.
+      if (edgeSubject !== null && !identity?.signer) {
+        warnEdgesUnsigned(this.#nc);
+      } else if (edgeSubject !== null) {
+        void this.#publishEdge(
           edgeSubject,
           buildEdgeRecord(
             lineage.threadId,
@@ -333,10 +340,24 @@ export class Agent {
     return h;
   }
 
-  /** Fire-and-forget: tracing never blocks, slows or fails a prompt. */
-  #publishEdge(subject: string, payload: Uint8Array): void {
+  /**
+   * Publish one signed edge record.
+   *
+   * The signature covers the short-form subject the record is published
+   * to: per the identity design a remap that only drops the account token
+   * is not a rename, so no `sub` override is needed. Consumers verify in
+   * stored mode.
+   *
+   * Fire-and-forget and fail-open — tracing never blocks, slows or fails
+   * a prompt.
+   */
+  async #publishEdge(subject: string, record: BuiltEdgeRecord): Promise<void> {
     try {
-      this.#nc.publish(subject, payload);
+      const plan = await this.#planHeader(subject, true);
+      if (!plan) throw new SenderSignatureRequiredError(subject);
+      const hdrs = await this.#headersFor(plan, record.payload);
+      hdrs.set(MSG_ID_HEADER, record.recordId);
+      this.#nc.publish(subject, record.payload, { headers: hdrs });
     } catch (err) {
       console.warn(`@synadia-ai/agents: failed to publish edge record on ${subject}`, err);
     }
@@ -357,6 +378,24 @@ export class Agent {
     );
     return this.#headersFor(plan, payload);
   }
+}
+
+// Connections already warned that their edge records go nowhere. One
+// warning per connection: a per-prompt log would itself be a way for
+// observability to disturb an agent. Same string as agents.ts's
+// NATS_MSG_ID_HEADER, spelled again here because agents.ts imports this
+// module.
+const MSG_ID_HEADER = "Nats-Msg-Id";
+const warnedUnsigned = new WeakSet<NatsConnection>();
+
+function warnEdgesUnsigned(nc: NatsConnection): void {
+  if (warnedUnsigned.has(nc)) return;
+  warnedUnsigned.add(nc);
+  console.warn(
+    "@synadia-ai/agents: tracing is enabled but no identity signer is configured; " +
+      "edge records are not published (consumers ignore unsigned records). " +
+      "Pass identity: { signer } to sign them.",
+  );
 }
 
 // The thread ID names this prompt's execution. Inside a prompt handler the

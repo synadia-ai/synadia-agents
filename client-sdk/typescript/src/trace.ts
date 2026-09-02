@@ -109,21 +109,32 @@ export function validToolCallId(toolCallId: string): boolean {
   return toolCallId.length > 0 && toolCallId.length <= TOOL_CALL_ID_MAX;
 }
 
-/** One edge record, ready to publish. */
+/** One built edge record: its wire bytes and the id that de-duplicates it. */
+export interface BuiltEdgeRecord {
+  readonly recordId: string;
+  readonly payload: Uint8Array;
+}
+
+/**
+ * One edge record, ready to publish. The record id comes back alongside
+ * the payload: the publisher stamps it as `Nats-Msg-Id` so a stream
+ * de-duplicates a record it already stored.
+ */
 export function buildEdgeRecord(
   threadId: string,
   parentId: string | null,
   rootId: string,
   toolCallId: string | null,
   turnCountHint: number,
-): Uint8Array {
+): BuiltEdgeRecord {
   // `turnCountHint` says where in the spawning thread this subprompt went
   // out: turns completed when it was spawned, 0 on a root (nothing spawned
   // it). A position marker, not a total — turns the parent takes after its
   // last spawn are recorded nowhere.
+  const recordId = randomThreadId();
   const record = {
     version: EDGE_RECORD_VERSION,
-    record_id: randomThreadId(),
+    record_id: recordId,
     ts: Math.floor(Date.now() / 1000),
     thread_id: threadId,
     parent_id: parentId,
@@ -131,5 +142,5 @@ export function buildEdgeRecord(
     tool_call_id: toolCallId,
     turn_count_hint: turnCountHint,
   };
-  return new TextEncoder().encode(JSON.stringify(record));
+  return { recordId, payload: new TextEncoder().encode(JSON.stringify(record)) };
 }

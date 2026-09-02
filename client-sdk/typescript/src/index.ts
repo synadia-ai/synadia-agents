@@ -252,6 +252,7 @@ export {
   inheritedTraceOptions,
   randomThreadId,
   validToolCallId,
+  type BuiltEdgeRecord,
   type TraceOptions,
   type TraceScope,
 } from "./trace.js";
