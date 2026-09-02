@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 # Bump every time you change the trace record schema
 # (be sure the TypeScript SDK is updated in lockstep)
-EDGE_RECORD_VERSION = 3
+EDGE_RECORD_VERSION = 1
 
 # Default subject edge records are published to — the tenant-side short
 # form; the account's import qualifies it.

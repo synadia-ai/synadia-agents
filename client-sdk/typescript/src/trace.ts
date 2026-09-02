@@ -18,7 +18,7 @@ import type { AgentId } from "./identity/agent-id.js";
 
 // Bump every time you change the trace record schema
 // (be sure the Python SDK is updated in lockstep)
-export const EDGE_RECORD_VERSION = 3;
+export const EDGE_RECORD_VERSION = 1;
 
 /** Default subject edge records are published to — the tenant-side short
  * form; the account's import qualifies it to `TRACE.{account}.edges`. */
