@@ -17,6 +17,8 @@ EDGE_RECORD_VERSION = 2
 # form; the account's import qualifies it.
 DEFAULT_EDGE_SUBJECT = "TRACE.edges"
 
+_SUBJECT_FORBIDDEN = re.compile(r"[\s\x00]")
+
 
 @dataclass(frozen=True, slots=True)
 class TraceOptions:
@@ -28,6 +30,23 @@ class TraceOptions:
     """
 
     edge_subject: str | None = DEFAULT_EDGE_SUBJECT
+
+    def __post_init__(self) -> None:
+        # Publishing is fail-open, so a subject that can never be published
+        # to would only ever show up as a warning on every prompt. Fail at
+        # construction instead.
+        subject = self.edge_subject
+        if subject is None:
+            return
+        if not isinstance(subject, str) or not subject:
+            raise ValueError(f"edge_subject must be a non-empty subject or None (got {subject!r})")
+        for token in subject.split("."):
+            if not token:
+                raise ValueError(f"edge_subject {subject!r} must not contain an empty token")
+            if _SUBJECT_FORBIDDEN.search(token):
+                raise ValueError(f"edge_subject {subject!r} must not contain whitespace or NUL")
+            if "*" in token or ">" in token:
+                raise ValueError(f"edge_subject {subject!r} must not contain wildcards")
 
 
 THREAD_ID_HEX_LEN = 32

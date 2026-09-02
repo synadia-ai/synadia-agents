@@ -45,7 +45,7 @@ import {
   type AgentSenderHeader,
 } from "./identity/sender-header.js";
 import { type Logger, SILENT_LOGGER } from "./internal/logger.js";
-import type { TraceOptions } from "./trace.js";
+import { assertValidTraceOptions, type TraceOptions } from "./trace.js";
 
 /** Default per-stream inactivity timeout (§6.6) — 60 seconds. */
 export const DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS = 60_000;
@@ -118,7 +118,9 @@ export class Agents {
       options.identity !== undefined
         ? new IdentityContext(options.nc, options.identity)
         : undefined;
-    // Omission is meaningful: no trace options, no tracing.
+    // Omission is meaningful: no trace options, no tracing. A subject that
+    // can never be published to fails here, not as a warning per prompt.
+    assertValidTraceOptions(options.trace);
     this.#trace = options.trace;
     // Validates `resolveTtlMs` up front (throws `IdentityError`).
     this.#resolver = new SenderResolver(

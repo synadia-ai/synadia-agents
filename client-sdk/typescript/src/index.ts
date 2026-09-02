@@ -247,6 +247,7 @@ export {
   THREAD_ID_HEX_LEN,
   TOOL_CALL_ID_MAX,
   activeTrace,
+  assertValidTraceOptions,
   bindActiveTrace,
   buildEdgeRecord,
   inheritedTraceOptions,

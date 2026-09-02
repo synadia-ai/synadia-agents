@@ -49,6 +49,7 @@ import { Svcm, type Service, type ServiceHandler, type ServiceMsg } from "@nats-
 
 import {
   activeTrace,
+  assertValidTraceOptions,
   agentIdAccount,
   agentIdUser,
   AgentSubject,
@@ -501,6 +502,9 @@ export class AgentService {
     if (options.operatorAttested !== undefined && typeof options.operatorAttested !== "boolean") {
       throw new Error("AgentService: operatorAttested must be a boolean");
     }
+    // Handed down to every client used inside a handler; a subject that can
+    // never be published to fails here, not as a warning per prompt.
+    assertValidTraceOptions(options.trace);
 
     this.#options = options;
     this.#subject = AgentSubject.new(

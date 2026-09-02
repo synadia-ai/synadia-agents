@@ -22,6 +22,7 @@ import {
 import { combineAbortSignals } from "./internal/abort.js";
 import {
   activeTrace,
+  assertValidTraceOptions,
   buildEdgeRecord,
   DEFAULT_EDGE_SUBJECT,
   inheritedTraceOptions,
@@ -89,6 +90,7 @@ export class Agent {
     this.#defaultInactivityTimeoutMs = defaultInactivityTimeoutMs;
     this.#closeSignal = closeSignal;
     this.#identity = identity;
+    assertValidTraceOptions(trace);
     this.#trace = trace;
     this.instanceId = info.instanceId;
     this.agent = info.agent;

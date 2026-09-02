@@ -13,6 +13,7 @@
 // thread ID, the tree's first execution.
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { NatsAgentError } from "./errors.js";
 
 // Bump every time you change the trace record schema
 // (be sure the Python SDK is updated in lockstep)
@@ -33,6 +34,30 @@ export interface TraceOptions {
    * — mint IDs and forward lineage, but publish no edge records.
    */
   readonly edgeSubject?: string | null;
+}
+
+/**
+ * Throws {@link NatsAgentError} when `options.edgeSubject` names a subject
+ * that can never be published to: empty, an empty token, whitespace or
+ * NUL, or a wildcard. Publishing is fail-open, so without this check a
+ * misconfigured subject would only ever show up as a warning on every
+ * prompt; checking where the options are accepted makes it fail at
+ * construction instead.
+ */
+export function assertValidTraceOptions(options: TraceOptions | undefined): void {
+  if (options === undefined) return;
+  const subject = options.edgeSubject;
+  if (subject === undefined || subject === null) return;
+  const reject = (reason: string): never => {
+    throw new NatsAgentError(`trace.edgeSubject ${JSON.stringify(subject)}: ${reason}`);
+  };
+  if (typeof subject !== "string") reject("must be a string or null");
+  if (subject.length === 0) reject("must not be empty");
+  for (const token of subject.split(".")) {
+    if (token.length === 0) reject("must not contain an empty token");
+    if (/[\s\0]/.test(token)) reject("must not contain whitespace or NUL");
+    if (token.includes("*") || token.includes(">")) reject("must not contain wildcards");
+  }
 }
 
 /** Identity of the prompt execution running in the current async context. */
