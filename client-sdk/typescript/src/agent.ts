@@ -20,6 +20,7 @@ import {
   serializeSenderHeader,
 } from "./identity/sender-header.js";
 import { combineAbortSignals } from "./internal/abort.js";
+import { randomThreadId, type TraceOptions } from "./trace.js";
 import { STATUS_ENDPOINT_NAME } from "./internal/service-name.js";
 import { normalizeAttachments } from "./prompt/attachments.js";
 import { encodedEnvelopeSize, encodeEnvelope, type RequestEnvelope } from "./prompt/envelope.js";
@@ -65,6 +66,7 @@ export class Agent {
   readonly #defaultInactivityTimeoutMs: number;
   readonly #closeSignal: AbortSignal | undefined;
   readonly #identity: IdentityContext | undefined;
+  readonly #trace: TraceOptions | undefined;
 
   constructor(
     nc: NatsConnection,
@@ -72,11 +74,13 @@ export class Agent {
     defaultInactivityTimeoutMs: number,
     closeSignal: AbortSignal | undefined = undefined,
     identity: IdentityContext | undefined = undefined,
+    trace: TraceOptions | undefined = undefined,
   ) {
     this.#nc = nc;
     this.#defaultInactivityTimeoutMs = defaultInactivityTimeoutMs;
     this.#closeSignal = closeSignal;
     this.#identity = identity;
+    this.#trace = trace;
     this.instanceId = info.instanceId;
     this.agent = info.agent;
     this.owner = info.owner;
@@ -106,6 +110,11 @@ export class Agent {
   /** The `NatsConnection` this agent uses (shared with its `Agents`). */
   get connection(): NatsConnection {
     return this.#nc;
+  }
+
+  /** `true` iff tracing was enabled on this handle. */
+  get tracingEnabled(): boolean {
+    return this.#trace !== undefined;
   }
 
   /**
@@ -166,9 +175,13 @@ export class Agent {
     // size is re-checked once the identity is known.
     const headerBound = identity?.mayAttachHeader() ? maxSenderHeaderBytes(sub, identity.name) : 0;
 
+    // If tracing is enabled, mint a thread ID for this prompt. It starts
+    // its own tree until an ambient trace can be inherited.
+    const lineage = this.#trace !== undefined ? mintLineage() : undefined;
+
     // Fast path: text-only — max_payload check is sync.
     if (!hasAttachments) {
-      const envelope: RequestEnvelope = { prompt: text };
+      const envelope: RequestEnvelope = { prompt: text, ...lineage };
       assertWithinMaxPayload(
         encodedEnvelopeSize(envelope),
         this.promptEndpoint,
@@ -181,7 +194,7 @@ export class Agent {
     // With attachments: load files, then check max_payload on the final encoded size.
     return (async (): Promise<PromptStream> => {
       const attachments = await normalizeAttachments(attachmentInputs);
-      const envelope: RequestEnvelope = { prompt: text, attachments };
+      const envelope: RequestEnvelope = { prompt: text, attachments, ...lineage };
       assertWithinMaxPayload(
         encodedEnvelopeSize(envelope),
         this.promptEndpoint,
@@ -290,4 +303,11 @@ export class Agent {
     );
     return this.#headersFor(plan, payload);
   }
+}
+
+// The thread ID names this prompt's execution; until an ambient trace can
+// be inherited, every prompt starts its own tree.
+function mintLineage(): { threadId: string; rootId: string } {
+  const threadId = randomThreadId();
+  return { threadId, rootId: threadId };
 }

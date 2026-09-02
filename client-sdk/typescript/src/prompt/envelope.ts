@@ -18,6 +18,11 @@ export interface RequestAttachment {
 export interface RequestEnvelope {
   readonly prompt: string;
   readonly attachments?: ReadonlyArray<RequestAttachment>;
+  // Observability lineage (trace.ts). NOT part of v0.3 — they are the
+  // SDK's tracing extension, and §5.6 tolerates them. Both present on
+  // prompts from a tracing-enabled caller, both absent otherwise.
+  readonly threadId?: string;
+  readonly rootId?: string;
 }
 
 /** Serialize a request envelope to UTF-8 bytes per §5.1. */
@@ -38,6 +43,8 @@ function envelopeObject(env: RequestEnvelope): Record<string, unknown> {
       content: encodeBase64(a.content),
     }));
   }
+  if (env.threadId !== undefined) obj["thread_id"] = env.threadId;
+  if (env.rootId !== undefined) obj["root_id"] = env.rootId;
   return obj;
 }
 
@@ -147,9 +154,18 @@ export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
     throw new ProtocolError("envelope `prompt` must be a non-empty string");
   }
 
+  // Lineage rides through untouched: the agent service adopts it, and a
+  // caller that never enabled tracing sees neither field.
+  const threadId = obj["thread_id"];
+  const rootId = obj["root_id"];
+  const lineage = {
+    ...(typeof threadId === "string" ? { threadId } : {}),
+    ...(typeof rootId === "string" ? { rootId } : {}),
+  };
+
   const rawAttachments = obj["attachments"];
   if (rawAttachments === undefined) {
-    return { prompt };
+    return { prompt, ...lineage };
   }
   if (!Array.isArray(rawAttachments)) {
     throw new ProtocolError("envelope `attachments` must be an array");
@@ -158,7 +174,7 @@ export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
   const attachments: RequestAttachment[] = rawAttachments.map((item, idx) =>
     decodeAttachment(item, idx),
   );
-  return attachments.length > 0 ? { prompt, attachments } : { prompt };
+  return attachments.length > 0 ? { prompt, attachments, ...lineage } : { prompt, ...lineage };
 }
 
 /**
