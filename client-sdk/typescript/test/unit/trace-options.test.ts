@@ -26,6 +26,11 @@ describe("assertValidTraceOptions", () => {
     ["a trailing dot", "TRACE.edges."],
     ["whitespace", "TRACE edges"],
     ["a NUL", "TRACE\0edges"],
+    // The two characters the languages' own `\s` disagree about: JavaScript
+    // matches U+FEFF and Python does not, Python matches the C0 separators
+    // and JavaScript does not. Both SDKs must reject both.
+    ["a byte-order mark", "TRACE.\ufeffedges"],
+    ["a C0 separator", "TRACE.\u001cedges"],
     ["a star wildcard", "TRACE.*"],
     ["a full wildcard", "TRACE.>"],
     ["a wildcard inside a token", "TRACE.ed>ges"],
