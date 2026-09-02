@@ -298,10 +298,23 @@ function randomId(): string {
   return crypto.randomUUID().replace(/-/g, "");
 }
 
-// Adopt the caller's (thread, root) when the envelope carries lineage, or
-// mint a root for an ID-less envelope (a CLI, or a plain 0.3 caller). The
-// service writes no trace record either way.
-function adoptOrMintTrace(envelope: RequestEnvelope): TraceScope {
+/**
+ * This execution's `(thread, root)`, or `undefined` when there is nothing
+ * to trace.
+ *
+ * A caller's lineage is adopted whatever this service is configured for,
+ * so a tree that starts upstream is not broken here. With no lineage on
+ * the envelope, only a service that opted in mints a root — an untraced
+ * service binds nothing, so nothing is minted per request and
+ * `PromptResponse.traceHeaders()` stays empty rather than stamping ids on
+ * model requests the operator never asked to trace. The service writes no
+ * trace record either way.
+ */
+function traceScopeFor(
+  envelope: RequestEnvelope,
+  options: TraceOptions | undefined,
+): TraceScope | undefined {
+  if (envelope.threadId === undefined && options === undefined) return undefined;
   const threadId = envelope.threadId ?? randomThreadId();
   return { threadId, rootId: envelope.rootId ?? threadId, turnCountHint: 0 };
 }
@@ -899,11 +912,10 @@ export class AgentService {
     try {
       // Place threadId and rootId in the ambient context so clients used
       // as tools can reach them.
-      await bindActiveTrace(
-        adoptOrMintTrace(envelope),
-        () => handler(envelope, response),
-        this.#options.trace,
-      );
+      const scope = traceScopeFor(envelope, this.#options.trace);
+      await (scope === undefined
+        ? handler(envelope, response)
+        : bindActiveTrace(scope, () => handler(envelope, response), this.#options.trace));
     } catch (err) {
       // Stop keep-alive BEFORE the §9 error frame so an ack chunk can't
       // race in between the error and the terminator.

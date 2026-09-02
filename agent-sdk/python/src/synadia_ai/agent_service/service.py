@@ -148,10 +148,23 @@ DEFAULT_ATTACHMENTS_OK = True
 DEFAULT_KEEPALIVE_INTERVAL_S: float = 30.0
 
 
-def _adopt_or_mint_trace(envelope: Envelope) -> TraceScope:
+def _trace_binding(
+    envelope: Envelope, options: TraceOptions | None
+) -> contextlib.AbstractContextManager[None]:
+    """Bind this execution's trace, or nothing at all.
+
+    A caller's lineage is adopted whatever this service is configured for,
+    so a tree that starts upstream is not broken here. With no lineage on
+    the envelope, only a service that opted in mints a root — an untraced
+    service binds nothing, so nothing is minted per request and
+    :meth:`PromptStream.trace_headers` stays empty rather than stamping
+    ids on model requests the operator never asked to trace.
+    """
+    if envelope.thread_id is None and options is None:
+        return contextlib.nullcontext()
     thread_id = envelope.thread_id or random_thread_id()
     root_id = envelope.root_id or thread_id
-    return TraceScope(thread_id, root_id)
+    return bind_active_trace(TraceScope(thread_id, root_id), options)
 
 
 class PromptStream:
@@ -734,7 +747,7 @@ class AgentService:
             try:
                 # Place thread_id and root_id in the context storage
                 # to allow clients used as tools to reache them
-                with bind_active_trace(_adopt_or_mint_trace(envelope), self._trace):
+                with _trace_binding(envelope, self._trace):
                     await handler(envelope, stream)
             except ProtocolError as exc:
                 log.warning(
