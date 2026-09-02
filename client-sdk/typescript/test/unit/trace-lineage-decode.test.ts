@@ -46,6 +46,35 @@ describe("envelope lineage decoding", () => {
     expect(() => decodeEnvelope(raw(body))).toThrow(ProtocolError);
   });
 
+  /**
+   * An adopted id is stamped verbatim on the agent's model requests as a
+   * header value, so the receiver bounds it to the shape the SDKs mint —
+   * otherwise a caller can inject a CRLF, or a megabyte, into headers the
+   * harness sends to a third party.
+   */
+  it.each([
+    ["uppercase hex", "A".repeat(32)],
+    ["one character short", "a".repeat(31)],
+    ["one character long", "a".repeat(33)],
+    ["non-hex characters", "g".repeat(32)],
+    ["a header injection", `${"a".repeat(30)}\r\nX-Injected: yes`],
+    ["surrounding whitespace", ` ${"a".repeat(30)} `],
+    ["a megabyte of garbage", "a".repeat(1 << 20)],
+  ])("rejects %s as malformed", (_label, id) => {
+    expect(() => decodeEnvelope(raw(JSON.stringify({ prompt: "x", thread_id: id })))).toThrow(
+      ProtocolError,
+    );
+    expect(() => decodeEnvelope(raw(JSON.stringify({ prompt: "x", root_id: id })))).toThrow(
+      ProtocolError,
+    );
+  });
+
+  it("accepts exactly what the SDK mints", () => {
+    const env = decodeEnvelope(raw(`{"prompt":"x","thread_id":"${THREAD}","root_id":"${ROOT}"}`));
+    expect(env.threadId).toBe(THREAD);
+    expect(env.rootId).toBe(ROOT);
+  });
+
   it("round-trips through encode", () => {
     const env = decodeEnvelope(encodeEnvelope({ prompt: "x", threadId: THREAD, rootId: ROOT }));
     expect(env).toEqual({ prompt: "x", threadId: THREAD, rootId: ROOT });
