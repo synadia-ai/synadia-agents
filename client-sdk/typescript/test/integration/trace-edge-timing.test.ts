@@ -100,6 +100,29 @@ describe.skipIf(!bin)("edge record timing", () => {
     expect(order).toEqual(["edge", "prompt"]);
   });
 
+  it("is stamped with the time the prompt went out, not the time it was planned", async () => {
+    const records: unknown[] = [];
+    const edges = nc.subscribe("TRACE.edges");
+    const prompts = nc.subscribe(SUBJECT);
+    void (async () => {
+      for await (const m of edges) records.push(JSON.parse(new TextDecoder().decode(m.data)));
+    })();
+    void (async () => {
+      for await (const m of prompts) if (m.reply) nc.publish(m.reply, "");
+    })();
+    await nc.flush();
+
+    const s = await tracedAgent().prompt("hi"); // planned now …
+    await new Promise((r) => setTimeout(r, 1100)); // … a whole second passes …
+    const sentAt = Math.floor(Date.now() / 1000);
+    for await (const _m of s) {
+      /* … sent now */
+    }
+    await new Promise((r) => setTimeout(r, 400));
+    expect(records).toHaveLength(1);
+    expect((records[0] as { ts: number }).ts).toBeGreaterThanOrEqual(sentAt);
+  });
+
   it("is not published when the caller never iterates the stream", async () => {
     const seen: unknown[] = [];
     const edges = nc.subscribe("TRACE.edges");

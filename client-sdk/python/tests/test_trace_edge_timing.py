@@ -9,6 +9,8 @@ before any wire I/O. The TypeScript SDK has the same three guarantees.
 from __future__ import annotations
 
 import asyncio
+import json
+import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -61,6 +63,34 @@ async def test_edge_precedes_the_prompt(
         pass
     await asyncio.sleep(0.3)
     assert order == ["edge", "prompt"], order
+
+
+async def test_edge_is_stamped_when_the_prompt_goes_out(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    identity_keys: dict[str, NkeyUser],
+    evidence_for: EvidenceFor,
+) -> None:
+    """``ts`` says when the prompt was sent — not when it was planned."""
+    nc = await connect_nkey_user(nats_server_nkey, "alice")
+    await evidence_for(nc)
+    records: list[dict[str, Any]] = []
+
+    async def on_edge(msg: Msg) -> None:
+        records.append(json.loads(msg.data))
+
+    await nc.subscribe("TRACE.edges", cb=on_edge)
+    await _sub(nc, SUBJECT, [], "prompt", reply=True)
+    agent = await _traced(nc, identity_keys["alice"])
+
+    stream = agent.prompt("hi")  # planned now …
+    await asyncio.sleep(1.1)  # … a whole second passes …
+    sent_at = int(time.time())
+    async for _ in stream:  # … sent now
+        pass
+    await asyncio.sleep(0.3)
+    assert len(records) == 1, records
+    assert records[0]["ts"] >= sent_at, (records[0]["ts"], sent_at)
 
 
 async def test_no_edge_when_the_stream_is_never_iterated(
