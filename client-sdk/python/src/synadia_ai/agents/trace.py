@@ -175,6 +175,7 @@ def build_edge_record(
     record_id = random_thread_id()
     record = {
         "version": EDGE_RECORD_VERSION,
+        "kind": "edge",
         "record_id": record_id,
         "ts": int(time.time()),
         "agent": str(agent),

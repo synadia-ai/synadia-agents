@@ -197,6 +197,7 @@ export function buildEdgeRecord(
   const recordId = randomThreadId();
   const record = {
     version: EDGE_RECORD_VERSION,
+    kind: "edge",
     record_id: recordId,
     ts: Math.floor(Date.now() / 1000),
     agent,

@@ -57,6 +57,7 @@ describe("buildEdgeRecord", () => {
     // The writer sits where the design's table puts it: after `ts`, before the ids.
     expect(Object.keys(record)).toEqual([
       "version",
+      "kind",
       "record_id",
       "ts",
       "agent",

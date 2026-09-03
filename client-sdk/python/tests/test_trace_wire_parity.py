@@ -108,6 +108,7 @@ def test_the_record_names_its_writer() -> None:
     # The writer sits where the design's table puts it: after `ts`, before the ids.
     assert list(record) == [
         "version",
+        "kind",
         "record_id",
         "ts",
         "agent",
