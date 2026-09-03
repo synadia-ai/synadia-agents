@@ -1,8 +1,14 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import { connect, nkeyAuthenticator } from "@nats-io/transport-node";
-import type { NatsConnection } from "@nats-io/nats-core";
-import { Agent, PayloadTooLargeError, signerFromSeed } from "../../src/index.js";
+import type { Msg, NatsConnection } from "@nats-io/nats-core";
+import {
+  Agent,
+  parseSenderHeader,
+  PayloadTooLargeError,
+  readSenderHeaderValue,
+  signerFromSeed,
+} from "../../src/index.js";
 import { IdentityContext } from "../../src/identity/context.js";
 import { buildAgentInfo } from "../../src/discovery/agent-info.js";
 import {
@@ -98,6 +104,36 @@ describe.skipIf(!bin)("edge record timing", () => {
     }
     await new Promise((r) => setTimeout(r, 400));
     expect(order).toEqual(["edge", "prompt"]);
+  });
+
+  it("carries one id: record_id, Nats-Msg-Id and the signed nonce agree", async () => {
+    // A reader de-duplicates on (signing user, record_id); a stream on
+    // Nats-Msg-Id; the signature binds the nonce. All three must be the
+    // same value or the record is counted differently by each.
+    const edges: Msg[] = [];
+    const sub = nc.subscribe("TRACE.edges");
+    const prompts = nc.subscribe(SUBJECT);
+    void (async () => {
+      for await (const m of sub) edges.push(m);
+    })();
+    void (async () => {
+      for await (const m of prompts) if (m.reply) nc.publish(m.reply, "");
+    })();
+    await nc.flush();
+
+    const s = await tracedAgent().prompt("hi");
+    for await (const _m of s) {
+      /* drain */
+    }
+    await new Promise((r) => setTimeout(r, 400));
+    sub.unsubscribe();
+    prompts.unsubscribe();
+
+    expect(edges).toHaveLength(1);
+    const record = JSON.parse(new TextDecoder().decode(edges[0]!.data)) as Record<string, unknown>;
+    const sender = parseSenderHeader(readSenderHeaderValue(edges[0]!.headers) ?? "");
+    expect(sender?.nonce).toBe(record["record_id"]);
+    expect(edges[0]!.headers?.get("Nats-Msg-Id")).toBe(record["record_id"]);
   });
 
   it("is stamped with the time the prompt went out, not the time it was planned", async () => {

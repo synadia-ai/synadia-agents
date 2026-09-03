@@ -341,9 +341,9 @@ export class Agent {
     return identity.plan(sub, requireSigned);
   }
 
-  async #headersFor(plan: SenderHeaderPlan, payload: Uint8Array): Promise<MsgHdrs> {
+  async #headersFor(plan: SenderHeaderPlan, payload: Uint8Array, nonce?: string): Promise<MsgHdrs> {
     const h = headers();
-    h.set(AGENT_SENDER_HEADER, serializeSenderHeader(await plan.build(payload)));
+    h.set(AGENT_SENDER_HEADER, serializeSenderHeader(await plan.build(payload, nonce)));
     return h;
   }
 
@@ -355,6 +355,9 @@ export class Agent {
    * is not a rename, so no `sub` override is needed. Consumers verify in
    * stored mode. The record's `agent` is the identity the header plan
    * resolved — the same one that signs it — so body and header agree.
+   * Its `record_id` is the header's nonce and the `Nats-Msg-Id` as well:
+   * one id, so a reader de-duplicating on `(user, record_id)` and a
+   * stream de-duplicating on the message id see the same record once.
    *
    * Fail-open — a failed publish never fails the prompt.
    */
@@ -370,7 +373,7 @@ export class Agent {
         edge.toolCallId,
         edge.turnCountHint,
       );
-      const hdrs = await this.#headersFor(plan, record.payload);
+      const hdrs = await this.#headersFor(plan, record.payload, record.recordId);
       hdrs.set(MSG_ID_HEADER, record.recordId);
       this.#nc.publish(subject, record.payload, { headers: hdrs });
     } catch (err) {

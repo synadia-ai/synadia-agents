@@ -161,7 +161,10 @@ def build_edge_record(
     turn_count_hint: int,
 ) -> tuple[str, bytes]:
     # Returns the record id alongside the payload: the publisher stamps it
-    # as Nats-Msg-Id so a stream de-duplicates a record it already stored.
+    # as Nats-Msg-Id so a stream de-duplicates a record it already stored,
+    # and signs with it as the Agent-Sender nonce, so body, header and
+    # message id carry one id. Its 32 hex characters fit the nonce's
+    # `[A-Za-z0-9_-]{1,64}`.
     #
     # `agent` is the writer — the caller that spawned the thread, the
     # parent side of the edge — in canonical `{account}.{user}` form. It is

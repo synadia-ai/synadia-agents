@@ -68,18 +68,30 @@ class SenderHeaderPlan:
     wire_bytes: int
     identity: Identity
 
-    async def build(self, payload: bytes) -> AgentSenderHeader:
-        """Build the header over the exact payload bytes — fresh ``ts`` / nonce each call."""
+    async def build(self, payload: bytes, *, nonce: str | None = None) -> AgentSenderHeader:
+        """Build the header over the exact payload bytes.
+
+        A fresh ``ts`` each call, and a fresh nonce unless ``nonce`` names
+        one. A signed record whose body carries its own id (an edge
+        record's ``record_id``) passes it here, so the header's nonce,
+        ``Nats-Msg-Id`` and the body agree.
+        """
         signer = self.identity.signer
         if self.signed and signer is not None:
             return await sign_sender_header(
-                signer=signer, id=self.id, sub=self.sub, payload=payload, name=self.identity.name
+                signer=signer,
+                id=self.id,
+                sub=self.sub,
+                payload=payload,
+                name=self.identity.name,
+                nonce=nonce,
             )
         return build_claim_header(id=self.id, name=self.identity.name)
 
-    async def build_headers(self, payload: bytes) -> dict[str, str]:
+    async def build_headers(self, payload: bytes, *, nonce: str | None = None) -> dict[str, str]:
         """The NATS headers dict for ``publish(headers=...)``."""
-        return {AGENT_SENDER_HEADER: serialize_sender_header(await self.build(payload))}
+        header = await self.build(payload, nonce=nonce)
+        return {AGENT_SENDER_HEADER: serialize_sender_header(header)}
 
 
 async def self_id_for(identity: Identity | None, nc: NATSClient) -> AgentId:

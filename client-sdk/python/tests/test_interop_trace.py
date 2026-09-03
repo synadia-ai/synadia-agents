@@ -238,6 +238,9 @@ async def test_traced_python_caller_publishes_edges_while_talking_to_an_untraced
         # The body names the same writer the signed header attests.
         assert record["agent"] == f"{sender.account}.{sender.user}"
         assert sender.user == alice.public
+        # One id three ways: the body's record_id is the signed nonce and the Nats-Msg-Id.
+        assert sender.nonce == record["record_id"]
+        assert (edges[0].headers or {})["Nats-Msg-Id"] == record["record_id"]
 
 
 @pytest.mark.skipif(

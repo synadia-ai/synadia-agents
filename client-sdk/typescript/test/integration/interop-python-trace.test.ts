@@ -242,6 +242,9 @@ describe.skipIf(!bin || !uvAvailable)("tracing interop with Python hosts (nkey)"
       // The body names the same writer the signed header attests.
       expect(record["agent"]).toBe(`${sender!.account}.${sender!.user}`);
       expect(sender!.user).toBe(ALICE.public);
+      // One id three ways: the body's record_id is the signed nonce and the Nats-Msg-Id.
+      expect(sender!.nonce).toBe(record["record_id"]);
+      expect(edges[0]!.headers?.get("Nats-Msg-Id")).toBe(record["record_id"]);
     } finally {
       await host.stop();
     }

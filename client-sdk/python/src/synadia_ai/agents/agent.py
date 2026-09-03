@@ -729,7 +729,10 @@ class Agent:
         account token is not a rename, so no ``sub`` override is needed.
         Consumers verify in stored mode. The record's ``agent`` is the
         identity the header plan resolved — the same one that signs it —
-        so body and header agree.
+        so body and header agree. Its ``record_id`` is the header's nonce
+        and the ``Nats-Msg-Id`` as well: one id, so a reader de-duplicating
+        on ``(user, record_id)`` and a stream de-duplicating on the message
+        id see the same record once.
 
         Fail-open — tracing never fails a prompt.
         """
@@ -748,7 +751,7 @@ class Agent:
                 edge_publish.tool_call_id,
                 edge_publish.turn_count_hint,
             )
-            headers = await plan.build_headers(payload)
+            headers = await plan.build_headers(payload, nonce=record_id)
             headers[_MSG_ID_HEADER] = record_id
             await self._nc.publish(subject, payload, headers=headers)
         except Exception:

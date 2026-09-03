@@ -23,7 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   propagate-only) immediately before the prompt goes out — and only then:
   a prompt that is never iterated, fails validation, or whose header
   cannot be built publishes no edge. The record names its writer in
-  `agent` (`{account}.{user}`, the identity that signs it).
+  `agent` (`{account}.{user}`, the identity that signs it); its
+  `record_id` is also the header's nonce and the `Nats-Msg-Id`, so body,
+  signature and stream de-duplication share one id.
   `PromptOptions.toolCallId` labels the edge. Omitted, prompts stay byte-identical to protocol 0.3. Exports:
   `TraceOptions`, `TraceScope`, `activeTrace`, `bindActiveTrace`,
   `inheritedTraceOptions`, `randomThreadId`, `isThreadId`,

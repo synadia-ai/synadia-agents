@@ -15,7 +15,15 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from synadia_ai.agents import Agent, Identity, PayloadTooLargeError, TraceOptions, signer_from_seed
+from synadia_ai.agents import (
+    Agent,
+    Identity,
+    PayloadTooLargeError,
+    TraceOptions,
+    parse_sender_header,
+    read_sender_header_value,
+    signer_from_seed,
+)
 from synadia_ai.agents.identity.options import SenderHeaderPlan
 from tests.test_prompt_max_wait import _make_agent_info
 
@@ -63,6 +71,38 @@ async def test_edge_precedes_the_prompt(
         pass
     await asyncio.sleep(0.3)
     assert order == ["edge", "prompt"], order
+
+
+async def test_edge_carries_one_id(
+    nats_server_nkey: RunningServer,
+    connect_nkey_user: ConnectNkeyUser,
+    identity_keys: dict[str, NkeyUser],
+    evidence_for: EvidenceFor,
+) -> None:
+    """A reader de-duplicates on (signing user, record_id); a stream on
+    Nats-Msg-Id; the signature binds the nonce. All three must be the same
+    value or the record is counted differently by each."""
+    nc = await connect_nkey_user(nats_server_nkey, "alice")
+    await evidence_for(nc)
+    edges: list[Msg] = []
+
+    async def cb(msg: Msg) -> None:
+        edges.append(msg)
+
+    await nc.subscribe("TRACE.edges", cb=cb)
+    order: list[str] = []
+    await _sub(nc, SUBJECT, order, "prompt", reply=True)
+    agent = await _traced(nc, identity_keys["alice"])
+    async for _ in agent.prompt("hi"):
+        pass
+    await asyncio.sleep(0.3)
+
+    assert len(edges) == 1, [e.data for e in edges]
+    record = json.loads(edges[0].data)
+    sender = parse_sender_header(read_sender_header_value(edges[0].headers) or "")
+    assert sender is not None
+    assert sender.nonce == record["record_id"]
+    assert (edges[0].headers or {})["Nats-Msg-Id"] == record["record_id"]
 
 
 async def test_edge_is_stamped_when_the_prompt_goes_out(
@@ -128,10 +168,10 @@ async def test_no_edge_when_the_prompt_header_cannot_be_built(
 
     real = SenderHeaderPlan.build_headers
 
-    async def failing(self: SenderHeaderPlan, payload: bytes) -> dict[str, str]:
+    async def failing(self: SenderHeaderPlan, payload: bytes, **kwargs: Any) -> dict[str, str]:
         if payload.startswith(b'{"prompt"'):
             raise RuntimeError("signer unavailable")
-        return await real(self, payload)
+        return await real(self, payload, **kwargs)
 
     monkeypatch.setattr(SenderHeaderPlan, "build_headers", failing)
 
