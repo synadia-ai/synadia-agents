@@ -101,3 +101,32 @@ async def test_empty_lineage_is_absent(nc: NATSClient) -> None:
     sent = await _send(nc, Envelope(prompt="hi", thread_id="", root_id=""))
     assert sent["thread_id"] not in ("", THREAD)
     assert sent["root_id"] == sent["thread_id"]
+
+
+async def test_an_untraced_client_drops_the_envelope_lineage(nc: NATSClient) -> None:
+    """With tracing off the extension leaves nothing on the wire, even when
+    the envelope handed in carries lineage — an untraced relay forwarding
+    what it received sends a plain v0.3 envelope."""
+    seen = await _prompts(nc)
+    agent = Agent(nc, _make_agent_info(PROMPT_SUBJECT))
+    async for _ in agent.prompt(Envelope(prompt="hi", thread_id=THREAD, root_id=ROOT)):
+        pass
+    await asyncio.sleep(0.1)
+    assert seen[0].data == b'{"prompt":"hi"}'
+
+
+async def test_an_untraced_client_drops_the_lineage_even_inside_a_traced_handler(
+    nc: NATSClient,
+) -> None:
+    """An untraced service that adopted upstream lineage binds a scope with
+    no options; a client used inside it stays untraced and must not forward
+    the parent's thread to the sub-agent."""
+    seen = await _prompts(nc)
+    scope = TraceScope(AMBIENT_THREAD, AMBIENT_ROOT)
+    incoming = Envelope(prompt="hi", thread_id=AMBIENT_THREAD, root_id=AMBIENT_ROOT)
+    with bind_active_trace(scope, None):
+        agent = Agent(nc, _make_agent_info(PROMPT_SUBJECT))
+        async for _ in agent.prompt(incoming):
+            pass
+    await asyncio.sleep(0.1)
+    assert seen[0].data == b'{"prompt":"hi"}'

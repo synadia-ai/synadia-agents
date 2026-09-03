@@ -19,10 +19,12 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   then: a prompt that is never iterated, fails validation, or whose header
   cannot be built publishes no edge. The record names its writer in
   `agent` (`{account}.{user}`, the identity that signs it).
-  `prompt(..., tool_call_id=...)` labels the edge. Omitted, prompts stay byte-identical to protocol 0.3. An
-  explicit `Envelope` may override the minted lineage, except that
-  forwarding the envelope a handler received spawns a new thread rather
-  than reusing its parent's. Exports: `TraceOptions`, `TraceScope`,
+  `prompt(..., tool_call_id=...)` labels the edge. Omitted, prompts stay byte-identical to protocol 0.3 — an
+  untraced client drops the `thread_id` / `root_id` of any `Envelope` handed
+  to it, so an untraced relay forwarding what it received sends a plain
+  envelope. With tracing on, an explicit `Envelope` may override the minted
+  lineage, except that forwarding the envelope a handler received spawns a
+  new thread rather than reusing its parent's. Exports: `TraceOptions`, `TraceScope`,
   `active_trace`, `bind_active_trace`, `inherited_trace_options`,
   `random_thread_id`, `is_thread_id`, `valid_tool_call_id`.
   - Lineage read from the wire is untrusted, bounded input: a `thread_id`

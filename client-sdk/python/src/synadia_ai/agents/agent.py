@@ -458,7 +458,13 @@ class Agent:
             else:
                 merged_attachments = list(text.attachments) if text.attachments else None
 
-            thread_id, root_id = _override_lineage(text, thread_id, root_id, parent_id)
+            # Only a tracing client honours the envelope's lineage. With
+            # tracing off the fields are dropped like any other extra, so an
+            # untraced relay that forwards what it received sends a plain
+            # v0.3 envelope — exactly what it sent before tracing existed —
+            # rather than filing the sub-agent under its own thread.
+            if trace_options is not None:
+                thread_id, root_id = _override_lineage(text, thread_id, root_id, parent_id)
 
             envelope = Envelope(
                 prompt=text.prompt,
