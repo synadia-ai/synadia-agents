@@ -52,8 +52,13 @@ export interface SenderHeaderPlan {
   readonly sub: string;
   /** Exact framed wire size of the header `build()` produces. */
   readonly wireBytes: number;
-  /** Build the header over the exact payload bytes — fresh `ts` / nonce each call. */
-  build(payload: Uint8Array): Promise<AgentSenderHeader>;
+  /**
+   * Build the header over the exact payload bytes — a fresh `ts` each
+   * call, and a fresh nonce unless `nonce` names one. A signed record
+   * whose body carries its own id (an edge record's `record_id`) passes
+   * it here, so the header's nonce, `Nats-Msg-Id` and the body agree.
+   */
+  build(payload: Uint8Array, nonce?: string): Promise<AgentSenderHeader>;
 }
 
 export class IdentityContext {
@@ -153,7 +158,15 @@ export class IdentityContext {
         signed: true,
         sub,
         wireBytes: expectedSenderHeaderBytes({ id, ...nameOpt, sub, signed: true }),
-        build: (payload) => signSenderHeader({ signer, id, ...nameOpt, sub, payload }),
+        build: (payload, nonce) =>
+          signSenderHeader({
+            signer,
+            id,
+            ...nameOpt,
+            sub,
+            payload,
+            ...(nonce !== undefined ? { nonce } : {}),
+          }),
       };
     }
     const claim = buildClaimHeader({ id, ...nameOpt });

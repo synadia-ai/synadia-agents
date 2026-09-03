@@ -26,9 +26,10 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from .errors import ProtocolError
+from .trace import THREAD_ID_HEX_LEN, is_thread_id
 
 
 class Attachment(BaseModel):
@@ -74,12 +75,36 @@ class Envelope(BaseModel):
     decode → encode is lossless (§5.6); a stray `session` from a
     non-compliant peer rides this unknown-field bag instead of surfacing
     as a first-class attribute.
+
+    The thread_id and root_id fields are NOT part of v0.3 but are part
+    of the SDK's tracing extension.
     """
 
     model_config = ConfigDict(extra="allow", frozen=True)
 
     prompt: str
     attachments: list[Attachment] | None = None
+
+    thread_id: str | None = None
+    root_id: str | None = None
+
+    @field_validator("thread_id", "root_id")
+    @classmethod
+    def _empty_lineage_is_absent(cls, value: str | None) -> str | None:
+        # An empty id names nothing. Treating it as absent keeps a
+        # receiver from adopting "" as a thread and filing every child
+        # under it — and keeps both SDKs reading the same wire the same
+        # way.
+        if not value:
+            return None
+        # Untrusted, bounded input: the id is adopted verbatim and later
+        # stamped on the agent's model requests as a header value, so
+        # anything not shaped like a minted id (a CRLF, a megabyte of
+        # garbage) is malformed — a 400 at the receiver, like any other
+        # wrongly-shaped field.
+        if not is_thread_id(value):
+            raise ValueError(f"must be {THREAD_ID_HEX_LEN} lowercase hex characters")
+        return value
 
 
 def encode(envelope: Envelope) -> bytes:

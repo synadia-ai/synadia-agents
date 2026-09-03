@@ -48,9 +48,12 @@ import type { NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceHandler, type ServiceMsg } from "@nats-io/services";
 
 import {
+  activeTrace,
+  assertValidTraceOptions,
   agentIdAccount,
   agentIdUser,
   AgentSubject,
+  bindActiveTrace,
   decodeEnvelope,
   encodeBase64,
   formatHumanBytes,
@@ -63,6 +66,7 @@ import {
   PROMPT_ENDPOINT_NAME,
   PROMPT_QUEUE_GROUP,
   ProtocolError,
+  randomThreadId,
   SDK_PROTOCOL_VERSION,
   selfId,
   SenderResolver,
@@ -78,6 +82,8 @@ import {
   type RequestEnvelope,
   type SenderInfo,
   type SenderSigner,
+  type TraceOptions,
+  type TraceScope,
 } from "@synadia-ai/agents";
 
 import { buildHeartbeatPayload, encodeHeartbeatPayload } from "./heartbeat/payload.js";
@@ -178,6 +184,14 @@ export interface AgentServiceOptions {
    * cadence). Defaults to 30.
    */
   readonly keepaliveIntervalS?: number | null;
+  /**
+   * Observability tracing handed down to clients used inside prompt
+   * handlers (opt-in). The service itself never writes trace records; it
+   * always adopts or mints the execution's `(thread, root)` and binds it
+   * as the ambient trace. Passing this makes a nested `Agent.prompt()`
+   * with no configuration of its own trace the calls it spawns.
+   */
+  readonly trace?: TraceOptions;
   /** Extra metadata keys merged into the service metadata (forward-compat). */
   readonly extraMetadata?: Readonly<Record<string, string>>;
   /**
@@ -286,6 +300,27 @@ function randomId(): string {
 }
 
 /**
+ * This execution's `(thread, root)`, or `undefined` when there is nothing
+ * to trace.
+ *
+ * A caller's lineage is adopted whatever this service is configured for,
+ * so a tree that starts upstream is not broken here. With no lineage on
+ * the envelope, only a service that opted in mints a root — an untraced
+ * service binds nothing, so nothing is minted per request and
+ * `PromptResponse.traceHeaders()` stays empty rather than stamping ids on
+ * model requests the operator never asked to trace. The service writes no
+ * trace record either way.
+ */
+function traceScopeFor(
+  envelope: RequestEnvelope,
+  options: TraceOptions | undefined,
+): TraceScope | undefined {
+  if (envelope.threadId === undefined && options === undefined) return undefined;
+  const threadId = envelope.threadId ?? randomThreadId();
+  return { threadId, rootId: envelope.rootId ?? threadId, turnCountHint: 0 };
+}
+
+/**
  * Server-side handle given to a {@link PromptHandler} for emitting response
  * chunks back to the caller. The {@link AgentService} owns stream
  * termination — handlers `send(...)` zero or more chunks and return.
@@ -308,6 +343,30 @@ export class PromptResponse {
     this.#msg = msg;
     this.#nc = nc;
     this.sender = sender;
+  }
+
+  /**
+   * Headers for every model request this execution issues.
+   *
+   * An agent stamps these on each completion request so the model proxy
+   * files the call under the right thread and tree without seeing any
+   * NATS traffic. Hierarchy is the edge records' job, so the proxy needs
+   * no parent or tool-call header.
+   *
+   * `{}` when the prompt was untraced, so harness code needs no plumbing
+   * and degrades to nothing.
+   *
+   * Each call counts against this execution: the running total is
+   * recorded on the edge of any thread it spawns afterwards.
+   */
+  traceHeaders(): Record<string, string> {
+    const scope = activeTrace();
+    if (scope === undefined) return {};
+    scope.turnCountHint += 1;
+    return {
+      "X-Synadia-Thread-ID": scope.threadId,
+      "X-Synadia-Root-ID": scope.rootId,
+    };
   }
 
   /**
@@ -443,6 +502,9 @@ export class AgentService {
     if (options.operatorAttested !== undefined && typeof options.operatorAttested !== "boolean") {
       throw new Error("AgentService: operatorAttested must be a boolean");
     }
+    // Handed down to every client used inside a handler; a subject that can
+    // never be published to fails here, not as a warning per prompt.
+    assertValidTraceOptions(options.trace);
 
     this.#options = options;
     this.#subject = AgentSubject.new(
@@ -852,7 +914,12 @@ export class AgentService {
     };
 
     try {
-      await handler(envelope, response);
+      // Place threadId and rootId in the ambient context so clients used
+      // as tools can reach them.
+      const scope = traceScopeFor(envelope, this.#options.trace);
+      await (scope === undefined
+        ? handler(envelope, response)
+        : bindActiveTrace(scope, () => handler(envelope, response), this.#options.trace));
     } catch (err) {
       // Stop keep-alive BEFORE the §9 error frame so an ack chunk can't
       // race in between the error and the terminator.

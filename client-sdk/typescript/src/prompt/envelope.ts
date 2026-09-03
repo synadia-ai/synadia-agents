@@ -9,6 +9,7 @@
 
 import { utf8ByteLength } from "../bytes.js";
 import { ProtocolError } from "../errors.js";
+import { isThreadId, THREAD_ID_HEX_LEN } from "../trace.js";
 
 export interface RequestAttachment {
   readonly filename: string;
@@ -18,6 +19,11 @@ export interface RequestAttachment {
 export interface RequestEnvelope {
   readonly prompt: string;
   readonly attachments?: ReadonlyArray<RequestAttachment>;
+  // Observability lineage (trace.ts). NOT part of v0.3 — they are the
+  // SDK's tracing extension, and §5.6 tolerates them. Both present on
+  // prompts from a tracing-enabled caller, both absent otherwise.
+  readonly threadId?: string;
+  readonly rootId?: string;
 }
 
 /** Serialize a request envelope to UTF-8 bytes per §5.1. */
@@ -38,6 +44,8 @@ function envelopeObject(env: RequestEnvelope): Record<string, unknown> {
       content: encodeBase64(a.content),
     }));
   }
+  if (env.threadId !== undefined) obj["thread_id"] = env.threadId;
+  if (env.rootId !== undefined) obj["root_id"] = env.rootId;
   return obj;
 }
 
@@ -106,6 +114,40 @@ export function encodeBase64(bytes: Uint8Array): string {
  * or unsafe filenames (path separators, `..`, NUL, absolute paths). Agent
  * services translate this into a `Nats-Service-Error-Code: 400` response.
  */
+/**
+ * One lineage field, absent when the key is missing or `null`.
+ *
+ * A present-but-not-a-string value is a malformed envelope (400), the same
+ * as any other wrongly-typed field — and the same as the Python SDK, which
+ * rejects it too. Silently dropping it would make the receiver mint a
+ * fresh root and file the execution under a tree of its own. An empty
+ * string is absent, again matching Python.
+ */
+function decodeLineageField(
+  obj: Record<string, unknown>,
+  wireName: string,
+  field: "threadId" | "rootId",
+): Record<string, string> {
+  const value = obj[wireName];
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "string") {
+    throw new ProtocolError(`envelope \`${wireName}\` must be a string`);
+  }
+  // An empty id names nothing. Treating it as absent keeps a receiver
+  // from adopting "" as a thread and filing every child under it — and
+  // keeps both SDKs reading the same wire the same way.
+  if (value === "") return {};
+  // Untrusted, bounded input: the id is adopted verbatim and later stamped
+  // on the agent's model requests as a header value, so anything not
+  // shaped like a minted id (a CRLF, a megabyte of garbage) is malformed.
+  if (!isThreadId(value)) {
+    throw new ProtocolError(
+      `envelope \`${wireName}\` must be ${THREAD_ID_HEX_LEN} lowercase hex characters`,
+    );
+  }
+  return { [field]: value };
+}
+
 export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
   // §5.3: a zero-byte request payload is invalid.
   if (data.length === 0) {
@@ -147,9 +189,16 @@ export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
     throw new ProtocolError("envelope `prompt` must be a non-empty string");
   }
 
+  // Lineage rides through untouched: the agent service adopts it, and a
+  // caller that never enabled tracing sees neither field.
+  const lineage = {
+    ...decodeLineageField(obj, "thread_id", "threadId"),
+    ...decodeLineageField(obj, "root_id", "rootId"),
+  };
+
   const rawAttachments = obj["attachments"];
   if (rawAttachments === undefined) {
-    return { prompt };
+    return { prompt, ...lineage };
   }
   if (!Array.isArray(rawAttachments)) {
     throw new ProtocolError("envelope `attachments` must be an array");
@@ -158,7 +207,7 @@ export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
   const attachments: RequestAttachment[] = rawAttachments.map((item, idx) =>
     decodeAttachment(item, idx),
   );
-  return attachments.length > 0 ? { prompt, attachments } : { prompt };
+  return attachments.length > 0 ? { prompt, attachments, ...lineage } : { prompt, ...lineage };
 }
 
 /**

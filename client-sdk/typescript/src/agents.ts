@@ -45,6 +45,7 @@ import {
   type AgentSenderHeader,
 } from "./identity/sender-header.js";
 import { type Logger, SILENT_LOGGER } from "./internal/logger.js";
+import { assertValidTraceOptions, type TraceOptions } from "./trace.js";
 
 /** Default per-stream inactivity timeout (§6.6) — 60 seconds. */
 export const DEFAULT_STREAM_INACTIVITY_TIMEOUT_MS = 60_000;
@@ -72,6 +73,11 @@ export interface AgentsOptions {
    * in milliseconds; `0` enumerates on every call. Default 10 000.
    */
   readonly resolveTtlMs?: number;
+  /**
+   * Observability tracing (opt-in). Omit for no tracing — prompts stay
+   * byte-identical to plain protocol 0.3; pass `{}` to enable with defaults.
+   */
+  readonly trace?: TraceOptions;
 }
 
 /** Options for the signed low-level wrappers. */
@@ -96,6 +102,7 @@ export class Agents {
   readonly #logger: Logger;
   readonly #streamInactivityTimeoutMs: number;
   readonly #identity: IdentityContext | undefined;
+  readonly #trace: TraceOptions | undefined;
   readonly #resolver: SenderResolver;
   readonly #closeController = new AbortController();
   #closed = false;
@@ -111,6 +118,10 @@ export class Agents {
       options.identity !== undefined
         ? new IdentityContext(options.nc, options.identity)
         : undefined;
+    // Omission is meaningful: no trace options, no tracing. A subject that
+    // can never be published to fails here, not as a warning per prompt.
+    assertValidTraceOptions(options.trace);
+    this.#trace = options.trace;
     // Validates `resolveTtlMs` up front (throws `IdentityError`).
     this.#resolver = new SenderResolver(
       options.nc,
@@ -127,6 +138,11 @@ export class Agents {
   /** Default per-stream inactivity timeout applied to every `Agent.prompt()`. */
   get streamInactivityTimeoutMs(): number {
     return this.#streamInactivityTimeoutMs;
+  }
+
+  /** The tracing options this client was constructed with; `undefined` = tracing off. */
+  get trace(): TraceOptions | undefined {
+    return this.#trace;
   }
 
   /**
@@ -170,6 +186,7 @@ export class Agents {
       this.#closeController.signal,
       opts,
       this.#identity,
+      this.#trace,
     );
   }
 
@@ -239,6 +256,7 @@ export class Agents {
       this.#closeController.signal,
       opts,
       this.#identity,
+      this.#trace,
     );
   }
 

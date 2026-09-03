@@ -10,6 +10,31 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
+- **Observability tracing (opt-in).** `Agents(nc=nc, trace=TraceOptions())`
+  — or an `AgentService` handing its options down — makes every `prompt()`
+  mint a thread id, carry `thread_id` / `root_id` in the envelope, and
+  publish a signed edge record (`build_edge_record`, `EDGE_RECORD_VERSION`)
+  to `TraceOptions.edge_subject` (default `DEFAULT_EDGE_SUBJECT`, `None`
+  for propagate-only) immediately before the prompt goes out — and only
+  then: a prompt that is never iterated, fails validation, or whose header
+  cannot be built publishes no edge. The record names its writer in
+  `agent` (`{account}.{user}`, the identity that signs it); its
+  `record_id` is also the header's nonce and the `Nats-Msg-Id`, so body,
+  signature and stream de-duplication share one id.
+  `prompt(..., tool_call_id=...)` labels the edge. Omitted, prompts stay byte-identical to protocol 0.3 — an
+  untraced client drops the `thread_id` / `root_id` of any `Envelope` handed
+  to it, so an untraced relay forwarding what it received sends a plain
+  envelope. With tracing on, an explicit `Envelope` may override the minted
+  lineage, except that forwarding the envelope a handler received spawns a
+  new thread rather than reusing its parent's. Exports: `TraceOptions`, `TraceScope`,
+  `active_trace`, `bind_active_trace`, `inherited_trace_options`,
+  `random_thread_id`, `is_thread_id`, `valid_tool_call_id`.
+  - Lineage read from the wire is untrusted, bounded input: a `thread_id`
+    or `root_id` that is not a string of `THREAD_ID_HEX_LEN` lowercase hex
+    characters is a malformed envelope (`ProtocolError`); an empty string
+    or `null` is absent.
+  - `TraceOptions` rejects an `edge_subject` that can never be published
+    to (empty, wildcard, whitespace) with `ValueError`.
 - `SenderSignatureRequiredError` exposes stable `code` (`401`),
   `description` (`"signature required"`), and `subject` attributes for
   handling local signed-target preflight failures without parsing a message.

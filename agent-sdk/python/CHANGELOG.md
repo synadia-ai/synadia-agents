@@ -8,6 +8,19 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Added
+
+- **Observability tracing (opt-in).** `AgentService(trace=TraceOptions())`
+  hands tracing down to every `synadia_ai.agents` client used inside a
+  prompt handler. The service adopts the caller's `thread_id` / `root_id`
+  (or mints a root when it opted in) and binds them as the ambient trace
+  for the handler; `PromptStream.trace_headers()` returns the
+  `X-Synadia-Thread-ID` / `X-Synadia-Root-ID` headers to stamp on each
+  model request (`{}` when untraced). The service itself writes no trace
+  record. A malformed lineage id on the envelope is a `400`; a
+  `TraceOptions` whose `edge_subject` can never be published to raises
+  `ValueError`.
+
 ### Changed
 
 - Host identity registration is now opt-in: omitting `identity` performs no

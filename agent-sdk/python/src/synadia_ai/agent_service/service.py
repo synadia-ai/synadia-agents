@@ -61,8 +61,13 @@ from synadia_ai.agents import (
     ResponseChunk,
     SenderResolver,
     StatusChunk,
+    TraceOptions,
+    TraceScope,
+    active_trace,
+    bind_active_trace,
     decode,
     format_sender,
+    random_thread_id,
 )
 from synadia_ai.agents.identity import (
     DEFAULT_RESOLVE_TTL_S,
@@ -143,6 +148,25 @@ DEFAULT_ATTACHMENTS_OK = True
 DEFAULT_KEEPALIVE_INTERVAL_S: float = 30.0
 
 
+def _trace_binding(
+    envelope: Envelope, options: TraceOptions | None
+) -> contextlib.AbstractContextManager[None]:
+    """Bind this execution's trace, or nothing at all.
+
+    A caller's lineage is adopted whatever this service is configured for,
+    so a tree that starts upstream is not broken here. With no lineage on
+    the envelope, only a service that opted in mints a root — an untraced
+    service binds nothing, so nothing is minted per request and
+    :meth:`PromptStream.trace_headers` stays empty rather than stamping
+    ids on model requests the operator never asked to trace.
+    """
+    if envelope.thread_id is None and options is None:
+        return contextlib.nullcontext()
+    thread_id = envelope.thread_id or random_thread_id()
+    root_id = envelope.root_id or thread_id
+    return bind_active_trace(TraceScope(thread_id, root_id), options)
+
+
 class PromptStream:
     """Handle given to a prompt handler for emitting response chunks.
 
@@ -162,6 +186,29 @@ class PromptStream:
         self._request = request
         self._nc = nc
         self._sender = sender
+
+    def trace_headers(self) -> dict[str, str]:
+        """Headers for every model request this execution issues.
+
+        An agent stamps these on each completion request so the model
+        proxy files the call under the right thread and tree without
+        seeing any NATS traffic. Hierarchy is the edge records' job, so
+        the proxy needs no parent or tool-call header.
+
+        ``{}`` when the prompt was untraced, so harness code needs no
+        plumbing and degrades to nothing.
+
+        Each call counts against this execution: the running total is
+        recorded on the edge of any thread it spawns afterwards.
+        """
+        scope = active_trace()
+        if scope is None:
+            return {}
+        scope.turn_count_hint[0] += 1
+        return {
+            "X-Synadia-Thread-ID": scope.thread_id,
+            "X-Synadia-Root-ID": scope.root_id,
+        }
 
     @property
     def sender(self) -> SenderInfo | None:
@@ -321,6 +368,7 @@ class AgentService:
         accept_sender: AcceptSenderHook | None = None,
         resolve_ttl_s: float = DEFAULT_RESOLVE_TTL_S,
         operator_attested: bool = False,
+        trace: TraceOptions | None = None,
     ) -> None:
         if heartbeat_interval_s <= 0:
             raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.3)")
@@ -344,6 +392,9 @@ class AgentService:
         self._effective_max_payload_value = max_payload
         self._attachments_ok = attachments_ok
         self._keepalive_interval_s = keepalive_interval_s
+        # Observability: handed down to clients used inside prompt handlers.
+        # The service itself never writes trace records.
+        self._trace = trace
         self._prompt_handler: PromptHandler | None = None
         self._service: Service | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
@@ -694,7 +745,10 @@ class AgentService:
                 )
 
             try:
-                await handler(envelope, stream)
+                # Place thread_id and root_id in the context storage
+                # to allow clients used as tools to reache them
+                with _trace_binding(envelope, self._trace):
+                    await handler(envelope, stream)
             except ProtocolError as exc:
                 log.warning(
                     "prompt handler rejected protocol input on %s: %s",
