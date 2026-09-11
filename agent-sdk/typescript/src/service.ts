@@ -24,7 +24,8 @@
 //   - Emits the spec-mandated empty-body no-headers terminator after
 //     every prompt — successful or errored (§6.5, §9.3).
 //   - Translates handler exceptions into `Nats-Service-Error-Code: 500`
-//     responses, while envelope decode failures and handler-raised
+//     responses by default. Handler errors may set a bounded
+//     `serviceErrorCode`; malformed requests and handler-raised
 //     `ProtocolError`s become `400` (§9.1).
 //   - Sender identity (extension): classifies every `prompt` request
 //     before the ack — malformed `Agent-Sender` → `400`, a failing
@@ -723,7 +724,14 @@ export class AgentService {
         service.info().id,
         this.#options.session !== undefined ? { session: this.#options.session } : {},
       );
-      this.#options.nc.publish(this.#subject.heartbeat, encodeHeartbeatPayload(payload));
+      try {
+        this.#options.nc.publish(this.#subject.heartbeat, encodeHeartbeatPayload(payload));
+      } catch {
+        // A transport that has closed between stop() and this timer tick must
+        // not turn into an uncaught exception.
+        if (this.#heartbeatTimer !== null) clearInterval(this.#heartbeatTimer);
+        this.#heartbeatTimer = null;
+      }
     };
     publish();
     this.#heartbeatTimer = setInterval(publish, this.#heartbeatIntervalS * 1000);
@@ -770,6 +778,23 @@ export class AgentService {
         /* connection may already be gone */
       }
       // §9.3 — the error frame is NOT the terminator; emit one explicitly.
+      tryRespondTerminator(msg);
+      return;
+    }
+
+    // Enforce the endpoint limits before identity work, acknowledgment, or
+    // handler dispatch. These values are advertised to callers and must be
+    // true at the receiving end too.
+    if (
+      !envelope.prompt.trim() ||
+      msg.data.length > parseHumanBytes(this.#effectiveMaxPayload()) ||
+      (envelope.attachments?.length && this.#options.attachmentsOk === false)
+    ) {
+      try {
+        msg.respondError(400, "empty or oversized prompt, or unsupported attachments");
+      } catch {
+        /* connection may already be gone */
+      }
       tryRespondTerminator(msg);
       return;
     }
@@ -864,8 +889,13 @@ export class AgentService {
           // Cross-realm / duplicate-module guard: adapters may throw a
           // ProtocolError class from another installed SDK copy.
           err instanceof ProtocolError || (err instanceof Error && err.name === "ProtocolError");
+        const requestedCode =
+          err instanceof Error
+            ? (err as Error & { serviceErrorCode?: unknown }).serviceErrorCode
+            : undefined;
+        const code = isProtocolError ? 400 : boundedServiceErrorCode(requestedCode);
         msg.respondError(
-          isProtocolError ? 400 : 500,
+          code,
           sanitizeErrorDesc(isProtocolError ? desc : `handler error: ${desc}`),
         );
       } catch {
@@ -878,6 +908,12 @@ export class AgentService {
       tryRespondTerminator(msg);
     }
   }
+}
+
+function boundedServiceErrorCode(value: unknown): number {
+  return typeof value === "number" && [400, 403, 409, 413, 429, 500, 502, 503, 504].includes(value)
+    ? value
+    : 500;
 }
 
 function tryRespondTerminator(msg: ServiceMsg): void {
