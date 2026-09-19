@@ -6,7 +6,7 @@ export { JsonLineRpcClient, JsonRpcError, defaultServerRequestResponse } from ".
 export { DEFAULT_CONFIG_PATH, helpText, loadConfigFromSources, mappingFromConfig, parseArgs, renderConfigTemplate } from "./config.js";
 export { runDoctor, redact, type DoctorCheck, type DoctorReport } from "./doctor.js";
 export { ManagedCodexRuntime } from "./managed-runtime.js";
-export { resolveNatsOptions } from "./nats.js";
+export { resolveNatsBundle } from "./nats.js";
 export { CodexPluginRegistrar, defaultPluginConfig, emitCodexPluginNotification, normalizePluginNotification, pluginEventSnapshot, pluginStatus, readPluginState, writePluginState, type CodexPluginEventRecord, type CodexPluginEventSnapshot, type CodexPluginNotification } from "./plugin-registrar.js";
 export { EndpointRegistry, type EndpointRegistryEntry } from "./endpoint-registry.js";
 export { endpointFingerprint, privateSessionKey, derivePublicSessionAlias } from "./identity.js";

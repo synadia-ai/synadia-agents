@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     const spawnSubject = controllerSpawnSubject(controller.owner, controller.name);
     process.stderr.write(`claude-code-headless-cli: calling ${spawnSubject}\n`);
 
-    const rep = await cli.nc.request(spawnSubject, JSON.stringify(spec), { timeout: 15_000 });
+    const rep = await cli.request(spawnSubject, JSON.stringify(spec), 15_000);
     const errCode = rep.headers?.get("Nats-Service-Error-Code");
     if (errCode) {
       const errMsg = rep.headers?.get("Nats-Service-Error") ?? "unknown error";
@@ -81,10 +81,10 @@ async function main(): Promise<void> {
 
       if (stopAfter) {
         const stopSubject = controllerStopSubject(controller.owner, controller.name);
-        await cli.nc.request(
+        await cli.request(
           stopSubject,
           JSON.stringify({ session_id: descriptor.session_id }),
-          { timeout: 5_000 },
+          5_000,
         );
         process.stderr.write(`claude-code-headless-cli: stopped ${descriptor.session_id}\n`);
       }

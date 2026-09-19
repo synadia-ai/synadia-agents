@@ -19,7 +19,11 @@ describe("package metadata", () => {
     expect(pkg.scripts["smoke:opencode-plugin-permission"]).toContain("opencode-plugin-permission-smoke.ts");
     expect(pkg.files).toContain("src");
     expect(pkg.files).toContain("README.md");
-    expect(pkg.files.filter((entry: string) => entry.endsWith(".md"))).toEqual(["README.md"]);
+    expect(pkg.files.filter((entry: string) => entry.endsWith(".md"))).toEqual([
+      "README.md",
+      "CHANGELOG.md",
+    ]);
+    expect(pkg.files).toContain("LICENSE");
     expect(pkg.files).not.toContain("spikes");
     expect(pkg.files).toContain(".env.example");
   });

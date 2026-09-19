@@ -9,6 +9,8 @@ import {
   Empty,
   headers,
   nkeyAuthenticator,
+  PermissionViolationError,
+  RequestError,
   type Msg,
   type MsgHdrs,
   type NatsConnection,
@@ -29,6 +31,7 @@ import {
   type ServiceError,
   signerFromSeed,
   signSenderHeader,
+  USER_INFO_SUBJECT,
   verifyAgentId,
   type AgentInfo,
   type Logger,
@@ -52,6 +55,12 @@ const enc = new TextEncoder();
 const ALICE = keys.users["alice"]!;
 const BOB = keys.users["bob"]!;
 const PAYLOAD = enc.encode('{"prompt":"hi"}');
+
+function fakeJwt(payload: Record<string, unknown>): string {
+  const b64 = (value: unknown): string =>
+    Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+  return `${b64({ typ: "JWT", alg: "ed25519-nkey" })}.${b64(payload)}.${b64(new Uint8Array(64))}`;
+}
 
 interface LogLine {
   readonly level: string;
@@ -197,6 +206,55 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
     expect(status.metadata[MIN_SENDER_TRUST_KEY]).toBeUndefined();
   });
 
+  it("omitted host identity does no lookup, strips spoofed metadata, and still classifies inbound senders", async () => {
+    const nc = await connectAs(server.url, ALICE.seed);
+    perTest.push(() => nc.close());
+    const probes: Msg[] = [];
+    const probeSub = nc.subscribe(USER_INFO_SUBJECT, {
+      callback: (_err, msg) => {
+        probes.push(msg);
+      },
+    });
+    perTest.push(() => {
+      probeSub.unsubscribe();
+      return Promise.resolve();
+    });
+    await nc.flush();
+
+    let received: SenderInfo | undefined;
+    const service = new AgentService({
+      nc,
+      agent: "id-svc",
+      owner: "testers",
+      name: "identity-off",
+      heartbeatIntervalS: 1,
+      keepaliveIntervalS: null,
+      extraMetadata: {
+        [IDENTITY_METADATA_KEYS.userNkey]: BOB.public,
+        [IDENTITY_METADATA_KEYS.account]: "FORGED",
+        [IDENTITY_METADATA_KEYS.idSig]: "FORGED",
+      },
+    });
+    service.onPrompt(async (_env, response) => {
+      received = response.sender;
+      await response.send("ok");
+    });
+    await service.start();
+    perTest.push(() => service.stop());
+    await nc.flush();
+    expect(probes).toHaveLength(0);
+    expect(service.identity).toBeUndefined();
+    probeSub.unsubscribe();
+
+    const signed = client({ signer: aliceSigner });
+    const agent = await discover(signed, service);
+    expect(agent.metadata[IDENTITY_METADATA_KEYS.userNkey]).toBeUndefined();
+    expect(agent.metadata[IDENTITY_METADATA_KEYS.account]).toBeUndefined();
+    expect(agent.metadata[IDENTITY_METADATA_KEYS.idSig]).toBeUndefined();
+    await drain(await agent.prompt("hi"));
+    expect(received?.trust).toBe("verified");
+  });
+
   it("start() throws IdentityMismatchError for a foreign signer", async () => {
     const nc = await connectAs(server.url, ALICE.seed);
     perTest.push(() => nc.close());
@@ -209,6 +267,39 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
     });
     svc.onPrompt(async () => {});
     await expect(svc.start()).rejects.toBeInstanceOf(IdentityMismatchError);
+  });
+
+  it("rejects credentials for the same user when the live account differs", async () => {
+    const nc = await connectAs(server.url, ALICE.seed);
+    perTest.push(() => nc.close());
+    const signerAccount = "AABYLMBR6Q2CDXTLGRQCFA2GP76BGCDF7NZF2OVHH4RQ7L3Y3TZWJDRL";
+    const signer = signerFromSeed(
+      ALICE.seed,
+      fakeJwt({ sub: ALICE.public, iss: signerAccount, nats: { type: "user" } }),
+    );
+    perTest.push(() => {
+      signer.wipe?.();
+      return Promise.resolve();
+    });
+    const svc = new AgentService({
+      nc,
+      agent: "id-svc",
+      owner: "testers",
+      name: "same-user-different-account",
+      identity: { signer },
+    });
+    svc.onPrompt(async () => {});
+    const error = await svc.start().then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(IdentityMismatchError);
+    expect(error).toMatchObject({
+      signerPublicKey: ALICE.public,
+      identityUser: ALICE.public,
+      signerAccount,
+      identityAccount: "$G",
+    });
   });
 
   it("the handler sees a VerifiedSender (with id) for a signed prompt, a ClaimedSender (no id) for a claim, undefined for none", async () => {
@@ -227,7 +318,7 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
       accountAttested: false,
     });
 
-    await drain(await (await discover(client(), service)).prompt("hi"));
+    await drain(await (await discover(client({}), service)).prompt("hi"));
     expect(senders[1]?.trust).toBe("claimed");
     expect(senders[1] && "id" in senders[1]).toBe(false);
 
@@ -286,7 +377,9 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
       (e: unknown) => e,
     );
     expect((e403 as ServiceError).code).toBe(403);
-    const e401 = await drain(await (await discover(client(), refusing.service)).prompt("hi")).then(
+    const e401 = await drain(
+      await (await discover(client({}), refusing.service)).prompt("hi"),
+    ).then(
       () => null,
       (e: unknown) => e,
     );
@@ -298,8 +391,14 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
     expect(refusing.senders).toHaveLength(0);
     expect(refusing.lines.filter((l) => l.level === "warn")).toHaveLength(3);
 
+    let secretFromHeader = "";
     const throwing = await startService({
-      acceptSender: () => Promise.reject(new Error("registry down")),
+      acceptSender: (sender) => {
+        secretFromHeader = sender?.trust === "verified" ? sender.header.nonce! : "unexpected";
+        const error = new Error(secretFromHeader);
+        error.name = secretFromHeader;
+        return Promise.reject(error);
+      },
     });
     const e500 = await drain(await (await discover(signed, throwing.service)).prompt("hi")).then(
       () => null,
@@ -310,6 +409,8 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
     expect(throwing.lines.some((l) => l.level === "error" && /acceptSender/.test(l.msg))).toBe(
       true,
     );
+    expect(secretFromHeader).not.toBe("");
+    expect(JSON.stringify(throwing.lines)).not.toContain(secretFromHeader);
   });
 
   it("status: classified and logged, never rejected — a failing classification is a warning", async () => {
@@ -333,16 +434,12 @@ describe.skipIf(!bin)("AgentService — sender identity (nkey user, $G)", () => 
     ).toBe(true);
   });
 
-  it("option validation: minSenderTrust, replayWindowMs, accountTokenPosition, resolveTtlMs, operatorAttested", () => {
+  it("option validation: minSenderTrust, replayWindowMs, resolveTtlMs, operatorAttested", () => {
     const base = { nc: hostNc, agent: "id-svc", owner: "testers", name: "opts" };
     expect(
       () => new AgentService({ ...base, minSenderTrust: "verified" as unknown as "any" }),
     ).toThrow(/minSenderTrust/);
     expect(() => new AgentService({ ...base, replayWindowMs: 0 })).toThrow(/replayWindowMs/);
-    expect(() => new AgentService({ ...base, accountTokenPosition: 0 })).toThrow(
-      /accountTokenPosition/,
-    );
-    expect(() => new AgentService({ ...base, accountTokenPosition: 2 })).not.toThrow();
     expect(() => new AgentService({ ...base, resolveTtlMs: -1 })).toThrow(/resolveTtlMs/);
     expect(() => new AgentService({ ...base, resolveTtlMs: Number.NaN })).toThrow(/resolveTtlMs/);
     expect(() => new AgentService({ ...base, resolveTtlMs: 0 })).not.toThrow();
@@ -399,7 +496,7 @@ describe.skipIf(!bin)(
 
     beforeAll(async () => {
       await server.start({ configPath: identityFixture("accounts.conf") });
-      for (const name of ["alice", "bob", "carol"]) {
+      for (const name of ["alice", "bob", "carol", "dave", "erin"]) {
         conns.set(name, await connectAs(server.url, user(name).seed));
       }
       const { logger, lines } = capturingLogger();
@@ -497,6 +594,41 @@ describe.skipIf(!bin)(
       expect(seen.at(-1)?.resolved?.promptEndpoint.subject).toBe(aliceSvc.subject.prompt);
     });
 
+    it("dave (APP2, no share): the account-only server stamp attests the signed sender", async () => {
+      const dave = agentsFor("dave");
+      const events = await drain(await (await discoverHost(dave)).prompt("hi"));
+      const daveId = newAgentId("APP2", user("dave").public);
+      expect(echoOf(events)).toBe(`${daveId} (verified)`);
+      expect(seen.at(-1)?.sender).toMatchObject({
+        trust: "verified",
+        id: daveId,
+        accountAttested: true,
+      });
+    });
+
+    it("erin (APP3, renamed import): publishes locally, signs the exported subject, and is attested", async () => {
+      const erin = agentsFor("erin");
+      const remote = await discoverHost(erin);
+      const local = `local.${host.subject.prompt}`;
+      const events = await drain(
+        await remote.prompt("hi", { subject: local, sub: remote.promptEndpoint.subject }),
+      );
+      const erinId = newAgentId("APP3", user("erin").public);
+      expect(echoOf(events)).toBe(`${erinId} (verified)`);
+      expect(seen.at(-1)?.sender).toMatchObject({
+        trust: "verified",
+        id: erinId,
+        accountAttested: true,
+      });
+      expect(seen.at(-1)?.sender?.header.sub).toBe(host.subject.prompt);
+
+      const error = await drain(await remote.prompt("hi", { subject: local })).then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+      expect(error).toMatchObject({ code: 401, description: "sender rejected" });
+    });
+
     it("a forged Nats-Request-Info from a same-account user → 401 `sender rejected`, logged with the disagreeing field, before the ack", async () => {
       const h = await signSenderHeader({
         signer: signerFromSeed(user("alice").seed),
@@ -523,6 +655,77 @@ describe.skipIf(!bin)(
   },
 );
 
+describe.skipIf(!bin)("AgentService — genuinely closed imported endpoint", () => {
+  const server = new NatsServerProcess();
+  let hostNc: NatsConnection;
+  let attackerNc: NatsConnection;
+  let callerNc: NatsConnection;
+
+  beforeAll(async () => {
+    await server.start({ configPath: identityFixture("closed-import.conf") });
+    [hostNc, attackerNc, callerNc] = await Promise.all([
+      connectAs(server.url, keys.users["carol"]!.seed),
+      connectAs(server.url, keys.users["alice"]!.seed),
+      connectAs(server.url, keys.users["bob"]!.seed),
+    ]);
+  });
+
+  afterAll(async () => {
+    await hostNc.close();
+    await attackerNc.close();
+    await callerNc.close();
+    await server.stop();
+  });
+
+  it("attests an imported caller while the broker rejects every same-account direct publish", async () => {
+    let sender: SenderInfo | undefined;
+    const service = new AgentService({
+      nc: hostNc,
+      agent: "closed-svc",
+      owner: "acme",
+      name: "host",
+      heartbeatIntervalS: 1,
+      keepaliveIntervalS: null,
+      identity: { signer: signerFromSeed(keys.users["carol"]!.seed) },
+      operatorAttested: true,
+    });
+    service.onPrompt(async (_envelope, response) => {
+      sender = response.sender;
+      await response.send("ok");
+    });
+    await service.start();
+    const agents = new Agents({
+      nc: callerNc,
+      identity: { signer: signerFromSeed(keys.users["bob"]!.seed) },
+    });
+    try {
+      const [remote] = await agents.discover({
+        timeoutMs: 800,
+        filter: { agent: "closed-svc" },
+      });
+      expect(remote).toBeDefined();
+      await drain(await remote!.prompt("hi"));
+      expect(sender).toMatchObject({
+        trust: "verified",
+        id: newAgentId("APP", keys.users["bob"]!.public),
+        accountAttested: true,
+      });
+
+      const error = await attackerNc
+        .request(service.subject.prompt, PAYLOAD, { timeout: 1_000 })
+        .then(
+          () => null,
+          (caught: unknown) => caught,
+        );
+      expect(error).toBeInstanceOf(RequestError);
+      expect((error as RequestError).cause).toBeInstanceOf(PermissionViolationError);
+    } finally {
+      await agents.close();
+      await service.stop();
+    }
+  });
+});
+
 describe.skipIf(!bin)("AgentService — sender identity on a no-auth server (T0)", () => {
   const server = new NatsServerProcess();
   let nc: NatsConnection;
@@ -537,7 +740,7 @@ describe.skipIf(!bin)("AgentService — sender identity on a no-auth server (T0)
     await server.stop();
   });
 
-  it("starts without identity metadata (logged), still advertises min_sender_trust, serves header-less requests", async () => {
+  it("omitted host identity performs no self lookup or warning, still advertises min_sender_trust, and serves header-less requests", async () => {
     const { logger, lines } = capturingLogger();
     const service = new AgentService({
       nc,
@@ -556,9 +759,7 @@ describe.skipIf(!bin)("AgentService — sender identity on a no-auth server (T0)
     await service.start();
     try {
       expect(service.identity).toBeUndefined();
-      expect(lines.some((l) => l.level === "warn" && /without identity metadata/.test(l.msg))).toBe(
-        true,
-      );
+      expect(lines.some((l) => /without identity metadata/.test(l.msg))).toBe(false);
       const agents = new Agents({ nc });
       const [agent] = await agents.discover({ timeoutMs: 800, filter: { agent: "t0" } });
       expect(agent?.supportsSenderIdentity).toBe(true);

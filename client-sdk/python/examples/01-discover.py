@@ -16,10 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from examples._connect_cli import (
     add_connection_flags,
     add_identity_flags,
-    connect_from_cli,
-    identity_from_cli,
+    open_agents_from_cli,
 )
-from synadia_ai.agents import Agents
 
 
 async def main() -> None:
@@ -30,8 +28,8 @@ async def main() -> None:
     add_identity_flags(parser)
     args = parser.parse_args()
 
-    nc = await connect_from_cli(args)
-    agents = Agents(nc=nc, identity=identity_from_cli(args))
+    session = await open_agents_from_cli(args)
+    agents = session.agents
     try:
         found = await agents.discover()
         if not found:
@@ -56,8 +54,7 @@ async def main() -> None:
             )
             print()
     finally:
-        await agents.close()
-        await nc.close()
+        await session.close()
 
 
 if __name__ == "__main__":

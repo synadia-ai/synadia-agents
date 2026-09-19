@@ -41,6 +41,8 @@
     "start": "bun run src/index.ts",
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --packages=external --banner:js='#!/usr/bin/env node' --outfile=dist/index.js && chmod +x dist/index.js",
     "typecheck": "tsc --noEmit",
+    "test": "bun test test/config.test.ts",
+    "test:smoke": "bun test/identity-smoke.mjs && PI_HEADLESS_SMOKE_SIGNED=1 bun test/identity-smoke.mjs && PI_HEADLESS_SMOKE_STRICT=1 bun test/identity-smoke.mjs",
     "prepack": "npm run build"
   },
   "dependencies": {
@@ -52,7 +54,7 @@
     "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "1.3.13",
     "@types/node": "^22.0.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.6.0"

@@ -13,8 +13,10 @@ Public API entry points:
   kwargs for :func:`nats.connect`.
 * :func:`parse_nats_url` — parse a NATS URL (with optional userinfo
   for token / user:password) into kwargs for :func:`nats.connect`.
+* :func:`resolve_nats_connection_bundle` — snapshot connection auth once
+  and optionally derive a sender signer from that same source.
 * :class:`Identity` + the ``signer_from_*`` helpers — the sender-identity
-  extension (``Agent-Sender`` on every ``prompt`` / ``status`` request,
+  extension (optional ``Agent-Sender`` on ``prompt`` / ``status`` requests,
   ``Agents.self_id()``, the signed wrappers); the shared codec lives in
   :mod:`synadia_ai.agents.identity` and is re-exported here.
 
@@ -41,6 +43,12 @@ from .agent import (
     StreamMessage,
 )
 from .agents import DEFAULT_REQUEST_SIGNED_TIMEOUT_S, NATS_MSG_ID_HEADER, Agents
+from .connection_bundle import (
+    CredentialSource,
+    IdentityMode,
+    NatsConnectionBundle,
+    resolve_nats_connection_bundle,
+)
 from .context import NatsContextFile, load_context_options, parse_nats_url, read_context_file
 from .discovery import (
     DEFAULT_DISCOVER_MAX_WAIT_S,
@@ -141,6 +149,25 @@ from .identity import (
 )
 from .messages import Chunk, QueryChunk, ResponseChunk, StatusChunk
 from .subjects import AgentSubject
+from .trace import (
+    DEFAULT_EDGE_SUBJECT,
+    EDGE_RECORD_VERSION,
+    THREAD_ID_HEX_LEN,
+    TOOL_CALL_ID_MAX,
+    TraceOptions,
+    TraceRecordCounts,
+    TraceScope,
+    active_trace,
+    bind_active_trace,
+    build_edge_record,
+    count_trace_record_dropped,
+    count_trace_record_published,
+    inherited_trace_options,
+    is_thread_id,
+    random_thread_id,
+    trace_record_counts,
+    valid_tool_call_id,
+)
 
 __all__ = [
     "AGENT_ID_SIGNED_INPUT_TAG",
@@ -148,6 +175,7 @@ __all__ = [
     "AGENT_SENDER_SIGNED_INPUT_TAG",
     "DEFAULT_DISCOVER_MAX_WAIT_S",
     "DEFAULT_DISCOVER_STALL_S",
+    "DEFAULT_EDGE_SUBJECT",
     "DEFAULT_LIVENESS_SLACK",
     "DEFAULT_PROMPT_MAX_WAIT_S",
     "DEFAULT_REPLAY_WINDOW_S",
@@ -155,6 +183,7 @@ __all__ = [
     "DEFAULT_RESOLVE_TTL_S",
     "DEFAULT_STATUS_TIMEOUT_S",
     "DEFAULT_STREAM_INACTIVITY_TIMEOUT_S",
+    "EDGE_RECORD_VERSION",
     "HEARTBEAT_SUBJECT",
     "IDENTITY_METADATA_KEYS",
     "MIN_SENDER_TRUST_KEY",
@@ -169,6 +198,8 @@ __all__ = [
     "SIGNATURE_REQUIRED_DESCRIPTION",
     "STATUS_ENDPOINT_NAME",
     "STATUS_QUEUE_GROUP",
+    "THREAD_ID_HEX_LEN",
+    "TOOL_CALL_ID_MAX",
     "USER_INFO_SUBJECT",
     "Agent",
     "AgentId",
@@ -182,6 +213,7 @@ __all__ = [
     "AttachmentsNotSupportedError",
     "Chunk",
     "ClaimedSender",
+    "CredentialSource",
     "DiscoverFilter",
     "EndpointInfo",
     "Envelope",
@@ -189,6 +221,7 @@ __all__ = [
     "Identity",
     "IdentityError",
     "IdentityMismatchError",
+    "IdentityMode",
     "IdentityUnavailableError",
     "InvalidAgentIdError",
     "InvalidSubjectToken",
@@ -196,6 +229,7 @@ __all__ = [
     "MalformedSenderHeaderError",
     "MinSenderTrust",
     "NatsAgentError",
+    "NatsConnectionBundle",
     "NatsContextError",
     "NatsContextFile",
     "NkeySigner",
@@ -218,19 +252,29 @@ __all__ = [
     "StreamMaxWaitExceededError",
     "StreamMessage",
     "StreamStalledError",
+    "TraceOptions",
+    "TraceRecordCounts",
+    "TraceScope",
     "ValidationError",
     "VerifiedSender",
     "VerifyMode",
+    "active_trace",
+    "bind_active_trace",
     "build_agent_info",
     "build_claim_header",
+    "build_edge_record",
     "build_signed_input",
     "check_subject_acceptance",
+    "count_trace_record_dropped",
+    "count_trace_record_published",
     "decode",
     "encode",
     "encoded_header_length",
     "expected_sender_header_bytes",
     "format_sender",
     "format_sender_timestamp",
+    "inherited_trace_options",
+    "is_thread_id",
     "load_context_options",
     "max_sender_header_bytes",
     "normalize_account_token_position",
@@ -238,9 +282,11 @@ __all__ = [
     "parse_nats_url",
     "parse_sender_header",
     "peek_self_id",
+    "random_thread_id",
     "read_context_file",
     "read_sender_header_value",
     "refresh_self_id",
+    "resolve_nats_connection_bundle",
     "resolve_sender",
     "self_id",
     "serialize_sender_header",
@@ -250,6 +296,8 @@ __all__ = [
     "signer_from_creds",
     "signer_from_creds_file",
     "signer_from_seed",
+    "trace_record_counts",
+    "valid_tool_call_id",
     "verify_agent_id",
     "verify_sender",
     "verify_sender_header",

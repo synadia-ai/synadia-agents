@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import TYPE_CHECKING
 
 import pytest
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 AGENT = "test"
 OWNER = "pytest"
 HEARTBEAT_INTERVAL_S = 30  # Long enough to never fire mid-test.
+SERVICE_LOGGER = "synadia_ai.agent_service.service"
 
 
 async def _collect_replies(
@@ -72,12 +74,16 @@ async def _collect_replies(
 
 @pytest.mark.asyncio
 async def test_handler_exception_emits_error_then_terminator(
-    nc: NATSClient, evidence: EvidenceRecorder
+    nc: NATSClient,
+    evidence: EvidenceRecorder,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """500 path: handler raises → wire shows error frame followed by terminator."""
 
+    secret = "SUASECRET-SEED eyJSECRET.JWT signature-secret nonce-secret"
+
     async def _boom(envelope: Envelope, stream: PromptStream) -> None:
-        raise RuntimeError("kaboom")
+        raise RuntimeError(secret)
 
     service = AgentService(
         agent=AGENT,
@@ -90,7 +96,8 @@ async def test_handler_exception_emits_error_then_terminator(
     await service.start()
 
     try:
-        messages = await _collect_replies(nc, service.subject.inbox, nc.new_inbox())
+        with caplog.at_level(logging.ERROR, logger=SERVICE_LOGGER):
+            messages = await _collect_replies(nc, service.subject.inbox, nc.new_inbox())
         evidence.write_jsonl(
             "wire.jsonl",
             [
@@ -123,7 +130,10 @@ async def test_handler_exception_emits_error_then_terminator(
         # Error frame carries both service-error headers.
         error_headers = error_msg.headers or {}
         assert error_headers.get("Nats-Service-Error-Code") == "500"
-        assert "kaboom" in error_headers.get("Nats-Service-Error", "")
+        assert error_headers.get("Nats-Service-Error") == "handler error"
+        assert secret not in str(dict(error_headers))
+        assert secret not in caplog.text
+        assert "exception" in caplog.text
 
         # Terminator: zero-byte body, NO headers (§6.5).
         assert terminator.data == b""
@@ -141,6 +151,9 @@ async def test_handler_exception_emits_error_then_terminator(
                     pass
         finally:
             await agents.close()
+        for artifact in evidence.directory.iterdir():
+            if artifact.is_file():
+                assert secret not in artifact.read_text(encoding="utf-8")
     finally:
         await service.stop()
 

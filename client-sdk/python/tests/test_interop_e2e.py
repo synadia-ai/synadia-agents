@@ -47,6 +47,7 @@ from synadia_ai.agents import (
     ResponseChunk,
     SenderSignatureRequiredError,
     StatusChunk,
+    TraceOptions,
     signer_from_seed,
 )
 
@@ -318,7 +319,11 @@ async def ts_reference_agent_signed(
     seed_file.chmod(0o600)
     proc = _ReferenceAgentProcess(
         nats_server_nkey.url,
-        env={"NATS_NKEY_SEED_FILE": str(seed_file), "REFERENCE_AGENT_MIN_SENDER_TRUST": "signed"},
+        env={
+            "NATS_NKEY_SEED_FILE": str(seed_file),
+            "NATS_SENDER_IDENTITY": "signed",
+            "REFERENCE_AGENT_MIN_SENDER_TRUST": "signed",
+        },
     )
     await proc.start()
     try:
@@ -385,5 +390,35 @@ async def test_python_unsigned_caller_is_refused_by_ts_signed_reference_agent(
         assert reply.headers is not None
         assert reply.headers["Nats-Service-Error-Code"] == "401"
         assert reply.headers["Nats-Service-Error"] == "signature required"
+    finally:
+        await agents.close()
+
+
+@pytest.mark.asyncio
+async def test_traced_python_caller_against_ts_reference_agent(
+    nc: NATSClient, ts_reference_agent: _ReferenceAgentProcess
+) -> None:
+    """A traced Python caller must not upset an agent hosted by the TS SDK.
+
+    Lineage is the tracing extension's only addition to the envelope. The
+    TS host has to read it — or at minimum tolerate it — for a mixed-
+    language fleet to work; §5.6 says unknown fields are tolerated, and
+    the TS decoder adopts these two. Propagate-only mode keeps the test
+    to the envelope, with no signer or edge subject involved.
+    """
+    assert ts_reference_agent.prompt_subject is not None
+
+    agents = Agents(nc=nc, trace=TraceOptions(edge_subject=None))
+    try:
+        found = await agents.discover(timeout=3.0)
+        discovered = next(a for a in found if a.prompt_subject == ts_reference_agent.prompt_subject)
+
+        responses = [
+            chunk
+            async for chunk in discovered.prompt("traced hello", timeout=10.0)
+            if isinstance(chunk, ResponseChunk)
+        ]
+        assert len(responses) == 1, f"traced prompt was not answered: {responses!r}"
+        assert responses[0].text == "demo agent received your prompt."
     finally:
         await agents.close()

@@ -21,12 +21,14 @@ sender the ``accept_sender`` hook refuses → ``403`` (verified) / ``401``
 :attr:`PromptStream.sender` (a ``VerifiedSender.resolve()`` is bound to a
 TTL-cached ``$SRV.INFO`` reverse lookup, ``resolve_ttl_s``). ``status``
 is classified and logged, never rejected. :meth:`AgentService.start`
-registers ``user_nkey`` / ``account`` (and ``id_sig`` with a signer) when
-the connection has an identity and **always** advertises
-``min_sender_trust`` on the prompt endpoint. ``operator_attested`` (off
-by default) adds the ``Nats-Request-Info`` cross-check of a closed
-endpoint. The codec itself lives in :mod:`synadia_ai.agents.identity`;
-the stateful parts are in :mod:`synadia_ai.agent_service.identity`.
+registers ``user_nkey`` / ``account`` (and ``id_sig`` with a signer) only
+when host identity is explicitly configured and its live lookup succeeds;
+omission performs no host-identity lookup or registration disclosure. It
+**always** advertises ``min_sender_trust`` on the prompt endpoint.
+``operator_attested`` (off by default) adds the ``Nats-Request-Info``
+cross-check of a closed endpoint. The codec itself lives in
+:mod:`synadia_ai.agents.identity`; the stateful parts are in
+:mod:`synadia_ai.agent_service.identity`.
 """
 
 from __future__ import annotations
@@ -53,22 +55,28 @@ from synadia_ai.agents import (
     Chunk,
     Envelope,
     IdentityError,
-    IdentityMismatchError,
     ProtocolError,
     QueryChunk,
     QueryTimeout,
     ResponseChunk,
     SenderResolver,
     StatusChunk,
+    TraceOptions,
+    TraceScope,
+    active_trace,
+    bind_active_trace,
     decode,
     format_sender,
-    self_id,
+    random_thread_id,
+    trace_record_counts,
 )
 from synadia_ai.agents.identity import (
     DEFAULT_RESOLVE_TTL_S,
+    IDENTITY_METADATA_KEYS,
     METADATA_ACCOUNT,
     METADATA_ID_SIG,
     METADATA_USER_NKEY,
+    lookup_self_id,
     sign_agent_id,
 )
 from synadia_ai.agents.messages import encode_chunk
@@ -76,7 +84,7 @@ from synadia_ai.agents.messages import encode_chunk
 from ._bytes import format_human_bytes, parse_human_bytes
 from ._inbox import new_inbox
 from ._logging import get_logger
-from .heartbeat import build_heartbeat_payload, run_publisher
+from .heartbeat import HeartbeatSigner, build_heartbeat_payload, run_publisher
 from .identity import (
     DEFAULT_MIN_SENDER_TRUST,
     DEFAULT_REPLAY_WINDOW_S,
@@ -142,6 +150,34 @@ DEFAULT_ATTACHMENTS_OK = True
 DEFAULT_KEEPALIVE_INTERVAL_S: float = 30.0
 
 
+def _trace_binding(
+    envelope: Envelope, options: TraceOptions | None
+) -> contextlib.AbstractContextManager[None]:
+    """Bind this execution's trace, or nothing at all.
+
+    A caller's lineage — the pair, ``thread_id`` and ``root_id`` — is
+    adopted whatever this service is configured for, so a tree that starts
+    upstream is not broken here. With no lineage on the envelope, only a
+    service that opted in mints a root — an untraced service binds
+    nothing, so nothing is minted per request and
+    :meth:`PromptStream.trace_headers` stays empty rather than stamping
+    ids on model requests the operator never asked to trace.
+
+    A half pair is never completed: :func:`~synadia_ai.agents.decode`
+    already rejects it on the wire, and an envelope built by hand gets the
+    same :class:`ProtocolError` here — a ``400`` to the caller — rather
+    than a tree of its own.
+    """
+    thread_id, root_id = envelope.thread_id, envelope.root_id
+    if thread_id is None or root_id is None:
+        if thread_id is not None or root_id is not None:
+            raise ProtocolError("envelope thread_id and root_id must be given together")
+        if options is None:
+            return contextlib.nullcontext()
+        thread_id = root_id = random_thread_id()
+    return bind_active_trace(TraceScope(thread_id, root_id), options)
+
+
 class PromptStream:
     """Handle given to a prompt handler for emitting response chunks.
 
@@ -161,6 +197,29 @@ class PromptStream:
         self._request = request
         self._nc = nc
         self._sender = sender
+
+    def trace_headers(self) -> dict[str, str]:
+        """Headers for every model request this execution issues.
+
+        An agent stamps these on each completion request so the model
+        proxy files the call under the right thread and tree without
+        seeing any NATS traffic. Hierarchy is the edge records' job, so
+        the proxy needs no parent or tool-call header.
+
+        ``{}`` when the prompt was untraced, so harness code needs no
+        plumbing and degrades to nothing.
+
+        Each call counts against this execution: the running total is
+        recorded on the edge of any thread it spawns afterwards.
+        """
+        scope = active_trace()
+        if scope is None:
+            return {}
+        scope.turn_count_hint[0] += 1
+        return {
+            "X-Synadia-Thread-ID": scope.thread_id,
+            "X-Synadia-Root-ID": scope.root_id,
+        }
 
     @property
     def sender(self) -> SenderInfo | None:
@@ -277,29 +336,31 @@ class AgentService:
     honored (use case: shed expensive prompts before they reach the
     handler).
 
+    ``extra_metadata`` adds harness-specific keys to the service
+    registration metadata (``$SRV.INFO.metadata``). Keys and values must
+    be ``str`` — the wire shape is ``Record<string, string>`` — or the
+    constructor raises :class:`TypeError`. The required keys (``agent``,
+    ``owner``, ``session``, ``protocol_version``) and the identity keys
+    (``user_nkey``, ``account``, ``id_sig``) always win: an extra entry
+    under one of them is overwritten, or dropped when the service
+    registers no such key, so a harness can neither advertise a subject
+    it does not serve nor register a forged identity.
+
     Sender identity (extension) — all optional, all additive:
 
-    - ``identity=ServiceIdentity(signer=…)``: the host's own signer. With
-      it :meth:`start` registers ``id_sig`` next to ``user_nkey`` /
-      ``account``; without it the identity keys are registered unsigned
-      (when the connection has an identity). A signer that is not the
-      connection's user makes :meth:`start` raise
-      :class:`~synadia_ai.agents.IdentityMismatchError`; a connection
-      without an identity starts without the keys (logged) — verifying
-      *senders* needs no host identity.
+    - omitted ``identity``: no own-identity lookup and no ``user_nkey`` /
+      ``account`` / ``id_sig`` registration metadata. Incoming senders are
+      still classified.
+    - ``identity=ServiceIdentity()``: explicit unsigned ``user_nkey`` /
+      ``account`` registration when the live connection has an identity.
+    - ``identity=ServiceIdentity(signer=…)``: adds ``id_sig`` after an
+      uncached live user-and-account binding. A mismatch or unavailable live
+      binding makes :meth:`start` fail.
     - ``min_sender_trust``: ``"any"`` (default) or ``"signed"`` —
       **always** advertised on the prompt endpoint (its presence is what
       advertises the extension), never on ``status``.
     - ``replay_window_s`` (default 30): the ``ts`` skew and the nonce
       set's horizon; entries expire at ``ts + window``.
-    - ``account_token_position``: 1-based position of the caller's
-      account token an export inserts (``account_token_position``). Note
-      that this service hosts five-token ``agents.{verb}.a.o.n``
-      subjects, which such an export turns into six-token arrivals the
-      subscription never sees — the option is validated and honoured by
-      the classifier; hosting *behind* such an export today means a
-      hand-rolled service on the wildcard subject calling
-      :func:`~synadia_ai.agents.verify_sender_header`.
     - ``accept_sender``: the acceptance hook (see
       :data:`~synadia_ai.agent_service.AcceptSenderHook`).
     - ``resolve_ttl_s`` (default 10): TTL of the ``$SRV.INFO`` index
@@ -322,13 +383,14 @@ class AgentService:
         max_payload: str = DEFAULT_MAX_PAYLOAD,
         attachments_ok: bool = DEFAULT_ATTACHMENTS_OK,
         keepalive_interval_s: float | None = DEFAULT_KEEPALIVE_INTERVAL_S,
+        extra_metadata: dict[str, str] | None = None,
         identity: ServiceIdentity | None = None,
         min_sender_trust: MinSenderTrust = DEFAULT_MIN_SENDER_TRUST,
         replay_window_s: float = DEFAULT_REPLAY_WINDOW_S,
-        account_token_position: int | None = None,
         accept_sender: AcceptSenderHook | None = None,
         resolve_ttl_s: float = DEFAULT_RESOLVE_TTL_S,
         operator_attested: bool = False,
+        trace: TraceOptions | None = None,
     ) -> None:
         if heartbeat_interval_s <= 0:
             raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.3)")
@@ -336,11 +398,15 @@ class AgentService:
             raise ValueError("keepalive_interval_s must be > 0 or None (None disables keep-alive)")
         if identity is not None and not isinstance(identity, ServiceIdentity):
             raise TypeError(
-                "identity must be a ServiceIdentity(signer=...) (the host never sends "
-                f"Agent-Sender, so there is no display name); got {type(identity).__name__}"
+                "identity must be a ServiceIdentity(signer=...) (the host's Agent-Sender, "
+                "on its heartbeats, carries no display name); "
+                f"got {type(identity).__name__}"
             )
         if resolve_ttl_s < 0:
             raise ValueError(f"resolve_ttl_s must be >= 0 (got {resolve_ttl_s!r})")
+        # Validated into a private copy: mutating the caller's dict afterwards
+        # can neither bypass the check nor change what start() registers.
+        self._extra_metadata = _validate_extra_metadata(extra_metadata)
         # Validate max_payload eagerly so misconfiguration fails at construction
         # rather than surfacing later via caller-side validation (§5.4).
         parse_human_bytes(max_payload)
@@ -352,21 +418,25 @@ class AgentService:
         self._effective_max_payload_value = max_payload
         self._attachments_ok = attachments_ok
         self._keepalive_interval_s = keepalive_interval_s
+        # Observability: handed down to clients used inside prompt handlers.
+        # The service itself never writes trace records.
+        self._trace = trace
         self._prompt_handler: PromptHandler | None = None
         self._service: Service | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._heartbeat_stop = asyncio.Event()
         # Sender identity: the gate validates `min_sender_trust`,
-        # `replay_window_s`, `account_token_position` and `operator_attested`
-        # eagerly; the resolver behind `sender.resolve()` enumerates
+        # `replay_window_s` and `operator_attested` eagerly; the resolver
+        # behind `sender.resolve()` enumerates
         # `$SRV.INFO.agents` on this connection (account-local).
-        self._service_identity = identity if identity is not None else ServiceIdentity()
+        # Preserve omission: inbound sender classification remains active, but
+        # the host performs no own-identity lookup or registration disclosure.
+        self._service_identity = identity
         self._agent_id: AgentId | None = None
         self._resolver = SenderResolver(nc, ttl_s=resolve_ttl_s)
         self._gate = SenderGate(
             min_sender_trust=min_sender_trust,
             replay_window_s=replay_window_s,
-            account_token_position=account_token_position,
             accept_sender=accept_sender,
             operator_attested=operator_attested,
             resolver=self._resolver.resolve,
@@ -376,8 +446,8 @@ class AgentService:
     def identity(self) -> AgentId | None:
         """The agent ID this instance registered (``user_nkey`` + ``account``).
 
-        ``None`` before :meth:`start` and when the connection has no
-        identity.
+        ``None`` before :meth:`start`, when host identity was omitted, or
+        when an optional unsigned lookup could not establish an identity.
         """
         return self._agent_id
 
@@ -446,19 +516,19 @@ class AgentService:
         max_payload_str = self._effective_max_payload()
         self._effective_max_payload_value = max_payload_str
 
-        # Sender identity: learn the connection's own agent ID once (awaited
-        # here, never again per request). A signer that does not match the
-        # connection's user is a configuration error (raise); a connection
-        # without an identity starts without the metadata keys — verifying
-        # *senders* needs no host identity.
-        signer = self._service_identity.signer
+        # Host identity is explicit. Omission performs no `$SYS` lookup and
+        # publishes no own identity metadata; sender classification is separate
+        # and remains active. Explicit registration uses an uncached live answer.
+        service_identity = self._service_identity
+        signer = service_identity.signer if service_identity is not None else None
         agent_id: AgentId | None = None
-        try:
-            agent_id = await self_id(self._nc, signer=signer)
-        except IdentityMismatchError:
-            raise
-        except IdentityError as exc:
-            log.warning("starting %s without identity metadata: %s", self.subject.prompt, exc)
+        if service_identity is not None:
+            try:
+                agent_id = await lookup_self_id(self._nc, signer=signer)
+            except IdentityError as exc:
+                if signer is not None:
+                    raise
+                log.warning("starting %s without identity metadata: %s", self.subject.prompt, exc)
         self._agent_id = agent_id
 
         # §3.2: metadata.session matches the 5th subject token. For session-
@@ -467,7 +537,12 @@ class AgentService:
         # `session_name` (defaulting callers pass "default"), so we always
         # advertise it. Callers that filter on metadata.session see a
         # consistent shape across session-aware and session-less agents.
+        #
+        # `extra_metadata` goes in first so the required keys below overwrite
+        # it: a harness cannot advertise an agent/owner/session other than
+        # the subject it serves.
         metadata: dict[str, str] = {
+            **self._extra_metadata,
             "agent": self.subject.agent,
             "owner": self.subject.owner,
             "session": self.subject.session_name,
@@ -476,7 +551,9 @@ class AgentService:
         # Identity keys (spec "Registration"): `user_nkey` / `account`
         # whenever the identity is known; `id_sig` (`AGENT-ID-V1` over the
         # prompt subject) only with a signer — a registration without it is
-        # the spec's display-grade claim.
+        # the spec's display-grade claim. They also win over `extra_metadata`:
+        # a key the service does not register itself is removed, so a
+        # harness cannot register a forged identity.
         if agent_id is not None:
             metadata[METADATA_USER_NKEY] = agent_id.user
             metadata[METADATA_ACCOUNT] = agent_id.account
@@ -488,6 +565,11 @@ class AgentService:
                     owner=self.subject.owner,
                     prompt_subject=self.subject.prompt,
                 )
+            else:
+                metadata.pop(METADATA_ID_SIG, None)
+        else:
+            for key in IDENTITY_METADATA_KEYS:
+                metadata.pop(key, None)
         config = ServiceConfig(
             name=SERVICE_NAME,
             version=_SDK_VERSION,
@@ -535,6 +617,14 @@ class AgentService:
         await self._nc.flush()
 
         self._heartbeat_stop.clear()
+        # Every heartbeat is signed with the signer that signs `id_sig`, once
+        # the identity is bound to the live connection (a signer that failed
+        # to bind raised above). Without a signer the service beats unsigned.
+        heartbeat_signer = (
+            HeartbeatSigner(id=agent_id, signer=signer)
+            if agent_id is not None and signer is not None
+            else None
+        )
         # §8.3 instance_id matches the micro-service instance id assigned by
         # nats-py; this is what callers correlate heartbeats against.
         self._heartbeat_task = asyncio.create_task(
@@ -544,6 +634,8 @@ class AgentService:
                 self._heartbeat_interval_s,
                 self._service.id,
                 self._heartbeat_stop,
+                extras=self._heartbeat_extras,
+                sender=heartbeat_signer,
             ),
             name=f"heartbeat-{self.subject.inbox}",
         )
@@ -563,6 +655,25 @@ class AgentService:
             await self._service.stop()
             self._service = None
         log.info("agent stopped on %s", self.subject.inbox)
+
+    def _heartbeat_extras(self) -> dict[str, object]:
+        """What goes on the heartbeat beyond the §8.3 required fields.
+
+        When the service opted in to tracing and publishes records: how
+        many trace records this process has published and dropped since
+        it started, as ``records_published`` and ``records_dropped``.
+        Read when each beat is built, so every beat carries the current
+        totals. A rising dropped count tells whoever consumes the
+        heartbeat that records this process owed were never sent. An
+        untraced service reports nothing, so its heartbeat stays
+        byte-identical to plain protocol 0.3; so does a propagate-only
+        one (``edge_subject=None``), which publishes no records and would
+        otherwise report a constant 0/0 that looks like a healthy zero.
+        """
+        if self._trace is None or self._trace.edge_subject is None:
+            return {}
+        counts = trace_record_counts()
+        return {"records_published": counts.published, "records_dropped": counts.dropped}
 
     async def _on_status_request(self, request: Request) -> None:
         """Reply with a freshly-built §8.3 heartbeat payload (v0.3 §-TBD).
@@ -588,19 +699,21 @@ class AgentService:
                 self.subject,
                 self._heartbeat_interval_s,
                 self._service.id,
+                self._heartbeat_extras(),
             )
             data = payload.model_dump_json().encode("utf-8")
             await request.respond(data)
-        except Exception as exc:
+        except Exception:
             # A respond() failure (broker dropped, request torn down, encode
             # error in a future richer payload) MUST surface as a §9.1 error
             # to the caller, not silently propagate into nats-py's framework
             # — mirroring _on_prompt_request's explicit error path.
-            log.exception("status handler failed on %s", request.subject)
+            log.error(
+                "status handler failed on %s (exception)",
+                request.subject,
+            )
             with contextlib.suppress(Exception):
-                await request.respond_error(
-                    "500", _sanitize_error_desc(f"status handler error: {exc}")
-                )
+                await request.respond_error("500", "status handler error")
 
     async def _admit_prompt(self, request: Request) -> tuple[bool, SenderInfo | None]:
         """Run the sender gate; answer the §9 error frame on a refusal.
@@ -615,7 +728,10 @@ class AgentService:
         try:
             admission = await self._gate.admit_prompt(request)
         except Exception:
-            log.exception("sender classification failed on %s", request.subject)
+            log.error(
+                "sender classification failed on %s (exception)",
+                request.subject,
+            )
             with contextlib.suppress(Exception):
                 await request.respond_error("500", "sender classification error")
             return (False, None)
@@ -680,7 +796,10 @@ class AgentService:
             try:
                 await request.respond(encode_chunk(StatusChunk(status="ack")))
             except Exception:
-                log.exception("failed to emit leading ack on %s", request.subject)
+                log.error(
+                    "failed to emit leading ack on %s (exception)",
+                    request.subject,
+                )
 
             stream = PromptStream(request, self._nc, sender=sender)
             handler = self._prompt_handler
@@ -694,7 +813,10 @@ class AgentService:
                 )
 
             try:
-                await handler(envelope, stream)
+                # Place thread_id and root_id in the context storage
+                # to allow clients used as tools to reache them
+                with _trace_binding(envelope, self._trace):
+                    await handler(envelope, stream)
             except ProtocolError as exc:
                 log.warning(
                     "prompt handler rejected protocol input on %s: %s",
@@ -704,15 +826,18 @@ class AgentService:
                 await _stop_keepalive(keepalive_task)
                 keepalive_task = None
                 await request.respond_error("400", _sanitize_error_desc(str(exc)))
-            except Exception as exc:
-                log.exception("prompt handler raised on %s", request.subject)
+            except Exception:
+                log.error(
+                    "prompt handler raised on %s (exception)",
+                    request.subject,
+                )
                 # Stop keep-alive BEFORE the §9 error frame so the keepalive
                 # task can't race an ack chunk in between error(500) and the
                 # §6.5 terminator emitted in the outer `finally`. Ditto in
                 # the success path right below.
                 await _stop_keepalive(keepalive_task)
                 keepalive_task = None
-                await request.respond_error("500", _sanitize_error_desc(f"handler error: {exc}"))
+                await request.respond_error("500", "handler error")
             else:
                 await _stop_keepalive(keepalive_task)
                 keepalive_task = None
@@ -729,7 +854,10 @@ class AgentService:
             try:
                 await request.respond(b"")
             except Exception:
-                log.exception("failed to emit stream terminator on %s", request.subject)
+                log.error(
+                    "failed to emit stream terminator on %s (exception)",
+                    request.subject,
+                )
 
 
 async def _stop_keepalive(task: asyncio.Task[None] | None) -> None:
@@ -762,7 +890,10 @@ async def _keepalive_loop(request: Request, interval_s: float) -> None:
             # An emit failure (broker dropped, request reply already torn down,
             # etc.) is best-effort — log and stop. The terminator path will
             # fail loudly enough on its own if the request is truly dead.
-            log.exception("keepalive emit failed on %s", request.subject)
+            log.error(
+                "keepalive emit failed on %s (exception)",
+                request.subject,
+            )
             return
 
 
@@ -781,6 +912,37 @@ def _sanitize_error_desc(desc: str) -> str:
         # byte UTF-8 in header values.
         flat = flat[: _MAX_ERROR_DESC_LEN - 3] + "..."
     return flat
+
+
+def _validate_extra_metadata(extra_metadata: dict[str, str] | None) -> dict[str, str]:
+    """Return a copy of ``extra_metadata`` after checking every key and value is a ``str``.
+
+    Registration metadata is ``Record<string, string>`` on the wire (the
+    TypeScript host enforces that with its option type). nats-py would
+    serialize an ``int`` or ``bool`` as a JSON number or boolean, which
+    breaks that shape — a TypeScript caller would see a non-string, and
+    the Python caller's ``str()`` coercion turns ``True`` into ``"True"``
+    rather than the wire's ``"true"`` — so fail at construction, naming
+    the offending key. Values are never echoed: a harness may put
+    something it would rather not see in an exception message.
+    """
+    if extra_metadata is None:
+        return {}
+    if not isinstance(extra_metadata, dict):
+        raise TypeError(
+            f"extra_metadata must be a dict[str, str] or None; got {type(extra_metadata).__name__}"
+        )
+    validated: dict[str, str] = {}
+    for key, value in extra_metadata.items():
+        if not isinstance(key, str):
+            raise TypeError(f"extra_metadata key {key!r} must be a str; got {type(key).__name__}")
+        if not isinstance(value, str):
+            raise TypeError(
+                f"extra_metadata[{key!r}] must be a str; got {type(value).__name__} "
+                '(registration metadata is string-valued: encode it, e.g. "true" or "42")'
+            )
+        validated[key] = value
+    return validated
 
 
 __all__ = [

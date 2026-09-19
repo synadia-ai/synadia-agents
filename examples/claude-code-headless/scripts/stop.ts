@@ -21,10 +21,10 @@ async function main(): Promise<void> {
   try {
     const controller = await findController(cli.agents, args);
     const stopSubject = controllerStopSubject(controller.owner, controller.name);
-    const rep = await cli.nc.request(
+    const rep = await cli.request(
       stopSubject,
       JSON.stringify({ session_id: sessionId }),
-      { timeout: 5_000 },
+      5_000,
     );
     const errCode = rep.headers?.get("Nats-Service-Error-Code");
     if (errCode) {

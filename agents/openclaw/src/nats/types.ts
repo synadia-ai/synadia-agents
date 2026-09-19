@@ -3,8 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ConnectionConfig {
-  url?: string;
-  credentials?: string;
+  source: import("@synadia-ai/agents").NatsConnectionSource;
+  senderIdentity: "off" | "signed";
   name?: string;
 }
 

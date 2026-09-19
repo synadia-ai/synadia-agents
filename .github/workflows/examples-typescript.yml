@@ -1,10 +1,9 @@
 name: CI — examples (TypeScript)
 
-# Typecheck smoke for the runnable examples. They all `file:`-link the
+# Branch-development checks for the runnable examples. They all `file:`-link the
 # local SDKs, so an SDK surface change that breaks an example shows up
-# here instead of after a release. Typecheck-only by design: the
-# examples talk to live NATS servers / LLM backends, so their runtime
-# behavior is exercised manually (see each example's README).
+# here instead of after a release. Focused deterministic tests and builds run
+# where packages expose them; LLM-backed behavior remains a manual gate.
 #
 # Installs use npm, not bun: bun 1.3.14's resolver is nondeterministic
 # on the client-sdk ⇄ agent-sdk `file:` cycle — it can hang forever or
@@ -14,7 +13,7 @@ name: CI — examples (TypeScript)
 
 on:
   push:
-    branches: [main]
+    branches: [main, sdk-release-rollout, rollout-agent-integrations]
     paths:
       - "examples/**"
       - "client-sdk/typescript/**"
@@ -51,6 +50,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
       # The examples import the SDKs via `file:` links, which resolve to
       # each package's built `dist/` — build both before installing.
       - name: Build client-sdk
@@ -69,3 +71,26 @@ jobs:
       - name: Typecheck
         working-directory: examples/${{ matrix.example }}
         run: npm install --no-audit --no-fund && npm run typecheck
+      - name: Install nats-server for identity smokes
+        if: matrix.example == 'claude-code-headless' || matrix.example == 'pi-headless'
+        working-directory: ${{ runner.temp }}
+        run: |
+          version=2.12.7
+          curl -fsSL "https://github.com/nats-io/nats-server/releases/download/v${version}/nats-server-v${version}-linux-amd64.tar.gz" | tar xz
+          sudo install -m 0755 "nats-server-v${version}-linux-amd64/nats-server" /usr/local/bin/nats-server
+          nats-server --version
+      - name: Focused tests
+        if: matrix.example == 'claude-code-headless' || matrix.example == 'open-agent-vercel' || matrix.example == 'pi-headless'
+        working-directory: examples/${{ matrix.example }}
+        run: npm test
+      - name: PI identity-mode smoke
+        if: matrix.example == 'pi-headless'
+        working-directory: examples/pi-headless
+        run: npm run test:smoke
+      - name: Build when available
+        working-directory: examples/${{ matrix.example }}
+        run: npm run build --if-present
+      - name: Inspect publishable headless package
+        if: matrix.example == 'claude-code-headless' || matrix.example == 'pi-headless'
+        working-directory: examples/${{ matrix.example }}
+        run: npm pack --dry-run --json

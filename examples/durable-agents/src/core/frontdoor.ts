@@ -8,11 +8,16 @@
 import type { NatsConnection } from "@nats-io/transport-node";
 import { Codec, type Resonate } from "@resonatehq/sdk";
 import { AgentService } from "@synadia-ai/agent-service";
+import type { NatsConnectionBundle } from "@synadia-ai/agents";
 import type { AgentResult } from "./effects";
 import { approvalSubject } from "./subjects";
 
 export interface ServeConfig {
   nc: NatsConnection;
+  /** The SDK-owned auth snapshot used to open `nc`. */
+  connectionBundle: NatsConnectionBundle;
+  /** Incoming prompt policy; independent from host identity. */
+  minSenderTrust?: "any" | "signed";
   /** Instance that has the durable workflow registered (acts as both worker and dispatcher). */
   resonate: Resonate;
   /** Name of the registered durable workflow; it takes `{ prompt }` and returns an AgentResult. */
@@ -35,6 +40,10 @@ export async function serveAgent(cfg: ServeConfig): Promise<AgentService> {
     version: "0.0.0",
     heartbeatIntervalS: 10,
     keepaliveIntervalS: null, // we send our own status lines
+    ...(cfg.connectionBundle.signer
+      ? { identity: { signer: cfg.connectionBundle.signer } }
+      : {}),
+    minSenderTrust: cfg.minSenderTrust ?? "any",
   });
 
   let seq = 0;

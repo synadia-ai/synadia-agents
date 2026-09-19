@@ -6,7 +6,9 @@ import os
 import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar, cast
+
+from synadia_ai.agents import IdentityMode, MinSenderTrust
 
 DEFAULT_AGENT = "df"
 DEFAULT_SESSION = "default"
@@ -15,6 +17,9 @@ DEFAULT_DEERFLOW_TIMEOUT_S = 60.0
 DEFAULT_QUERY_TIMEOUT_S = 300.0
 DEFAULT_MAX_PAYLOAD = None
 DEFAULT_CONFIG_PATH = Path("~/.config/synadia/deerflow-channel/config.toml")
+IDENTITY_MODES: tuple[IdentityMode, ...] = ("off", "signed")
+SENDER_TRUST_LEVELS: tuple[MinSenderTrust, ...] = ("any", "signed")
+ChoiceT = TypeVar("ChoiceT", bound=str)
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,8 @@ class ChannelConfig:
     deerflow_url: str = DEFAULT_DEERFLOW_URL
     nats_context: str | None = None
     nats_url: str | None = None
+    sender_identity: IdentityMode = "off"
+    min_sender_trust: MinSenderTrust = "any"
     deerflow_timeout_s: float = DEFAULT_DEERFLOW_TIMEOUT_S
     query_timeout_s: float = DEFAULT_QUERY_TIMEOUT_S
     max_payload: str | None = DEFAULT_MAX_PAYLOAD
@@ -55,6 +62,8 @@ class ChannelConfig:
             "deerflow_url": self.deerflow_url,
             "nats_context": self.nats_context,
             "nats_url": self.nats_url,
+            "sender_identity": self.sender_identity,
+            "min_sender_trust": self.min_sender_trust,
             "deerflow_timeout_s": str(self.deerflow_timeout_s),
             "query_timeout_s": str(self.query_timeout_s),
             "max_payload": self.max_payload,
@@ -107,6 +116,15 @@ def _optional_positive_float(data: dict[str, Any], key: str) -> float | None:
     return result
 
 
+def _optional_choice(
+    data: dict[str, Any], key: str, choices: tuple[ChoiceT, ...]
+) -> ChoiceT | None:
+    value = _optional_str(data, key)
+    if value is not None and value not in choices:
+        raise ValueError(f"config key {key!r} must be one of: {', '.join(choices)}")
+    return cast(ChoiceT, value)
+
+
 def _env(name: str) -> str | None:
     value = os.environ.get(name)
     if value is None:
@@ -137,6 +155,10 @@ def _apply_file(config: ChannelConfig, data: dict[str, Any], path: Path) -> Chan
         deerflow_url=_optional_str(data, "deerflow_url") or config.deerflow_url,
         nats_context=_optional_str(data, "nats_context") or config.nats_context,
         nats_url=_optional_str(data, "nats_url") or config.nats_url,
+        sender_identity=_optional_choice(data, "sender_identity", IDENTITY_MODES)
+        or config.sender_identity,
+        min_sender_trust=_optional_choice(data, "min_sender_trust", SENDER_TRUST_LEVELS)
+        or config.min_sender_trust,
         deerflow_timeout_s=_optional_positive_float(data, "deerflow_timeout_s")
         or config.deerflow_timeout_s,
         query_timeout_s=_optional_positive_float(data, "query_timeout_s") or config.query_timeout_s,
@@ -167,6 +189,14 @@ def _apply_env(config: ChannelConfig) -> ChannelConfig:
         deerflow_url=_env("DEERFLOW_URL") or config.deerflow_url,
         nats_context=_env("NATS_CONTEXT") or config.nats_context,
         nats_url=_env("NATS_URL") or config.nats_url,
+        sender_identity=_choice(
+            _env("NATS_SENDER_IDENTITY"), "NATS_SENDER_IDENTITY", IDENTITY_MODES
+        )
+        or config.sender_identity,
+        min_sender_trust=_choice(
+            _env("NATS_MIN_SENDER_TRUST"), "NATS_MIN_SENDER_TRUST", SENDER_TRUST_LEVELS
+        )
+        or config.min_sender_trust,
         deerflow_timeout_s=_env_positive_float("DEERFLOW_TIMEOUT_S") or config.deerflow_timeout_s,
         query_timeout_s=_env_positive_float("DEERFLOW_QUERY_TIMEOUT_S") or config.query_timeout_s,
         max_payload=_env("DEERFLOW_MAX_PAYLOAD") or config.max_payload,
@@ -186,6 +216,8 @@ def resolve_config(
     deerflow_url: str | None = None,
     nats_context: str | None = None,
     nats_url: str | None = None,
+    sender_identity: IdentityMode | None = None,
+    min_sender_trust: MinSenderTrust | None = None,
     deerflow_timeout_s: float | None = None,
     query_timeout_s: float | None = None,
     max_payload: str | None = None,
@@ -206,6 +238,10 @@ def resolve_config(
         deerflow_url=deerflow_url or config.deerflow_url,
         nats_context=nats_context or config.nats_context,
         nats_url=nats_url or config.nats_url,
+        sender_identity=_choice(sender_identity, "sender_identity", IDENTITY_MODES)
+        or config.sender_identity,
+        min_sender_trust=_choice(min_sender_trust, "min_sender_trust", SENDER_TRUST_LEVELS)
+        or config.min_sender_trust,
         deerflow_timeout_s=deerflow_timeout_s or config.deerflow_timeout_s,
         query_timeout_s=query_timeout_s or config.query_timeout_s,
         max_payload=max_payload or config.max_payload,
@@ -214,3 +250,9 @@ def resolve_config(
         deerflow_username=deerflow_username or config.deerflow_username,
         deerflow_password=deerflow_password or config.deerflow_password,
     )
+
+
+def _choice(value: str | None, field: str, choices: tuple[ChoiceT, ...]) -> ChoiceT | None:
+    if value is not None and value not in choices:
+        raise ValueError(f"{field} must be one of: {', '.join(choices)}")
+    return cast(ChoiceT, value)

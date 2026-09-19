@@ -41,7 +41,7 @@ async function main(): Promise<void> {
     }
     for (const controller of controllers) {
       const listSubject = controllerListSubject(controller.owner, controller.name);
-      const rep = await cli.nc.request(listSubject, "", { timeout: 5_000 });
+      const rep = await cli.request(listSubject, "", 5_000);
       const body = JSON.parse(rep.string()) as { sessions: SessionSummary[] };
       process.stdout.write(
         `# ${controller.promptEndpoint.subject} (instance ${controller.instanceId})\n`,

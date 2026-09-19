@@ -91,7 +91,15 @@ _BMP_MAX = 0xFFFF
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AgentSenderHeader:
-    """A parsed (or built) ``Agent-Sender`` header. Only the known fields."""
+    """A parsed (or built) ``Agent-Sender`` header. Only the known fields.
+
+    ``nonce`` and ``sig`` remain directly readable for signing and explicit
+    wire serialization, but are omitted from ``repr``. Do not pass this
+    dataclass to generic reflection serializers such as
+    :func:`dataclasses.asdict` for logs: those helpers read every field. Use
+    :meth:`to_log_dict` for structured logging and
+    :func:`serialize_sender_header` only for the wire.
+    """
 
     v: Literal[1] = 1
     account: str
@@ -99,8 +107,25 @@ class AgentSenderHeader:
     name: str | None = None
     sub: str | None = None
     ts: str | None = None
-    nonce: str | None = None
-    sig: str | None = None
+    nonce: str | None = field(default=None, repr=False)
+    sig: str | None = field(default=None, repr=False)
+
+    def to_log_dict(self) -> dict[str, object]:
+        """Return a structured-log view with proof fields redacted."""
+        result: dict[str, object] = {
+            "v": self.v,
+            "account": self.account,
+            "user": self.user,
+        }
+        for name in ("name", "sub", "ts"):
+            value = getattr(self, name)
+            if value is not None:
+                result[name] = value
+        if self.nonce is not None:
+            result["nonce"] = "[redacted]"
+        if self.sig is not None:
+            result["sig"] = "[redacted]"
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,8 +321,15 @@ def parse_sender_header(value: str) -> AgentSenderHeader | None:  # noqa: PLR091
         raise MalformedSenderHeaderError(f"value exceeds {MAX_SENDER_HEADER_VALUE_BYTES} bytes")
     try:
         parsed = json.loads(value)
-    except ValueError as exc:
-        raise MalformedSenderHeaderError("not valid JSON") from exc
+        parse_failed = False
+    except ValueError:
+        # JSONDecodeError retains the entire source document on `.doc`.
+        # Raise only after leaving the except block so neither `__cause__`
+        # nor `__context__` retains a raw nonce or signature.
+        parsed = None
+        parse_failed = True
+    if parse_failed:
+        raise MalformedSenderHeaderError("not valid JSON")
     if not isinstance(parsed, dict):
         raise MalformedSenderHeaderError("not a JSON object")
     o: dict[str, object] = parsed
@@ -607,7 +639,7 @@ def verify_sender_header(
         account_attested = position is not None or (stamp is not None and stamp.account is not None)
 
     if mode == "live" and nonce_seen is not None and nonce_seen(header.user, header.nonce):
-        raise _reject(f"nonce {header.nonce!r} already seen for {header.user}")
+        raise _reject(f"nonce already seen for {header.user}")
 
     data = build_signed_input(
         account=header.account,

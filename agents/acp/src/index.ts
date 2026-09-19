@@ -5,7 +5,7 @@ export { bridgePromptToAcp, FakeAcpBridgeClient, type AcpBridgeClient, type AcpB
 export { DEFAULT_CONFIG_PATH, helpText, loadConfigFromSources, mappingFromConfig, parseArgs, renderConfigTemplate } from "./config.js";
 export { checkBinary, runDoctor, type DoctorBinaryCheck, type DoctorReport } from "./doctor.js";
 export { ManagedAcpRuntime, mapSessionUpdate, type ManagedAcpRuntimeOptions } from "./managed-runtime.js";
-export { resolveNatsOptions } from "./nats.js";
+export { resolveNatsBundle } from "./nats.js";
 export {
   permissionPromptText,
   resolvePermissionRequest,

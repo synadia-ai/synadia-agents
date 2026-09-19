@@ -29,6 +29,8 @@ export interface ParsedArgs {
   readonly natsUrl?: string;
   readonly natsContext?: string;
   readonly natsCreds?: string;
+  readonly senderIdentity?: "off" | "signed";
+  readonly minSenderTrust?: "any" | "signed";
   readonly owner?: string;
   readonly session?: string;
   readonly subjectToken?: string;
@@ -60,6 +62,8 @@ const flagMap: Record<string, keyof Omit<ParsedArgs, "command">> = {
   "--nats-url": "natsUrl",
   "--nats-context": "natsContext",
   "--nats-creds": "natsCreds",
+  "--sender-identity": "senderIdentity",
+  "--min-sender-trust": "minSenderTrust",
   "--owner": "owner",
   "--session": "session",
   "--subject-token": "subjectToken",
@@ -95,6 +99,10 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       out[key] = parseAcpMode(value, arg);
     } else if (key === "permissionPolicy") {
       out[key] = parsePermissionPolicy(value, arg);
+    } else if (key === "senderIdentity") {
+      out[key] = parseSenderIdentity(value, arg);
+    } else if (key === "minSenderTrust") {
+      out[key] = parseMinSenderTrust(value, arg);
     } else {
       out[key] = value;
     }
@@ -192,6 +200,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): AcpChann
     url: get(args.natsUrl, env.NATS_URL, natsSection.url, "nats://127.0.0.1:4222")!,
     ...(natsContext ? { context: natsContext } : {}),
     ...(natsCreds ? { creds: natsCreds } : {}),
+    senderIdentity: parseSenderIdentity(get(args.senderIdentity, env.NATS_SENDER_IDENTITY, natsSection.sender_identity, "off")!, "nats.sender_identity"),
   };
 
   const bin = get(args.acpBin, perAgent("BIN"), env.SYNADIA_ACP_BIN, acpSection.bin, preset?.bin)
@@ -231,6 +240,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): AcpChann
     subjectToken,
     heartbeatIntervalS: parsePositiveNumber(get(args.heartbeatIntervalS?.toString(), agentSection.heartbeat_interval_s, "30")!, "agent.heartbeat_interval_s"),
     keepaliveIntervalS: parsePositiveNumber(get(args.keepaliveIntervalS?.toString(), agentSection.keepalive_interval_s, "30")!, "agent.keepalive_interval_s"),
+    minSenderTrust: parseMinSenderTrust(get(args.minSenderTrust, env.NATS_MIN_SENDER_TRUST, agentSection.min_sender_trust, "any")!, "agent.min_sender_trust"),
   };
 
   return { nats, agent, acp };
@@ -256,6 +266,16 @@ function parsePermissionPolicy(value: string, field: string): AcpPermissionPolic
   throw new Error(`${field} must be reject, query, or allow`);
 }
 
+function parseSenderIdentity(value: string, field: string): "off" | "signed" {
+  if (value === "off" || value === "signed") return value;
+  throw new Error(`${field} must be off or signed`);
+}
+
+function parseMinSenderTrust(value: string, field: string): "any" | "signed" {
+  if (value === "any" || value === "signed") return value;
+  throw new Error(`${field} must be any or signed`);
+}
+
 export function mappingFromConfig(config: AcpChannelConfig): AcpMapping {
   return {
     owner: config.agent.owner,
@@ -270,6 +290,7 @@ export function renderConfigTemplate(): string {
 url = "nats://127.0.0.1:4222"
 context = ""
 creds = ""
+sender_identity = "off"
 
 [agent]
 owner = "local"
@@ -278,6 +299,7 @@ session = "main"
 subject_token = ""
 heartbeat_interval_s = 30
 keepalive_interval_s = 30
+min_sender_trust = "any"
 
 [acp]
 # Preset: grok or custom (custom requires agent_id + bin).
@@ -309,6 +331,8 @@ Options:
   --nats-url URL
   --nats-context NAME
   --nats-creds PATH
+  --sender-identity off|signed
+  --min-sender-trust any|signed
   --owner TOKEN
   --session TOKEN
   --subject-token TOKEN

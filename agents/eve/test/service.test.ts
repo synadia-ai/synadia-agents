@@ -34,10 +34,31 @@ describe("service construction", () => {
     expect(opts.name).toBe("support");
     expect(opts.session).toBe("support");
     expect(opts.attachmentsOk).toBe(true);
+    expect(opts.identity).toBeUndefined();
+    expect(opts.minSenderTrust).toBe("any");
     expect(opts.extraMetadata).toEqual({
       eve_base_url: "http://127.0.0.1:2000",
       eve_auth: "none",
     });
+  });
+
+  test("uses only the connection-bundle signer when signed mode is enabled", () => {
+    const signer = {} as never;
+    const base = config();
+    const signedConfig = {
+      ...base,
+      nats: { ...base.nats, senderIdentity: "signed" as const },
+      agent: { ...base.agent, minSenderTrust: "signed" as const },
+    };
+    const opts = buildAgentServiceOptions({
+      nc: {} as never,
+      config: signedConfig,
+      version: "0.1.0",
+      connectionBundle: { signer } as never,
+    });
+    expect(opts.identity).toEqual({ signer });
+    expect(opts.minSenderTrust).toBe("signed");
+    expect(() => buildAgentServiceOptions({ nc: {} as never, config: signedConfig, version: "0.1.0" })).toThrow("resolved NATS connection bundle");
   });
 
   test("advertises bearer auth mode without ever exposing the token", () => {

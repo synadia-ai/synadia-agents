@@ -149,24 +149,30 @@ responsible for `nc.close()`.
 
 ```python
 import nats
-from synadia_ai.agents import Agents, load_context_options
+from synadia_ai.agents import Agents, resolve_nats_connection_bundle
 
 # 1. Direct URL(s) — caller drives nats-py directly.
 nc = await nats.connect(servers="nats://127.0.0.1:4222")
 
-# 2. Load a `nats` CLI context (~/.config/nats/context/<name>.json) and
-#    splat its kwargs into nats.connect. Pass `"current"` to honour
-#    $NATS_CONTEXT → the `context.txt` pointer written by
-#    `nats context select`.
-nc = await nats.connect(**load_context_options("prod"))
-nc = await nats.connect(**load_context_options("current"))
+# 2. Snapshot a `nats` CLI context and its selected auth once. Pass
+#    `"current"` to honour $NATS_CONTEXT → the `context.txt` pointer.
+bundle = resolve_nats_connection_bundle(context="prod")
+nc = await nats.connect(**bundle.connection_options)
 
 # Then in either case:
 agents = Agents(nc=nc)
 ```
 
-`load_context_options` returns a dict ready to splat into
-`nats.connect(...)`. Supported context fields: `url` → `servers`,
+`resolve_nats_connection_bundle` is preferred for new connections. Its
+default `identity="off"` exposes no signer. With `identity="signed"`, its
+signer is derived from the exact connection-auth snapshot and must be passed
+to `Identity(signer=bundle.signer)`. URL mode accepts one connection source:
+`creds=` or `nkey=`. Close SDK controllers and NATS before calling the
+idempotent `bundle.wipe()`; never log `bundle.connection_options`.
+
+`load_context_options` remains the connection-only compatibility helper and
+returns a dict ready to splat into `nats.connect(...)`. Supported context
+fields: `url` → `servers`,
 `token`, `user`/`password`, `creds` (with `~` expansion, mapped to
 `user_credentials`), `nkey` (a seed-file path, with `~` expansion; the
 seed line is read and passed as `nkeys_seed_str` — nats-py's
@@ -180,11 +186,11 @@ is the reading half (the identity module's `signer_from_context`
 reuses it to find the seed / creds path). The SDK itself does NOT
 read `NATS_URL`; that stays a convenience default inside `examples/`.
 
-Sender identity is configured separately, on `Agents(identity=Identity(
-signer=…, name=…))` — the SDK never reads the seed out of the
-connection (`nc._nkeys_seed` and friends are private API; explicit
-signer only, plan §2.1). `examples/_connect_cli.py` shows the pairing:
-`--nkey` / `--creds` feed both `nats.connect` and `Identity`.
+Sender identity is still explicitly enabled on `Agents(identity=Identity(
+signer=…, name=…))`; resolving a signed bundle does not silently enable it.
+One bundle/signer may be shared by multiple controllers on its one NATS
+connection, because the signer represents the connection user rather than a
+session. The SDK never reaches into private `nc._nkeys_seed` state.
 
 ### Examples vs scripts
 

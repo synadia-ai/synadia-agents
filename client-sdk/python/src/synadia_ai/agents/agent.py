@@ -5,11 +5,11 @@ Wraps a parsed :class:`~synadia_ai.agents.discovery.AgentInfo` with the
 SDK's ``Agent`` class (PR #7): every field flat / read-only, ``prompt()``
 and ``status()`` are the methods that actually do I/O.
 
-Sender identity (extension): when constructed by an :class:`Agents`
-client the handle carries its :class:`~synadia_ai.agents.identity.Identity`,
-and ``prompt()`` / ``status()`` attach an ``Agent-Sender`` header —
-signed when a signer is configured, an unsigned claim otherwise, nothing
-when the connection has no identity.
+Sender identity (extension): a handle carries an
+:class:`~synadia_ai.agents.identity.Identity` only when its
+:class:`Agents` client explicitly enables one. ``prompt()`` / ``status()``
+then attach a live-bound signed header or an explicitly requested unsigned
+claim; omission attaches nothing and performs no identity lookup.
 
 The server-side counterpart (``AgentService``) ships in the sibling
 distribution :mod:`synadia_ai.agent_service`.
@@ -22,6 +22,7 @@ import contextlib
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeAlias
+from weakref import WeakSet
 
 import pydantic
 
@@ -42,6 +43,16 @@ from .heartbeat import HeartbeatPayload
 from .identity.agent_id import AgentId
 from .identity.options import Identity, plan_sender_header, sender_header_bound
 from .messages import QueryChunk, ResponseChunk, StatusChunk, decode_chunk
+from .trace import (
+    TraceOptions,
+    active_trace,
+    build_edge_record,
+    count_trace_record_dropped,
+    count_trace_record_published,
+    inherited_trace_options,
+    random_thread_id,
+    valid_tool_call_id,
+)
 from .validation import (
     assert_attachments_allowed,
     assert_prompt_non_empty,
@@ -56,6 +67,16 @@ log = get_logger(__name__)
 
 _SERVICE_ERROR_CODE_HEADER = "Nats-Service-Error-Code"
 _SERVICE_ERROR_HEADER = "Nats-Service-Error"
+
+# Set to the record id so a stream de-duplicates a record it already
+# stored. Same string as agents.NATS_MSG_ID_HEADER, spelled again here
+# because agents.py imports this module.
+_MSG_ID_HEADER = "Nats-Msg-Id"
+
+# Connections already warned that their edge records go nowhere. One
+# warning per connection: a per-prompt log would itself be a way for
+# observability to disturb an agent.
+_warned_unsigned: WeakSet[NATSClient] = WeakSet()
 
 # Default `Agent.status()` request timeout — 2 seconds (mirrors the TS
 # SDK's DEFAULT_STATUS_TIMEOUT_MS).
@@ -112,6 +133,61 @@ StreamMessage: TypeAlias = ResponseChunk | StatusChunk | Query
 """One item yielded by :meth:`Agent.prompt`'s async iterator."""
 
 
+def _override_lineage(
+    envelope: Envelope,
+    thread_id: str | None,
+    root_id: str | None,
+    parent_id: str | None,
+) -> tuple[str | None, str | None]:
+    """Let an explicit ``Envelope`` override the minted lineage.
+
+    The pair travels together on the wire, so an overridden thread with no
+    root of its own starts its own tree — exactly as a minted one does, and
+    exactly as the agent service does when it adopts an ID-less envelope.
+    Splicing the minted root onto it instead would name a root that is
+    neither this thread nor any ancestor of it. Inside a handler
+    (``parent_id`` set) the ambient root wins: the overridden thread is
+    still part of that tree.
+
+    An envelope naming this execution's own thread is the incoming
+    envelope being forwarded — the most natural relay code hands what it
+    received straight to a sub-agent. Forwarding spawns a thread, it does
+    not continue one: honouring that id would file the sub-agent's
+    execution under its parent's thread, collapsing the two into one and
+    recording an edge from a thread to itself. So the minted thread stands
+    and the envelope's id remains what it already is: the parent.
+    """
+    if envelope.thread_id is not None and envelope.thread_id != parent_id:
+        thread_id = envelope.thread_id
+        if envelope.root_id is None and parent_id is None:
+            root_id = thread_id
+    if envelope.root_id is not None:
+        root_id = envelope.root_id
+    return thread_id, root_id
+
+
+@dataclass(frozen=True, slots=True)
+class _EdgePlan:
+    """What :meth:`Agent.prompt` decided to record; built into a record at publish time.
+
+    The lineage is fixed when the prompt is planned — that is when the
+    ambient trace is still the caller's — but the record's ``ts`` must say
+    when the prompt actually went out and its ``agent`` is whoever signs
+    it, so the bytes are produced by :meth:`Agent._publish_edge`
+    immediately before the publish.
+    """
+
+    subject: str
+    thread_id: str
+    parent_id: str | None
+    root_id: str
+    tool_call_id: str | None
+    turn_count_hint: int
+    #: No identity signer: the record is due when the prompt goes out and
+    #: cannot be published, so it is counted as a drop at that moment.
+    unsigned: bool = False
+
+
 class Agent:
     """A live handle returned by :meth:`Agents.discover`.
 
@@ -143,6 +219,7 @@ class Agent:
         prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         close_event: asyncio.Event | None = None,
         identity: Identity | None = None,
+        trace: TraceOptions | None = None,
     ) -> None:
         if prompt_max_wait_s <= 0:
             raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
@@ -152,6 +229,12 @@ class Agent:
         self._default_max_wait_s = prompt_max_wait_s
         self._close_event = close_event
         self._sender_identity = identity
+        self._trace = trace
+
+    @property
+    def tracing_enabled(self) -> bool:
+        """``True`` iff tracing was enabled on this handle."""
+        return self._trace is not None
 
     # --- flat read-only identity / capability fields -------------------
 
@@ -253,6 +336,7 @@ class Agent:
         max_wait_s: float | None = None,
         subject: str | None = None,
         sub: str | None = None,
+        tool_call_id: str | None = None,
     ) -> AsyncIterator[StreamMessage]:
         """Send a prompt and return an async iterator of streamed messages.
 
@@ -281,6 +365,9 @@ class Agent:
         :class:`ValueError` synchronously — there is no "no limit"
         sentinel, since an unbounded prompt stream is the exact failure
         mode this ceiling exists to prevent.
+
+        ``tool_call_id`` is the ID of the model tool call this prompt
+        serves, used to label the trace edge when tracing is enabled.
 
         §5.4 pre-publish validation runs synchronously before any wire I/O.
         Failures raise:
@@ -343,6 +430,31 @@ class Agent:
                 f"max_wait_s must be > 0 (got {max_wait_s!r}); pass None to use the default."
             )
 
+        # Tracing is best-effort and shouldn't stop an agent from
+        # sending out a prompt. Invalid tools are just ignored.
+        if tool_call_id is not None and not valid_tool_call_id(tool_call_id):
+            tool_call_id = None
+
+        # Effective configuration: this handle's own, else the one handed
+        # down by the enclosing AgentService, else tracing is off.
+        trace_options = self._trace if self._trace is not None else inherited_trace_options()
+
+        # If tracing is enabled, mint a thread ID for this prompt
+        thread_id: str | None = None
+        root_id: str | None = None
+        parent_id: str | None = None
+        turn_count_hint = 0
+        if trace_options is not None:
+            thread_id = random_thread_id()
+            ambient = active_trace()
+            if ambient is None:
+                root_id = thread_id
+                parent_id = None
+            else:
+                root_id = ambient.root_id
+                parent_id = ambient.thread_id
+                turn_count_hint = ambient.turn_count_hint[0]
+
         if isinstance(text, Envelope):
             merged_attachments: list[Attachment] | None
             if attachments:
@@ -350,15 +462,39 @@ class Agent:
                 merged_attachments.extend(attachments)
             else:
                 merged_attachments = list(text.attachments) if text.attachments else None
+
+            # Only a tracing client honours the envelope's lineage. With
+            # tracing off the fields are dropped like any other extra, so an
+            # untraced relay that forwards what it received sends a plain
+            # v0.3 envelope — exactly what it sent before tracing existed —
+            # rather than filing the sub-agent under its own thread.
+            if trace_options is not None:
+                thread_id, root_id = _override_lineage(text, thread_id, root_id, parent_id)
+
             envelope = Envelope(
                 prompt=text.prompt,
                 attachments=merged_attachments,
+                thread_id=thread_id,
+                root_id=root_id,
             )
         else:
             envelope = Envelope(
                 prompt=text,
                 attachments=list(attachments) if attachments else None,
+                thread_id=thread_id,
+                root_id=root_id,
             )
+
+        # We do this after constructing the envelope to allow
+        # overriding fields. Only the plan is made here — the record,
+        # signing and the publish happen in _stream_prompt, at publish time.
+        edge_publish = (
+            self._plan_edge(
+                trace_options, thread_id, parent_id, root_id, tool_call_id, turn_count_hint
+            )
+            if trace_options is not None and thread_id is not None and root_id is not None
+            else None
+        )
 
         # §5.4: local validation happens synchronously BEFORE any wire I/O.
         # Raising here means callers don't even allocate a reply subject.
@@ -394,6 +530,7 @@ class Agent:
             subject=publish_subject,
             sub=signed_subject,
             require_signed=require_signed,
+            edge_publish=edge_publish,
         )
 
     # --- status --------------------------------------------------------
@@ -418,8 +555,9 @@ class Agent:
         :class:`ProtocolError` on an error-headered reply or a reply that
         is not a §8.3 heartbeat payload, :class:`TimeoutError` /
         :class:`~nats.errors.NoRespondersError` from the transport, and
-        :class:`IdentityMismatchError` when a configured signer is not
-        the connection's user (other identity failures mean "no header").
+        configured-signer identity errors when its live connection binding
+        cannot be established. Without a signer, an unavailable optional
+        unsigned identity means "no header".
         """
         endpoint = next((e for e in self.endpoints if e.name == STATUS_ENDPOINT_NAME), None)
         publish_subject = (
@@ -554,6 +692,93 @@ class Agent:
         if self._close_event is not None and self._close_event.is_set():
             raise ProtocolError(f"prompt stream cancelled: owning Agents is closed (reply={reply})")
 
+    def _plan_edge(
+        self,
+        trace_options: TraceOptions,
+        thread_id: str,
+        parent_id: str | None,
+        root_id: str,
+        tool_call_id: str | None,
+        turn_count_hint: int,
+    ) -> _EdgePlan | None:
+        """The edge to publish, or ``None`` for nothing.
+
+        Split out of :meth:`prompt` only to keep that method within
+        ruff's statement budget.
+        """
+        if trace_options.edge_subject is None:
+            return None
+        # Consumers ignore unsigned records, so publishing without a
+        # signer would be pure waste: warn once per connection and skip.
+        # Minting and envelope lineage need no identity and still happen,
+        # so downstream agents that do have one keep tracing.
+        identity = self._sender_identity
+        unsigned = identity is None or identity.signer is None
+        if unsigned and self._nc not in _warned_unsigned:
+            _warned_unsigned.add(self._nc)
+            log.warning(
+                "tracing is enabled but no identity signer is configured; edge "
+                "records are not published (consumers ignore unsigned records). "
+                "Pass identity=Identity(signer=...) to sign them."
+            )
+        return _EdgePlan(
+            trace_options.edge_subject,
+            thread_id,
+            parent_id,
+            root_id,
+            tool_call_id,
+            turn_count_hint,
+            unsigned=unsigned,
+        )
+
+    async def _publish_edge(self, edge_publish: _EdgePlan) -> None:
+        """Build and publish one signed edge record.
+
+        The signature covers the short-form subject the record is
+        published to: per the identity design a remap that only drops the
+        account token is not a rename, so no ``sub`` override is needed.
+        Consumers verify in stored mode. The record's ``agent`` is the
+        identity the header plan resolved — the same one that signs it —
+        so body and header agree. Its ``record_id`` is the header's nonce
+        and the ``Nats-Msg-Id`` as well: one id, so a reader de-duplicating
+        on ``(user, record_id)`` and a stream de-duplicating on the message
+        id see the same record once.
+
+        Fail-open — tracing never fails a prompt. It is counted: every
+        record that goes out or fails to moves the process-wide
+        :func:`trace_record_counts`, which the ``AgentService`` reports on
+        its heartbeat.
+        """
+        subject = edge_publish.subject
+        if edge_publish.unsigned:
+            # Due now — the prompt is about to go out — and cannot go out:
+            # a drop, reported on the heartbeat as a record that was owed
+            # and never sent. Counted here rather than when the prompt was
+            # planned, so a prompt that is never sent counts nothing.
+            count_trace_record_dropped()
+            return
+        try:
+            plan = await plan_sender_header(
+                self._sender_identity, self._nc, subject, require_signed=True
+            )
+            if plan is None:  # pragma: no cover — guarded in _plan_edge
+                raise SenderSignatureRequiredError(subject)
+            record_id, payload = build_edge_record(
+                plan.id,
+                edge_publish.thread_id,
+                edge_publish.parent_id,
+                edge_publish.root_id,
+                edge_publish.tool_call_id,
+                edge_publish.turn_count_hint,
+            )
+            headers = await plan.build_headers(payload, nonce=record_id)
+            headers[_MSG_ID_HEADER] = record_id
+            await self._nc.publish(subject, payload, headers=headers)
+            count_trace_record_published()
+        except Exception:
+            count_trace_record_dropped()
+            log.exception("failed to publish edge record on %s", subject)
+
     async def _stream_prompt(
         self,
         encoded: bytes,
@@ -563,15 +788,26 @@ class Agent:
         subject: str,
         sub: str,
         require_signed: bool,
+        edge_publish: _EdgePlan | None = None,
     ) -> AsyncIterator[StreamMessage]:
         # Pre-flight: refuse outright if the owning Agents is already
         # closed. This catches the "called prompt() after close()" case
         # cleanly, before any wire I/O or mux state mutation.
         self._raise_if_closed()
 
-        # Sender identity: resolve the identity (at most one awaited lookup
-        # per connection) and re-check `max_payload` with the exact header
-        # size. The header itself is built — signed — at publish time.
+        # Establish the reply mux before resolving identity. Its first start
+        # pays a SUB+flush await; putting that one-time transport setup first
+        # prevents a reconnect during the flush from leaving a pre-flush
+        # identity plan ready to publish.
+        mux = mux_for(self._nc)
+        await mux.start()
+        self._raise_if_closed()
+
+        # Resolve the live identity as late as nats-py allows and re-check
+        # `max_payload` with the exact header size. nats-py exposes no
+        # reconnect generation, so a reconnect after this lookup and before
+        # publish cannot yet be detected; adopting one when available is the
+        # remaining target. The header is signed at publish time.
         plan = await plan_sender_header(
             self._sender_identity, self._nc, sub, require_signed=require_signed
         )
@@ -582,10 +818,6 @@ class Agent:
                 len(encoded), ep.max_payload_bytes, conn_limit, plan.wire_bytes
             )
 
-        # Per-nc mux singleton — shared across every Agent on the same
-        # connection. See `_mux.py`'s INTERIM-NATSPY-REQUEST-MANY note.
-        mux = mux_for(self._nc)
-        await mux.start()  # idempotent; pays SUB+flush on the first prompt
         # `max_wait_s > 0` is enforced at the public boundary (Agent.prompt
         # and the constructors), so we treat it as an invariant here.
         loop = asyncio.get_running_loop()
@@ -600,14 +832,23 @@ class Agent:
         try:
             reply = mux.reply_subject_for(token)
 
-            # Re-check after the mux.start() await: close may have
-            # fired during the SUB+flush window. Bail before publishing
+            # Re-check after identity lookup: close may have fired while the
+            # live binding request was in flight. Bail before publishing
             # rather than firing a request whose reply we won't consume.
             self._raise_if_closed()
 
             # Signed at publish time so `ts` / nonce are fresh even when the
             # caller iterates late; the signature covers exactly `encoded`.
+            # Built BEFORE the edge record goes out: signing can still fail,
+            # and an edge record is a claim that a prompt was sent, so
+            # nothing may be published until that claim is certain.
             headers = await plan.build_headers(encoded) if plan is not None else None
+
+            # Observability: publish the edge before the prompt goes out, so
+            # an observer sees the node before it runs.
+            if edge_publish is not None:
+                await self._publish_edge(edge_publish)
+
             await self._nc.publish(subject, encoded, reply=reply, headers=headers)
 
             while True:

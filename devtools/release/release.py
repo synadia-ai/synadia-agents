@@ -1,0 +1,1936 @@
+#!/usr/bin/env python3
+"""Fail-closed release staging and artifact tooling.
+
+The checkout is a development input.  Release artifacts are always produced
+from a tracked-only ``git archive`` in a separate directory, with exact
+internal dependency versions written only into that stage.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import binascii
+import email.parser
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import tomllib
+import zipfile
+from collections import defaultdict
+from pathlib import Path, PurePosixPath
+from typing import Any, BinaryIO
+
+
+HERE = Path(__file__).resolve().parent
+DEFAULT_REPO = HERE.parent.parent
+DEFAULT_PLAN = HERE / "plan.json"
+DEFAULT_REHEARSAL_VERSIONS = HERE / "versions.rehearsal.json"
+DEFAULT_CANDIDATE_VERSIONS = HERE / "versions.json"
+DEFAULT_COOLDOWN = HERE / "cooldown-policy.json"
+DEFAULT_FREEZE = HERE / "freeze-baseline.json"
+STAGE_MARKER = ".release-stage.json"
+DEPENDENCY_SECTIONS = (
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+)
+FORBIDDEN_SPEC_PREFIXES = (
+    "file:",
+    "link:",
+    "workspace:",
+    "path:",
+    "git:",
+    "git+",
+    "github:",
+    "http:",
+    "https:",
+    "catalog:",
+)
+FORBIDDEN_PUBLIC_TEXT = (
+    b"agent fabric",
+    b"synadia-agent-fabric",
+)
+NKEY_SEED_PATTERN = re.compile(rb"\bS[UAONC][A-Z2-7]{54,60}\b")
+JWT_CANDIDATE_PATTERN = re.compile(
+    rb"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{12,})\.([A-Za-z0-9_-]{20,})(?![A-Za-z0-9_-])"
+)
+PUBLISH_TOKEN_PATTERN = re.compile(
+    rb"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{20,}|pypi-[A-Za-z0-9_-]{20,})\b"
+)
+ABSOLUTE_SOURCE_PATH_PATTERN = re.compile(
+    rb"(?:/Users/[^\s\"']+|/home/(?:runner|[^/\s]+)/(?:work|src)/[^\s\"']+|[A-Za-z]:\\(?:Users|work|src)\\[^\s\"']+)"
+)
+PUBLIC_TEXT_SCAN_CHUNK = 1024 * 1024
+PUBLIC_TEXT_SCAN_OVERLAP = 4096
+
+
+class ReleaseError(RuntimeError):
+    """A release invariant was violated."""
+
+
+def fail(message: str) -> None:
+    raise ReleaseError(message)
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"cannot read JSON {path}: {exc}")
+    if not isinstance(value, dict):
+        fail(f"expected a JSON object in {path}")
+    return value
+
+
+def write_json(path: Path, value: Any, *, overwrite: bool = True) -> None:
+    if path.exists() and not overwrite:
+        fail(f"refusing to overwrite {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def run(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    capture: bool = False,
+) -> str:
+    rendered = " ".join(command)
+    print(f"+ ({cwd}) {rendered}", flush=True)
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        env=env,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.PIPE if capture else None,
+    )
+    if completed.returncode != 0:
+        detail = ""
+        if capture:
+            detail = f"\nstdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+        fail(f"command failed ({completed.returncode}): {rendered}{detail}")
+    return completed.stdout if capture else ""
+
+
+def package_dir(entry: dict[str, Any]) -> Path:
+    return Path(entry["path"]).parent
+
+
+def release_entries(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        *[
+            item
+            for item in plan["npm"]
+            if item["role"] in {"publishable", "marketplace"}
+        ],
+        *[item for item in plan["python"] if item["role"] == "publishable"],
+    ]
+
+
+def validate_plan(plan: dict[str, Any]) -> None:
+    if plan.get("schema_version") != 1:
+        fail("unsupported release plan schema")
+
+    ids: set[str] = set()
+    paths: set[str] = set()
+    names: set[str] = set()
+    all_entries = [*plan.get("npm", []), *plan.get("python", [])]
+    npm_ids = {entry.get("id") for entry in plan.get("npm", [])}
+    for entry in all_entries:
+        for key in ("id", "path", "name", "role"):
+            if not entry.get(key):
+                fail(f"release plan entry is missing {key}: {entry!r}")
+        if entry["id"] in ids:
+            fail(f"duplicate release-plan id: {entry['id']}")
+        if entry["path"] in paths:
+            fail(f"duplicate release-plan manifest: {entry['path']}")
+        if entry["name"] in names:
+            fail(f"duplicate release-plan package name: {entry['name']}")
+        ids.add(entry["id"])
+        paths.add(entry["path"])
+        names.add(entry["name"])
+
+        if entry["role"] == "publishable" and entry["id"] in npm_ids:
+            imports = entry.get("import_smoke", [])
+            bins = entry.get("bin_smoke", {})
+            waiver = entry.get("smoke_waiver")
+            if (
+                not imports
+                and not bins
+                and not (isinstance(waiver, str) and waiver.strip())
+            ):
+                fail(
+                    f"npm publishable {entry['id']} needs an artifact runtime "
+                    "smoke or an explicit smoke_waiver"
+                )
+            for smoke_key in (
+                "import_smoke",
+                "node_import_smoke",
+                "node_require_smoke",
+            ):
+                smoke_values = entry.get(smoke_key, [])
+                if not isinstance(smoke_values, list) or not all(
+                    isinstance(value, str) and value for value in smoke_values
+                ):
+                    fail(f"{entry['id']} {smoke_key} must be a list of module names")
+
+    excluded_paths: set[str] = set()
+    for entry in plan.get("excluded_manifests", []):
+        path = entry.get("path")
+        reason = entry.get("reason")
+        if not path or not reason:
+            fail("every excluded manifest needs a path and reason")
+        if path in paths or path in excluded_paths:
+            fail(f"duplicate manifest classification: {path}")
+        excluded_paths.add(path)
+
+    release_names = {entry["name"] for entry in release_entries(plan)}
+    npm_names = {entry["name"] for entry in plan["npm"]}
+    python_names = {entry["name"] for entry in plan["python"]}
+    for entry in all_entries:
+        for edge in entry.get("internal_edges", []):
+            if edge not in npm_names | python_names:
+                fail(f"{entry['id']} has unknown internal edge {edge}")
+            if (
+                entry["role"] in {"publishable", "marketplace"}
+                and edge not in release_names
+            ):
+                fail(
+                    f"release package {entry['id']} depends on non-release package {edge}"
+                )
+
+    # Enforce the release DAG rather than trusting a hand-written layer number.
+    layers = {entry["name"]: entry.get("layer", 0) for entry in release_entries(plan)}
+    for entry in release_entries(plan):
+        for edge in entry.get("internal_edges", []):
+            if layers[edge] >= layers[entry["name"]]:
+                fail(f"non-topological edge: {entry['name']} -> {edge}")
+
+    python_versions = plan.get("toolchain", {}).get("python")
+    if (
+        not isinstance(python_versions, list)
+        or not python_versions
+        or not all(isinstance(value, str) and value for value in python_versions)
+        or len(set(python_versions)) != len(python_versions)
+    ):
+        fail("release toolchain needs distinct supported Python versions")
+
+
+def git_tracked_manifests(repo: Path) -> set[str]:
+    output = run(
+        [
+            "git",
+            "ls-files",
+            "--",
+            "client-sdk/**/package.json",
+            "agent-sdk/**/package.json",
+            "agents/**/package.json",
+            "examples/**/package.json",
+            "client-sdk/**/pyproject.toml",
+            "agent-sdk/**/pyproject.toml",
+            "agents/**/pyproject.toml",
+            "examples/**/pyproject.toml",
+        ],
+        cwd=repo,
+        capture=True,
+    )
+    return {line for line in output.splitlines() if line}
+
+
+def is_forbidden_spec(spec: Any) -> bool:
+    if not isinstance(spec, str):
+        return True
+    normalized = spec.strip().lower()
+    return normalized in {"", "*", "latest"} or normalized.startswith(
+        FORBIDDEN_SPEC_PREFIXES
+    )
+
+
+def npm_dependencies(manifest: dict[str, Any]) -> dict[str, tuple[str, Any]]:
+    result: dict[str, tuple[str, Any]] = {}
+    for section in DEPENDENCY_SECTIONS:
+        values = manifest.get(section, {})
+        if values is None:
+            continue
+        if not isinstance(values, dict):
+            fail(f"package.json {section} must be an object")
+        for name, spec in values.items():
+            result[name] = (section, spec)
+    return result
+
+
+def python_dependencies(project: dict[str, Any]) -> dict[str, str]:
+    dependencies = project.get("project", {}).get("dependencies", [])
+    if not isinstance(dependencies, list):
+        fail("pyproject project.dependencies must be a list")
+    result: dict[str, str] = {}
+    for requirement in dependencies:
+        if not isinstance(requirement, str):
+            fail(f"non-string Python requirement: {requirement!r}")
+        match = re.match(r"^([A-Za-z0-9_.-]+)", requirement)
+        if match:
+            result[match.group(1).lower().replace("_", "-")] = requirement
+    return result
+
+
+def validate_source(repo: Path, plan_path: Path) -> None:
+    plan = read_json(plan_path)
+    validate_plan(plan)
+    classified = {
+        *[entry["path"] for entry in plan["npm"]],
+        *[entry["path"] for entry in plan["python"]],
+        *[entry["path"] for entry in plan["excluded_manifests"]],
+    }
+    tracked = git_tracked_manifests(repo)
+    missing = sorted(tracked - classified)
+    stale = sorted(classified - tracked)
+    if missing or stale:
+        fail(
+            f"manifest classification mismatch; unclassified={missing}, missing={stale}"
+        )
+
+    npm_names = {entry["name"] for entry in plan["npm"]}
+    for entry in plan["npm"]:
+        manifest_path = repo / entry["path"]
+        manifest = read_json(manifest_path)
+        if manifest.get("name") != entry["name"]:
+            fail(f"name mismatch in {entry['path']}")
+        actual_edges = {
+            name for name in npm_dependencies(manifest) if name in npm_names
+        }
+        expected_edges = set(entry.get("internal_edges", []))
+        # The caller's test-only host back-edge is deliberately removed in stage.
+        for removal in entry.get("stage_remove", []):
+            _, name = removal.split(":", 1)
+            expected_edges.add(name)
+        if actual_edges != expected_edges:
+            fail(
+                f"internal edge mismatch in {entry['path']}: "
+                f"expected {sorted(expected_edges)}, found {sorted(actual_edges)}"
+            )
+        for name, (section, spec) in npm_dependencies(manifest).items():
+            if name not in npm_names and is_forbidden_spec(spec):
+                fail(
+                    f"mutable external dependency {section}:{name}={spec!r} in {entry['path']}"
+                )
+        if entry["role"] == "publishable":
+            if manifest.get("private") is True:
+                fail(f"publishable package is private: {entry['path']}")
+            if manifest.get("publishConfig", {}).get("access") != "public":
+                fail(f"publishable package lacks public publishConfig: {entry['path']}")
+            if not isinstance(manifest.get("files"), list):
+                fail(f"publishable package lacks a files allowlist: {entry['path']}")
+        if entry["role"] == "marketplace" and manifest.get("private") is not True:
+            fail(f"marketplace-only package must be private: {entry['path']}")
+        lock = entry.get("lock")
+        if (
+            lock
+            and not (repo / lock).is_file()
+            and not entry.get("source_lock_optional")
+        ):
+            fail(f"missing source lock for {entry['id']}: {lock}")
+
+    python_names = {entry["name"] for entry in plan["python"]}
+    for entry in plan["python"]:
+        path = repo / entry["path"]
+        with path.open("rb") as stream:
+            project = tomllib.load(stream)
+        if project.get("project", {}).get("name") != entry["name"]:
+            fail(f"name mismatch in {entry['path']}")
+        actual_edges = set(python_dependencies(project)) & python_names
+        if actual_edges != set(entry.get("internal_edges", [])):
+            fail(f"internal edge mismatch in {entry['path']}")
+        lock = entry.get("lock")
+        if lock and not (repo / lock).is_file():
+            fail(f"missing Python lock for {entry['id']}: {lock}")
+
+    print(f"validated {len(classified)} classified manifests")
+
+
+def resolve_source(repo: Path, source: str) -> tuple[str, int]:
+    sha = run(
+        ["git", "rev-parse", f"{source}^{{commit}}"], cwd=repo, capture=True
+    ).strip()
+    epoch_text = run(
+        ["git", "show", "-s", "--format=%ct", sha], cwd=repo, capture=True
+    ).strip()
+    return sha, int(epoch_text)
+
+
+def extract_checked_tar(archive: tarfile.TarFile, destination: Path) -> None:
+    for member in archive.getmembers():
+        path = PurePosixPath(member.name)
+        if path.is_absolute() or ".." in path.parts:
+            fail(f"unsafe path in git archive: {member.name}")
+    try:
+        archive.extractall(
+            destination,
+            filter="data",
+        )  # noqa: S202 - names and the data filter are checked above
+    except tarfile.TarError as exc:
+        fail(f"unsafe member in git archive: {exc}")
+
+
+def safe_extract_git_archive(repo: Path, sha: str, destination: Path) -> None:
+    archive = subprocess.run(
+        ["git", "archive", "--format=tar", sha],
+        cwd=repo,
+        check=False,
+        stdout=subprocess.PIPE,
+    )
+    if archive.returncode != 0:
+        fail(f"git archive failed for {sha}")
+    with tarfile.open(
+        fileobj=__import__("io").BytesIO(archive.stdout), mode="r:"
+    ) as tar:
+        extract_checked_tar(tar, destination)
+
+
+def load_versions(path: Path, plan: dict[str, Any]) -> tuple[str, dict[str, str]]:
+    document = read_json(path)
+    phase = document.get("phase")
+    if phase not in {"rehearsal", "candidate"}:
+        fail(f"invalid versions phase in {path}: {phase!r}")
+    values = document.get("versions")
+    if not isinstance(values, dict):
+        fail(f"versions must be an object in {path}")
+    required = {entry["name"] for entry in release_entries(plan)}
+    missing = sorted(required - set(values))
+    unknown = sorted(set(values) - required)
+    unset = sorted(
+        name
+        for name in required
+        if not isinstance(values.get(name), str) or not values[name]
+    )
+    if missing or unknown or unset:
+        fail(
+            f"version map invalid; missing={missing}, unknown={unknown}, unset={unset}"
+        )
+    return phase, {name: values[name] for name in required}
+
+
+def rewrite_npm_manifest(
+    manifest: dict[str, Any],
+    entry: dict[str, Any],
+    versions: dict[str, str],
+    phase: str,
+) -> dict[str, Any]:
+    result = json.loads(json.dumps(manifest))
+    if entry["role"] in {"publishable", "marketplace"}:
+        expected = versions[entry["name"]]
+        if phase == "candidate" and result.get("version") != expected:
+            fail(
+                f"candidate source version mismatch for {entry['name']}: "
+                f"source={result.get('version')!r}, plan={expected!r}"
+            )
+        if phase == "rehearsal":
+            result["version"] = expected
+    for removal in entry.get("stage_remove", []):
+        section, name = removal.split(":", 1)
+        values = result.get(section)
+        if isinstance(values, dict):
+            values.pop(name, None)
+            if not values:
+                result.pop(section, None)
+    for section in DEPENDENCY_SECTIONS:
+        dependencies = result.get(section)
+        if not isinstance(dependencies, dict):
+            continue
+        for dependency in list(dependencies):
+            if dependency in versions:
+                dependencies[dependency] = versions[dependency]
+    return result
+
+
+def rewrite_pyproject(
+    text: str,
+    entry: dict[str, Any],
+    versions: dict[str, str],
+    phase: str,
+    hatchling: str,
+) -> str:
+    lines = text.splitlines(keepends=True)
+    output: list[str] = []
+    section = ""
+    removed_uv_sources = False
+    own_version_done = False
+    build_requires_done = False
+    dependency_replacements = {
+        name: f"{name}=={versions[name]}" for name in entry["internal_edges"]
+    }
+
+    for line in lines:
+        heading = re.match(r"^\s*\[([^]]+)]\s*$", line)
+        if heading:
+            section = heading.group(1)
+            if section == "tool.uv.sources":
+                removed_uv_sources = True
+                continue
+        if section == "tool.uv.sources":
+            continue
+        if section == "project" and re.match(r"^version\s*=", line):
+            if entry["role"] == "publishable":
+                expected = versions[entry["name"]]
+                current_match = re.match(r'^version\s*=\s*"([^"]+)"', line)
+                current = current_match.group(1) if current_match else None
+                if phase == "candidate" and current != expected:
+                    fail(
+                        f"candidate source version mismatch for {entry['name']}: "
+                        f"source={current!r}, plan={expected!r}"
+                    )
+                if phase == "rehearsal":
+                    line = f'version = "{expected}"\n'
+                own_version_done = True
+        if section == "project" and dependency_replacements:
+            match = re.match(r'^(\s*)"([A-Za-z0-9_.-]+)(?:[^";]*)"(,?\s*)$', line)
+            if match:
+                canonical = match.group(2).lower().replace("_", "-")
+                if canonical in dependency_replacements:
+                    line = f'{match.group(1)}"{dependency_replacements[canonical]}"{match.group(3)}\n'
+        if section == "build-system" and re.match(r"^requires\s*=", line):
+            line = f'requires = ["hatchling=={hatchling}"]\n'
+            build_requires_done = True
+        output.append(line)
+
+    result = "".join(output)
+    if entry["role"] == "publishable" and not own_version_done:
+        fail(f"did not find project version in {entry['path']}")
+    if entry["role"] == "publishable" and not build_requires_done:
+        fail(f"did not find build-system.requires in {entry['path']}")
+    # Evidence projects may not have build metadata, but all source overrides
+    # must still disappear from the stage.
+    if "[tool.uv.sources]" in text and not removed_uv_sources:
+        fail(f"failed to remove tool.uv.sources from {entry['path']}")
+    parsed = tomllib.loads(result)
+    dependencies = python_dependencies(parsed)
+    for name, expected in dependency_replacements.items():
+        if dependencies.get(name) != expected:
+            fail(f"failed to exact-pin {name} in {entry['path']}")
+    return result
+
+
+def stage_release(
+    repo: Path, plan_path: Path, versions_path: Path, source: str, output: Path
+) -> None:
+    plan = read_json(plan_path)
+    validate_plan(plan)
+    phase, versions = load_versions(versions_path, plan)
+    sha, epoch = resolve_source(repo, source)
+    output = output.resolve()
+    repo_resolved = repo.resolve()
+    if output == repo_resolved or repo_resolved in output.parents:
+        fail("release stage must be outside the repository")
+    if output.exists():
+        fail(f"release stage already exists: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temp = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+    try:
+        safe_extract_git_archive(repo, sha, temp)
+        for relative in plan.get("stage_remove_files", []):
+            target = temp / relative
+            if not target.is_file():
+                fail(f"staged removal target is missing: {target}")
+            target.unlink()
+        for entry in plan["npm"]:
+            path = temp / entry["path"]
+            manifest = read_json(path)
+            rewritten = rewrite_npm_manifest(manifest, entry, versions, phase)
+            write_json(path, rewritten)
+            if license_source := entry.get("stage_license_from"):
+                shutil.copyfile(temp / license_source, path.parent / "LICENSE")
+            descriptor = entry.get("plugin_descriptor")
+            if descriptor:
+                descriptor_path = temp / descriptor
+                plugin = read_json(descriptor_path)
+                plugin["version"] = versions[entry["name"]]
+                write_json(descriptor_path, plugin)
+
+        hatchling = plan["toolchain"]["hatchling"]
+        for entry in plan["python"]:
+            path = temp / entry["path"]
+            rewritten = rewrite_pyproject(
+                path.read_text(encoding="utf-8"), entry, versions, phase, hatchling
+            )
+            path.write_text(rewritten, encoding="utf-8")
+            for relative in entry.get("stage_remove_files", []):
+                target = path.parent / relative
+                if not target.is_file():
+                    fail(f"staged removal target is missing: {target}")
+                target.unlink()
+            if license_source := entry.get("stage_license_from"):
+                shutil.copyfile(temp / license_source, path.parent / "LICENSE")
+
+        marker = {
+            "schema_version": 1,
+            "source_sha": sha,
+            "source_epoch": epoch,
+            "phase": phase,
+            "plan_sha256": sha256_file(plan_path),
+            "versions_sha256": sha256_file(versions_path),
+            "versions": versions,
+        }
+        write_json(temp / STAGE_MARKER, marker)
+        temp.rename(output)
+    except BaseException:
+        shutil.rmtree(temp, ignore_errors=True)
+        raise
+    print(f"staged {sha} at {output}")
+
+
+def parse_bun_lock(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    # Bun's text lock is JSON with trailing commas.  It currently contains no
+    # comments; deliberately fail if it grows syntax this small parser cannot
+    # understand instead of silently accepting an incomplete graph.
+    cleaned = re.sub(r",(\s*[}\]])", r"\1", text)
+    try:
+        result = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        fail(f"cannot parse Bun lock {path}: {exc}")
+    if not isinstance(result, dict):
+        fail(f"invalid Bun lock root in {path}")
+    return result
+
+
+def validate_bun_lock(
+    root: Path,
+    entry: dict[str, Any],
+    manifest: dict[str, Any],
+    versions: dict[str, str],
+) -> None:
+    lock_path = root / entry["lock"]
+    if not lock_path.is_file():
+        fail(f"missing registry-stage lock: {entry['lock']}")
+    raw = lock_path.read_text(encoding="utf-8")
+    lowered = raw.lower()
+    for token in ("file:", "workspace:", "link:", "git+", "catalog:"):
+        if token in lowered:
+            fail(f"forbidden locator {token} in {entry['lock']}")
+    lock = parse_bun_lock(lock_path)
+    workspace = lock.get("workspaces", {}).get("")
+    if not isinstance(workspace, dict):
+        fail(f"missing root workspace in {entry['lock']}")
+    for section in ("dependencies", "devDependencies", "optionalDependencies"):
+        expected = manifest.get(section, {}) or {}
+        actual = workspace.get(section, {}) or {}
+        if expected != actual:
+            fail(f"stale {section} root in {entry['lock']}")
+    packages = lock.get("packages", {})
+    for dependency in entry.get("internal_edges", []):
+        record = packages.get(dependency)
+        if not isinstance(record, list) or not record:
+            fail(f"missing internal lock entry {dependency} in {entry['lock']}")
+        expected_prefix = f"{dependency}@{versions[dependency]}"
+        if record[0] != expected_prefix:
+            fail(f"wrong locked internal version for {dependency} in {entry['lock']}")
+        if len(record) < 4 or not valid_sha512_integrity(record[-1]):
+            fail(f"missing registry integrity for {dependency} in {entry['lock']}")
+
+
+def valid_sha512_integrity(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha512-"):
+        return False
+    try:
+        digest = base64.b64decode(value.removeprefix("sha512-"), validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return len(digest) == hashlib.sha512().digest_size
+
+
+def validate_python_lock(
+    root: Path,
+    entry: dict[str, Any],
+    versions: dict[str, str],
+) -> None:
+    lock_path = root / entry["lock"]
+    if not lock_path.is_file():
+        fail(f"missing Python lock: {entry['lock']}")
+    with lock_path.open("rb") as stream:
+        lock = tomllib.load(stream)
+    packages = defaultdict(list)
+    for package in lock.get("package", []):
+        packages[package.get("name")].append(package)
+    own = packages.get(entry["name"], [])
+    if not own:
+        fail(f"missing root package {entry['name']} in {entry['lock']}")
+    for dependency in entry.get("internal_edges", []):
+        matches = packages.get(dependency, [])
+        registry_matches = [
+            package
+            for package in matches
+            if package.get("version") == versions[dependency]
+            and isinstance(package.get("source"), dict)
+            and "registry" in package["source"]
+        ]
+        if not registry_matches:
+            fail(
+                f"wrong, missing, or non-registry internal version {dependency} "
+                f"in {entry['lock']}"
+            )
+
+        requirements = [
+            requirement
+            for package in own
+            for requirement in package.get("metadata", {}).get("requires-dist", [])
+        ]
+        expected = f"=={versions[dependency]}"
+        if not any(
+            requirement.get("name") == dependency
+            and requirement.get("specifier") == expected
+            and "editable" not in requirement
+            and "directory" not in requirement
+            and "git" not in requirement
+            for requirement in requirements
+        ):
+            fail(
+                f"root metadata does not exact-pin registry dependency {dependency} "
+                f"in {entry['lock']}"
+            )
+
+    # Let uv validate the entire solution, not only internal edges. This catches
+    # stale or incompatible external resolutions while remaining offline and
+    # incapable of rewriting the approved lock.
+    run(
+        [
+            "uv",
+            "lock",
+            "--check",
+            "--offline",
+            "--project",
+            str(package_dir(entry)),
+        ],
+        cwd=root,
+    )
+
+
+def validate_stage(
+    root: Path,
+    plan_path: Path,
+    *,
+    require_registry_locks: bool,
+    required_lock_ids: set[str] | None = None,
+) -> None:
+    plan = read_json(plan_path)
+    validate_plan(plan)
+    marker = read_json(root / STAGE_MARKER)
+    versions = marker.get("versions")
+    if not isinstance(versions, dict):
+        fail("stage marker has no version map")
+    if marker.get("plan_sha256") != sha256_file(plan_path):
+        fail("stage was created with a different release plan")
+    for relative in plan.get("stage_remove_files", []):
+        if (root / relative).exists():
+            fail(f"staged removal target remains: {relative}")
+
+    npm_names = {entry["name"] for entry in plan["npm"]}
+    for entry in plan["npm"]:
+        manifest = read_json(root / entry["path"])
+        if entry["role"] in {"publishable", "marketplace"}:
+            if manifest.get("version") != versions[entry["name"]]:
+                fail(f"wrong staged version for {entry['name']}")
+        if (
+            entry.get("stage_license_from")
+            and not (root / package_dir(entry) / "LICENSE").is_file()
+        ):
+            fail(f"staged license is missing for {entry['name']}")
+        dependencies = npm_dependencies(manifest)
+        for name, (section, spec) in dependencies.items():
+            if is_forbidden_spec(spec) and name not in entry.get(
+                "allowed_stage_local_edges", []
+            ):
+                fail(
+                    f"forbidden staged dependency {section}:{name}={spec!r} in {entry['path']}"
+                )
+            if name in versions and spec != versions[name]:
+                fail(
+                    f"non-exact internal dependency {name}={spec!r} in {entry['path']}"
+                )
+        actual_edges = set(dependencies) & npm_names
+        if actual_edges != set(entry.get("internal_edges", [])):
+            fail(f"staged internal edge mismatch in {entry['path']}")
+        if entry["role"] == "marketplace":
+            if manifest.get("private") is not True:
+                fail("marketplace package is npm-publishable")
+            plugin = read_json(root / entry["plugin_descriptor"])
+            if plugin.get("version") != manifest.get("version"):
+                fail("Claude marketplace package/plugin version mismatch")
+            if not (root / entry["runtime_bundle"]).is_file():
+                fail("Claude marketplace runtime bundle is missing")
+        lock_required = required_lock_ids is None or entry["id"] in required_lock_ids
+        if (
+            require_registry_locks
+            and lock_required
+            and entry.get("lock")
+            and entry.get("lock_phase") == "registry"
+        ):
+            validate_bun_lock(root, entry, manifest, versions)
+
+    python_names = {entry["name"] for entry in plan["python"]}
+    for entry in plan["python"]:
+        path = root / entry["path"]
+        text = path.read_text(encoding="utf-8")
+        if "[tool.uv.sources]" in text:
+            fail(f"Python source override remains in {entry['path']}")
+        with path.open("rb") as stream:
+            project = tomllib.load(stream)
+        if (
+            entry["role"] == "publishable"
+            and project["project"].get("version") != versions[entry["name"]]
+        ):
+            fail(f"wrong staged Python version for {entry['name']}")
+        if (
+            entry.get("stage_license_from")
+            and not (root / package_dir(entry) / "LICENSE").is_file()
+        ):
+            fail(f"staged license is missing for {entry['name']}")
+        for relative in entry.get("stage_remove_files", []):
+            if (path.parent / relative).exists():
+                fail(f"staged removal target remains for {entry['name']}: {relative}")
+        dependencies = python_dependencies(project)
+        for name in set(dependencies) & python_names:
+            expected = f"{name}=={versions[name]}"
+            if dependencies[name] != expected:
+                fail(f"non-exact Python internal requirement {dependencies[name]!r}")
+        lock_required = required_lock_ids is None or entry["id"] in required_lock_ids
+        if require_registry_locks and lock_required and entry["role"] == "publishable":
+            validate_python_lock(root, entry, versions)
+
+    qualifier = " with registry locks" if require_registry_locks else ""
+    print(f"validated staged graph{qualifier}: {root}")
+
+
+def freeze_paths(repo: Path, plan: dict[str, Any]) -> list[str]:
+    paths = {
+        *[entry["path"] for entry in plan["npm"]],
+        *[entry["path"] for entry in plan["python"]],
+        *[entry["lock"] for entry in plan["npm"] if entry.get("lock")],
+        *[entry["lock"] for entry in plan["python"] if entry.get("lock")],
+        "devtools/release/plan.json",
+        "devtools/release/release.py",
+        "devtools/release/python-build-constraints.txt",
+        "devtools/release/python-build-requirements.in",
+        "devtools/release/versions.rehearsal.json",
+        "devtools/release/versions.json",
+        "devtools/release/cooldown-policy.json",
+        ".github/scripts/rollout-ci-summary.sh",
+        ".github/workflows/release-rehearsal.yml",
+        ".github/workflows/release-python.yml",
+        ".github/workflows/release-python-agent-service.yml",
+        ".github/workflows/release-python-deerflow.yml",
+        ".github/workflows/rollout-ci-summary.yml",
+    }
+    return sorted(path for path in paths if (repo / path).is_file())
+
+
+def make_freeze(repo: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "files": {
+            path: {
+                "sha256": sha256_file(repo / path),
+                "size": (repo / path).stat().st_size,
+            }
+            for path in freeze_paths(repo, plan)
+        },
+        "toolchain": plan["toolchain"],
+    }
+
+
+def freeze_command(repo: Path, plan_path: Path, baseline: Path, *, write: bool) -> None:
+    plan = read_json(plan_path)
+    validate_plan(plan)
+    current = make_freeze(repo, plan)
+    if write:
+        write_json(baseline, current)
+        print(f"wrote dependency freeze baseline: {baseline}")
+        return
+    recorded = read_json(baseline)
+    if recorded != current:
+        recorded_files = recorded.get("files", {})
+        current_files = current["files"]
+        changed = sorted(
+            path
+            for path in set(recorded_files) | set(current_files)
+            if recorded_files.get(path) != current_files.get(path)
+        )
+        fail(f"dependency freeze drift: {changed}")
+    print(f"dependency freeze matches {baseline}")
+
+
+def ensure_empty_output(path: Path) -> None:
+    if path.exists():
+        if not path.is_dir() or any(path.iterdir()):
+            fail(f"artifact directory must not exist or must be empty: {path}")
+    else:
+        path.mkdir(parents=True)
+
+
+def internal_closure(
+    entry: dict[str, Any], entries_by_name: dict[str, dict[str, Any]]
+) -> list[str]:
+    """Return a dependency-first transitive internal closure for an entry."""
+    result: list[str] = []
+    visiting: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in result:
+            return
+        if name in visiting:
+            fail(f"internal dependency cycle at {name}")
+        dependency = entries_by_name.get(name)
+        if dependency is None:
+            fail(f"unknown internal dependency in artifact build: {name}")
+        visiting.add(name)
+        for child in dependency.get("internal_edges", []):
+            visit(child)
+        visiting.remove(name)
+        result.append(name)
+
+    for edge in entry.get("internal_edges", []):
+        visit(edge)
+    return result
+
+
+def select_publishable_entries(
+    plan: dict[str, Any],
+    ecosystem: str,
+    package_ids: set[str] | None,
+) -> list[dict[str, Any]]:
+    entries = sorted(
+        (entry for entry in plan[ecosystem] if entry["role"] == "publishable"),
+        key=lambda item: (item["layer"], item["id"]),
+    )
+    if package_ids is None:
+        return entries
+    known = {entry["id"] for entry in entries}
+    unknown = sorted(package_ids - known)
+    if unknown:
+        fail(f"unknown {ecosystem} publishable package ids: {unknown}")
+    return [entry for entry in entries if entry["id"] in package_ids]
+
+
+def inspect_public_text(artifact: Path, member: str, data: bytes) -> None:
+    lowered = data.lower()
+    for forbidden in FORBIDDEN_PUBLIC_TEXT:
+        if forbidden in lowered:
+            fail(f"private product terminology in {artifact.name}: {member}")
+    if NKEY_SEED_PATTERN.search(data):
+        fail(f"possible NKEY seed in {artifact.name}: {member}")
+    if PUBLISH_TOKEN_PATTERN.search(data):
+        fail(f"possible registry or source-control token in {artifact.name}: {member}")
+    if ABSOLUTE_SOURCE_PATH_PATTERN.search(data):
+        fail(f"absolute source path in {artifact.name}: {member}")
+    for candidate in JWT_CANDIDATE_PATTERN.finditer(data):
+        payload = candidate.group(2)
+        try:
+            decoded = base64.urlsafe_b64decode(payload + b"=" * (-len(payload) % 4))
+            claims = json.loads(decoded)
+        except (binascii.Error, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if (
+            isinstance(claims, dict)
+            and isinstance(claims.get("sub"), str)
+            and isinstance(claims.get("iss"), str)
+        ):
+            fail(f"possible JWT credential in {artifact.name}: {member}")
+
+
+def inspect_public_stream(
+    artifact: Path,
+    member: str,
+    stream: BinaryIO,
+) -> None:
+    tail = b""
+    while chunk := stream.read(PUBLIC_TEXT_SCAN_CHUNK):
+        data = tail + chunk
+        inspect_public_text(artifact, member, data)
+        tail = data[-PUBLIC_TEXT_SCAN_OVERLAP:]
+
+
+def inspect_npm_tarball(tarball: Path, staged_manifest: dict[str, Any]) -> None:
+    with tarfile.open(tarball, "r:gz") as archive:
+        members = archive.getmembers()
+        names = [member.name for member in members]
+        members_by_name = {member.name: member for member in members}
+        for name in names:
+            lowered = name.lower()
+            if (
+                "/node_modules/" in f"/{lowered}/"
+                or "/.git/" in f"/{lowered}/"
+                or lowered.endswith((".tgz", ".tar.gz"))
+                or PurePosixPath(lowered).name in {".env", ".npmrc"}
+            ):
+                fail(f"forbidden file in {tarball.name}: {name}")
+        for member in members:
+            if not member.isfile():
+                continue
+            stream = archive.extractfile(member)
+            if stream is not None:
+                inspect_public_stream(tarball, member.name, stream)
+        try:
+            package_file = archive.extractfile("package/package.json")
+        except KeyError:
+            package_file = None
+        if package_file is None:
+            fail(f"missing package/package.json in {tarball}")
+        packed_manifest = json.load(package_file)
+        if packed_manifest != staged_manifest:
+            fail(f"packed manifest differs from staged manifest: {tarball}")
+        if (
+            "LICENSE" in staged_manifest.get("files", [])
+            and "package/LICENSE" not in names
+        ):
+            fail(f"declared LICENSE is missing from {tarball}")
+        bins = staged_manifest.get("bin", {})
+        if isinstance(bins, str):
+            bins = {staged_manifest["name"].rsplit("/", 1)[-1]: bins}
+        for binary, target in bins.items():
+            member_name = f"package/{str(target).removeprefix('./')}"
+            member = members_by_name.get(member_name)
+            if member is None:
+                fail(f"bin {binary} target is missing from {tarball}: {target}")
+            if member.mode & 0o111 == 0:
+                fail(f"bin {binary} is not executable in {tarball}: {target}")
+
+
+def canonical_python_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value).lower()
+
+
+def inspect_python_metadata(
+    artifact: Path,
+    member: str,
+    data: bytes,
+    entry: dict[str, Any],
+    version: str,
+) -> None:
+    metadata = email.parser.BytesParser().parsebytes(data)
+    if canonical_python_name(metadata.get("Name", "")) != canonical_python_name(
+        entry["name"]
+    ):
+        fail(f"wrong metadata name in {artifact.name}: {member}")
+    if metadata.get("Version") != version:
+        fail(f"wrong metadata version in {artifact.name}: {member}")
+
+
+def inspect_python_distribution(
+    artifact: Path,
+    entry: dict[str, Any],
+    version: str,
+) -> None:
+    if artifact.name.endswith(".tar.gz"):
+        with tarfile.open(artifact, "r:gz") as archive:
+            files = [member for member in archive.getmembers() if member.isfile()]
+            roots = {PurePosixPath(member.name).parts[0] for member in files}
+            if len(roots) != 1:
+                fail(f"sdist must have one top-level directory: {artifact.name}")
+            root = next(iter(roots))
+            relative_names: list[str] = []
+            metadata_seen = False
+            for member in files:
+                path = PurePosixPath(member.name)
+                relative = PurePosixPath(*path.parts[1:])
+                relative_names.append(str(relative))
+                stream = archive.extractfile(member)
+                if stream is None:
+                    fail(f"cannot read {member.name} from {artifact.name}")
+                if relative.name == "PKG-INFO" and len(relative.parts) == 1:
+                    data = stream.read()
+                    inspect_public_text(artifact, member.name, data)
+                    inspect_python_metadata(artifact, member.name, data, entry, version)
+                    metadata_seen = True
+                else:
+                    inspect_public_stream(artifact, member.name, stream)
+
+            top_level = {PurePosixPath(name).parts[0] for name in relative_names}
+            allowed = set(entry["sdist_roots"]) | {"PKG-INFO"}
+            unexpected = sorted(top_level - allowed)
+            required = {"src", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"}
+            missing = sorted(required - top_level)
+            if unexpected or missing:
+                fail(
+                    f"sdist content mismatch for {entry['id']}: "
+                    f"unexpected={unexpected}, missing={missing}"
+                )
+            if not metadata_seen:
+                fail(f"sdist has no root PKG-INFO: {artifact.name}")
+            if not root.startswith(
+                canonical_python_name(entry["name"]).replace("-", "_")
+            ):
+                fail(f"unexpected sdist root {root!r} in {artifact.name}")
+        return
+
+    if artifact.suffix != ".whl":
+        fail(f"unknown Python artifact type: {artifact}")
+    with zipfile.ZipFile(artifact) as archive:
+        names = archive.namelist()
+        metadata_names = [
+            name for name in names if name.endswith(".dist-info/METADATA")
+        ]
+        if len(metadata_names) != 1:
+            fail(f"wheel must contain exactly one METADATA: {artifact.name}")
+        if not any(name.endswith(".dist-info/licenses/LICENSE") for name in names):
+            fail(f"wheel is missing LICENSE: {artifact.name}")
+        for name in names:
+            if name.endswith("/"):
+                continue
+            if name == metadata_names[0]:
+                data = archive.read(name)
+                inspect_public_text(artifact, name, data)
+            else:
+                with archive.open(name) as stream:
+                    inspect_public_stream(artifact, name, stream)
+        metadata_name = metadata_names[0]
+        inspect_python_metadata(
+            artifact,
+            metadata_name,
+            archive.read(metadata_name),
+            entry,
+            version,
+        )
+
+
+def artifact_record(stage: Path, files: list[Path], kind: str) -> dict[str, Any]:
+    marker = read_json(stage / STAGE_MARKER)
+    return {
+        "schema_version": 1,
+        "kind": kind,
+        "source_sha": marker["source_sha"],
+        "source_epoch": marker["source_epoch"],
+        "phase": marker["phase"],
+        "plan_sha256": marker["plan_sha256"],
+        "versions": marker["versions"],
+        "artifacts": [
+            {
+                "file": path.name,
+                "sha256": sha256_file(path),
+                "size": path.stat().st_size,
+            }
+            for path in sorted(files)
+        ],
+    }
+
+
+def build_npm(
+    stage: Path,
+    plan_path: Path,
+    output: Path,
+    package_ids: set[str] | None = None,
+) -> None:
+    plan = read_json(plan_path)
+    marker = read_json(stage / STAGE_MARKER)
+    phase = marker["phase"]
+    if phase == "rehearsal" and package_ids is not None:
+        fail("rehearsal npm builds always exercise the complete artifact graph")
+    if phase == "candidate" and (package_ids is None or len(package_ids) != 1):
+        fail("candidate npm builds require exactly one --package-id")
+    validate_stage(
+        stage,
+        plan_path,
+        require_registry_locks=phase == "candidate",
+        required_lock_ids=package_ids,
+    )
+    ensure_empty_output(output)
+    env = os.environ.copy()
+    env["SOURCE_DATE_EPOCH"] = str(marker["source_epoch"])
+    env["npm_config_audit"] = "false"
+    env["npm_config_fund"] = "false"
+    env["npm_config_package_lock"] = "false"
+    tarballs: dict[str, Path] = {}
+
+    entries = select_publishable_entries(plan, "npm", package_ids)
+    entries_by_name = {entry["name"]: entry for entry in entries}
+    for entry in entries:
+        directory = stage / package_dir(entry)
+        manifest_path = directory / "package.json"
+        manifest_before_install = manifest_path.read_bytes()
+        if phase == "candidate":
+            install = ["bun", "install", "--frozen-lockfile", "--ignore-scripts"]
+        else:
+            internal = [
+                str(tarballs[name]) for name in internal_closure(entry, entries_by_name)
+            ]
+            install = [
+                "npm",
+                "install",
+                "--no-save",
+                "--ignore-scripts",
+                "--no-package-lock",
+                "--no-audit",
+                "--no-fund",
+                "--include=dev",
+                *internal,
+            ]
+        run(install, cwd=directory, env=env)
+        if manifest_path.read_bytes() != manifest_before_install:
+            fail(f"dependency install mutated staged manifest for {entry['id']}")
+        build = entry.get("build")
+        if build:
+            run(build, cwd=directory, env=env)
+        before = set(output.glob("*.tgz"))
+        packed = run(
+            [
+                "npm",
+                "pack",
+                "--ignore-scripts",
+                "--json",
+                "--pack-destination",
+                str(output),
+            ],
+            cwd=directory,
+            env=env,
+            capture=True,
+        )
+        try:
+            metadata = json.loads(packed)
+            filename = metadata[0]["filename"]
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+            fail(f"cannot parse npm pack result for {entry['id']}: {exc}")
+        tarball = output / filename
+        if tarball in before or not tarball.is_file():
+            fail(f"npm pack did not create one new artifact for {entry['id']}")
+        manifest = read_json(directory / "package.json")
+        inspect_npm_tarball(tarball, manifest)
+        tarballs[entry["name"]] = tarball
+
+    # Install all exact tarballs together outside the source/stage tree.  Root
+    # direct tarball specs satisfy transitive exact internal edges without a
+    # local registry and cannot leak into any package artifact.
+    harness = Path(tempfile.mkdtemp(prefix="synadia-npm-artifact-smoke-"))
+    try:
+        dependencies = {name: f"file:{tarball}" for name, tarball in tarballs.items()}
+        write_json(
+            harness / "package.json",
+            {
+                "name": "release-artifact-smoke",
+                "private": True,
+                "type": "module",
+                "dependencies": dependencies,
+            },
+        )
+        run(
+            [
+                "npm",
+                "install",
+                "--ignore-scripts",
+                "--no-package-lock",
+                "--no-audit",
+                "--no-fund",
+            ],
+            cwd=harness,
+            env=env,
+        )
+        smoke_npm_imports(entries, harness, env)
+        for entry in entries:
+            for binary, arguments in entry.get("bin_smoke", {}).items():
+                run(
+                    ["bun", str(harness / "node_modules/.bin" / binary), *arguments],
+                    cwd=harness,
+                    env=env,
+                )
+    finally:
+        shutil.rmtree(harness, ignore_errors=True)
+
+    files = list(output.glob("*.tgz"))
+    record = artifact_record(stage, files, "npm")
+    record["packages"] = {
+        entry["id"]: tarballs[entry["name"]].name for entry in entries
+    }
+    write_json(output / "artifacts.json", record, overwrite=False)
+    write_json(
+        output / "SHA256SUMS.json",
+        {item["file"]: item["sha256"] for item in record["artifacts"]},
+        overwrite=False,
+    )
+    print(f"built and artifact-tested {len(files)} npm tarballs")
+
+
+def smoke_npm_imports(
+    entries: list[dict[str, Any]], harness: Path, env: dict[str, str]
+) -> None:
+    """Import exact installed artifacts in every runtime/loader they promise."""
+    for entry in entries:
+        for module in entry.get("import_smoke", []):
+            run(
+                ["bun", "-e", f"await import({json.dumps(module)})"],
+                cwd=harness,
+                env=env,
+            )
+        for module in entry.get("node_import_smoke", []):
+            run(
+                [
+                    "node",
+                    "--input-type=module",
+                    "-e",
+                    f"await import({json.dumps(module)})",
+                ],
+                cwd=harness,
+                env=env,
+            )
+        for module in entry.get("node_require_smoke", []):
+            run(
+                ["node", "-e", f"require({json.dumps(module)})"],
+                cwd=harness,
+                env=env,
+            )
+
+    if any(entry.get("id") == "ts-host" for entry in entries):
+        script = r"""
+import { spawn } from "node:child_process";
+import { connect } from "@nats-io/transport-node";
+import { Agents } from "@synadia-ai/agents";
+import { AgentService } from "@synadia-ai/agent-service";
+
+// NATS uses -1 (not 0, which means 4222) for an OS-assigned random port.
+const server = spawn("nats-server", ["-a", "127.0.0.1", "-p", "-1"], {
+  stdio: ["ignore", "ignore", "pipe"],
+});
+let stderr = "";
+const announcedUrl = new Promise((resolve, reject) => {
+  let settled = false;
+  const fail = (error) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timeout);
+    reject(error);
+  };
+  const timeout = setTimeout(
+    () => fail(new Error(`nats-server did not announce a client port; ${stderr}`)),
+    5000,
+  );
+  server.once("error", fail);
+  server.once("exit", (code, signal) => {
+    fail(new Error(`nats-server exited before listening (${code ?? signal}); ${stderr}`));
+  });
+  server.stderr.on("data", (chunk) => {
+    stderr = `${stderr}${chunk.toString()}`.slice(-16384);
+    const match = stderr.match(/Listening for client connections on 127\.0\.0\.1:(\d+)/);
+    if (settled || match === null) return;
+    settled = true;
+    clearTimeout(timeout);
+    resolve(`nats://127.0.0.1:${match[1]}`);
+  });
+});
+let host;
+let caller;
+let service;
+let agents;
+try {
+  const url = await announcedUrl;
+  host = await connect({ servers: url, reconnect: false, timeout: 1000 });
+  caller = await connect({ servers: url, reconnect: false });
+  let sender = "unset";
+  service = new AgentService({
+    nc: host,
+    agent: "artifact-smoke",
+    owner: "release",
+    name: "identity-off",
+    heartbeatIntervalS: 30,
+    keepaliveIntervalS: null,
+  });
+  service.onPrompt(async (_envelope, response) => {
+    sender = response.sender;
+    await response.send("ok");
+  });
+  await service.start();
+  if (service.identity !== undefined) throw new Error("identity-off host registered identity");
+  agents = new Agents({ nc: caller });
+  const found = await agents.discover({ timeoutMs: 1000, filter: { agent: "artifact-smoke" } });
+  if (found.length !== 1) throw new Error(`artifact host discovery returned ${found.length}`);
+  for await (const _ of await found[0].prompt("hello")) { /* drain */ }
+  if (sender !== undefined) throw new Error("headerless artifact prompt exposed a sender");
+} finally {
+  await agents?.close();
+  await service?.stop();
+  await caller?.close();
+  await host?.close();
+  if (server.exitCode === null && server.pid !== undefined) {
+    server.kill("SIGTERM");
+    await new Promise((resolve) => server.once("exit", resolve));
+  }
+}
+"""
+        run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=harness,
+            env=env,
+        )
+
+
+def python_cooldown_args(
+    cooldown: dict[str, Any], entries: list[dict[str, Any]]
+) -> list[str]:
+    exclusions = cooldown.get("python_internal_exclusions", [])
+    if not isinstance(exclusions, list) or not all(
+        isinstance(value, str) for value in exclusions
+    ):
+        fail("python_internal_exclusions must be a list of package names")
+    internal_names = {
+        edge for entry in entries for edge in entry.get("internal_edges", [])
+    }
+    result: list[str] = []
+    for name in sorted(set(exclusions) & internal_names):
+        result.extend(["--exclude-newer-package", f"{name}=9999-12-31T23:59:59Z"])
+    return result
+
+
+def smoke_python_artifacts(
+    entries: list[dict[str, Any]],
+    artifacts: list[Path],
+    constraints: Path,
+    cooldown: dict[str, Any],
+    env: dict[str, str],
+    python_versions: list[str],
+) -> None:
+    cooldown_args = python_cooldown_args(cooldown, entries)
+    for artifact_kind, suffix in (("wheel", ".whl"), ("sdist", ".tar.gz")):
+        selected = sorted(path for path in artifacts if path.name.endswith(suffix))
+        if not selected:
+            fail(f"no {artifact_kind} artifacts selected for smoke test")
+        for python_version in python_versions:
+            harness = Path(
+                tempfile.mkdtemp(
+                    prefix=(f"synadia-python-{python_version}-{artifact_kind}-smoke-")
+                )
+            )
+            try:
+                python = harness / ".venv/bin/python"
+                run(
+                    [
+                        "uv",
+                        "venv",
+                        "--python",
+                        python_version,
+                        str(harness / ".venv"),
+                    ],
+                    cwd=harness,
+                    env=env,
+                )
+                run(
+                    [
+                        "uv",
+                        "pip",
+                        "install",
+                        "--python",
+                        str(python),
+                        "--build-constraints",
+                        str(constraints.resolve()),
+                        "--no-progress",
+                        *cooldown_args,
+                        *[str(path.resolve()) for path in selected],
+                    ],
+                    cwd=harness,
+                    env=env,
+                )
+                for entry in entries:
+                    run(
+                        [str(python), "-c", f"import {entry['import']}"],
+                        cwd=harness,
+                        env=env,
+                    )
+                smoke_python_identity_off(entries, python, harness, env)
+            finally:
+                shutil.rmtree(harness, ignore_errors=True)
+
+
+def smoke_python_identity_off(
+    entries: list[dict[str, Any]],
+    python: Path,
+    harness: Path,
+    env: dict[str, str],
+) -> None:
+    if not any(entry.get("import") == "synadia_ai.agent_service" for entry in entries):
+        return
+    script = r"""
+import asyncio
+import re
+import subprocess
+
+import nats
+from synadia_ai.agents import Agents, DiscoverFilter
+from synadia_ai.agent_service import AgentService
+
+async def main():
+    server = subprocess.Popen(
+        # NATS uses -1 (not 0, which means 4222) for an OS-assigned random port.
+        ["nats-server", "-a", "127.0.0.1", "-p", "-1"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    host = caller = service = agents = None
+    try:
+        if server.stderr is None:
+            raise RuntimeError("nats-server stderr pipe is unavailable")
+        stderr_tail = []
+        deadline = asyncio.get_running_loop().time() + 5
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                detail = "".join(stderr_tail)
+                raise RuntimeError(
+                    f"nats-server did not announce a client port; {detail}"
+                )
+            try:
+                line = await asyncio.wait_for(
+                    asyncio.to_thread(server.stderr.readline), timeout=remaining
+                )
+            except TimeoutError as error:
+                detail = "".join(stderr_tail)
+                raise RuntimeError(
+                    f"nats-server did not announce a client port; {detail}"
+                ) from error
+            if not line:
+                detail = "".join(stderr_tail)
+                raise RuntimeError(
+                    f"nats-server exited before announcing a client port; {detail}"
+                )
+            stderr_tail.append(line)
+            stderr_tail = stderr_tail[-40:]
+            match = re.search(
+                r"Listening for client connections on 127\.0\.0\.1:(\d+)", line
+            )
+            if match is not None:
+                url = f"nats://127.0.0.1:{match.group(1)}"
+                break
+        host = await nats.connect(url, allow_reconnect=False, connect_timeout=1)
+        caller = await nats.connect(url, allow_reconnect=False)
+        seen = ["unset"]
+        service = AgentService(
+            agent="artifact-smoke",
+            owner="release",
+            session_name="identity-off",
+            nc=host,
+            heartbeat_interval_s=30,
+            keepalive_interval_s=None,
+        )
+        async def echo(_envelope, stream):
+            seen[0] = stream.sender
+            await stream.send("ok")
+        service.on_prompt(echo)
+        await service.start()
+        if service.identity is not None:
+            raise RuntimeError("identity-off host registered identity")
+        agents = Agents(nc=caller)
+        found = await agents.discover(
+            timeout=1.0, filter=DiscoverFilter(agent="artifact-smoke")
+        )
+        if len(found) != 1:
+            raise RuntimeError(f"artifact host discovery returned {len(found)}")
+        async for _ in found[0].prompt("hello"):
+            pass
+        if seen[0] is not None:
+            raise RuntimeError("headerless artifact prompt exposed a sender")
+    finally:
+        if agents is not None:
+            await agents.close()
+        if service is not None:
+            await service.stop()
+        if caller is not None:
+            await caller.close()
+        if host is not None:
+            await host.close()
+        server.terminate()
+        try:
+            server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait(timeout=5)
+
+asyncio.run(main())
+"""
+    run([str(python), "-c", script], cwd=harness, env=env)
+
+
+def build_python(
+    stage: Path,
+    plan_path: Path,
+    constraints: Path,
+    output: Path,
+    package_ids: set[str] | None = None,
+) -> None:
+    plan = read_json(plan_path)
+    marker = read_json(stage / STAGE_MARKER)
+    if marker["phase"] == "candidate" and (
+        package_ids is None or len(package_ids) != 1
+    ):
+        fail("candidate Python builds require exactly one --package-id")
+    validate_stage(
+        stage,
+        plan_path,
+        require_registry_locks=marker["phase"] == "candidate",
+        required_lock_ids=package_ids,
+    )
+    ensure_empty_output(output)
+    env = os.environ.copy()
+    env["SOURCE_DATE_EPOCH"] = str(marker["source_epoch"])
+    cooldown = read_json(stage / "devtools/release/cooldown-policy.json")
+    cutoff = cooldown.get("external_freeze_cutoff")
+    if not isinstance(cutoff, str) or not cutoff:
+        fail("Python artifact rehearsal requires an external freeze cutoff")
+    env["UV_EXCLUDE_NEWER"] = cutoff
+    entries = select_publishable_entries(plan, "python", package_ids)
+    by_id: dict[str, list[Path]] = {}
+    for entry in entries:
+        directory = stage / package_dir(entry)
+        before = set(output.iterdir())
+        common = [
+            "--out-dir",
+            str(output),
+            "--no-sources",
+            "--build-constraints",
+            str(constraints.resolve()),
+            "--require-hashes",
+            "--no-progress",
+        ]
+        run(["uv", "build", str(directory), "--sdist", *common], cwd=stage, env=env)
+        new_sdists = sorted(set(output.glob("*.tar.gz")) - before)
+        if len(new_sdists) != 1:
+            fail(f"expected one new sdist for {entry['id']}, found {new_sdists}")
+        sdist = new_sdists[0]
+        before_wheels = set(output.glob("*.whl"))
+        run(["uv", "build", str(sdist), "--wheel", *common], cwd=stage, env=env)
+        new_wheels = sorted(set(output.glob("*.whl")) - before_wheels)
+        if len(new_wheels) != 1:
+            fail(f"expected one new wheel for {entry['id']}, found {new_wheels}")
+        by_id[entry["id"]] = [sdist, new_wheels[0]]
+    uv_gitignore = output / ".gitignore"
+    if uv_gitignore.exists():
+        if uv_gitignore.read_bytes() != b"*":
+            fail(f"unexpected uv output marker content: {uv_gitignore}")
+        uv_gitignore.unlink()
+    files = [*output.glob("*.whl"), *output.glob("*.tar.gz")]
+    for entry in entries:
+        for artifact in by_id[entry["id"]]:
+            inspect_python_distribution(
+                artifact, entry, marker["versions"][entry["name"]]
+            )
+    smoke_python_artifacts(
+        entries,
+        files,
+        constraints,
+        cooldown,
+        env,
+        plan["toolchain"]["python"],
+    )
+    record = artifact_record(stage, files, "python")
+    record["packages"] = {
+        entry_id: [path.name for path in paths] for entry_id, paths in by_id.items()
+    }
+    write_json(output / "artifacts.json", record, overwrite=False)
+    write_json(
+        output / "SHA256SUMS.json",
+        {item["file"]: item["sha256"] for item in record["artifacts"]},
+        overwrite=False,
+    )
+    print(f"built and artifact-tested {len(files)} Python distributions")
+
+
+def verify_python_artifacts(
+    record_path: Path,
+    artifact_dir: Path,
+    plan_path: Path,
+    constraints: Path,
+    cooldown_path: Path,
+) -> None:
+    verify_record(record_path, artifact_dir)
+    record = read_json(record_path)
+    if record.get("kind") != "python":
+        fail("artifact record is not for Python")
+    package_files = record.get("packages")
+    versions = record.get("versions")
+    if not isinstance(package_files, dict) or not isinstance(versions, dict):
+        fail("Python artifact record lacks package or version metadata")
+    plan = read_json(plan_path)
+    entries = select_publishable_entries(plan, "python", set(package_files))
+    artifacts: list[Path] = []
+    recorded_names = {item["file"] for item in record["artifacts"]}
+    package_artifact_names: set[str] = set()
+    for entry in entries:
+        filenames = package_files.get(entry["id"])
+        if not isinstance(filenames, list) or len(filenames) != 2:
+            fail(f"wrong artifact list for {entry['id']}")
+        for filename in filenames:
+            if not isinstance(filename, str):
+                fail(f"non-string artifact name for {entry['id']}")
+            artifact = safe_artifact_path(artifact_dir, filename)
+            if filename not in recorded_names:
+                fail(f"unrecorded Python artifact for {entry['id']}: {filename}")
+            if filename in package_artifact_names:
+                fail(f"duplicate Python package artifact: {filename}")
+            package_artifact_names.add(filename)
+            artifacts.append(artifact)
+            inspect_python_distribution(artifact, entry, versions[entry["name"]])
+    cooldown = read_json(cooldown_path)
+    cutoff = cooldown.get("external_freeze_cutoff")
+    if not isinstance(cutoff, str) or not cutoff:
+        fail("Python artifact verification requires an external freeze cutoff")
+    env = os.environ.copy()
+    env["UV_EXCLUDE_NEWER"] = cutoff
+    smoke_python_artifacts(
+        entries,
+        artifacts,
+        constraints,
+        cooldown,
+        env,
+        plan["toolchain"]["python"],
+    )
+    print(f"verified and installed Python artifacts for {sorted(package_files)}")
+
+
+def safe_artifact_path(artifact_dir: Path, filename: Any) -> Path:
+    if (
+        not isinstance(filename, str)
+        or not filename
+        or filename in {".", ".."}
+        or "/" in filename
+        or "\\" in filename
+        or PurePosixPath(filename).name != filename
+    ):
+        fail(f"unsafe artifact filename in record: {filename!r}")
+    artifact_root = artifact_dir.resolve()
+    path = artifact_root / filename
+    if path.is_symlink() or path.resolve().parent != artifact_root:
+        fail(f"unsafe artifact filename in record: {filename!r}")
+    return path
+
+
+def verify_record(record_path: Path, artifact_dir: Path) -> None:
+    record = read_json(record_path)
+    expected = record.get("artifacts")
+    if not isinstance(expected, list) or not expected:
+        fail("artifact record is empty")
+    expected_paths: list[tuple[dict[str, Any], Path]] = []
+    expected_names: set[str] = set()
+    for item in expected:
+        if not isinstance(item, dict):
+            fail(f"invalid artifact record entry: {item!r}")
+        path = safe_artifact_path(artifact_dir, item.get("file"))
+        if path.name in expected_names:
+            fail(f"duplicate artifact filename in record: {path.name}")
+        if (
+            not isinstance(item.get("size"), int)
+            or item["size"] < 0
+            or not isinstance(item.get("sha256"), str)
+            or re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is None
+        ):
+            fail(f"invalid artifact metadata for {path.name}")
+        expected_names.add(path.name)
+        expected_paths.append((item, path))
+
+    ignored = {record_path.name, "artifacts.json", "SHA256SUMS.json"}
+    actual_names: set[str] = set()
+    for path in artifact_dir.iterdir():
+        if path.name in ignored:
+            continue
+        if path.is_symlink() or not path.is_file():
+            fail(f"unexpected non-file artifact entry: {path.name}")
+        actual_names.add(path.name)
+    if actual_names != expected_names:
+        fail(
+            f"artifact set mismatch: expected={sorted(expected_names)}, actual={sorted(actual_names)}"
+        )
+    for item, path in expected_paths:
+        if path.stat().st_size != item["size"] or sha256_file(path) != item["sha256"]:
+            fail(f"artifact digest mismatch: {path}")
+    print(f"verified {len(expected)} recorded artifacts")
+
+
+def publication_preflight(
+    stage: Path,
+    plan_path: Path,
+    versions_path: Path,
+    cooldown_path: Path,
+    package_ids: set[str] | None,
+) -> None:
+    plan = read_json(plan_path)
+    phase, _ = load_versions(versions_path, plan)
+    if phase != "candidate":
+        fail("publication requires the candidate version map")
+    cooldown = read_json(cooldown_path)
+    enforcement_points = cooldown.get("enforcement_points")
+    if (
+        cooldown.get("status") != "resolved"
+        or not isinstance(cooldown.get("minimum_age_seconds"), int)
+        or cooldown["minimum_age_seconds"] <= 0
+        or not isinstance(enforcement_points, list)
+        or not enforcement_points
+        or not all(isinstance(value, str) and value for value in enforcement_points)
+    ):
+        fail("cooldown policy is unresolved; registry publication is blocked")
+    publishable = {
+        entry["id"]: entry
+        for ecosystem in ("npm", "python")
+        for entry in plan[ecosystem]
+        if entry["role"] == "publishable"
+    }
+    if package_ids is not None:
+        unknown = sorted(package_ids - set(publishable))
+        if unknown:
+            fail(f"unknown publishable package ids: {unknown}")
+    release_names = {entry["name"] for entry in publishable.values()}
+    for key in ("npm_internal_exclusions", "python_internal_exclusions"):
+        exclusions = cooldown.get(key)
+        if not isinstance(exclusions, list) or not all(
+            isinstance(value, str) for value in exclusions
+        ):
+            fail(f"{key} must be a list of package names")
+        unknown = sorted(set(exclusions) - release_names)
+        if unknown:
+            fail(f"{key} contains non-release packages: {unknown}")
+    validate_stage(
+        stage,
+        plan_path,
+        require_registry_locks=True,
+        required_lock_ids=package_ids,
+    )
+    print("publication preflight passed")
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description=__doc__)
+    result.add_argument("--repo", type=Path, default=DEFAULT_REPO)
+    result.add_argument("--plan", type=Path, default=DEFAULT_PLAN)
+    commands = result.add_subparsers(dest="command", required=True)
+
+    commands.add_parser("validate-source")
+
+    stage = commands.add_parser("stage")
+    stage.add_argument("--source", default="HEAD")
+    stage.add_argument("--versions", type=Path, default=DEFAULT_REHEARSAL_VERSIONS)
+    stage.add_argument("--output", type=Path, required=True)
+
+    validate = commands.add_parser("validate-stage")
+    validate.add_argument("--stage", type=Path, required=True)
+    validate.add_argument("--require-registry-locks", action="store_true")
+    validate.add_argument("--package-id", action="append")
+
+    freeze = commands.add_parser("freeze")
+    freeze.add_argument("action", choices=("write", "check"))
+    freeze.add_argument("--baseline", type=Path, default=DEFAULT_FREEZE)
+
+    npm = commands.add_parser("build-npm")
+    npm.add_argument("--stage", type=Path, required=True)
+    npm.add_argument("--output", type=Path, required=True)
+    npm.add_argument("--package-id", action="append")
+
+    python = commands.add_parser("build-python")
+    python.add_argument("--stage", type=Path, required=True)
+    python.add_argument(
+        "--constraints", type=Path, default=HERE / "python-build-constraints.txt"
+    )
+    python.add_argument("--output", type=Path, required=True)
+    python.add_argument("--package-id", action="append")
+
+    verify = commands.add_parser("verify-record")
+    verify.add_argument("--record", type=Path, required=True)
+    verify.add_argument("--artifacts", type=Path, required=True)
+
+    verify_python = commands.add_parser("verify-python-artifacts")
+    verify_python.add_argument("--record", type=Path, required=True)
+    verify_python.add_argument("--artifacts", type=Path, required=True)
+    verify_python.add_argument(
+        "--constraints", type=Path, default=HERE / "python-build-constraints.txt"
+    )
+    verify_python.add_argument("--cooldown", type=Path, default=DEFAULT_COOLDOWN)
+
+    publish = commands.add_parser("publication-preflight")
+    publish.add_argument("--stage", type=Path, required=True)
+    publish.add_argument("--versions", type=Path, default=DEFAULT_CANDIDATE_VERSIONS)
+    publish.add_argument("--cooldown", type=Path, default=DEFAULT_COOLDOWN)
+    publish.add_argument("--package-id", action="append")
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    repo = args.repo.resolve()
+    plan_path = args.plan.resolve()
+    try:
+        if args.command == "validate-source":
+            validate_source(repo, plan_path)
+        elif args.command == "stage":
+            stage_release(
+                repo, plan_path, args.versions.resolve(), args.source, args.output
+            )
+        elif args.command == "validate-stage":
+            validate_stage(
+                args.stage.resolve(),
+                plan_path,
+                require_registry_locks=args.require_registry_locks,
+                required_lock_ids=(
+                    set(args.package_id) if args.package_id is not None else None
+                ),
+            )
+        elif args.command == "freeze":
+            freeze_command(
+                repo, plan_path, args.baseline.resolve(), write=args.action == "write"
+            )
+        elif args.command == "build-npm":
+            build_npm(
+                args.stage.resolve(),
+                plan_path,
+                args.output.resolve(),
+                set(args.package_id) if args.package_id is not None else None,
+            )
+        elif args.command == "build-python":
+            build_python(
+                args.stage.resolve(),
+                plan_path,
+                args.constraints.resolve(),
+                args.output.resolve(),
+                set(args.package_id) if args.package_id is not None else None,
+            )
+        elif args.command == "verify-record":
+            verify_record(args.record.resolve(), args.artifacts.resolve())
+        elif args.command == "verify-python-artifacts":
+            verify_python_artifacts(
+                args.record.resolve(),
+                args.artifacts.resolve(),
+                plan_path,
+                args.constraints.resolve(),
+                args.cooldown.resolve(),
+            )
+        elif args.command == "publication-preflight":
+            publication_preflight(
+                args.stage.resolve(),
+                plan_path,
+                args.versions.resolve(),
+                args.cooldown.resolve(),
+                set(args.package_id) if args.package_id is not None else None,
+            )
+        else:  # pragma: no cover - argparse prevents this
+            fail(f"unknown command: {args.command}")
+    except ReleaseError as exc:
+        print(f"release error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -59,6 +59,37 @@ export interface NatsContextFile {
 }
 
 /**
+ * Auth material selected from one context-file read. Internal contract for
+ * `resolveNatsConnectionBundle`; raw bytes are never exported from the
+ * package root or included in logs/errors.
+ *
+ * @internal
+ */
+export type ContextAuthSnapshot =
+  | { readonly kind: "creds"; readonly bytes: Uint8Array }
+  | { readonly kind: "nkey"; readonly bytes: Uint8Array }
+  | { readonly kind: "jwt-seed"; readonly jwt: string; readonly seed: Uint8Array }
+  | { readonly kind: "jwt" }
+  | { readonly kind: "user-password" }
+  | { readonly kind: "token" }
+  | { readonly kind: "none" };
+
+/**
+ * Connection options plus the exact auth snapshot used to build their
+ * authenticator. Internal so the connection-bundle helper can derive a
+ * signer without re-reading a context or credential file.
+ *
+ * @internal
+ */
+export interface ContextConnectionSnapshot {
+  readonly name: string;
+  readonly connectionOptions: NodeConnectionOptions;
+  readonly auth: ContextAuthSnapshot;
+  /** Zero retained auth bytes. Call only after the connection is closed. */
+  wipe(): void;
+}
+
+/**
  * Read a NATS CLI context by name. Pass `"current"` to resolve via
  * `$NATS_CONTEXT` or the `context.txt` selection file. This is the
  * *reading* half of {@link loadContextOptions}; `signerFromContext` in the
@@ -103,71 +134,124 @@ export async function readContextFile(selector: string): Promise<NatsContextFile
  * the `context.txt` selection file.
  */
 export async function loadContextOptions(selector: string): Promise<NodeConnectionOptions> {
+  return (await loadContextConnectionSnapshot(selector)).connectionOptions;
+}
+
+/**
+ * Resolve a context once, retaining the selected auth bytes long enough for
+ * both the NATS authenticator and an optional sender signer to consume the
+ * same snapshot. Not exported from the package root.
+ *
+ * @internal
+ */
+export async function loadContextConnectionSnapshot(
+  selector: string,
+): Promise<ContextConnectionSnapshot> {
   const { name, fields: parsed } = await readContextFile(selector);
 
   const url = str(parsed["url"]);
   if (!url) throw new NatsContextError(`NATS context "${name}" is missing \`url\``);
-  const servers = url
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-
-  const opts: NodeConnectionOptions = { servers };
+  // Parse userinfo just as direct URL mode does. Explicit context auth below
+  // wins and removes these fields, so a context can never retain two
+  // competing connection credential sources.
+  const opts = parseNatsUrl(url);
+  let auth: ContextAuthSnapshot =
+    opts.user !== undefined || opts.pass !== undefined
+      ? { kind: "user-password" }
+      : opts.token !== undefined
+        ? { kind: "token" }
+        : { kind: "none" };
 
   const creds = str(parsed["creds"]);
   const nkey = str(parsed["nkey"]);
   const userJwt = str(parsed["user_jwt"]);
   const userSeed = str(parsed["user_seed"]);
   if (creds) {
+    clearBasicAuth(opts);
     const bytes = await readAuthFile("creds", expandHome(creds));
-    opts.authenticator = credsAuthenticator(
-      new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-    );
+    const snapshot = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    opts.authenticator = credsAuthenticator(snapshot);
+    auth = { kind: "creds", bytes: snapshot };
   } else if (nkey) {
+    clearBasicAuth(opts);
     // `nats context add` writes `nkey` as a path to a file containing the
     // raw seed. Read it once and pass through `nkeyAuthenticator`, which
     // signs the server nonce on each CONNECT.
     const bytes = await readAuthFile("nkey", expandHome(nkey));
-    opts.authenticator = nkeyAuthenticator(
-      new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
-    );
+    const snapshot = new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    opts.authenticator = nkeyAuthenticator(snapshot);
+    auth = { kind: "nkey", bytes: snapshot };
   } else if (userJwt) {
+    clearBasicAuth(opts);
     // Inline JWT + optional inline seed. When `user_seed` is present
     // alongside `user_jwt` (the typical "decentralised auth without a
     // .creds file" shape), pass the seed bytes so nonce signing works.
     if (userSeed) {
-      opts.authenticator = jwtAuthenticator(userJwt, new TextEncoder().encode(userSeed));
+      const snapshot = new TextEncoder().encode(userSeed);
+      opts.authenticator = jwtAuthenticator(userJwt, snapshot);
+      auth = { kind: "jwt-seed", jwt: userJwt, seed: snapshot };
     } else {
       opts.authenticator = jwtAuthenticator(userJwt);
+      auth = { kind: "jwt" };
     }
   } else {
     const token = str(parsed["token"]);
     const user = str(parsed["user"]);
     const password = str(parsed["password"]);
-    if (token) opts.token = token;
-    if (user) opts.user = user;
-    if (password) opts.pass = password;
+    if (token || user || password) {
+      clearBasicAuth(opts);
+      if (token) opts.token = token;
+      if (user) opts.user = user;
+      if (password) opts.pass = password;
+      auth = user || password ? { kind: "user-password" } : { kind: "token" };
+    }
   }
 
-  // Optional TLS triple. `nats context add --tlscert/--tlskey/--tlsca`
-  // writes file paths; load them into standard node:tls options.
-  const cert = str(parsed["cert"]);
-  const key = str(parsed["key"]);
-  const ca = str(parsed["ca"]);
-  const tlsFirst = parsed["tls_first"];
-  if (cert || key || ca || tlsFirst === true) {
-    const tls: NonNullable<NodeConnectionOptions["tls"]> = {};
-    if (cert) tls.cert = await readTlsFile("cert", expandHome(cert));
-    if (key) tls.key = await readTlsFile("key", expandHome(key));
-    if (ca) tls.ca = await readTlsFile("ca", expandHome(ca));
-    if (tlsFirst === true) tls.handshakeFirst = true;
-    opts.tls = tls;
+  try {
+    // Optional TLS triple. `nats context add --tlscert/--tlskey/--tlsca`
+    // writes file paths; load them into standard node:tls options.
+    const cert = str(parsed["cert"]);
+    const key = str(parsed["key"]);
+    const ca = str(parsed["ca"]);
+    const tlsFirst = parsed["tls_first"];
+    if (cert || key || ca || tlsFirst === true) {
+      const tls: NonNullable<NodeConnectionOptions["tls"]> = {};
+      if (cert) tls.cert = await readTlsFile("cert", expandHome(cert));
+      if (key) tls.key = await readTlsFile("key", expandHome(key));
+      if (ca) tls.ca = await readTlsFile("ca", expandHome(ca));
+      if (tlsFirst === true) tls.handshakeFirst = true;
+      opts.tls = tls;
+    }
+  } catch (error) {
+    wipeContextAuth(auth);
+    throw error;
   }
 
   const inboxPrefix = str(parsed["inbox_prefix"]);
   if (inboxPrefix) opts.inboxPrefix = inboxPrefix;
 
-  return opts;
+  let wiped = false;
+  return {
+    name,
+    connectionOptions: opts,
+    auth,
+    wipe() {
+      if (wiped) return;
+      wiped = true;
+      wipeContextAuth(auth);
+    },
+  };
+}
+
+function clearBasicAuth(options: NodeConnectionOptions): void {
+  delete options.token;
+  delete options.user;
+  delete options.pass;
+}
+
+function wipeContextAuth(auth: ContextAuthSnapshot): void {
+  if (auth.kind === "creds" || auth.kind === "nkey") auth.bytes.fill(0);
+  if (auth.kind === "jwt-seed") auth.seed.fill(0);
 }
 
 /** Expand a leading `~/` to `$HOME/`. */
@@ -225,7 +309,7 @@ export function parseNatsUrl(url: string): NodeConnectionOptions {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   if (parts.length === 0) {
-    throw new NatsContextError(`empty NATS URL: ${JSON.stringify(url)}`);
+    throw new NatsContextError("empty NATS URL");
   }
 
   const parsedAll = parts.map((p) => parseSingleNatsUrl(p, url));
@@ -235,7 +319,9 @@ export function parseNatsUrl(url: string): NodeConnectionOptions {
   const first = parsedAll[0]!;
   for (const p of parsedAll.slice(1)) {
     if (p.token !== first.token || p.user !== first.user || p.pass !== first.pass) {
-      throw new NatsContextError(`NATS URL has mixed credentials across server entries: ${url}`);
+      throw new NatsContextError(
+        `NATS URL has mixed credentials across server entries: ${redactNatsUrl(url)}`,
+      );
     }
   }
 
@@ -249,7 +335,7 @@ export function parseNatsUrl(url: string): NodeConnectionOptions {
 }
 
 interface ParsedNatsUrl {
-  server: string; // protocol + host (no userinfo)
+  server: string; // protocol + host, plus WebSocket path/query (no userinfo)
   token?: string;
   user?: string;
   pass?: string;
@@ -263,21 +349,25 @@ function parseSingleNatsUrl(part: string, original: string): ParsedNatsUrl {
   let parsed: URL;
   try {
     parsed = new URL(withScheme);
-  } catch (e) {
-    throw new NatsContextError(
-      `invalid NATS URL ${JSON.stringify(original)}: ${(e as Error).message}`,
-    );
+  } catch {
+    throw new NatsContextError(`invalid NATS URL ${redactNatsUrl(original)}`);
   }
   if (!/^(nats|tls|ws|wss):$/.test(parsed.protocol)) {
     throw new NatsContextError(
-      `unsupported scheme "${parsed.protocol}" in NATS URL ${JSON.stringify(original)}`,
+      `unsupported scheme "${parsed.protocol}" in NATS URL ${redactNatsUrl(original)}`,
     );
   }
   if (!parsed.host) {
-    throw new NatsContextError(`NATS URL ${JSON.stringify(original)} is missing a host`);
+    throw new NatsContextError(`NATS URL ${redactNatsUrl(original)} is missing a host`);
   }
 
-  const out: ParsedNatsUrl = { server: `${parsed.protocol}//${parsed.host}` };
+  const websocketSuffix =
+    parsed.protocol === "ws:" || parsed.protocol === "wss:"
+      ? `${explicitUrlSuffix(withScheme) ? parsed.pathname : ""}${parsed.search}`
+      : "";
+  const out: ParsedNatsUrl = {
+    server: `${parsed.protocol}//${parsed.host}${websocketSuffix}`,
+  };
 
   // WHATWG `URL` squashes both `nats://user@host` and `nats://user:@host`
   // into `password === ""`, losing the distinction between "no separator"
@@ -299,6 +389,33 @@ function parseSingleNatsUrl(part: string, original: string): ParsedNatsUrl {
     out.token = decodeURIComponent(parsed.username);
   }
   return out;
+}
+
+/** Whether the raw URL explicitly contained a path or query. */
+function explicitUrlSuffix(url: string): boolean {
+  const authorityStart = url.indexOf("://") + 3;
+  return /[/?]/.test(url.slice(authorityStart));
+}
+
+/** Preserve schemes/hosts in diagnostics while replacing every URL userinfo. */
+function redactNatsUrl(url: string): string {
+  return JSON.stringify(
+    url
+      .split(",")
+      .map((entry) => {
+        const trimmed = entry.trim();
+        const scheme = trimmed.match(/^[a-z]+:\/\//i)?.[0];
+        const authorityStart = scheme?.length ?? 0;
+        // Redact through the final `@` even when malformed userinfo contains
+        // a literal slash. This may over-redact an `@` in a WebSocket path,
+        // which is preferable to leaking credentials from an error path.
+        const at = trimmed.lastIndexOf("@");
+        return at >= authorityStart
+          ? `${trimmed.slice(0, authorityStart)}[redacted]@${trimmed.slice(at + 1)}`
+          : trimmed;
+      })
+      .join(","),
+  );
 }
 
 function str(v: unknown): string | undefined {

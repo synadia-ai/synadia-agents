@@ -6,8 +6,7 @@
 # so it has nothing to toggle.
 dspy
 
-# Claude Code MCP plugin — installed via the plugin marketplace, which
-# only ships the agents/claude-code/ subtree. file: links can't resolve
-# in that install layout, so this consumer must stay on ^semver pins to
-# the published @synadia-ai/* SDKs (npm). Devmode must not flip it.
+# Claude Code MCP plugin — installed via a separately staged marketplace
+# subtree. Its branch manifest may use local SDK inputs, but release staging
+# replaces them with exact registry versions. Devmode must not mutate it.
 claude-code

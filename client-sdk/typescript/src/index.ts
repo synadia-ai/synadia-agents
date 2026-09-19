@@ -240,6 +240,29 @@ export {
 export { type IdentityOptions } from "./identity/context.js";
 export { base64UrlDecode, base64UrlEncode, sha256, sha256Hex } from "./identity/crypto.js";
 
+// Observability tracing (opt-in)
+export {
+  DEFAULT_EDGE_SUBJECT,
+  EDGE_RECORD_VERSION,
+  THREAD_ID_HEX_LEN,
+  TOOL_CALL_ID_MAX,
+  activeTrace,
+  assertValidTraceOptions,
+  bindActiveTrace,
+  buildEdgeRecord,
+  countTraceRecordDropped,
+  countTraceRecordPublished,
+  inheritedTraceOptions,
+  isThreadId,
+  randomThreadId,
+  traceRecordCounts,
+  validToolCallId,
+  type BuiltEdgeRecord,
+  type TraceOptions,
+  type TraceRecordCounts,
+  type TraceScope,
+} from "./trace.js";
+
 // Logging
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";
 
@@ -260,6 +283,16 @@ export {
   readContextFile,
   type NatsContextFile,
 } from "./context.js";
+
+// One-snapshot connection credentials + optional sender signer.
+export {
+  resolveNatsConnectionBundle,
+  type NatsConnectionBundle,
+  type NatsConnectionSource,
+  type NatsUrlConnectionSource,
+  type ResolveNatsConnectionBundleOptions,
+  type SignedNatsConnectionBundle,
+} from "./connection-bundle.js";
 
 // Opinionated reconnect defaults for agent runtimes — see #121.
 export { AGENT_RECONNECT_DEFAULTS, withAgentReconnectDefaults } from "./connect-defaults.js";

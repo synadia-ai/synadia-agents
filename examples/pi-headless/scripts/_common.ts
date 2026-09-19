@@ -2,8 +2,13 @@
 
 import { connect as natsConnect } from "@nats-io/transport-node";
 import type { NatsConnection } from "@nats-io/nats-core";
-import type { NodeConnectionOptions } from "@nats-io/transport-node";
-import { Agents, loadContextOptions, type Agent } from "@synadia-ai/agents";
+import {
+  Agents,
+  resolveNatsConnectionBundle,
+  type Agent,
+  type NatsConnectionBundle,
+} from "@synadia-ai/agents";
+import { natsConnectionSource, parseSenderIdentity } from "../src/config.js";
 
 export interface CliArgs {
   readonly context?: string;
@@ -72,20 +77,6 @@ export function parseArgs(argv: ReadonlyArray<string>): CliArgs {
   };
 }
 
-export async function openNats(args: CliArgs): Promise<NatsConnection> {
-  const context = args.context ?? process.env["NATS_CONTEXT"];
-  const url = args.natsUrl ?? process.env["NATS_URL"];
-  let opts: NodeConnectionOptions;
-  if (context) {
-    opts = { ...(await loadContextOptions(context)), name: "pi-headless-cli" };
-  } else if (url) {
-    opts = { servers: url, name: "pi-headless-cli" };
-  } else {
-    throw new Error("provide --context or --url (or set NATS_CONTEXT / NATS_URL)");
-  }
-  return natsConnect(opts);
-}
-
 export function ownerFilter(args: CliArgs): string {
   return args.owner ?? process.env["USER"] ?? "";
 }
@@ -133,7 +124,9 @@ export async function waitForSession(
     if (match) return match;
     await new Promise((r) => setTimeout(r, delayMs));
   }
-  throw new Error(`spawned session ${instanceId} not discoverable after ${retries} tries`);
+  throw new Error(
+    `spawned session ${instanceId} not discoverable after ${retries} tries`,
+  );
 }
 
 export interface CliClient {
@@ -143,8 +136,39 @@ export interface CliClient {
 }
 
 export async function openCliClient(args: CliArgs): Promise<CliClient> {
-  const nc = await openNats(args);
-  const agents = new Agents({ nc });
+  const context = args.context ?? process.env["NATS_CONTEXT"];
+  const url = args.natsUrl ?? process.env["NATS_URL"];
+  const senderIdentity = parseSenderIdentity(
+    process.env["NATS_SENDER_IDENTITY"],
+  );
+  let bundle: NatsConnectionBundle | undefined;
+  let nc: NatsConnection;
+  try {
+    bundle = await resolveNatsConnectionBundle(
+      natsConnectionSource(context, url),
+      {
+        identity: senderIdentity,
+      },
+    );
+    nc = await natsConnect({
+      ...bundle.connectionOptions,
+      name: "pi-headless-cli",
+    });
+  } catch (e) {
+    bundle?.wipe();
+    throw e;
+  }
+  let agents: Agents;
+  try {
+    agents = new Agents({
+      nc,
+      ...(bundle.signer ? { identity: { signer: bundle.signer } } : {}),
+    });
+  } catch (error) {
+    await nc.close();
+    bundle.wipe();
+    throw error;
+  }
   return {
     nc,
     agents,
@@ -154,11 +178,9 @@ export async function openCliClient(args: CliArgs): Promise<CliClient> {
       } catch {
         /* noop */
       }
-      try {
-        await nc.close();
-      } catch {
-        /* noop */
-      }
+      await nc.close();
+      bundle?.wipe();
+      bundle = undefined;
     },
   };
 }

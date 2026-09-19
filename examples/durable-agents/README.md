@@ -90,6 +90,13 @@ bun run prompt          # in another terminal: discovers, prompts, and auto-appr
 LLM_BACKEND=ollama OLLAMA_MODEL=gpt-oss:latest bun run sre:serve
 ```
 
+NATS setup is shared by every runnable path: `NATS_CONTEXT` wins over
+`NATS_URL`, and the SDK connection-bundle helper owns authentication. Sender
+identity is off by default. Set `NATS_SENDER_IDENTITY=signed` to derive the
+caller or host signer from those same connection credentials, and set
+`NATS_MIN_SENDER_TRUST=signed` separately on a host to reject headerless
+prompts. Signed mode fails if the selected NATS credentials cannot sign.
+
 Once `sre:serve` is running, the agent also shows up in [`../agent-web-ui`](../agent-web-ui) with zero
 config — prompt it there and answer the approval as an in-chat allow/deny query.
 

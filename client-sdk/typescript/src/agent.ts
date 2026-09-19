@@ -4,9 +4,8 @@
 // done inline by the caller via native `Array` / `Map.groupBy` / `filter`.
 //
 // Sender identity (extension): when constructed by an `Agents` client the
-// handle carries its `IdentityContext`, and `prompt()` / `status()` attach
-// an `Agent-Sender` header — signed when a signer is configured, an
-// unsigned claim otherwise, nothing when the connection has no identity.
+// handle carries its optional `IdentityContext`, and `prompt()` / `status()`
+// attach an `Agent-Sender` header only when identity was explicitly enabled.
 
 import { Empty, headers, type MsgHdrs, type NatsConnection } from "@nats-io/nats-core";
 import type { AgentInfo } from "./discovery/agent-info.js";
@@ -21,6 +20,18 @@ import {
   serializeSenderHeader,
 } from "./identity/sender-header.js";
 import { combineAbortSignals } from "./internal/abort.js";
+import {
+  activeTrace,
+  assertValidTraceOptions,
+  buildEdgeRecord,
+  countTraceRecordDropped,
+  countTraceRecordPublished,
+  DEFAULT_EDGE_SUBJECT,
+  inheritedTraceOptions,
+  randomThreadId,
+  validToolCallId,
+  type TraceOptions,
+} from "./trace.js";
 import { STATUS_ENDPOINT_NAME } from "./internal/service-name.js";
 import { normalizeAttachments } from "./prompt/attachments.js";
 import { encodedEnvelopeSize, encodeEnvelope, type RequestEnvelope } from "./prompt/envelope.js";
@@ -66,6 +77,7 @@ export class Agent {
   readonly #defaultInactivityTimeoutMs: number;
   readonly #closeSignal: AbortSignal | undefined;
   readonly #identity: IdentityContext | undefined;
+  readonly #trace: TraceOptions | undefined;
 
   constructor(
     nc: NatsConnection,
@@ -73,11 +85,14 @@ export class Agent {
     defaultInactivityTimeoutMs: number,
     closeSignal: AbortSignal | undefined = undefined,
     identity: IdentityContext | undefined = undefined,
+    trace: TraceOptions | undefined = undefined,
   ) {
     this.#nc = nc;
     this.#defaultInactivityTimeoutMs = defaultInactivityTimeoutMs;
     this.#closeSignal = closeSignal;
     this.#identity = identity;
+    assertValidTraceOptions(trace);
+    this.#trace = trace;
     this.instanceId = info.instanceId;
     this.agent = info.agent;
     this.owner = info.owner;
@@ -110,6 +125,15 @@ export class Agent {
   }
 
   /**
+   * `true` iff tracing was enabled on this handle. Inherited tracing (from
+   * an enclosing agent service) is resolved per call, so this reports only
+   * the handle's own configuration.
+   */
+  get tracingEnabled(): boolean {
+    return this.#trace !== undefined;
+  }
+
+  /**
    * Send a prompt (optionally with attachments) and return a
    * {@link PromptStream} to iterate the response.
    *
@@ -122,11 +146,13 @@ export class Agent {
    *   - {@link SenderSignatureRequiredError} — the endpoint declares
    *     `min_sender_trust: signed` and no `identity.signer` is configured.
    *
-   * Errors rejecting the returned promise (they need the async identity
-   * lookup): {@link NoIdentityError} / {@link IdentityUnavailableError}
-   * on a `signed` endpoint, {@link IdentityMismatchError} whenever a
-   * signer is configured, and the exact {@link PayloadTooLargeError}
-   * re-check once the header size is known.
+   * Errors from asynchronous identity resolution can reject the returned
+   * promise during preflight. Because identity is resolved again immediately
+   * before publish (to account for reconnects), they can also be thrown by
+   * the first iterator step. These include {@link NoIdentityError} /
+   * {@link IdentityUnavailableError} on a `signed` endpoint,
+   * {@link IdentityMismatchError} whenever a signer is configured, and the
+   * exact {@link PayloadTooLargeError} re-check once the header size is known.
    *
    * Wire errors thrown from the iterator:
    *   - {@link ServiceError}              — `Nats-Service-Error-Code` header (§9.1);
@@ -165,29 +191,84 @@ export class Agent {
     // size is re-checked once the identity is known.
     const headerBound = identity?.mayAttachHeader() ? maxSenderHeaderBytes(sub, identity.name) : 0;
 
+    // Tracing is best-effort and shouldn't stop an agent from sending out
+    // a prompt. Invalid tools are just ignored.
+    const toolCallId =
+      opts.toolCallId !== undefined && validToolCallId(opts.toolCallId) ? opts.toolCallId : null;
+
+    // Effective configuration: this handle's own, else the one handed down
+    // by the enclosing agent service, else tracing is off.
+    const trace = this.#trace ?? inheritedTraceOptions();
+
+    // If tracing is enabled, mint a thread ID for this prompt and inherit
+    // the root and parent from the ambient trace (a root when none is bound).
+    const lineage = trace !== undefined ? mintLineage() : undefined;
+    let edge: (() => Promise<void>) | undefined;
+    if (lineage !== undefined) {
+      // The edge goes out immediately before the prompt, so an observer
+      // sees the node before it runs.
+      const edgeSubject =
+        trace?.edgeSubject === undefined ? DEFAULT_EDGE_SUBJECT : trace.edgeSubject;
+      // Consumers ignore unsigned records, so publishing without a signer
+      // would be pure waste: warn once per connection and skip. Minting and
+      // envelope lineage need no identity and still happen, so downstream
+      // agents that do have one keep tracing.
+      if (edgeSubject !== null && !identity?.signer) {
+        warnEdgesUnsigned(this.#nc);
+        // The record is due once the prompt goes out, and cannot go out:
+        // a drop, counted where the signed path would have published —
+        // immediately before the prompt — so a prompt that is never sent
+        // owes nothing and counts nothing.
+        edge = (): Promise<void> => {
+          countTraceRecordDropped();
+          return Promise.resolve();
+        };
+      } else if (edgeSubject !== null) {
+        // Lineage is captured here, where the ambient trace is still the
+        // caller's. The record itself is built at publish time, so its
+        // `ts` says when the prompt actually went out — not when it was
+        // planned — and a prompt that never goes out (never iterated, or
+        // rejected by validation below) publishes no edge.
+        const { threadId, parentId, rootId, turnCountHint } = lineage;
+        const plan: EdgePlan = {
+          threadId,
+          parentId: parentId ?? null,
+          rootId,
+          toolCallId,
+          turnCountHint,
+        };
+        edge = (): Promise<void> => this.#publishEdge(edgeSubject, plan);
+      }
+    }
+
+    // The envelope carries only what the receiver must inherit; the parent
+    // stays in the edge record and never transits the child.
+    const envLineage =
+      lineage !== undefined ? { threadId: lineage.threadId, rootId: lineage.rootId } : undefined;
+
     // Fast path: text-only — max_payload check is sync.
     if (!hasAttachments) {
-      const envelope: RequestEnvelope = { prompt: text };
+      const envelope: RequestEnvelope = { prompt: text, ...envLineage };
       assertWithinMaxPayload(
         encodedEnvelopeSize(envelope),
         this.promptEndpoint,
         connLimit,
         headerBound,
       );
-      return this.#buildStream(envelope, subject, sub, requireSigned, opts);
+      return this.#buildStream(envelope, subject, sub, requireSigned, opts, edge);
     }
 
     // With attachments: load files, then check max_payload on the final encoded size.
     return (async (): Promise<PromptStream> => {
       const attachments = await normalizeAttachments(attachmentInputs);
-      const envelope: RequestEnvelope = { prompt: text, attachments };
+      const envelope: RequestEnvelope = { prompt: text, attachments, ...envLineage };
       assertWithinMaxPayload(
         encodedEnvelopeSize(envelope),
         this.promptEndpoint,
         connLimit,
         headerBound,
       );
-      return this.#buildStream(envelope, subject, sub, requireSigned, opts);
+      return this.#buildStream(envelope, subject, sub, requireSigned, opts, edge);
     })();
   }
 
@@ -197,25 +278,34 @@ export class Agent {
     sub: string,
     requireSigned: boolean,
     opts: PromptOptions,
+    edge: (() => Promise<void>) | undefined,
   ): Promise<PromptStream> {
     // Encode once; the header (when signed) covers exactly these bytes.
     const payload = encodeEnvelope(envelope);
-    const plan = await this.#planHeader(sub, requireSigned);
-    if (plan) {
+    const initialPlan = await this.#planHeader(sub, requireSigned);
+    if (initialPlan) {
       // Exact re-check with the real header size (§2.4 step 2).
       assertWithinMaxPayload(
         payload.length,
         this.promptEndpoint,
         this.#nc.info?.max_payload,
-        plan.wireBytes,
+        initialPlan.wireBytes,
       );
     }
+    const identity = this.#identity;
+    const identityEnabled =
+      identity !== undefined && (identity.signer !== undefined || identity.sendUnsignedClaim);
     const signal = combineAbortSignals([opts.signal, this.#closeSignal]);
     return new PromptStream({
       nc: this.#nc,
       subject,
       payload,
-      ...(plan ? { buildHeaders: () => this.#headersFor(plan, payload) } : {}),
+      // Re-plan at publish time. A reconnect after `prompt()` may invalidate
+      // the initial identity; a captured plan must never survive it.
+      ...(identityEnabled
+        ? { buildHeaders: () => this.#headersAtPublish(sub, requireSigned, payload) }
+        : {}),
+      ...(edge ? { beforePublish: edge } : {}),
       inactivityTimeoutMs: opts.inactivityTimeoutMs ?? this.#defaultInactivityTimeoutMs,
       maxWaitMs: opts.maxWaitMs ?? DEFAULT_PROMPT_MAX_WAIT_MS,
       signal,
@@ -261,9 +351,116 @@ export class Agent {
     return identity.plan(sub, requireSigned);
   }
 
-  async #headersFor(plan: SenderHeaderPlan, payload: Uint8Array): Promise<MsgHdrs> {
+  async #headersFor(plan: SenderHeaderPlan, payload: Uint8Array, nonce?: string): Promise<MsgHdrs> {
     const h = headers();
-    h.set(AGENT_SENDER_HEADER, serializeSenderHeader(await plan.build(payload)));
+    h.set(AGENT_SENDER_HEADER, serializeSenderHeader(await plan.build(payload, nonce)));
     return h;
   }
+
+  /**
+   * Build and publish one signed edge record.
+   *
+   * The signature covers the short-form subject the record is published
+   * to: per the identity design a remap that only drops the account token
+   * is not a rename, so no `sub` override is needed. Consumers verify in
+   * stored mode. The record's `agent` is the identity the header plan
+   * resolved — the same one that signs it — so body and header agree.
+   * Its `record_id` is the header's nonce and the `Nats-Msg-Id` as well:
+   * one id, so a reader de-duplicating on `(user, record_id)` and a
+   * stream de-duplicating on the message id see the same record once.
+   *
+   * Fail-open — a failed publish never fails the prompt. It is counted:
+   * every record that goes out or fails to moves the process-wide
+   * {@link traceRecordCounts}, which the agent service reports on its
+   * heartbeat.
+   */
+  async #publishEdge(subject: string, edge: EdgePlan): Promise<void> {
+    try {
+      const plan = await this.#planHeader(subject, true);
+      if (!plan) throw new SenderSignatureRequiredError(subject);
+      const record = buildEdgeRecord(
+        plan.id,
+        edge.threadId,
+        edge.parentId,
+        edge.rootId,
+        edge.toolCallId,
+        edge.turnCountHint,
+      );
+      const hdrs = await this.#headersFor(plan, record.payload, record.recordId);
+      hdrs.set(MSG_ID_HEADER, record.recordId);
+      this.#nc.publish(subject, record.payload, { headers: hdrs });
+      countTraceRecordPublished();
+    } catch (err) {
+      countTraceRecordDropped();
+      console.warn(`@synadia-ai/agents: failed to publish edge record on ${subject}`, err);
+    }
+  }
+
+  async #headersAtPublish(
+    sub: string,
+    requireSigned: boolean,
+    payload: Uint8Array,
+  ): Promise<MsgHdrs | undefined> {
+    const plan = await this.#planHeader(sub, requireSigned);
+    if (!plan) return undefined;
+    assertWithinMaxPayload(
+      payload.length,
+      this.promptEndpoint,
+      this.#nc.info?.max_payload,
+      plan.wireBytes,
+    );
+    return this.#headersFor(plan, payload);
+  }
+}
+
+// Connections already warned that their edge records go nowhere. One
+// warning per connection: a per-prompt log would itself be a way for
+// observability to disturb an agent. Same string as agents.ts's
+// NATS_MSG_ID_HEADER, spelled again here because agents.ts imports this
+// module.
+const MSG_ID_HEADER = "Nats-Msg-Id";
+const warnedUnsigned = new WeakSet<NatsConnection>();
+
+function warnEdgesUnsigned(nc: NatsConnection): void {
+  if (warnedUnsigned.has(nc)) return;
+  warnedUnsigned.add(nc);
+  console.warn(
+    "@synadia-ai/agents: tracing is enabled but no identity signer is configured; " +
+      "edge records are not published (consumers ignore unsigned records). " +
+      "Pass identity: { signer } to sign them.",
+  );
+}
+
+/**
+ * What `prompt()` decided to record; built into a record at publish time.
+ * The lineage is fixed when the prompt is planned — when the ambient trace
+ * is still the caller's — but the record's `ts` and `agent` are resolved
+ * immediately before the publish.
+ */
+interface EdgePlan {
+  readonly threadId: string;
+  readonly parentId: string | null;
+  readonly rootId: string;
+  readonly toolCallId: string | null;
+  readonly turnCountHint: number;
+}
+
+// The thread ID names this prompt's execution. Inside a prompt handler the
+// ambient trace supplies the tree root and this prompt's parent; with none
+// bound, the prompt starts its own tree.
+function mintLineage(): {
+  threadId: string;
+  rootId: string;
+  parentId?: string;
+  turnCountHint: number;
+} {
+  const threadId = randomThreadId();
+  const ambient = activeTrace();
+  if (ambient === undefined) return { threadId, rootId: threadId, turnCountHint: 0 };
+  return {
+    threadId,
+    rootId: ambient.rootId,
+    parentId: ambient.threadId,
+    turnCountHint: ambient.turnCountHint,
+  };
 }

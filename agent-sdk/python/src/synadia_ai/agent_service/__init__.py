@@ -18,7 +18,9 @@ Public API:
 * :class:`PromptHandler` — type alias for ``Callable[[Envelope,
   PromptStream], Awaitable[None]]``.
 * :class:`ServiceIdentity` — ``AgentService(identity=ServiceIdentity(signer=…))``,
-  the host's own signer (registers ``id_sig``).
+  the host's own signer (registers ``id_sig`` and signs every heartbeat's
+  ``Agent-Sender``; :mod:`synadia_ai.agent_service.heartbeat` has the
+  publisher and ``sign_heartbeat`` for hand-rolled ones).
 * :data:`AcceptSenderHook`, :class:`SenderGate`, :class:`NonceCache`,
   :class:`SenderAdmission`, :class:`SenderRejection` — the stateful
   classification parts, exposed for hand-rolled services.

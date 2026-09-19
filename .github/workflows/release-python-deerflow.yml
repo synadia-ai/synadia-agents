@@ -1,18 +1,7 @@
 name: Release — agents/deerflow
 
-# Publishes synadia-ai-nats-deerflow-channel to PyPI when a tag matching
-# `python-deerflow-v*` is pushed. The tag prefix keeps this package's
-# releases distinct from the monorepo's client-sdk (`python-v*`) and
-# agent-service (`python-agent-service-v*`) releases. Verification runs
-# before publishing and the publish job uses PyPI trusted publishing.
-#
-# PyPI trusted publishing is configured with a pending publisher for:
-#   project: synadia-ai-nats-deerflow-channel
-#   owner: synadia-ai
-#   repo: synadia-agents
-#   workflow: release-python-deerflow.yml
-#   environment: pypi
-
+# The pushed version tag is the publication approval. The pypi environment
+# scopes trusted-publishing credentials; it does not add a second manual gate.
 on:
   push:
     tags:
@@ -22,76 +11,136 @@ concurrency:
   group: release-python-deerflow-${{ github.ref }}
   cancel-in-progress: false
 
-defaults:
-  run:
-    working-directory: agents/deerflow
+env:
+  UV_VERSION: "0.9.26"
 
 jobs:
-  verify:
-    name: Verify (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+  verify-source:
+    name: Verify source (py${{ matrix.python-version }})
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: true
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
+    defaults:
+      run:
+        working-directory: agents/deerflow
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v7
         with:
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: "agents/deerflow/uv.lock"
           python-version: ${{ matrix.python-version }}
 
-      - run: uv sync --all-extras
+      - run: uv sync --all-extras --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy src tests
       - run: uv run pytest -v
 
-  publish:
-    name: Publish to PyPI
-    needs: verify
-    runs-on: ubuntu-latest
-    environment: pypi
+  build-artifact:
+    name: Build approved artifacts once
+    needs: verify-source
+    runs-on: ubuntu-24.04
     permissions:
-      contents: write  # softprops/action-gh-release creates the tag's GitHub Release
-      id-token: write  # required for PyPI trusted publishing (OIDC)
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          enable-cache: true
-          cache-dependency-glob: "agents/deerflow/uv.lock"
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v7
+        with:
+          version: ${{ env.UV_VERSION }}
           python-version: "3.11"
 
-      - name: Build sdist + wheel
+      - name: Verify tag and stage candidate
         run: |
-          uv build
-          ls -lh dist/
-
-      - name: Verify tag matches pyproject version
-        run: |
-          # Strip the `python-deerflow-v` monorepo prefix before comparing.
-          TAG_VERSION="${GITHUB_REF_NAME#python-deerflow-v}"
-          PKG_VERSION="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "::error::tag python-deerflow-v$TAG_VERSION does not match pyproject version $PKG_VERSION"
+          tag_version="${GITHUB_REF_NAME#python-deerflow-v}"
+          planned_version="$(python3 -c 'import json; print(json.load(open("devtools/release/versions.json"))["versions"]["synadia-ai-nats-deerflow-channel"])')"
+          if [ "$tag_version" != "$planned_version" ]; then
+            echo "::error::tag version $tag_version does not match planned version $planned_version"
             exit 1
           fi
-          echo "Tag and pyproject.toml both at $PKG_VERSION."
+          python3 devtools/release/release.py stage \
+            --source "$GITHUB_SHA" \
+            --versions devtools/release/versions.json \
+            --output "$RUNNER_TEMP/release-stage"
+          python3 devtools/release/release.py publication-preflight \
+            --stage "$RUNNER_TEMP/release-stage" \
+            --package-id deerflow
 
-      - name: Publish to PyPI (trusted publishing)
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Build and test wheel and sdist
+        run: |
+          python3 devtools/release/release.py build-python \
+            --stage "$RUNNER_TEMP/release-stage" \
+            --package-id deerflow \
+            --output "$RUNNER_TEMP/python-artifacts"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          packages-dir: agents/deerflow/dist/
+          name: deerflow-release-${{ github.sha }}
+          path: ${{ runner.temp }}/python-artifacts/
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Attach artifacts to GitHub release
-        if: success()
-        uses: softprops/action-gh-release@v2
+  verify-artifact:
+    name: Verify downloaded artifacts
+    needs: build-artifact
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.11"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: deerflow-release-${{ github.sha }}
+          path: ${{ runner.temp }}/python-artifacts
+
+      - run: |
+          python3 devtools/release/release.py verify-python-artifacts \
+            --record "$RUNNER_TEMP/python-artifacts/artifacts.json" \
+            --artifacts "$RUNNER_TEMP/python-artifacts"
+
+  publish:
+    name: Publish tested artifacts to PyPI
+    needs: verify-artifact
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: deerflow-release-${{ github.sha }}
+          path: release-artifacts
+
+      - name: Verify digest and isolate distributions
+        run: |
+          python3 devtools/release/release.py verify-record \
+            --record release-artifacts/artifacts.json \
+            --artifacts release-artifacts
+          mkdir dist
+          cp release-artifacts/*.whl dist/
+          cp release-artifacts/*.tar.gz dist/
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: dist/
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
-            agents/deerflow/dist/*.whl
-            agents/deerflow/dist/*.tar.gz
+            dist/*.whl
+            dist/*.tar.gz
           generate_release_notes: true

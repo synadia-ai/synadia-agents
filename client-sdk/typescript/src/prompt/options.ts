@@ -35,6 +35,11 @@ export interface PromptOptions {
    * token).
    */
   readonly sub?: string;
+  /**
+   * The ID of the model tool call this prompt serves, used to label the
+   * trace edge when tracing is enabled.
+   */
+  readonly toolCallId?: string;
 }
 
 /** `Agent.status()` options — the same remap overrides as {@link PromptOptions}. */

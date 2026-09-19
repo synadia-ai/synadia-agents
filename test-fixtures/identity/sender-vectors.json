@@ -177,6 +177,27 @@
       }
     },
     {
+      "id": "signed-heartbeat",
+      "note": "a host's heartbeat: sub the heartbeat subject as published, ts the frame's own ts, the hash over the frame bytes",
+      "input": {
+        "user": "UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT",
+        "seed": "SUAEJ6GDK6FSSB54LD45Q7W25AW7NUT7MVLBABIR5MIPFUTBW7ZNPK2KYE",
+        "account": "$G",
+        "subject": "agents.hb.demo-agent.alice.example",
+        "payload_b64": "eyJhZ2VudCI6ImRlbW8tYWdlbnQiLCJvd25lciI6ImFsaWNlIiwiaW5zdGFuY2VfaWQiOiJkZW1vLWFnZW50LWV4YW1wbGUtMSIsInRzIjoiMjAyNi0wOC0yOFQxMjowMDowMFoiLCJpbnRlcnZhbF9zIjozMH0=",
+        "ts": "2026-08-28T12:00:00Z",
+        "nonce": "nonce-signed-heartbeat",
+        "signed": true
+      },
+      "expected": {
+        "signed_input": "AGENT-SENDER-V1\n$G\nUCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\nagents.hb.demo-agent.alice.example\n2026-08-28T12:00:00Z\nnonce-signed-heartbeat\n9d90c385bd40b492ff3f8ed05a2481431823d49eaec231e2b926378ee9ed4302\n",
+        "sig": "WkuqcZx4Rrj33Q0Htym0WTEimbzvzK4CTitstqzMCkWMa0oe9549yr6lJrddOJHsHMxy2SIt-AcZordHetFUDQ",
+        "header": "{\"v\":1,\"account\":\"$G\",\"user\":\"UCDUW5V44EBDBIK2FL4CTNDBQFNGBEZVJHSZGQVKRHASN4AV4IWPB5NT\",\"sub\":\"agents.hb.demo-agent.alice.example\",\"ts\":\"2026-08-28T12:00:00Z\",\"nonce\":\"nonce-signed-heartbeat\",\"sig\":\"WkuqcZx4Rrj33Q0Htym0WTEimbzvzK4CTitstqzMCkWMa0oe9549yr6lJrddOJHsHMxy2SIt-AcZordHetFUDQ\"}",
+        "header_bytes": 287,
+        "header_wire_bytes": 315
+      }
+    },
+    {
       "id": "unsigned-claim",
       "note": "unsigned claim: exactly v, account, user, name",
       "input": {

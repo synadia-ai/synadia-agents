@@ -86,9 +86,11 @@ async def main() -> None:
             loop.add_signal_handler(sig, stop.set)
         await stop.wait()
     finally:
-        if service is not None:
-            await service.stop()
-        await user.close()
+        try:
+            if service is not None:
+                await service.stop()
+        finally:
+            await user.close()
 
 
 if __name__ == "__main__":

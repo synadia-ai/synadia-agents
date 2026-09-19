@@ -14,6 +14,7 @@ import {
   PROMPT_ENDPOINT_NAME,
   parseHumanBytes,
   SILENT_LOGGER,
+  type NatsConnectionBundle,
   type Logger,
 } from "@synadia-ai/agents";
 import type { ModelMessage } from "ai";
@@ -36,6 +37,10 @@ export interface SandboxBundle {
 export interface RunBridgeOptions {
   /** Pre-connected NATS handle. Caller retains ownership. */
   readonly nc: NatsConnection;
+  /** Bundle used to open `nc`; its signer, when present, is the host identity. */
+  readonly connectionBundle?: NatsConnectionBundle;
+  /** Incoming prompt policy. Default: any. Independent from host identity. */
+  readonly minSenderTrust?: "any" | "signed";
   /** §3.2 `metadata.owner`. */
   readonly owner: string;
   /** Instance name — 5th subject token (§2 v0.3). */
@@ -158,6 +163,8 @@ export async function runBridge(opts: RunBridgeOptions): Promise<{ stop: () => P
     description: `open-agent bridge for ${opts.owner}/${opts.session}`,
     version: "0.0.1",
     attachmentsOk: false,
+    ...(opts.connectionBundle?.signer ? { identity: { signer: opts.connectionBundle.signer } } : {}),
+    minSenderTrust: opts.minSenderTrust ?? "any",
     ...(opts.maxPayload !== undefined ? { maxPayload: opts.maxPayload } : {}),
   };
 

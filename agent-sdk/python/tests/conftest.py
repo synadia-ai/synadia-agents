@@ -129,7 +129,8 @@ async def evidence_for(request: pytest.FixtureRequest) -> AsyncIterator[Evidence
     so they attach the spy to their own connection instead. The
     ``_INBOX.>`` spy captures every ``Agent-Sender``-bearing request's
     reply stream; ``agents.>`` / ``$SRV.>`` capture the requests
-    themselves, headers included. Every recorder is detached on teardown.
+    themselves. Security-bearing header values are redacted. Every recorder
+    is detached on teardown.
     """
     attached: list[EvidenceRecorder] = []
 

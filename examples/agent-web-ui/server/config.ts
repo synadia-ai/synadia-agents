@@ -1,13 +1,16 @@
 // CLI + env parser. Flags beat env beats defaults.
 //
 //   bun run server/index.ts [--host 127.0.0.1] [--port 3300]
-//                           [--context current] [--servers nats://...] [--dev]
+//                           [--context current] [--servers nats://...]
+//                           [--sender-identity off|signed] [--dev]
 
 export type ServerConfig = {
   host?: string;
   port: number;
   context?: string;
   servers?: string;
+  creds?: string;
+  senderIdentity: "off" | "signed";
   dev: boolean;
 };
 
@@ -36,6 +39,12 @@ export function parseConfig(argv: string[]): ServerConfig {
 
   const contextFlag = pickFlag("--context");
   const serversFlag = pickFlag("--servers") ?? process.env["NATS_URL"];
+  const creds = pickFlag("--creds") ?? process.env["NATS_CREDS"];
+  const senderIdentityRaw =
+    pickFlag("--sender-identity") ?? process.env["NATS_SENDER_IDENTITY"] ?? "off";
+  if (senderIdentityRaw !== "off" && senderIdentityRaw !== "signed") {
+    throw new Error("--sender-identity must be off or signed");
+  }
   const dev = hasFlag("--dev");
 
   // If --servers is given, it wins outright. Otherwise fall back to context
@@ -45,5 +54,5 @@ export function parseConfig(argv: string[]): ServerConfig {
     ? undefined
     : (contextFlag ?? process.env["NATS_CONTEXT"] ?? "current");
 
-  return { host, port, context, servers, dev };
+  return { host, port, context, servers, creds, senderIdentity: senderIdentityRaw, dev };
 }

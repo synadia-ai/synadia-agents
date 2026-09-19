@@ -16,6 +16,10 @@
 //                                helpers for emitting response chunks.
 //   - {@link buildHeartbeatPayload}, {@link encodeHeartbeatPayload} —
 //                                heartbeat-publisher helpers.
+//   - {@link signHeartbeat}, {@link signHeartbeatHeader} —
+//                                the `Agent-Sender` header on a heartbeat
+//                                (`sub` the heartbeat subject, `ts` the
+//                                frame's own), for hand-rolled publishers.
 //   - {@link SenderGate}, {@link NonceCache} — sender-identity
 //                                classification for hand-rolled services
 //                                (the shared codec lives in the caller
@@ -67,3 +71,9 @@ export {
   buildHeartbeatPayload,
   encodeHeartbeatPayload,
 } from "./heartbeat/payload.js";
+export {
+  type HeartbeatSigner,
+  type SignHeartbeatOptions,
+  signHeartbeat,
+  signHeartbeatHeader,
+} from "./heartbeat/sender.js";

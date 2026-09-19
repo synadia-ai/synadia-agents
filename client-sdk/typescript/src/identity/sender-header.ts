@@ -77,6 +77,38 @@ export interface AgentSenderHeader {
   readonly sig?: string;
 }
 
+const NODE_INSPECT = Symbol.for("nodejs.util.inspect.custom");
+
+/** Keep wire-only proof fields out of ordinary JSON/structured logs and Node inspection. */
+function protectSenderHeader<T extends AgentSenderHeader>(header: T): T {
+  for (const field of ["nonce", "sig"] as const) {
+    if (header[field] !== undefined) {
+      Object.defineProperty(header, field, {
+        value: header[field],
+        enumerable: false,
+        configurable: false,
+        writable: false,
+      });
+    }
+  }
+  const safeView = (): Record<string, unknown> => ({
+    v: header.v,
+    account: header.account,
+    user: header.user,
+    ...(header.name !== undefined ? { name: header.name } : {}),
+    ...(header.sub !== undefined ? { sub: header.sub } : {}),
+    ...(header.ts !== undefined ? { ts: header.ts } : {}),
+    ...(header.nonce !== undefined ? { nonce: "[redacted]" } : {}),
+    ...(header.sig !== undefined ? { sig: "[redacted]" } : {}),
+  });
+  Object.defineProperty(header, "toJSON", { value: safeView, enumerable: false });
+  Object.defineProperty(header, NODE_INSPECT, {
+    value: (): string => `AgentSenderHeader(${JSON.stringify(safeView())})`,
+    enumerable: false,
+  });
+  return Object.freeze(header);
+}
+
 /** A sender whose signature verified: `user` is proven, `account` is the signed claim. */
 export interface VerifiedSender {
   readonly trust: "verified";
@@ -330,7 +362,7 @@ export function parseSenderHeader(value: string): AgentSenderHeader | null {
     }
     out.sig = sig;
   }
-  return Object.freeze(out);
+  return protectSenderHeader(out);
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +429,7 @@ export async function signSenderHeader(opts: SignSenderHeaderOptions): Promise<A
     payloadSha256Hex: await sha256Hex(opts.payload),
   });
   const sig = base64UrlEncode(await opts.signer.sign(input));
-  return Object.freeze({
+  return protectSenderHeader({
     v: 1 as const,
     account,
     user,
@@ -415,7 +447,7 @@ export function buildClaimHeader(opts: {
   readonly name?: string;
 }): AgentSenderHeader {
   const dot = opts.id.indexOf(".");
-  return Object.freeze({
+  return protectSenderHeader({
     v: 1 as const,
     account: opts.id.slice(0, dot),
     user: opts.id.slice(dot + 1),
@@ -601,7 +633,7 @@ export async function verifySenderHeader(
   }
 
   if (opts.mode === "live" && opts.nonceSeen?.(header.user, header.nonce)) {
-    reject(`nonce ${JSON.stringify(header.nonce)} already seen for ${header.user}`);
+    reject(`nonce already seen for ${header.user}`);
   }
 
   const input = buildSignedInput({
