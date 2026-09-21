@@ -98,7 +98,7 @@ Every SDK call mapped to its Synadia Agent Protocol for NATS section, for implem
 | `agents.close()`             | Aborts ALL in-flight streams via a shared AbortController.             | §6.7     |
 | Wire-level cancel message    | **Not sent** - spec defines none; interest-based delivery handles it.  | §6.7     |
 
-## Sender identity (extension — `agent-protocol-sender-identity.md`)
+## Sender identity (extension — `core-protocol.md` §13)
 
 The extension is additive to protocol `0.3`; section names below refer to the
 [sender-identity chapter](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension)

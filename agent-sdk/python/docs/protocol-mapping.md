@@ -9,7 +9,7 @@
 > status handler describe behavior shipped from **this** package now;
 > the wire shapes themselves are unchanged.
 
-## Sender identity (extension — `agent-protocol-sender-identity.md`)
+## Sender identity (extension — `core-protocol.md` §13)
 
 The sender-identity extension is additive on top of the unchanged 0.3
 protocol; its
