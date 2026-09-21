@@ -44,6 +44,8 @@ from synadia_ai.agents import (
     AgentId,
     Agents,
     Identity,
+    PromptExtras,
+    PromptInterceptorContext,
     ResponseChunk,
     SenderSignatureRequiredError,
     StatusChunk,
@@ -318,7 +320,11 @@ async def ts_reference_agent_signed(
     seed_file.chmod(0o600)
     proc = _ReferenceAgentProcess(
         nats_server_nkey.url,
-        env={"NATS_NKEY_SEED_FILE": str(seed_file), "REFERENCE_AGENT_MIN_SENDER_TRUST": "signed"},
+        env={
+            "NATS_NKEY_SEED_FILE": str(seed_file),
+            "NATS_SENDER_IDENTITY": "signed",
+            "REFERENCE_AGENT_MIN_SENDER_TRUST": "signed",
+        },
     )
     await proc.start()
     try:
@@ -386,4 +392,50 @@ async def test_python_unsigned_caller_is_refused_by_ts_signed_reference_agent(
         assert reply.headers["Nats-Service-Error-Code"] == "401"
         assert reply.headers["Nats-Service-Error"] == "signature required"
     finally:
+        await agents.close()
+
+
+@pytest.mark.asyncio
+async def test_extra_envelope_fields_from_a_python_interceptor_reach_a_ts_host(
+    nc: NATSClient, ts_reference_agent: _ReferenceAgentProcess
+) -> None:
+    """A TS host answers a prompt whose envelope carries fields it does not know.
+
+    A Python prompt interceptor adds two top-level fields and a header;
+    §5.6 obliges the TS decoder to tolerate the fields, so a mixed-language
+    fleet running an extension on the caller side keeps working with a
+    host that knows nothing about it.
+    """
+    assert ts_reference_agent.prompt_subject is not None
+
+    class Extend:
+        async def before_prompt(self, ctx: PromptInterceptorContext) -> PromptExtras | None:
+            return PromptExtras(
+                fields={"x_ext_id": "interop-1", "x_ext_meta": {"n": 1, "ok": True}},
+                headers={"X-Ext": "interop-1"},
+            )
+
+    agents = Agents(nc=nc, interceptors=[Extend()])
+    seen: list[bytes] = []
+
+    async def spy(msg: object) -> None:
+        seen.append(msg.data)  # type: ignore[attr-defined]
+
+    sub = await nc.subscribe(ts_reference_agent.prompt_subject, cb=spy)
+    try:
+        found = await agents.discover(timeout=3.0)
+        discovered = next(a for a in found if a.prompt_subject == ts_reference_agent.prompt_subject)
+
+        responses = [
+            chunk
+            async for chunk in discovered.prompt("extended hello", timeout=10.0)
+            if isinstance(chunk, ResponseChunk)
+        ]
+        assert len(responses) == 1, f"extended prompt was not answered: {responses!r}"
+        assert responses[0].text == "demo agent received your prompt."
+        assert seen == [
+            b'{"prompt":"extended hello","x_ext_id":"interop-1","x_ext_meta":{"n":1,"ok":true}}'
+        ]
+    finally:
+        await sub.unsubscribe()
         await agents.close()

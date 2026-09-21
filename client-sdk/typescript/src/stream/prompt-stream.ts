@@ -6,10 +6,11 @@
 //   - Calls `nc.requestMany(subject, payload, { strategy: "sentinel", maxWait, headers })`
 //     on the first iteration. The connection's mux inbox handles the reply
 //     routing; the empty-body terminator (§6.5) ends the iterator.
-//   - The optional `buildHeaders` callback runs at publish time (inside
-//     that first iteration), so an `Agent-Sender` header's `ts` / nonce
-//     are fresh even when the caller iterates late; the signature covers
-//     the exact `payload` bytes handed in.
+//   - The optional `prepare` callback runs at publish time (inside that
+//     first iteration) and returns the bytes and headers that go out, so
+//     an `Agent-Sender` header's `ts` / nonce are fresh even when the
+//     caller iterates late, and its signature covers the exact bytes
+//     published.
 //   - Yields `{ type: "response" }`, `{ type: "status" }`, `QueryEvent` per
 //     §6.3–§7.
 //   - Emits a synthetic `{ type: "status", status: "done" }` when the wire
@@ -45,18 +46,25 @@ export type StreamMessage =
   | { readonly type: "status"; readonly status: string }
   | QueryEvent;
 
+/** The request as it goes out: the bytes and, when there are any, the headers. */
+export interface PreparedRequest {
+  readonly payload: Uint8Array;
+  readonly headers?: MsgHdrs;
+}
+
 export interface PromptStreamOptions {
   readonly nc: NatsConnection;
   /** The subject the request is published to. */
   readonly subject: string;
-  /** The exact request bytes (encoded once by `Agent.prompt()`). */
+  /** The request bytes (encoded once by `Agent.prompt()`), published as-is without `prepare`. */
   readonly payload: Uint8Array;
   /**
-   * Builds the request headers at publish time (first iteration). Used
-   * for the `Agent-Sender` header, signed over `payload`. `undefined`
-   * → no headers.
+   * Prepares the request at publish time (first iteration), in place of
+   * publishing `payload` bare: `Agent.prompt()` runs its prompt
+   * interceptors and signs the `Agent-Sender` header here, over the exact
+   * bytes it returns. A throw fails the stream before anything is sent.
    */
-  readonly buildHeaders?: () => Promise<MsgHdrs | undefined>;
+  readonly prepare?: () => Promise<PreparedRequest>;
   readonly inactivityTimeoutMs: number;
   readonly maxWaitMs: number;
   readonly signal?: AbortSignal;
@@ -66,7 +74,7 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
   readonly #nc: NatsConnection;
   readonly #requestSubject: string;
   readonly #payload: Uint8Array;
-  readonly #buildHeaders: (() => Promise<MsgHdrs | undefined>) | undefined;
+  readonly #prepare: (() => Promise<PreparedRequest>) | undefined;
   readonly #inactivityTimeoutMs: number;
   readonly #maxWaitMs: number;
   readonly #signal: AbortSignal | undefined;
@@ -78,7 +86,7 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
     this.#nc = options.nc;
     this.#requestSubject = options.subject;
     this.#payload = options.payload;
-    this.#buildHeaders = options.buildHeaders;
+    this.#prepare = options.prepare;
     this.#inactivityTimeoutMs = options.inactivityTimeoutMs;
     this.#maxWaitMs = options.maxWaitMs;
     this.#signal = options.signal;
@@ -111,13 +119,15 @@ export class PromptStream implements AsyncIterable<StreamMessage> {
     // transport-node / Bun ws) all return a `QueuedIterator<Msg>` whose
     // `.stop()` is the only way to bail out early without waiting for
     // `maxWait` to expire. Cast at the boundary.
-    // Headers are built here — at publish time — so a signed
+    // The request is prepared here — at publish time — so a signed
     // `Agent-Sender` carries a fresh `ts` and nonce.
-    const hdrs = this.#buildHeaders ? await this.#buildHeaders() : undefined;
-    const iter = (await this.#nc.requestMany(this.#requestSubject, this.#payload, {
+    const request: PreparedRequest = this.#prepare
+      ? await this.#prepare()
+      : { payload: this.#payload };
+    const iter = (await this.#nc.requestMany(this.#requestSubject, request.payload, {
       strategy: "sentinel",
       maxWait: this.#maxWaitMs,
-      ...(hdrs ? { headers: hdrs } : {}),
+      ...(request.headers ? { headers: request.headers } : {}),
     })) as QueuedIterator<Msg>;
     this.#iter = iter;
     // cancel() may have fired during the requestMany await — the early

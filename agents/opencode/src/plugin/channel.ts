@@ -1,7 +1,8 @@
 import { connect as natsConnect } from "@nats-io/transport-node";
+import { withAgentReconnectDefaults } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
 import { bridgePromptToOpenCode } from "../bridge.js";
-import { resolveNatsOptions } from "../nats.js";
+import { resolveNatsBundle } from "../nats.js";
 import { buildAgentServiceOptions } from "../service.js";
 import { resolvePluginConfig } from "./config.js";
 import { PluginOpenCodeBridgeClient } from "./prompt.js";
@@ -54,27 +55,58 @@ export async function createSynadiaPluginChannel(
     promptCount: 0,
   };
   const bridgeClient = new PluginOpenCodeBridgeClient(ctx, state);
-  const nc = await natsConnect(await resolveNatsOptions(resolved.config.nats));
-  const service = new AgentService(buildAgentServiceOptions({
-    nc,
-    config: resolved.config,
-    version: options.version ?? "0.0.0",
-    extraMetadata: resolved.identity.metadata,
-  }));
-  service.onPrompt(async (envelope, response) => {
-    await bridgePromptToOpenCode({ envelope, response, mapping: { owner: resolved.identity.owner, name: resolved.identity.session, subjectToken: "opencode", opencode: resolved.config.opencode }, client: bridgeClient });
+  const connectionBundle = await resolveNatsBundle(resolved.config.nats);
+  const nc = await natsConnect(withAgentReconnectDefaults(connectionBundle.connectionOptions)).catch((error: unknown) => {
+    connectionBundle.wipe();
+    throw error;
   });
-  await service.start();
+  let service: AgentService;
+  try {
+    service = new AgentService(buildAgentServiceOptions({
+      nc,
+      config: resolved.config,
+      version: options.version ?? "0.0.0",
+      extraMetadata: resolved.identity.metadata,
+      connectionBundle,
+    }));
+    service.onPrompt(async (envelope, response) => {
+      await bridgePromptToOpenCode({ envelope, response, mapping: { owner: resolved.identity.owner, name: resolved.identity.session, subjectToken: "opencode", opencode: resolved.config.opencode }, client: bridgeClient });
+    });
+    await service.start();
+  } catch (error) {
+    await nc.close();
+    connectionBundle.wipe();
+    throw error;
+  }
   state.subject = service.subject.prompt;
 
   let disposed = false;
+  let stopPromise: Promise<void> | undefined;
   const stop = async (): Promise<void> => {
     if (disposed) return;
-    disposed = true;
-    state.disposeCount += 1;
-    channels.delete(key);
-    await service.stop();
-    await nc.drain();
+    if (stopPromise) return stopPromise;
+    stopPromise = (async () => {
+      let serviceError: unknown;
+      try {
+        await service.stop();
+      } catch (error) {
+        serviceError = error;
+      }
+      // A failed drain leaves reconnect authentication live. Keep the channel
+      // reachable through this instance so a later dispose can retry it.
+      await nc.drain();
+      connectionBundle.wipe();
+      disposed = true;
+      state.disposeCount += 1;
+      channels.delete(key);
+      if (serviceError !== undefined) throw serviceError;
+    })();
+    try {
+      await stopPromise;
+    } catch (error) {
+      if (!disposed) stopPromise = undefined;
+      throw error;
+    }
   };
   const instance: ChannelInstance = {
     state,

@@ -8,6 +8,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Request interceptors.** `AgentServiceOptions.interceptors`: each
+  `RequestInterceptor`'s `aroundRequest(ctx, next)` runs around the prompt
+  handler for every admitted request — after the envelope is decoded and
+  the sender classified, before the §6.4 ack; the first listed is the
+  outermost. `ctx` carries the decoded `envelope` (unknown top-level
+  fields in `envelope.extras`), the classified `sender`, the `subject` and
+  the request's `headers`. Throwing before `next()` refuses the request
+  with no ack: a `RequestRejectedError(code, description)` answers its §9
+  code (400–599), a `ProtocolError` `400`, anything else `500`. `next()`
+  acks and runs the rest of the chain and the handler; an interceptor runs
+  it inside its own context (`AsyncLocalStorage.run`), which the handler
+  then sees. One that returns without calling `next()` answers `500`; a
+  second call of `next()` rejects. A throw after `next()` resolved — the
+  handler's reply already out in full — leaves that reply standing: no
+  error frame, the normal terminator, and one error-level log line with a
+  fixed message, never the error's details.
+- **`heartbeatExtras`.** `AgentServiceOptions.heartbeatExtras` — a provider
+  read when each heartbeat and each `status` reply is built, merged into
+  its extras. A provider that throws, a §8.3 field name, or a value that
+  does not serialize costs that beat its extras, never the beat, and is
+  logged at `error`.
+- **Signed heartbeats.** With `identity: { signer }` the service sets the
+  `Agent-Sender` header of the sender-identity extension on every
+  heartbeat it publishes — `sub` the heartbeat subject as published, `ts`
+  the frame's own `ts`, a fresh nonce per beat, `sig` over subject · ts ·
+  nonce · sha256 of the exact bytes published — with the signer that signs
+  `id_sig`. No new payload field, no new signing format; a 0.3 subscriber
+  ignores headers. Without a signer the service beats unsigned, as before;
+  the status reply carries no header. A signer that fails mid-life costs
+  the beat its signature, never the beat (logged at `error`); a signer
+  slower than the interval never piles beats up — a tick that finds the
+  previous beat still being signed is skipped and logged. `start()`
+  resolves once the first beat is published; `stop()` lets a beat still
+  being signed finish without publishing. `signHeartbeat` /
+  `signHeartbeatHeader` and `HeartbeatSigner` are exported for hand-rolled
+  publishers; the shared fixtures gain the `signed-heartbeat` vector.
 - **Sender identity (the sender-identity extension).** `AgentService`
   classifies every `prompt` request before the §6.4 ack: a malformed
   `Agent-Sender` header → `400`; a failing signature, replayed nonce,
@@ -18,16 +54,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   never served. The classified sender reaches the handler as
   `PromptResponse.sender` (`VerifiedSender` with `id`, `ClaimedSender`
   without — never authorize on a claim — or `undefined`). `status` is
-  classified and logged, never rejected. Spec:
-  [`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
-  - Registration: `user_nkey` / `account` when the connection has an
-    identity, `id_sig` (`AGENT-ID-V1` over the prompt subject) when
-    `identity.signer` is set; identity keys override `extraMetadata`.
+  classified and logged, never rejected. The extension is additive to
+  protocol `0.3`.
+  - Registration is opt-in: omitted `identity` performs no self lookup and
+    emits no identity metadata; explicit `{}` requests unsigned
+    `user_nkey` / `account`; a live-bound signer also adds `id_sig`
+    (`AGENT-ID-V1` over the prompt subject). Identity keys override
+    `extraMetadata` and are removed when identity is omitted.
     `min_sender_trust` is **always** emitted on the prompt endpoint
     (default `"any"`) — that key is what advertises the extension.
   - New `AgentServiceOptions`: `identity: { signer? }`, `minSenderTrust`,
     `replayWindowMs` (default 30 000; nonces expire at `ts + window`),
-    `accountTokenPosition` (validated, passed to classification),
     `acceptSender`, `logger` (replaces the bare `console.warn`),
     `resolveTtlMs` (default 10 000) and `operatorAttested` (default
     `false`).
@@ -38,30 +75,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Operator-attested mode (spec Appendix A), `operatorAttested: true`:
     a verified header is cross-checked against the server's
     `Nats-Request-Info` stamp — disagreement on `acc` / `user`, or a stamp
-    the server would not write, → `401`; agreement on `acc` (or the
-    `accountTokenPosition` cross-check) → `sender.accountAttested === true`
+    the server would not write, → `401`; agreement on `acc` →
+    `sender.accountAttested === true`
     and `formatSender` renders `(verified)`. A deployment promise (closed
     endpoint) the SDK cannot verify; off by default, and `Nats-Request-Info`
     is never read otherwise. `AgentService.operatorAttested` getter.
   - `SenderGateOptions.operatorAttested` / `.resolver`,
     `SenderGate.operatorAttested`; `SenderGate.classify` now runs the
     caller package's `verifySender(msg, "live", …)`.
-  - `start()` throws `IdentityMismatchError` when the signer's key is not
-    the connection's user; on `NoIdentityError` / `IdentityUnavailableError`
-    it logs and starts without identity metadata.
+  - With a signer, `start()` requires the live connection's user and account
+    to match and propagates every binding failure; it never starts with
+    downgraded unsigned or absent identity metadata. Explicit unsigned
+    registration remains best-effort.
   - `AgentService.identity` / `.minSenderTrust` getters.
   - `SenderGate` and `NonceCache` (`@synadia-ai/agent-service`) for
     hand-rolled services that want the same classification (the shared
     codec — `verifySenderHeader`, `SenderInfo`, `formatSender` — lives in
     `@synadia-ai/agents` and is not re-exported here).
   - `ReferenceAgent`: `identity`, `minSenderTrust`, `acceptSender`,
-    `replayWindowMs`, `accountTokenPosition`, `resolveTtlMs`,
-    `operatorAttested`, `logger`; the prompt handler receives the
+    `replayWindowMs`, `resolveTtlMs`, `operatorAttested`, `logger`; the prompt handler receives the
     classified sender as its second argument; the same registration
     metadata and classification as `AgentService`.
 
 ### Changed
 
+- `extraMetadata` can no longer override the required registration keys.
+  `AgentService` and `ReferenceAgent` now write `agent`, `owner` and
+  `protocol_version` over `extraMetadata` (previously an extra entry
+  replaced them), matching `session` and the identity keys, which already
+  won. A harness can no longer advertise an agent or owner other than the
+  subject it serves.
 - `PromptResponse` takes an optional third constructor argument (the
   classified sender) and exposes it as `sender`.
 - `ReferenceAgentPromptHandler` is now `(msg, sender) => …`; handlers
@@ -76,6 +119,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   subscriptions are registered at the server — a caller on another
   connection that discovers or prompts right away no longer races them
   (no responders).
+- Replay rejection details omit raw nonces, and `acceptSender` hook failures
+  log only a fixed safe marker rather than application-controlled exception
+  names or messages.
+- **BREAKING (pre-1.0):** `AgentService` and `ReferenceAgent` no longer expose
+  the unusable `accountTokenPosition` option: their fixed five-token
+  subscriptions cannot receive the inserted six-token subject. Applications
+  that need an account token in a remapped subject must use a hand-rolled
+  wildcard service with `SenderGate({ accountTokenPosition: … })` or call
+  `verifySenderHeader(…, { accountTokenPosition: … })` directly.
+- Unexpected handler, status, and classification failures use generic wire
+  descriptions and fixed log markers; application-controlled exception names,
+  messages, and stacks are never emitted by the SDK.
 
 ### Changed (pre-identity)
 

@@ -61,8 +61,8 @@ use a **named NATS CLI context** — it carries creds / nkey / JWT / TLS:
 NATS_CONTEXT=my-synadia-cloud RESEARCH_PROVIDER=tavily RESEARCH_MODEL="openai/gpt-oss-120b" ./scripts/run.sh
 ```
 
-Connection resolution (the agent **and** the `ask.ts` driver both follow it): **`NATS_CONTEXT` → `NATS_URL` → `nats://127.0.0.1:4222`**.
-A bare `NATS_URL` only carries the address — for an authenticated server you need the context.
+Connection resolution (the agent **and** the `ask.ts` driver both follow it): **`NATS_CONTEXT` → `NATS_URL` + optional `NATS_CREDS` → `nats://127.0.0.1:4222`**.
+Both paths use the SDK connection-bundle helper; context mode carries its own authentication.
 
 ## Try it
 
@@ -95,6 +95,14 @@ from any protocol client — `../agent-web-ui/`, `../../client-sdk/typescript/ex
 | `RESEARCH_DEBUG`         | unset                                 | `1` enables ax's verbose turn trace + dumps req/res to `/tmp/research-*.json` |
 | `NATS_CONTEXT`           | unset                                 | named NATS CLI context (creds/nkey/JWT/TLS); takes precedence over `NATS_URL` |
 | `NATS_URL`               | `nats://127.0.0.1:4222`               | NATS server (used when `NATS_CONTEXT` is unset)                              |
+| `NATS_CREDS`             | unset                                 | connection credentials file for URL mode                                     |
+| `NATS_SENDER_IDENTITY`   | `off`                                 | `signed` derives a caller/host signer from the same connection credentials   |
+| `NATS_MIN_SENDER_TRUST`  | `any`                                 | host prompt policy; `signed` rejects headerless/invalidly signed callers      |
+
+Identity and incoming trust are independent. The default `off` / `any`
+combination preserves identity-free operation. In signed mode, the SDK reads
+the selected credentials once and uses the same snapshot for NATS auth and the
+signer; there is no separate identity credential.
 
 ## Subject
 

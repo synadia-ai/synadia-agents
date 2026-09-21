@@ -1,21 +1,26 @@
 // Tiny driver: discover the research agent and stream a prompt to it.
 import process, { stdout } from "node:process";
-import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents, loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
+import { Agents } from "@synadia-ai/agents";
+import { connectResearchNats } from "../src/nats.js";
 
 const question =
   process.argv.slice(2).join(" ") ||
   "what are the main tradeoffs between DSPy ReAct and DSPy RLM?";
 
-// NATS_CONTEXT (a named CLI context) wins, then NATS_URL, then localhost —
-// same resolution as the agent in src/index.ts.
-const opts = process.env["NATS_CONTEXT"]
-  ? await loadContextOptions(process.env["NATS_CONTEXT"])
-  : process.env["NATS_URL"]
-    ? parseNatsUrl(process.env["NATS_URL"])
-    : { servers: "nats://127.0.0.1:4222" };
-const nc = await natsConnect(opts);
-const agents = new Agents({ nc });
+const { nc, bundle: connectionBundle } = await connectResearchNats("dspy-research-caller");
+let agents: Agents;
+try {
+  agents = new Agents({
+    nc,
+    ...(connectionBundle.signer
+      ? { identity: { signer: connectionBundle.signer, name: "dspy-research-caller" } }
+      : {}),
+  });
+} catch (error) {
+  await nc.close();
+  connectionBundle.wipe();
+  throw error;
+}
 
 try {
   const found = await agents.discover();
@@ -43,6 +48,10 @@ try {
   }
   stdout.write("\n");
 } finally {
-  await agents.close();
-  await nc.close();
+  try {
+    await agents.close();
+  } finally {
+    await nc.close();
+    connectionBundle.wipe();
+  }
 }

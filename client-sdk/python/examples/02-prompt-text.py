@@ -16,10 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from examples._connect_cli import (
     add_connection_flags,
     add_identity_flags,
-    connect_from_cli,
-    identity_from_cli,
+    open_agents_from_cli,
 )
-from synadia_ai.agents import Agents, DiscoverFilter, ResponseChunk, StatusChunk
+from synadia_ai.agents import DiscoverFilter, ResponseChunk, StatusChunk
 
 
 async def main() -> None:
@@ -41,8 +40,8 @@ async def main() -> None:
     add_identity_flags(parser)
     args = parser.parse_args()
 
-    nc = await connect_from_cli(args)
-    agents = Agents(nc=nc, identity=identity_from_cli(args))
+    session = await open_agents_from_cli(args)
+    agents = session.agents
     try:
         filt = DiscoverFilter(session_name=args.session) if args.session else None
         found = await agents.discover(filter=filt)
@@ -59,8 +58,7 @@ async def main() -> None:
                     sys.stdout.write("\n")
                     sys.stdout.flush()
     finally:
-        await agents.close()
-        await nc.close()
+        await session.close()
 
 
 if __name__ == "__main__":

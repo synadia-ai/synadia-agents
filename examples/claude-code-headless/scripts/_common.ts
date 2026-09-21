@@ -1,9 +1,14 @@
 // Small shared helpers for the CLI scripts. Not exported publicly.
 
 import { connect as natsConnect } from "@nats-io/transport-node";
-import type { NatsConnection } from "@nats-io/nats-core";
-import type { NodeConnectionOptions } from "@nats-io/transport-node";
-import { Agents, loadContextOptions, type Agent } from "@synadia-ai/agents";
+import type { Msg, NatsConnection } from "@nats-io/nats-core";
+import {
+  Agents,
+  resolveNatsConnectionBundle,
+  type Agent,
+  type NatsConnectionBundle,
+  type NatsConnectionSource,
+} from "@synadia-ai/agents";
 
 export interface CliArgs {
   readonly context?: string;
@@ -72,26 +77,58 @@ export function parseArgs(argv: ReadonlyArray<string>): CliArgs {
   };
 }
 
-export async function openNats(args: CliArgs): Promise<NatsConnection> {
-  const context = args.context ?? process.env["NATS_CONTEXT"];
-  const url = args.natsUrl ?? process.env["NATS_URL"];
-  let opts: NodeConnectionOptions;
-  if (context) {
-    opts = { ...(await loadContextOptions(context)), name: "claude-code-headless-cli" };
-  } else if (url) {
-    opts = { servers: url, name: "claude-code-headless-cli" };
-  } else {
+interface OpenedNats {
+  readonly nc: NatsConnection;
+  readonly bundle: NatsConnectionBundle;
+  readonly senderIdentity: "off" | "signed";
+}
+
+async function openNats(args: CliArgs): Promise<OpenedNats> {
+  const source: NatsConnectionSource | undefined = args.context
+    ? { context: args.context }
+    : args.natsUrl
+      ? { url: args.natsUrl }
+      : process.env["NATS_CONTEXT"]
+        ? { context: process.env["NATS_CONTEXT"] }
+        : process.env["NATS_URL"]
+          ? { url: process.env["NATS_URL"] }
+          : undefined;
+  if (!source) {
     throw new Error("provide --context or --url (or set NATS_CONTEXT / NATS_URL)");
   }
-  return natsConnect(opts);
+  const rawMode = process.env["NATS_SENDER_IDENTITY"] ?? "off";
+  if (rawMode !== "off" && rawMode !== "signed") {
+    throw new Error('NATS_SENDER_IDENTITY must be "off" or "signed"');
+  }
+  const bundle = await resolveNatsConnectionBundle(source, { identity: rawMode });
+  bundle.connectionOptions.name = "claude-code-headless-cli";
+  try {
+    return {
+      nc: await natsConnect(bundle.connectionOptions),
+      bundle,
+      senderIdentity: rawMode,
+    };
+  } catch (error) {
+    bundle.wipe();
+    throw error;
+  }
 }
 
 export function ownerFilter(args: CliArgs): string {
-  return args.owner ?? process.env["USER"] ?? "";
+  return args.owner ??
+    process.env["SYNADIA_CLAUDE_CODE_HEADLESS_OWNER"] ??
+    process.env["SYNADIA_OWNER"] ??
+    process.env["CLAUDE_CODE_HEADLESS_OWNER"] ??
+    process.env["USER"] ??
+    "";
 }
 
 export function nameFilter(args: CliArgs): string {
-  return args.name ?? "control";
+  return args.name ??
+    process.env["SYNADIA_CLAUDE_CODE_HEADLESS_NAME"] ??
+    process.env["SYNADIA_NAME"] ??
+    process.env["CLAUDE_CODE_HEADLESS_NAME"] ??
+    "control";
 }
 
 export async function findController(agents: Agents, args: CliArgs): Promise<Agent> {
@@ -136,26 +173,42 @@ export async function waitForSession(
 export interface CliClient {
   readonly nc: NatsConnection;
   readonly agents: Agents;
+  request(subject: string, payload: string, timeout: number): Promise<Msg>;
   close(): Promise<void>;
 }
 
 export async function openCliClient(args: CliArgs): Promise<CliClient> {
-  const nc = await openNats(args);
-  const agents = new Agents({ nc });
+  const opened = await openNats(args);
+  const { nc, bundle, senderIdentity } = opened;
+  let agents: Agents;
+  try {
+    agents = new Agents({
+      nc,
+      ...(senderIdentity === "signed"
+        ? { identity: { signer: bundle.signer!, name: "claude-code-headless-cli" } }
+        : {}),
+    });
+  } catch (error) {
+    await nc.close();
+    bundle.wipe();
+    throw error;
+  }
   return {
     nc,
     agents,
+    request(subject, payload, timeout) {
+      return senderIdentity === "signed"
+        ? agents.requestSigned(subject, payload, { timeoutMs: timeout })
+        : nc.request(subject, payload, { timeout });
+    },
     async close() {
       try {
         await agents.close();
       } catch {
         /* noop */
       }
-      try {
-        await nc.close();
-      } catch {
-        /* noop */
-      }
+      await nc.close();
+      bundle.wipe();
     },
   };
 }

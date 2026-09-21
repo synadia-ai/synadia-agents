@@ -9,6 +9,7 @@ import { resolve as pathResolve } from "node:path";
 
 import type { NatsConnection } from "@nats-io/nats-core";
 import type { PermissionMode } from "@anthropic-ai/claude-agent-sdk";
+import type { MinSenderTrust, SenderSigner } from "@synadia-ai/agents";
 
 import { ManagedSession, type SessionSummary } from "./managed-session.js";
 import { generateSessionId, validateSessionId } from "./subjects.js";
@@ -71,6 +72,9 @@ export interface ClaudeSessionManagerOptions {
   readonly defaultAllowedTools: ReadonlyArray<string>;
   readonly defaultMaxTurns: number;
   readonly defaultMaxLifetimeS: number;
+  /** Shared by every AgentService registered on this one NATS connection. */
+  readonly signer?: SenderSigner;
+  readonly minSenderTrust?: MinSenderTrust;
   /** Absolute path to the `claude` binary; passed to the SDK as `pathToClaudeCodeExecutable`. */
   readonly claudeCodePath?: string;
   readonly logger?: (line: string) => void;
@@ -217,6 +221,8 @@ export class ClaudeSessionManager {
       permissionMode,
       maxTurns,
       maxLifetimeS,
+      ...(this.options.signer ? { signer: this.options.signer } : {}),
+      minSenderTrust: this.options.minSenderTrust ?? "any",
       ...(this.options.claudeCodePath ? { claudeCodePath: this.options.claudeCodePath } : {}),
     });
 
@@ -226,7 +232,7 @@ export class ClaudeSessionManager {
       this.creating.delete(sessionId);
       return {
         code: 400,
-        message: `failed to register session agent: ${(e as Error).message}`,
+        message: `failed to register session agent (${e instanceof Error ? e.name : "unknown error"})`,
       };
     }
 

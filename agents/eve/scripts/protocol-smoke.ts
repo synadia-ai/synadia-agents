@@ -128,7 +128,8 @@ try {
   if (!agent.promptEndpoint.metadata["max_payload"])
     throw new Error("prompt endpoint missing max_payload");
   const statusEndpoint = agent.endpoints.find((e) => e.name === "status");
-  if (statusEndpoint?.subject !== service.subject.status)
+  if (!statusEndpoint) throw new Error("status endpoint missing");
+  if (statusEndpoint.subject !== service.subject.status)
     throw new Error("status endpoint subject mismatch");
   if (statusEndpoint.queueGroup !== "agents")
     throw new Error("status endpoint queue group mismatch");

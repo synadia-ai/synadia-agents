@@ -13,45 +13,56 @@ import { existsSync, statSync } from "node:fs";
 import {
   Agents,
   SDK_PROTOCOL_VERSION,
-  loadContextOptions,
-  parseNatsUrl,
+  resolveNatsConnectionBundle,
   type NatsConnection,
+  type NatsConnectionSource,
 } from "@synadia-ai/agents";
 import {
   connect as natsConnect,
-  type NodeConnectionOptions,
 } from "@nats-io/transport-node";
 import { parseConfig } from "./config.ts";
 import { Bridge, formatSdkProtocolVersion, type BridgeWsData } from "./bridge.ts";
 
 const config = parseConfig(Bun.argv);
 
-async function buildConnectOptions(): Promise<NodeConnectionOptions> {
-  if (config.servers) {
-    // `parseNatsUrl` extracts userinfo (token / user:password) — without it
-    // a URL like `nats://TOKEN@host:port` would silently drop the token
-    // because `@nats-io/transport-node` doesn't parse credentials from URLs.
-    // `name` is spread last so the local connection identity wins even if
-    // a future `parseNatsUrl` were to start emitting a `name` field.
-    return { ...parseNatsUrl(config.servers), name: "testui" };
-  }
-  const contextName = config.context ?? "current";
-  return { ...(await loadContextOptions(contextName)), name: "testui" };
+const connectionSource: NatsConnectionSource = config.servers
+  ? config.creds
+    ? { url: config.servers, creds: config.creds }
+    : { url: config.servers }
+  : { context: config.context ?? "current" };
+const connectionBundle = config.senderIdentity === "signed"
+  ? await resolveNatsConnectionBundle(connectionSource, { identity: "signed" })
+  : await resolveNatsConnectionBundle(connectionSource);
+connectionBundle.connectionOptions.name = "testui";
+const nc: NatsConnection = await natsConnect(connectionBundle.connectionOptions).catch(
+  (error: unknown) => {
+    connectionBundle.wipe();
+    throw error;
+  },
+);
+let agents: Agents;
+try {
+  agents = new Agents({
+    nc,
+    ...(connectionBundle.signer
+      ? { identity: { signer: connectionBundle.signer, name: "agent-web-ui" } }
+      : {}),
+  });
+} catch (error) {
+  await nc.close();
+  connectionBundle.wipe();
+  throw error;
 }
 
-const connectOpts = await buildConnectOptions();
-const nc: NatsConnection = await natsConnect(connectOpts);
-const agents = new Agents({ nc });
-
 const serverInfoNote = config.servers
-  ? `servers=${config.servers}`
+  ? "configured URL"
   : `context=${config.context ?? "current"}`;
 console.log(`[testui] NATS client connected (${serverInfoNote})`);
 
 const distDir = join(import.meta.dir, "..", "dist");
 const sdkVersionString = formatSdkProtocolVersion(SDK_PROTOCOL_VERSION);
 
-const server = Bun.serve<BridgeWsData>({
+const createServer = () => Bun.serve<BridgeWsData>({
   ...(config.host ? { hostname: config.host } : {}),
   port: config.port,
   async fetch(req, srv) {
@@ -107,6 +118,19 @@ const server = Bun.serve<BridgeWsData>({
   },
 });
 
+let server: ReturnType<typeof createServer>;
+try {
+  server = createServer();
+} catch (error) {
+  try {
+    await agents.close();
+  } finally {
+    await nc.close();
+    connectionBundle.wipe();
+  }
+  throw error;
+}
+
 console.log(
   `[testui] listening on http://${config.host ?? "localhost"}:${server.port} (sdk protocol ${sdkVersionString})`,
 );
@@ -116,7 +140,10 @@ if (config.dev) {
   console.log(`[testui] no dist/ found; run \`bun run build\` to serve the UI from this port`);
 }
 
+let shuttingDown = false;
 async function shutdown(sig: NodeJS.Signals): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`[testui] received ${sig}, shutting down...`);
   try {
     server.stop();
@@ -128,13 +155,16 @@ async function shutdown(sig: NodeJS.Signals): Promise<void> {
   } catch (e) {
     console.warn("[testui] agents.close() failed:", (e as Error).message);
   }
-  try {
-    await nc.close();
-  } catch {
-    /* noop */
-  }
+  await nc.close();
+  connectionBundle.wipe();
   process.exit(0);
 }
 
-process.on("SIGINT", () => void shutdown("SIGINT"));
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
+const requestShutdown = (signal: NodeJS.Signals): void => {
+  void shutdown(signal).catch((error: unknown) => {
+    shuttingDown = false;
+    console.error(`[testui] shutdown failed: ${(error as Error).message}`);
+  });
+};
+process.on("SIGINT", () => requestShutdown("SIGINT"));
+process.on("SIGTERM", () => requestShutdown("SIGTERM"));

@@ -4,68 +4,58 @@
 // Use this as a smoke target while iterating on a caller, or as a
 // starting shape when writing your own agent.
 //
-// Connection resolution:
-//   1. $NATS_CONTEXT — name of a NATS CLI context under ~/.config/nats/context/
-//   2. $NATS_URL     — raw URL (credentials in userinfo are honored)
-//   3. nats://127.0.0.1:4222
+// Shared connection resolution (`_connection.ts`): $NATS_CONTEXT wins as one
+// complete source; otherwise $NATS_URL combines with NATS_NKEY_SEED_FILE or
+// NATS_CREDS, then falls back to localhost. NATS_SENDER_IDENTITY=signed derives
+// registration identity from that same source; identity is off by default.
 
-import { connect as natsConnect } from "@nats-io/transport-node";
-import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
+import { openExampleNatsConnection, waitForTermination } from "./_connection";
 
 async function main(): Promise<void> {
-  const opts = process.env["NATS_CONTEXT"]
-    ? await loadContextOptions(process.env["NATS_CONTEXT"])
-    : process.env["NATS_URL"]
-      ? parseNatsUrl(process.env["NATS_URL"])
-      : { servers: "nats://127.0.0.1:4222" };
-  const nc = await natsConnect(opts);
+  const connection = await openExampleNatsConnection();
+  let service: AgentService | undefined;
 
-  // Identity → subject `agents.prompt.echo.<owner>.<name>`. Owner and name are
-  // env-overridable so several people can run this against one server without
-  // colliding; `agent` ("echo") is what this example *is*, so it stays fixed.
-  // The lookup chain below is the convention agents should follow: per-agent
-  // var > fleet-wide var > legacy `NATS_AGENT_*` alias > derived fallback.
-  // NATS_AGENT_HEARTBEAT_INTERVAL (seconds) tunes the heartbeat cadence —
-  // unset falls back to the SDK default (30s).
-  const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
-  const service = new AgentService({
-    nc,
-    agent: "echo",
-    owner:
-      process.env["SYNADIA_ECHO_OWNER"] ??
-      process.env["SYNADIA_OWNER"] ??
-      process.env["NATS_AGENT_OWNER"] ??
-      process.env["USER"] ??
-      "anon",
-    name:
-      process.env["SYNADIA_ECHO_NAME"] ??
-      process.env["SYNADIA_NAME"] ??
-      process.env["NATS_AGENT_NAME"] ??
-      "main",
-    // Spread the key in only when set: exactOptionalPropertyTypes forbids passing
-    // `heartbeatIntervalS: undefined` explicitly, and an absent key is exactly
-    // what tells the SDK to apply its 30s default.
-    ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
-    description: "Echo agent — replies with the prompt prefixed by 'echo: '",
-  });
+  try {
+    // Identity → subject `agents.prompt.echo.<owner>.<name>`. Owner and name are
+    // env-overridable so several people can run this against one server without
+    // colliding; `agent` ("echo") is what this example *is*, so it stays fixed.
+    const heartbeatIntervalS = Number(process.env["NATS_AGENT_HEARTBEAT_INTERVAL"]) || undefined;
+    service = new AgentService({
+      nc: connection.nc,
+      agent: "echo",
+      owner:
+        process.env["SYNADIA_ECHO_OWNER"] ??
+        process.env["SYNADIA_OWNER"] ??
+        process.env["NATS_AGENT_OWNER"] ??
+        process.env["USER"] ??
+        "anon",
+      name:
+        process.env["SYNADIA_ECHO_NAME"] ??
+        process.env["SYNADIA_NAME"] ??
+        process.env["NATS_AGENT_NAME"] ??
+        "main",
+      ...(heartbeatIntervalS !== undefined ? { heartbeatIntervalS } : {}),
+      ...(connection.signer ? { identity: { signer: connection.signer } } : {}),
+      description: "Echo agent — replies with the prompt prefixed by 'echo: '",
+    });
 
-  service.onPrompt(async (envelope, response) => {
-    await response.send(`echo: ${envelope.prompt}`);
-  });
+    service.onPrompt(async (envelope, response) => {
+      await response.send(`echo: ${envelope.prompt}`);
+    });
 
-  await service.start();
-  console.log(`echo agent listening on ${service.subject.prompt}`);
-  console.log("press Ctrl+C to stop");
-
-  const shutdown = async (): Promise<void> => {
+    await service.start();
+    console.log(`echo agent listening on ${service.subject.prompt}`);
+    console.log("press Ctrl+C to stop");
+    await waitForTermination();
     console.log("\nshutting down…");
-    await service.stop();
-    await nc.close();
-    process.exit(0);
-  };
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
+  } finally {
+    try {
+      await service?.stop();
+    } finally {
+      await connection.close();
+    }
+  }
 }
 
 void main().catch((err: unknown) => {

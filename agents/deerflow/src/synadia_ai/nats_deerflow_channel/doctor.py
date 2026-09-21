@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from synadia_ai.agents import NatsContextError, load_context_options, parse_nats_url
+from synadia_ai.agents import NatsAgentError
 
 from .config import ChannelConfig
+from .host import resolve_connection_bundle
 
 HTTP_OK_MIN = 200
 HTTP_OK_MAX = 300
@@ -54,27 +55,18 @@ def _check_deerflow_reachable(
 
 
 def _check_nats_target(config: ChannelConfig) -> tuple[bool, str | None]:
-    if config.nats_url:
-        try:
-            options = parse_nats_url(config.nats_url)
-            servers = options.get("servers", [])
-        except (NatsContextError, ValueError) as exc:
-            return False, f"NATS_URL is invalid: {exc}"
-        if not servers or any(
-            any(ch.isspace() for ch in server)
-            or urlparse(server).scheme not in {"nats", "tls", "ws", "wss"}
-            for server in servers
-        ):
-            return False, "NATS_URL is invalid: expected nats://, tls://, ws://, or wss:// URL"
-        return True, None
-
-    context = config.nats_context or "current"
+    bundle = None
     try:
-        load_context_options(context)
-    except NatsContextError as exc:
+        bundle = resolve_connection_bundle(config)
+    except (NatsAgentError, ValueError) as exc:
+        if config.nats_url:
+            return False, f"NATS_URL is invalid: {exc}"
         if config.nats_context:
             return False, f"NATS context {config.nats_context!r} could not be loaded: {exc}"
         return False, f"default NATS context could not be loaded: {exc}"
+    finally:
+        if bundle is not None:
+            bundle.wipe()
     return True, None
 
 

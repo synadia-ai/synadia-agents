@@ -308,7 +308,7 @@ export class SenderGate {
         return this.#refuse(msg, {
           code: 401,
           description: SENDER_REJECTED_DESCRIPTION,
-          detail: `nonce ${JSON.stringify(nonce)} already seen for ${user}`,
+          detail: `nonce already seen for ${user}`,
         });
       }
     }
@@ -317,11 +317,11 @@ export class SenderGate {
       let accepted: boolean;
       try {
         accepted = await this.#acceptSender(sender);
-      } catch (err) {
+      } catch {
         this.#logger.error("acceptSender hook threw; request not served", {
           subject: msg.subject,
           sender: formatSender(sender),
-          error: err instanceof Error ? err.message : String(err),
+          error: "hook error",
         });
         return {
           ok: false,

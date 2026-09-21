@@ -2,6 +2,11 @@
 
 NATS channel plugin for [OpenClaw](https://openclaw.ai). Every configured OpenClaw agent becomes discoverable, addressable, and streamable over NATS — anyone running a [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs) client (e.g. [`@synadia-ai/agents`](../../client-sdk/typescript) or [`synadia-ai-agents`](../../client-sdk/python)) can find your agent, prompt it, and stream the reply back.
 
+The plugin uses the production `AgentService` for registration, prompt admission,
+status classification, heartbeats, acknowledgements, keepalives, error mapping,
+and stream termination. OpenClaw-specific code handles only channel dispatch,
+attachments, configuration, and the optional raw outbound extension.
+
 ## Install
 
 ```bash
@@ -23,6 +28,10 @@ export NATS_CREDENTIALS=/path/to/your.creds   # optional, for NKEY/JWT auth
 
 export NATS_AGENT_NAME=my-agent               # required: agent identity (5th subject token; or SYNADIA_OPENCLAW_NAME)
 export NATS_OWNER=my-org                      # optional: 4th subject token (defaults to "default"; or SYNADIA_OPENCLAW_OWNER)
+
+# Optional and independent:
+export NATS_SENDER_IDENTITY=signed            # sign registration from the connection credentials
+export NATS_MIN_SENDER_TRUST=any              # accept any valid/headerless prompt (default)
 
 openclaw gateway
 ```
@@ -64,6 +73,8 @@ openclaw config set channels.nats.accounts.default.agentName "my-agent"
 openclaw config set channels.nats.accounts.default.agentName "my-agent"
 openclaw config set channels.nats.accounts.default.context "prod"
 openclaw config set channels.nats.accounts.default.owner "acme"
+# Optional: the context must contain a user seed when signed identity is on.
+openclaw config set channels.nats.accounts.default.senderIdentity "signed"
 ```
 
 **NGS or other auth via a `.creds` file:**
@@ -97,15 +108,17 @@ Restart with `openclaw gateway restart`.
 
 ### Configuration reference
 
-| Field | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `agentName` | yes | — | The 5th token in your agent's subject. Letters, digits, `-`, `_`. |
-| `owner` | no | `default` | The 4th token — your operator/account namespace. |
-| `url` | no | `nats://demo.nats.io` | NATS server URL. Ignored when `context` resolves successfully. |
-| `context` | no | — | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). Sources `url` and `credentials` from there. |
-| `credentials` | no | — | Path to a `.creds` file (NGS, NKEY/JWT auth). |
-| `description` | no | `OpenClaw agent <agentName>` | Shown in `$SRV.INFO` so callers know what they discovered. |
-| `enabled` | no | `true` | Set to `false` to keep the account block in config but skip connecting. |
+| Field            | Required | Default                      | Description                                                                                                                                   |
+| ---------------- | -------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentName`      | yes      | —                            | The 5th token in your agent's subject. Letters, digits, `-`, `_`.                                                                             |
+| `owner`          | no       | `default`                    | The 4th token — your operator/account namespace.                                                                                              |
+| `url`            | no       | `nats://demo.nats.io`        | NATS server URL for the direct connection source.                                                                                             |
+| `context`        | no       | —                            | Name of a NATS CLI context used as one complete URL/auth/TLS source.                                                                          |
+| `credentials`    | no       | —                            | Path to a `.creds` file (NGS, NKEY/JWT auth).                                                                                                 |
+| `senderIdentity` | no       | `off`                        | `signed` derives the agent signer from the same context/credentials snapshot used for the NATS connection; `off` performs no identity lookup. |
+| `minSenderTrust` | no       | `any`                        | `any` accepts headerless and valid signed prompts; `signed` requires a verified sender. This is independent of `senderIdentity`.              |
+| `description`    | no       | `OpenClaw agent <agentName>` | Shown in `$SRV.INFO` so callers know what they discovered.                                                                                    |
+| `enabled`        | no       | `true`                       | Set to `false` to keep the account block in config but skip connecting.                                                                       |
 
 > **`org` → `owner`.** The pre-0.3 `org` field is still accepted as a deprecated alias and logs a one-time warning until you rename it.
 
@@ -117,34 +130,44 @@ Identity vars (`owner`, `agentName`) follow the `SYNADIA_*` convention shared
 across the agent plugins: per-agent var > fleet-wide var > legacy alias >
 account config. The legacy vars keep working indefinitely.
 
-| Variable | Sets | Notes |
-|----------|------|-------|
-| `NATS_CONTEXT` | `context` | Highest precedence — see below. |
-| `NATS_URL` | `url` | |
-| `NATS_DESCRIPTION` | `description` | |
-| `SYNADIA_OPENCLAW_NAME` | `agentName` | Per-agent override — highest name precedence. |
-| `SYNADIA_NAME` | `agentName` | Fleet-wide override — below the per-agent var. |
-| `NATS_AGENT_NAME` | `agentName` | Legacy alias, still honored below the `SYNADIA_*` vars. |
-| `SYNADIA_OPENCLAW_OWNER` | `owner` | Per-agent override — highest owner precedence. |
-| `SYNADIA_OWNER` | `owner` | Fleet-wide override — below the per-agent var. |
-| `NATS_OWNER` | `owner` | Legacy alias, still honored below the `SYNADIA_*` vars. |
-| `NATS_ORG` | `owner` | Legacy alias (pre-0.3). |
-| `NATS_CREDENTIALS` | `credentials` | |
-| `NATS_CREDS` | `credentials` | Alias — used only when `NATS_CREDENTIALS` is unset. |
+| Variable                 | Sets             | Notes                                                   |
+| ------------------------ | ---------------- | ------------------------------------------------------- |
+| `NATS_CONTEXT`           | `context`        | Highest precedence — see below.                         |
+| `NATS_URL`               | `url`            |                                                         |
+| `NATS_DESCRIPTION`       | `description`    |                                                         |
+| `SYNADIA_OPENCLAW_NAME`  | `agentName`      | Per-agent override — highest name precedence.           |
+| `SYNADIA_NAME`           | `agentName`      | Fleet-wide override — below the per-agent var.          |
+| `NATS_AGENT_NAME`        | `agentName`      | Legacy alias, still honored below the `SYNADIA_*` vars. |
+| `SYNADIA_OPENCLAW_OWNER` | `owner`          | Per-agent override — highest owner precedence.          |
+| `SYNADIA_OWNER`          | `owner`          | Fleet-wide override — below the per-agent var.          |
+| `NATS_OWNER`             | `owner`          | Legacy alias, still honored below the `SYNADIA_*` vars. |
+| `NATS_ORG`               | `owner`          | Legacy alias (pre-0.3).                                 |
+| `NATS_CREDENTIALS`       | `credentials`    |                                                         |
+| `NATS_CREDS`             | `credentials`    | Alias — used only when `NATS_CREDENTIALS` is unset.     |
+| `NATS_SENDER_IDENTITY`   | `senderIdentity` | `off` or `signed`.                                      |
+| `NATS_MIN_SENDER_TRUST`  | `minSenderTrust` | `any` or `signed`; independent of sender identity.      |
 
 ### Resolution order
 
-When several sources set the same field, this is who wins. Later steps override earlier ones, except `$NATS_CONTEXT` which is applied last as a single source of truth for `url` + `credentials`.
+Connection contexts are atomic: their URL, authentication, and TLS settings
+come from one context snapshot and are never spliced together with credentials
+from somewhere else. The shared SDK resolver derives both connection auth and,
+when enabled, the sender signer from that same immutable snapshot.
 
-1. Built-in default (`nats://demo.nats.io` for `url`, `default` for `owner`)
-2. Account config in `openclaw.json`
-3. `config.context` — wizard-selected NATS CLI context
-4. Per-field env vars (`$NATS_URL`, `$NATS_CREDENTIALS`, `$NATS_AGENT_NAME`, …)
-5. **`$NATS_CONTEXT`** — wins over everything else
+Connection source precedence is:
 
-A failure in step 3 or 5 (missing file, malformed JSON, no `url`) is logged and downgraded — the gateway falls back to whatever the previous step resolved instead of crashing.
+1. **`$NATS_CONTEXT`** — complete source; wins over everything else.
+2. `$NATS_URL` / `$NATS_CREDENTIALS` — selecting either chooses the direct
+   URL-plus-credentials source and does not retain half of `config.context`.
+3. `config.context` — complete wizard-selected source.
+4. Direct account `url` / `credentials`.
+5. Built-in `nats://demo.nats.io` default.
 
-> **Auth limitations.** A NATS CLI context is read for `url`, `token`, `user`/`password`, and `creds`. Inline `nkey`, `user_jwt`/`user_seed`, and the TLS triple `cert`/`key`/`ca` are silently dropped — for those, point `credentials` at a `.creds` file directly.
+An explicitly selected context that is missing or invalid is a startup error;
+the plugin does not silently connect with a different credential source. NATS
+contexts support token, user/password, creds, nkey, JWT+seed, and TLS settings.
+Signed identity requires a user seed in that selected source (creds, nkey, or
+JWT+seed). It never accepts a second identity-only credentials path.
 
 ## Verify
 
@@ -178,7 +201,11 @@ A successful `$SRV.INFO.agents` response for an OpenClaw agent looks like:
       "name": "prompt",
       "subject": "agents.prompt.oc.me.my-agent",
       "queue_group": "agents",
-      "metadata": { "max_payload": "8MB", "attachments_ok": "true" }
+      "metadata": {
+        "max_payload": "8MB",
+        "attachments_ok": "true",
+        "min_sender_trust": "any"
+      }
     },
     {
       "name": "status",
@@ -190,6 +217,11 @@ A successful `$SRV.INFO.agents` response for an OpenClaw agent looks like:
 ```
 
 If you see your `agents.prompt.oc.<owner>.<agentName>` subject in the response, you're discoverable.
+
+With `senderIdentity: "signed"`, service metadata also contains the connection
+user/account identity and a signed registration proof. Startup fails if those
+credentials do not match the live NATS connection. With the default `off`,
+those fields are omitted and no identity-discovery permission is needed.
 
 ## Talk to your agent
 
@@ -212,6 +244,12 @@ nats req agents.prompt.oc.<owner>.<agentName> '{
 ```
 
 `--wait-for-empty` is required: replies stream as multiple chunks and end with an empty terminator message.
+
+The default `minSenderTrust: "any"` remains compatible with the plain
+`nats req` examples above. Set it to `signed` only when every caller sends a valid
+`Agent-Sender` header; unsigned prompts then receive `401` before OpenClaw's
+handler runs. Valid sender metadata is classified and logged, but never added
+to the model prompt text.
 
 `--reply-timeout` matters too. Its default is **300 ms** — the maximum gap allowed between consecutive replies. The agent publishes an immediate `{type:"status",data:"ack"}` chunk on request receipt, but the LLM's first response chunk typically lands 1–2 s later, so the default fires before the first response and the CLI exits after just the ack. Setting `--reply-timeout 30s` gives the LLM enough warm-up time. SDK callers (`requestMany` with `strategy:"sentinel"`) don't hit this — they wait the full `maxWait` regardless of inter-arrival gaps.
 
@@ -264,6 +302,11 @@ agents.oc.<owner>.<agentName>.outbound
 
 This is a fire-and-forget pub/sub subject — subscribe with `nats sub agents.oc.<owner>.<agentName>.outbound` to consume them. **The payload is raw UTF-8 text, not a JSON envelope** — pipe it straight into your consumer, don't try to parse it as JSON. It's an OpenClaw-specific extension, not part of the protocol; the subject deliberately sits under the agent root for easy locating relative to the prompt subject.
 
+Because this extension is raw pub/sub rather than a protocol prompt, it does
+not carry an `Agent-Sender` header. Sender signing applies to protocol prompts
+sent through the caller SDK and to this service's registration proof; the raw
+outbound extension keeps its existing wire shape.
+
 ## Multi-tenancy
 
 The agent subject layout has no per-tenant slot. For real isolation between tenants or environments, use **NATS accounts** and subject permissions — that's a server-side configuration, not a plugin one. Within a single account, agents with distinct `owner` values coexist cleanly.
@@ -273,6 +316,8 @@ The agent subject layout has no per-tenant slot. For real isolation between tena
 - **`config field 'org' is deprecated`** — rename `org` → `owner` in `openclaw.json`. The old name still works, just noisy in logs.
 - **`[nats] disconnected from … — retrying…`** — transient. The channel keeps retrying indefinitely (`maxReconnectAttempts: -1` from the SDK's `withAgentReconnectDefaults`), so just leave it — it will recover when the server is reachable again.
 - **`[nats] connection closed — agent is off-bus until restart`** — terminal. The client gave up reconnecting; the typical cause is repeated identical auth errors (the one path nats.js does not retry through, regardless of our defaults). Check `url` and (if using credentials) that the `.creds` file exists and is readable by the gateway process, then restart.
+- **Signed identity fails at startup** — the selected connection source must contain a user seed, and that credential identity must match the live connection. Do not configure a separate identity credentials file.
+- **A context error no longer falls back to another URL** — contexts are complete identity-bearing connection sources. Fix or unset the explicitly selected context instead of relying on an implicit downgrade.
 - **`nats req` returns only the initial ack and exits** — pass `--reply-timeout 30s` (default is 300 ms, shorter than the gap between the ack chunk and the LLM's first response). See the "Talk to your agent" section above for the full command. `--wait-for-empty` alone isn't enough.
 - **`nats req` hangs or returns nothing** — pass `--wait-for-empty`. The protocol ends streams with an empty-body message, not a single response.
 - **`400 attachment[N] has invalid base64 content`** — the caller emitted URL-safe base64 or unpadded output. `Buffer.from(bytes).toString("base64")` (Node) produces the right form.
@@ -288,16 +333,31 @@ bun run test           # protocol unit tests, no nats-server needed
 bun run test:smoke     # wire-level smoke against nats-server on 127.0.0.1:4222
 ```
 
+The branch-development SDK dependencies use local `file:` links. Their circular
+development-only graph makes Bun hang when consuming a frozen lock, so
+`bun.lock` is intentionally ignored at this stage. Release staging replaces the
+file links with the selected exact registry SDK versions, then generates,
+reviews, and verifies the staged immutable lock with
+`bun install --frozen-lockfile`. Do not perform that publication transform in
+the reviewed source checkout.
+
 The npm tarball ships **compiled** entries under `dist/` (declared via
 `openclaw.runtimeExtensions` and `openclaw.runtimeSetupEntry`).
 OpenClaw 2026.5.4+ refuses to install plugins that only ship TS source.
-`prepublishOnly` runs the build automatically.
+`prepublishOnly` remains a local safety net. The coordinated release flow builds
+once in a clean staging directory, packs and hashes that result, and publishes
+the already-approved tarball without rebuilding it.
 
 The smoke test needs a `nats-server` running on `127.0.0.1:4222` — install per [the upstream docs](https://docs.nats.io/running-a-nats-service/introduction/installation) (`brew install nats-server` on macOS) then start it in another terminal with `nats-server`.
 
-The smoke test drives a minimal spec-compliant service assembled from this repo's own protocol module and verifies `$SRV.INFO` shape, heartbeat fields, the four 400 paths, the `ack → response → terminator` cycle, and attachment staging + cleanup.
+The unit suite exercises the plugin's production `AgentService` wiring,
+including identity-off, signed, and strict-trust configuration. The wire smoke
+separately assembles a minimal service from the same shared protocol primitives
+and verifies `$SRV.INFO` shape, heartbeat fields, the
+`ack → response → terminator` cycle, and attachment staging + cleanup against a
+real NATS server.
 
-The plugin pulls `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side encoders + heartbeat helpers) via `file:` links to the SDK checkouts in this monorepo. See [`README-DEV.md`](../../README-DEV.md) at the repo root for the build/install dance when iterating locally.
+The plugin pulls `@synadia-ai/agents` (connection and caller-side primitives) and `@synadia-ai/agent-service` (the production host service) via `file:` links to the SDK checkouts in this monorepo. See [`README-DEV.md`](../../README-DEV.md) at the repo root for the build/install dance when iterating locally and the separate clean-staging release process.
 
 ## See also
 

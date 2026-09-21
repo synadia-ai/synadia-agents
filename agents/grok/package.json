@@ -14,6 +14,9 @@
   },
   "homepage": "https://github.com/synadia-ai/synadia-agents/tree/main/agents/grok",
   "type": "module",
+  "engines": {
+    "bun": ">=1.3.14"
+  },
   "main": "./src/index.ts",
   "module": "./src/index.ts",
   "types": "./src/index.ts",
@@ -32,6 +35,7 @@
     "src",
     "README.md",
     "CHANGELOG.md",
+    "LICENSE",
     ".env.example"
   ],
   "scripts": {
@@ -45,7 +49,7 @@
     "@synadia-ai/acp-nats-channel": "file:../acp"
   },
   "devDependencies": {
-    "@types/bun": "latest",
+    "@types/bun": "1.3.14",
     "@types/node": "^20.16.0",
     "typescript": "~5.6.0"
   }

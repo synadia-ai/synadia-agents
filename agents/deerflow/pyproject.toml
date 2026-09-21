@@ -34,6 +34,7 @@ deerflow-nats-channel = "synadia_ai.nats_deerflow_channel.cli:main"
 [project.urls]
 Homepage = "https://github.com/synadia-ai/synadia-agents/tree/main/agents/deerflow"
 Repository = "https://github.com/synadia-ai/synadia-agents"
+Changelog = "https://github.com/synadia-ai/synadia-agents/blob/main/agents/deerflow/CHANGELOG.md"
 Issues = "https://github.com/synadia-ai/synadia-agents/issues"
 
 [tool.uv.sources]
@@ -54,6 +55,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/synadia_ai"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/README.md",
+    "/examples",
+    "/pyproject.toml",
+    "/src",
+]
 
 [tool.ruff]
 line-length = 100

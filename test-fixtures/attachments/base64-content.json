@@ -1,0 +1,90 @@
+{
+  "cases": [
+    {
+      "content": "aGVsbG8=",
+      "valid": true,
+      "hex": "68656c6c6f",
+      "note": "hello, one pad"
+    },
+    {
+      "content": "aGVsbA==",
+      "valid": true,
+      "hex": "68656c6c",
+      "note": "two pads"
+    },
+    {
+      "content": "aGk=",
+      "valid": true,
+      "hex": "6869",
+      "note": "short"
+    },
+    {
+      "content": "/+//",
+      "valid": true,
+      "hex": "ffefff",
+      "note": "+ and / are the standard alphabet"
+    },
+    {
+      "content": "",
+      "valid": true,
+      "hex": "",
+      "note": "empty content is zero bytes"
+    },
+    {
+      "content": "aGVsbG9=",
+      "valid": true,
+      "hex": "68656c6c6f",
+      "note": "non-zero trailing bits are tolerated, as Python's validate=True does"
+    },
+    {
+      "content": "aGVsbG8",
+      "valid": false,
+      "note": "unpadded"
+    },
+    {
+      "content": "aGVs bG8=",
+      "valid": false,
+      "note": "whitespace inside (and wrong length)"
+    },
+    {
+      "content": "aGV bG8=",
+      "valid": false,
+      "note": "whitespace inside at a valid length"
+    },
+    {
+      "content": "aGVsbG8=\n",
+      "valid": false,
+      "note": "trailing newline"
+    },
+    {
+      "content": "aGVsbG8-",
+      "valid": false,
+      "note": "URL-safe alphabet"
+    },
+    {
+      "content": "aGVsbG8_",
+      "valid": false,
+      "note": "URL-safe alphabet"
+    },
+    {
+      "content": "a===",
+      "valid": false,
+      "note": "three pads"
+    },
+    {
+      "content": "====",
+      "valid": false,
+      "note": "only padding"
+    },
+    {
+      "content": "aGVsbG8=aGk=",
+      "valid": false,
+      "note": "padding in the middle"
+    },
+    {
+      "content": "aGVsbG\u00e9=",
+      "valid": false,
+      "note": "a non-ASCII character"
+    }
+  ]
+}

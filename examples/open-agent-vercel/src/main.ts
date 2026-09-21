@@ -14,33 +14,16 @@ import {
   type ModelFactory,
 } from "@synadia-ai/open-agent";
 import { connectVercelSandbox } from "../vendor/vercel/index.js";
+import { resolveVercelNatsSettings } from "./config.js";
 
-// Same flag plumbing as the CLI in agents/open-agent: only --nats-context is
-// a flag; everything else is env. NATS_URL still wins over a context if set.
-const NATS_CONTEXT = parseNatsContextFlag(process.argv.slice(2));
-const NATS_URL = process.env["NATS_URL"];
-const OWNER = process.env["OPEN_AGENT_OWNER"] ?? process.env["USER"] ?? "vercel-demo";
+// Same NATS contract as agents/open-agent: flag context > env context > URL >
+// localhost, with identity-free/permissive defaults.
+const natsSettings = resolveVercelNatsSettings(process.argv.slice(2));
+const OWNER =
+  process.env["OPEN_AGENT_OWNER"] ?? process.env["USER"] ?? "vercel-demo";
 const SESSION = process.env["OPEN_AGENT_SESSION"] ?? "default";
 const REPO_URL = process.env["OPEN_AGENT_REPO_URL"]; // optional GitHub URL to clone
 const MODEL = process.env["OPEN_AGENT_MODEL"];
-
-function parseNatsContextFlag(argv: ReadonlyArray<string>): string | undefined {
-  const args = [...argv];
-  while (args.length > 0) {
-    const a = args.shift() as string;
-    if (a === "--nats-context") {
-      const next = args[0];
-      // Guard against the next token being another flag (e.g.
-      // `--nats-context --provider openrouter`), which would otherwise
-      // silently consume `--provider` as the context name and surface as
-      // a confusing context-not-found error.
-      if (next !== undefined && !next.startsWith("--")) return args.shift();
-      return undefined;
-    }
-    if (a.startsWith("--nats-context=")) return a.slice("--nats-context=".length);
-  }
-  return undefined;
-}
 
 if (!process.env["VERCEL_TOKEN"]) {
   console.error(
@@ -67,7 +50,9 @@ const provider: "gateway" | "openrouter" =
 let modelFactory: ModelFactory;
 if (provider === "openrouter") {
   if (!process.env["OPENROUTER_API_KEY"]) {
-    console.error("OPEN_AGENT_PROVIDER=openrouter requires OPENROUTER_API_KEY.");
+    console.error(
+      "OPEN_AGENT_PROVIDER=openrouter requires OPENROUTER_API_KEY.",
+    );
     process.exit(1);
   }
   if (MODEL === undefined || MODEL.length === 0) {
@@ -92,45 +77,82 @@ if (provider === "openrouter") {
   modelFactory = gatewayModelFactory();
 }
 
-const nc = await connectFrom({
-  ...(NATS_CONTEXT !== undefined && NATS_CONTEXT.length > 0
-    ? { natsContext: NATS_CONTEXT }
+const { nc, bundle: connectionBundle } = await connectFrom({
+  ...(natsSettings.natsContext !== undefined
+    ? { natsContext: natsSettings.natsContext }
     : {}),
-  ...(NATS_URL !== undefined && NATS_URL.length > 0 ? { natsUrl: NATS_URL } : {}),
+  ...(natsSettings.natsUrl !== undefined
+    ? { natsUrl: natsSettings.natsUrl }
+    : {}),
+  senderIdentity: natsSettings.senderIdentity,
 });
 
-const { stop } = await runBridge({
-  nc,
-  owner: OWNER,
-  session: SESSION,
-  sandboxFactory: async (sessionId) => {
-    const sandbox = await connectVercelSandbox({
-      name: sessionId,
-      ...(REPO_URL !== undefined ? { source: { url: REPO_URL } } : {}),
-    });
-    const liveState =
-      typeof sandbox.getState === "function"
-        ? (sandbox.getState() as unknown as Record<string, unknown>)
-        : ({ sandboxName: sessionId } as Record<string, unknown>);
-    return {
-      sandbox,
-      state: { type: "vercel", ...liveState },
-    };
-  },
-  modelFactory,
-  ...(MODEL !== undefined && MODEL.length > 0 ? { modelId: MODEL } : {}),
-  workingDirectoryHint: "(Vercel sandbox)",
-});
+let stop: () => Promise<void>;
+try {
+  ({ stop } = await runBridge({
+    nc,
+    owner: OWNER,
+    session: SESSION,
+    sandboxFactory: async (sessionId) => {
+      const sandbox = await connectVercelSandbox({
+        name: sessionId,
+        ...(REPO_URL !== undefined ? { source: { url: REPO_URL } } : {}),
+      });
+      const liveState =
+        typeof sandbox.getState === "function"
+          ? (sandbox.getState() as unknown as Record<string, unknown>)
+          : ({ sandboxName: sessionId } as Record<string, unknown>);
+      return {
+        sandbox,
+        state: { type: "vercel", ...liveState },
+      };
+    },
+    modelFactory,
+    ...(MODEL !== undefined && MODEL.length > 0 ? { modelId: MODEL } : {}),
+    workingDirectoryHint: "(Vercel sandbox)",
+    connectionBundle,
+    minSenderTrust: natsSettings.minSenderTrust,
+  }));
+} catch (error) {
+  await nc.close();
+  connectionBundle.wipe();
+  throw error;
+}
 
-console.log(`open-agent-vercel: listening on agents.prompt.open-agent.${OWNER}.${SESSION}`);
+console.log(
+  `open-agent-vercel: listening on agents.prompt.open-agent.${OWNER}.${SESSION}`,
+);
+console.log(
+  `sender identity=${natsSettings.senderIdentity}; minimum sender trust=${natsSettings.minSenderTrust}`,
+);
 console.log("press Ctrl+C to stop");
 
+let stopping = false;
 const shutdown = async (signal: string): Promise<void> => {
+  if (stopping) return;
+  stopping = true;
   console.log(`\n${signal} — shutting down`);
-  await stop();
+  let exitCode = 0;
+  try {
+    await stop();
+  } catch (error) {
+    exitCode = 1;
+    console.error(
+      `open-agent-vercel: stop failed: ${(error as Error).message}`,
+    );
+  }
   await nc.close();
-  process.exit(0);
+  // Reconnect auth and the signer share this retained credential snapshot;
+  // wipe it only after the connection is closed.
+  connectionBundle.wipe();
+  process.exit(exitCode);
 };
 
-process.on("SIGINT", () => void shutdown("SIGINT"));
-process.on("SIGTERM", () => void shutdown("SIGTERM"));
+const requestShutdown = (signal: string): void => {
+  void shutdown(signal).catch((error: unknown) => {
+    stopping = false;
+    console.error(`open-agent-vercel: connection shutdown failed: ${(error as Error).message}`);
+  });
+};
+process.on("SIGINT", () => requestShutdown("SIGINT"));
+process.on("SIGTERM", () => requestShutdown("SIGTERM"));

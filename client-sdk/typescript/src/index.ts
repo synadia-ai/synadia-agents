@@ -101,14 +101,27 @@ export {
   normalizeAttachments,
 } from "./prompt/attachments.js";
 export {
+  type SaveAttachmentsOptions,
+  type SavedAttachment,
+  DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES,
+  saveAttachments,
+} from "./prompt/save-attachments.js";
+export {
   type PromptOptions,
   type StatusOptions,
   DEFAULT_PROMPT_MAX_WAIT_MS,
   DEFAULT_STATUS_TIMEOUT_MS,
 } from "./prompt/options.js";
 export {
+  type PromptExtras,
+  type PromptInterceptor,
+  type PromptInterceptorContext,
+  type PromptSigning,
+} from "./prompt/interceptor.js";
+export {
   PromptStream,
   buildServiceErrorFromMsg,
+  type PreparedRequest,
   type PromptStreamOptions,
   type StreamMessage,
   type ResponseAttachment,
@@ -192,6 +205,7 @@ export {
   encodedHeaderLength,
   expectedSenderHeaderBytes,
   formatSenderTimestamp,
+  isValidSenderNonce,
   maxSenderHeaderBytes,
   normalizeAccountTokenPosition,
   parseSenderHeader,
@@ -260,6 +274,16 @@ export {
   readContextFile,
   type NatsContextFile,
 } from "./context.js";
+
+// One-snapshot connection credentials + optional sender signer.
+export {
+  resolveNatsConnectionBundle,
+  type NatsConnectionBundle,
+  type NatsConnectionSource,
+  type NatsUrlConnectionSource,
+  type ResolveNatsConnectionBundleOptions,
+  type SignedNatsConnectionBundle,
+} from "./connection-bundle.js";
 
 // Opinionated reconnect defaults for agent runtimes — see #121.
 export { AGENT_RECONNECT_DEFAULTS, withAgentReconnectDefaults } from "./connect-defaults.js";

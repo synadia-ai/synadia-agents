@@ -79,8 +79,8 @@ export class Bridge {
   open(ws: ServerWebSocket<BridgeWsData>): void {
     this.ws = ws;
     // `nc.getServer()` returns the host:port the underlying transport is
-    // currently dialed to (no userinfo — credentials are stripped by
-    // `parseNatsUrl` before connect). Empty string when not yet connected.
+    // currently dialed to (no userinfo — credentials are stripped by the
+    // connection-bundle helper before connect). Empty string when not connected.
     const natsServer = this.nc.getServer() || undefined;
     this.send({
       kind: "ready",

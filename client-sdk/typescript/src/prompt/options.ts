@@ -35,6 +35,13 @@ export interface PromptOptions {
    * token).
    */
   readonly sub?: string;
+  /**
+   * Opaque values for the client's prompt interceptors, handed to each as
+   * `ctx.context` — the SDK never reads them. A caller that knows which
+   * interceptors it runs passes what they need here (the ID of the model
+   * tool call a prompt serves, say). Default: `{}`.
+   */
+  readonly context?: Readonly<Record<string, unknown>>;
 }
 
 /** `Agent.status()` options — the same remap overrides as {@link PromptOptions}. */

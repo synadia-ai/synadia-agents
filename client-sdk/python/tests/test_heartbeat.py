@@ -84,10 +84,12 @@ def test_unknown_fields_tolerated() -> None:
     )
     hb = HeartbeatPayload.model_validate_json(wire)
     assert hb.agent == "claude-code"
-    # ``extra="ignore"`` drops the unknowns on re-encode.
+    # ``extra="allow"`` keeps the unknowns: readable on ``extras`` and
+    # preserved verbatim on re-encode, as the TypeScript SDK does.
+    assert hb.extras == {"future_field": 42, "another": "ok"}
     parsed = json.loads(hb.model_dump_json())
-    assert "future_field" not in parsed
-    assert "another" not in parsed
+    assert parsed["future_field"] == 42
+    assert parsed["another"] == "ok"
 
 
 def test_encoded_form_carries_session_key() -> None:

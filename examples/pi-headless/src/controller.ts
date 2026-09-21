@@ -1,36 +1,22 @@
 // pi-headless controller service.
 //
-// One protocol-compliant NATS agent that registers under the agent token
-// `pi-headless` (3rd subject token, see subjects.ts for the full layout)
-// and exposes endpoints:
-//
-//   - `prompt`  (§5/§6-compliant)  — returns a help-text response, so the
-//                                    controller is usable with `nats req`.
-//   - `status`                     — replies with a heartbeat-shaped payload.
-//   - `spawn`   (request/reply)    — creates a new PI session, registers it
-//                                    as its own NATS agent instance.
-//   - `stop`    (request/reply)    — disposes a session.
-//   - `list`    (request/reply)    — returns an array of session summaries.
-//
-// Heartbeats go to `agents.hb.pi-headless.<owner>.<name>` every 30s.
+// AgentService owns the protocol prompt/status endpoints, sender admission,
+// stream lifecycle, and heartbeats. Its extension endpoints preserve the
+// controller's spawn/stop/list request/reply wire contract.
 
 import type { NatsConnection } from "@nats-io/nats-core";
-import { Svcm, type Service, type ServiceMsg } from "@nats-io/services";
+import type { ServiceMsg } from "@nats-io/services";
 import {
-  SDK_PROTOCOL_VERSION,
-  SERVICE_NAME,
-  PROMPT_QUEUE_GROUP,
-  STATUS_ENDPOINT_NAME,
-  STATUS_QUEUE_GROUP,
-  formatHumanBytes,
+  formatSender,
+  type MinSenderTrust,
+  type SenderSigner,
 } from "@synadia-ai/agents";
-import { encodeChunk } from "@synadia-ai/agent-service";
+import { AgentService, type PromptResponse } from "@synadia-ai/agent-service";
+
 import {
-  controllerHeartbeatSubject,
   controllerListSubject,
   controllerPromptSubject,
   controllerSpawnSubject,
-  controllerStatusSubject,
   controllerStopSubject,
 } from "./subjects.js";
 import type { PiSessionManager, SpawnSpec } from "./pi-session-manager.js";
@@ -42,12 +28,13 @@ export interface ControllerOptions {
   readonly version?: string;
   readonly heartbeatIntervalS?: number;
   readonly manager: PiSessionManager;
+  /** Connection-bound signer shared by the controller and every session. */
+  readonly signer?: SenderSigner;
+  readonly minSenderTrust?: MinSenderTrust;
   readonly logger?: (line: string) => void;
 }
 
 const DEFAULT_VERSION = "0.4.0";
-// Mirrors the session-side `HEARTBEAT_INTERVAL_S` so a controller
-// and its spawned sessions share the same cadence on `agents.hb.*`.
 const DEFAULT_HEARTBEAT_INTERVAL_S = 5;
 
 const helpText = (
@@ -60,9 +47,10 @@ const helpText = (
     `pi-headless controller @ ${promptSubject}`,
     "",
     "This is a control-plane agent. It spawns, stops, and lists PI coding-agent",
-    "sessions. Each spawned session registers as its OWN NATS agent at",
+    "sessions. Each spawned session registers as its own logical NATS agent at",
     "`agents.prompt.pi-headless.<owner>.<session_id>` and speaks the standard NATS",
     "Agent Protocol v0.3 — discover it via $SRV.INFO.agents and prompt it like any agent.",
+    "The controller and sessions share this process's one NATS connection identity.",
     "",
     "Custom endpoints on this controller:",
     `  spawn : ${spawnSubject}`,
@@ -83,98 +71,73 @@ export class Controller {
   private readonly opts: ControllerOptions;
   private readonly log: (line: string) => void;
   private readonly promptSubject: string;
-  private readonly heartbeatSubject: string;
-  private service: Service | null = null;
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-
-  private readonly statusSubject: string;
+  private service: AgentService | null = null;
 
   constructor(opts: ControllerOptions) {
     this.opts = opts;
     this.log = opts.logger ?? ((line) => process.stderr.write(`${line}\n`));
     this.promptSubject = controllerPromptSubject(opts.owner, opts.name);
-    this.heartbeatSubject = controllerHeartbeatSubject(opts.owner, opts.name);
-    this.statusSubject = controllerStatusSubject(opts.owner, opts.name);
   }
 
   get instanceId(): string {
     if (!this.service) throw new Error("Controller not started");
-    return this.service.info().id;
+    return this.service.instanceId;
   }
 
   async start(): Promise<void> {
     if (this.service) return;
-    const svcm = new Svcm(this.opts.nc);
-
-    const metadata: Record<string, string> = {
+    const service = new AgentService({
+      nc: this.opts.nc,
       agent: "pi-headless",
       owner: this.opts.owner,
-      protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
-      role: "controller",
-    };
-
-    this.service = await svcm.add({
-      name: SERVICE_NAME,
+      name: this.opts.name,
       version: this.opts.version ?? DEFAULT_VERSION,
       description: `pi-headless controller (${this.opts.owner}/${this.opts.name})`,
-      metadata,
+      attachmentsOk: false,
+      heartbeatIntervalS:
+        this.opts.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S,
+      minSenderTrust: this.opts.minSenderTrust ?? "any",
+      ...(this.opts.signer ? { identity: { signer: this.opts.signer } } : {}),
+      extraMetadata: { role: "controller" },
+      extraEndpoints: [
+        {
+          name: "spawn",
+          subject: controllerSpawnSubject(this.opts.owner, this.opts.name),
+          handler: (err, msg) => {
+            if (err) return;
+            void this.handleSpawn(msg);
+          },
+        },
+        {
+          name: "stop",
+          subject: controllerStopSubject(this.opts.owner, this.opts.name),
+          handler: (err, msg) => {
+            if (err) return;
+            void this.handleStop(msg);
+          },
+        },
+        {
+          name: "list",
+          subject: controllerListSubject(this.opts.owner, this.opts.name),
+          handler: (err, msg) => {
+            if (err) return;
+            void this.handleList(msg);
+          },
+        },
+      ],
     });
-
-    // §5/§6 prompt endpoint — returns help text. Reflect the broker's
-    // negotiated `max_payload` rather than hardcoding "1MB", so the
-    // controller's advertised cap matches what callers can actually send.
-    const serverMaxPayload = this.opts.nc.info?.max_payload;
-    const maxPayloadStr = serverMaxPayload ? formatHumanBytes(serverMaxPayload) : "1MB";
-
-    this.service.addEndpoint("prompt", {
-      subject: this.promptSubject,
-      queue: PROMPT_QUEUE_GROUP,
-      handler: (err, msg) => {
-        if (err) return;
-        void this.handleHelp(msg);
-      },
-      metadata: {
-        max_payload: maxPayloadStr,
-        attachments_ok: "false",
-      },
-    });
-
-    // Status endpoint — replies with a heartbeat-shaped payload.
-    this.service.addEndpoint(STATUS_ENDPOINT_NAME, {
-      subject: this.statusSubject,
-      queue: STATUS_QUEUE_GROUP,
-      handler: (err, msg) => {
-        if (err) return;
-        this.handleStatus(msg);
-      },
-    });
-
-    // Extension endpoints (verb-first, agents.<verb>.pi-headless.<owner>.<name>).
-    this.service.addEndpoint("spawn", {
-      subject: controllerSpawnSubject(this.opts.owner, this.opts.name),
-      handler: (err, msg) => {
-        if (err) return;
-        void this.handleSpawn(msg);
-      },
-    });
-
-    this.service.addEndpoint("stop", {
-      subject: controllerStopSubject(this.opts.owner, this.opts.name),
-      handler: (err, msg) => {
-        if (err) return;
-        void this.handleStop(msg);
-      },
-    });
-
-    this.service.addEndpoint("list", {
-      subject: controllerListSubject(this.opts.owner, this.opts.name),
-      handler: (err, msg) => {
-        if (err) return;
-        void this.handleList(msg);
-      },
-    });
-
-    this.startHeartbeats();
+    service.onPrompt((_envelope, response) => this.handleHelp(response));
+    try {
+      await service.start();
+    } catch (e) {
+      try {
+        await service.stop();
+      } catch {
+        /* noop */
+      }
+      throw e;
+    }
+    this.service = service;
     this.log(`pi-headless: controller listening on ${this.promptSubject}`);
     this.log(
       `pi-headless: control endpoints — ${controllerSpawnSubject(this.opts.owner, this.opts.name)}, ${controllerStopSubject(this.opts.owner, this.opts.name)}, ${controllerListSubject(this.opts.owner, this.opts.name)}`,
@@ -182,67 +145,40 @@ export class Controller {
   }
 
   async stop(): Promise<void> {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = null;
-    if (this.service) {
-      try {
-        await this.service.stop();
-      } catch {
-        /* noop */
-      }
-      this.service = null;
-    }
-  }
-
-  // ─── Handlers ──────────────────────────────────────────────────────────────
-
-  private async handleHelp(msg: ServiceMsg): Promise<void> {
+    const service = this.service;
+    this.service = null;
+    if (!service) return;
     try {
-      msg.respond(encodeChunk({ type: "status", status: "ack" }));
-      msg.respond(
-        encodeChunk({
-          type: "response",
-          text: helpText(
-            this.promptSubject,
-            controllerSpawnSubject(this.opts.owner, this.opts.name),
-            controllerStopSubject(this.opts.owner, this.opts.name),
-            controllerListSubject(this.opts.owner, this.opts.name),
-          ),
-        }),
-      );
-    } catch {
-      /* noop */
-    } finally {
-      try {
-        msg.respond("");
-      } catch {
-        /* noop */
-      }
-    }
-  }
-
-  private handleStatus(msg: ServiceMsg): void {
-    if (!this.service) return;
-    const intervalS = this.opts.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S;
-    const payload = {
-      agent: "pi-headless",
-      owner: this.opts.owner,
-      instance_id: this.service.info().id,
-      ts: new Date().toISOString(),
-      interval_s: intervalS,
-    };
-    try {
-      msg.respond(JSON.stringify(payload));
+      await service.stop();
     } catch {
       /* noop */
     }
+  }
+
+  private async handleHelp(response: PromptResponse): Promise<void> {
+    // Sender metadata is emitted only to the operator diagnostic. It is never
+    // added to a spawned PI session's model prompt.
+    this.log(
+      `pi-headless: controller prompt sender=${formatSender(response.sender)}`,
+    );
+    await response.send(
+      helpText(
+        this.promptSubject,
+        controllerSpawnSubject(this.opts.owner, this.opts.name),
+        controllerStopSubject(this.opts.owner, this.opts.name),
+        controllerListSubject(this.opts.owner, this.opts.name),
+      ),
+    );
   }
 
   private async handleSpawn(msg: ServiceMsg): Promise<void> {
     let spec: SpawnSpec;
     try {
       const raw = msg.string();
-      spec = raw.length === 0 ? ({ cwd: "" } as SpawnSpec) : (JSON.parse(raw) as SpawnSpec);
+      spec =
+        raw.length === 0
+          ? ({ cwd: "" } as SpawnSpec)
+          : (JSON.parse(raw) as SpawnSpec);
     } catch (e) {
       this.respondError(msg, 400, `invalid JSON: ${(e as Error).message}`);
       return;
@@ -264,7 +200,8 @@ export class Controller {
     let sessionId: string;
     try {
       const raw = msg.string();
-      const parsed = raw.length === 0 ? {} : (JSON.parse(raw) as { session_id?: unknown });
+      const parsed =
+        raw.length === 0 ? {} : (JSON.parse(raw) as { session_id?: unknown });
       const value = parsed.session_id;
       if (typeof value !== "string" || value.length === 0) {
         this.respondError(msg, 400, "session_id is required");
@@ -303,27 +240,5 @@ export class Controller {
     } catch {
       /* noop */
     }
-  }
-
-  private startHeartbeats(): void {
-    const intervalS = this.opts.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S;
-    const publish = (): void => {
-      if (!this.service) return;
-      const payload = {
-        agent: "pi-headless",
-        owner: this.opts.owner,
-        instance_id: this.service.info().id,
-        ts: new Date().toISOString(),
-        interval_s: intervalS,
-      };
-      try {
-        this.opts.nc.publish(this.heartbeatSubject, JSON.stringify(payload));
-      } catch {
-        /* noop */
-      }
-    };
-    publish();
-    this.heartbeatTimer = setInterval(publish, intervalS * 1000);
-    this.heartbeatTimer.unref?.();
   }
 }

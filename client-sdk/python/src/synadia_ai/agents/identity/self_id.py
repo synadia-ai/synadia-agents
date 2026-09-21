@@ -1,18 +1,18 @@
-"""``self_id()`` — the connection's own agent ID, learned once per connection.
+"""``self_id()`` — the connection's own agent ID.
 
-Sources, in order: (1) the user JWT of a creds signer (``sub`` → user,
-``nats.issuer_account`` / ``iss`` → account) — no network, not spoofable
-by a same-account peer; (2) ``$SYS.REQ.USER.INFO``. With a JWT in hand
-the server is not asked.
+The live identity comes from ``$SYS.REQ.USER.INFO``. When a signer is
+configured, its user key and (for credentials signers) account are compared
+with that live answer before the identity can be used.
 
-Memoised per connection in a module-level :class:`weakref.WeakKeyDictionary`
+Signer-less diagnostic lookups are memoised per connection in a module-level
+:class:`weakref.WeakKeyDictionary`
 (``nats.aio.client.Client`` is weak-referenceable): one in-flight lookup
 task shared by concurrent callers, success kept for the connection's
 lifetime, **every failure a negative cache with a 30 s TTL** (a raced or
 transient answer must not stick). :func:`refresh_self_id` forces a retry.
-nats-py exposes no reconnect event on an existing client, so — unlike the
-TS SDK — the memo is not cleared on reconnect; ``refresh_self_id()`` is
-the tool after a reconnect that may have changed the identity.
+nats-py exposes no reconnect event on an existing client, so signed and
+unsigned request paths do not consume this memo: they perform an uncached
+live lookup for every identity-bearing operation.
 
 Fast-fail: the server reports a permissions violation on ``$SYS.>`` as an
 asynchronous ``-ERR`` that nats-py keeps as ``Client.last_error``
@@ -69,6 +69,7 @@ class _Entry:
 
 
 _memo: weakref.WeakKeyDictionary[NATSClient, _Entry] = weakref.WeakKeyDictionary()
+_background_bindings: set[asyncio.Task[AgentId]] = set()
 
 
 def _entry_for(nc: NATSClient) -> _Entry:
@@ -135,6 +136,10 @@ async def self_id(
     inside its TTL) afterwards. Raises :class:`NoIdentityError`,
     :class:`IdentityUnavailableError` or :class:`IdentityMismatchError`.
     """
+    # A signer turns this into a connection-binding operation. nats-py has no
+    # public reconnect generation, so a prior answer must never satisfy it.
+    if signer is not None:
+        return await lookup_self_id(nc, signer=signer, timeout_s=timeout_s)
     entry = _entry_for(nc)
     if entry.settled_id is not None:
         return entry.settled_id
@@ -147,6 +152,8 @@ async def refresh_self_id(
     nc: NATSClient, *, signer: SenderSigner | None = None, timeout_s: float = SELF_ID_TIMEOUT_S
 ) -> AgentId:
     """Force a new lookup, discarding any memoised answer (shares an in-flight one)."""
+    if signer is not None:
+        return await lookup_self_id(nc, signer=signer, timeout_s=timeout_s)
     entry = _entry_for(nc)
     if _inflight(entry) is None:
         entry.settled_id = None
@@ -160,15 +167,37 @@ def start_self_id_lookup(
 ) -> None:
     """Fire-and-forget: start the lookup if nothing is memoised or in flight.
 
-    The task captures its own outcome into the memo, so nothing is left
-    unretrieved when no caller awaits it.
+    Signer-less diagnostic lookups capture their outcome into the memo.
+    A signer starts an uncached one-off binding check and never consumes or
+    populates the signer-less memo. Call this from a running async SDK path;
+    like the rest of the client, its background task requires an active event
+    loop.
     """
+    if signer is not None:
+        task = asyncio.create_task(
+            lookup_self_id(nc, signer=signer, timeout_s=timeout_s),
+            name="agents-self-id-binding",
+        )
+        _background_bindings.add(task)
+        task.add_done_callback(_consume_background_lookup)
+        return
     entry = _entry_for(nc)
     if _inflight(entry) is not None or entry.settled_id is not None:
         return
     if entry.settled_error is not None and not _failure_expired(entry, time.monotonic()):
         return
     _start_task(nc, entry, signer, timeout_s)
+
+
+def _consume_background_lookup(task: asyncio.Task[AgentId]) -> None:
+    """Retrieve a fire-and-forget binding outcome without logging its detail."""
+    _background_bindings.discard(task)
+    if task.cancelled():
+        return
+    try:
+        task.exception()
+    except asyncio.CancelledError:
+        return
 
 
 def _start_task(
@@ -235,18 +264,35 @@ async def _run_lookup(
 async def lookup_self_id(
     nc: NATSClient, *, signer: SenderSigner | None = None, timeout_s: float = SELF_ID_TIMEOUT_S
 ) -> AgentId:
-    """One uncached lookup: JWT source when the signer carries one, else ``$SYS.REQ.USER.INFO``.
+    """One uncached live lookup, with optional signer-to-connection binding.
 
-    A configured signer must match the resolved user
-    (:class:`IdentityMismatchError`) — a server answer that disagrees with
-    the signer is treated as untrusted, i.e. it fails and is not memoised
-    as a success.
+    A configured signer must match the live user. A credentials signer must
+    additionally carry the same account as the live connection. A mismatch
+    raises :class:`IdentityMismatchError`; inability to obtain the live answer
+    remains :class:`IdentityUnavailableError` and never silently downgrades a
+    signed operation.
     """
-    jwt = signer.jwt if signer is not None else None
-    id = identity_from_jwt(jwt) if jwt else await _request_user_info(nc, timeout_s)
-    if signer is not None and id.user != signer.public_key:
-        raise IdentityMismatchError(signer.public_key, id.user)
-    return id
+    live_id = await _request_user_info(nc, timeout_s)
+    if signer is None:
+        return live_id
+    if live_id.user != signer.public_key:
+        raise IdentityMismatchError(signer.public_key, live_id.user)
+    if signer.jwt is not None:
+        signer_id = identity_from_jwt(signer.jwt)
+        if signer_id.user != signer.public_key:
+            raise IdentityMismatchError(
+                signer.public_key,
+                live_id.user,
+                credential_user=signer_id.user,
+            )
+        if signer_id.account != live_id.account:
+            raise IdentityMismatchError(
+                signer.public_key,
+                live_id.user,
+                signer_account=signer_id.account,
+                identity_account=live_id.account,
+            )
+    return live_id
 
 
 async def _request_user_info(nc: NATSClient, timeout_s: float) -> AgentId:

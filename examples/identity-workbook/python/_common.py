@@ -12,12 +12,13 @@ from synadia_ai.agents import (
     Agent,
     Agents,
     DiscoverFilter,
+    NatsConnectionBundle,
     NkeySigner,
     ResponseChunk,
     SenderInfo,
     StreamMessage,
     format_sender,
-    signer_from_seed,
+    resolve_nats_connection_bundle,
 )
 
 if TYPE_CHECKING:
@@ -34,14 +35,17 @@ class ConnectedUser:
     """One NKEY-authenticated connection and the matching request signer."""
 
     nc: NATSClient
-    signer: NkeySigner
+    bundle: NatsConnectionBundle[NkeySigner]
+
+    @property
+    def signer(self) -> NkeySigner:
+        """Return the signer derived from the connection credential snapshot."""
+        return self.bundle.signer
 
     async def close(self) -> None:
-        """Close the connection, then erase the signer's in-memory key material."""
-        try:
-            await self.nc.close()
-        finally:
-            self.signer.wipe()
+        """Close the connection, then erase retained authentication material."""
+        await self.nc.close()
+        self.bundle.wipe()
 
 
 def default_seed_path(role: str) -> Path:
@@ -49,27 +53,23 @@ def default_seed_path(role: str) -> Path:
 
 
 async def connect_user(url: str, seed_path: Path) -> ConnectedUser:
-    """Connect with a seed file and return a signer derived from that same seed.
+    """Connect with one SDK-owned authentication and identity snapshot.
 
-    The seed is never logged. ``signer_from_seed`` also guarantees that its
-    validation errors do not include the supplied key material.
+    The workbook never reads or parses the seed. The connection-bundle helper
+    owns credential loading, the NATS authenticator, signer derivation, and
+    cleanup, so the service/caller signer cannot drift from the connection.
     """
-    expanded_seed_path = seed_path.expanduser()
-    # Python's immutable bytes cannot be zeroed. Keep this unavoidable copy
-    # scoped to signer construction; signer_from_seed wipes its mutable
-    # internal seed buffer. nats-py receives the file path rather than another
-    # immutable seed string and reads it only when authenticating.
-    seed = expanded_seed_path.read_bytes()
+    bundle = resolve_nats_connection_bundle(
+        url=url,
+        nkey=seed_path.expanduser(),
+        identity="signed",
+    )
     try:
-        signer = signer_from_seed(seed)
-    finally:
-        del seed
-    try:
-        nc = await nats.connect(servers=url, nkeys_seed=str(expanded_seed_path))
+        nc = await nats.connect(**bundle.connection_options)
     except Exception:
-        signer.wipe()
+        bundle.wipe()
         raise
-    return ConnectedUser(nc=nc, signer=signer)
+    return ConnectedUser(nc=nc, bundle=bundle)
 
 
 def describe_sender(sender: SenderInfo | None) -> str:

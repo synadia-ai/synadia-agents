@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   map to underscores in the env prefix. Legacy vars keep working.
 - `$NATS_CONTEXT` env var is honored (previously context selection was
   CLI-only via `--nats-context`).
+- Optional connection-bound sender identity via `--sender-identity signed` /
+  `NATS_SENDER_IDENTITY=signed`, using the SDK connection-bundle helper.
+- Independent incoming sender policy via `--min-sender-trust any|signed` /
+  `NATS_MIN_SENDER_TRUST` (default: `any`).
 
 ### Changed
 

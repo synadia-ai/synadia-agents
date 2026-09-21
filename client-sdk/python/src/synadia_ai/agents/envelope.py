@@ -74,6 +74,11 @@ class Envelope(BaseModel):
     decode → encode is lossless (§5.6); a stray `session` from a
     non-compliant peer rides this unknown-field bag instead of surfacing
     as a first-class attribute.
+
+    An extension adds fields of its own the same way: construct with them
+    as keyword arguments (``Envelope(prompt="hi", my_field=1)``) and
+    :func:`encode` writes them next to the protocol's; :attr:`extras` reads
+    them back from a decoded envelope.
     """
 
     model_config = ConfigDict(extra="allow", frozen=True)
@@ -81,14 +86,32 @@ class Envelope(BaseModel):
     prompt: str
     attachments: list[Attachment] | None = None
 
+    @property
+    def extras(self) -> dict[str, object]:
+        """The top-level fields the envelope does not define (§5.6), verbatim.
+
+        The same as the TypeScript SDK's ``RequestEnvelope.extras``: an
+        extension reads what a peer sent here without the SDK knowing
+        about it. Empty when there are none.
+        """
+        return dict(self.model_extra or {})
+
+
+def is_envelope_field(name: str) -> bool:
+    """``True`` iff ``name`` is a wire field the envelope codec owns, never an extra."""
+    return name in Envelope.model_fields
+
 
 def encode(envelope: Envelope) -> bytes:
     """Serialize an envelope to its JSON wire form (UTF-8 bytes).
 
     `attachments` is omitted from the wire when it is `None` so callers
     without attachments produce the compact form `{"prompt": "..."}`.
+    Extra fields are written verbatim, a ``null`` among them included, so
+    a decode → encode round trip keeps what a peer sent (§5.6).
     """
-    return envelope.model_dump_json(exclude_none=True).encode("utf-8")
+    unset = {name for name in Envelope.model_fields if getattr(envelope, name) is None}
+    return envelope.model_dump_json(exclude=unset).encode("utf-8")
 
 
 def decode(payload: bytes) -> Envelope:
@@ -102,9 +125,10 @@ def decode(payload: bytes) -> Envelope:
         raise ProtocolError("zero-byte payload (§5.3)")
     if looks_like_json(payload):
         try:
-            return Envelope.model_validate_json(payload)
+            envelope = Envelope.model_validate_json(payload)
         except ValidationError as exc:
             raise ProtocolError(f"malformed envelope: {exc}") from exc
+        return envelope
 
     try:
         text = payload.decode("utf-8")

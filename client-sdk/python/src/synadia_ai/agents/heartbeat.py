@@ -50,9 +50,12 @@ class HeartbeatPayload(BaseModel):
     spec-compliant session-less peers (e.g. a TS harness that omits
     ``options.session``). The tracker keys on ``payload.instance_id``
     per §8.3 so multiple instances of the same logical session stay
-    distinguishable. ``extra="ignore"`` because §8.3 requires callers
-    to tolerate unknown fields for forward compat; pydantic silently
-    drops them on decode.
+    distinguishable. ``extra="allow"`` because §8.3 requires callers
+    to tolerate unknown fields for forward compat: pydantic keeps them,
+    :attr:`extras` reads them, and a ``decode → encode`` round trip
+    preserves them verbatim — the same as the TypeScript SDK's
+    ``HeartbeatPayload.extras`` (an ``AgentService`` puts its
+    ``heartbeat_extras`` there).
 
     The model's serializer drops ``session`` when it is ``None`` so that
     a payload decoded from a session-less peer round-trips through
@@ -60,7 +63,7 @@ class HeartbeatPayload(BaseModel):
     spec-illegal ``"session": null`` (§8.3 requires absence, not null).
     """
 
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    model_config = ConfigDict(extra="allow", frozen=True)
 
     agent: str
     owner: str
@@ -68,6 +71,11 @@ class HeartbeatPayload(BaseModel):
     instance_id: str
     ts: str  # UTC ISO 8601
     interval_s: int
+
+    @property
+    def extras(self) -> dict[str, object]:
+        """Any additional fields on the heartbeat payload, preserved verbatim."""
+        return dict(self.model_extra or {})
 
     @model_serializer(mode="wrap")
     def _drop_none_session(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:

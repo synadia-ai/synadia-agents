@@ -29,7 +29,8 @@
   "files": [
     "extensions",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "pi": {
     "extensions": [
@@ -37,7 +38,7 @@
     ]
   },
   "scripts": {
-    "test:smoke": "bun test/smoke.mjs"
+    "test:smoke": "bun test/smoke.mjs && PI_SMOKE_SIGNED=1 bun test/smoke.mjs && PI_SMOKE_STRICT=1 bun test/smoke.mjs"
   },
   "dependencies": {
     "@nats-io/transport-node": "^3.4.0",
@@ -46,6 +47,6 @@
     "@synadia-ai/agent-service": "file:../../agent-sdk/typescript"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=0.84.0 <0.85.0"
   }
 }

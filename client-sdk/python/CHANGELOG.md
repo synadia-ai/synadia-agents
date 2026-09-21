@@ -8,6 +8,118 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt interceptors.** `Agents(nc=nc, interceptors=[...])` — every
+  `Agent` it hands out inherits them; `Agent(..., interceptors=...)` takes
+  them directly. A `PromptInterceptor` runs at publish time — on the
+  stream's first `__anext__`, in a copy of the `contextvars` context
+  `prompt()` was called in — in two phases that see the same per-prompt
+  `ctx` (`PromptInterceptorContext`): the target `agent`, the `prompt`
+  text, `envelope_extras` (the extra fields of an `Envelope` passed to
+  `prompt()`, a read-only copy; empty for a text prompt), the opaque
+  `context` from the new `prompt(..., context=...)`, the `connection`, and
+  `identity` (`PromptSigning`: `can_sign`, `self_id()`,
+  `publish_signed()`).
+  - `async before_prompt(ctx)`, after the sender identity is resolved,
+    returns `PromptExtras` — extra envelope `fields` and `headers`, and a
+    `state` the SDK hands back — or `None`, and has no side effects.
+    Several are merged in order, the later winning a key. A field the
+    envelope defines or the `Agent-Sender` header is refused with
+    `NatsAgentError`; an exception fails the prompt before anything is
+    sent. A field the caller's envelope also carries is replaced, as
+    between interceptors.
+  - `async before_publish(ctx, extras)`, optional
+    (`PublishingPromptInterceptor`), runs only after the `Agent-Sender`
+    header is signed and the size checked, immediately before the prompt
+    is published, with what that interceptor's `before_prompt` returned.
+    That is where an interceptor publishes its own messages, so they
+    describe a prompt that goes out; an exception is logged and does not
+    stop the prompt.
+
+  A prompt never iterated, or one `prompt()` itself rejects, runs neither
+  phase.
+  Without interceptors nothing changes on the wire. The TypeScript SDK has
+  the same hook.
+- **`Envelope.extras` (§5.6).** The top-level fields an envelope does not
+  define, verbatim; `encode()` now writes a `null` among them too, so a
+  decode → encode round trip keeps what a peer sent. `is_envelope_field`
+  (in `synadia_ai.agents.envelope`) names the fields the codec owns.
+- **Signing with a chosen nonce.** `sign_sender` / `publish_signed` /
+  `request_signed` take `nonce=`: sign with the id a message body carries,
+  so it is the `Agent-Sender` nonce and the `Nats-Msg-Id` too.
+  `is_valid_sender_nonce` checks the header grammar
+  (`[A-Za-z0-9_-]{1,64}`); a nonce outside it is an `IdentityError`.
+- **`save_attachments(attachments, directory, *, max_total_bytes=...)`.**
+  The receiving counterpart of `Attachment.from_path`, synchronous like it:
+  writes the attachments of a reply (§6.3), a mid-stream query (§7.1) or an
+  inbound envelope into `directory`, created if missing, so a caller can
+  hand its model paths instead of base64. One `SavedAttachment` per input,
+  in order: `filename` as sent, `size_bytes`, and the absolute `path`, or
+  `path=None` with `skipped="over_limit" | "invalid_content"`. The sender's
+  name is untrusted and reduced to a safe base name, the same on every OS:
+  no path, no control characters, no characters that change text
+  direction, no leading or trailing dots or whitespace, `< > : " | ? *`
+  replaced by `_`, a Windows device name (`CON`, `nul.txt`, `CONIN$`)
+  prefixed with `_`, at most 200 UTF-8 bytes. Files are created with
+  `open(..., "xb")` and mode 0600: nothing is overwritten, no symlink is
+  followed, a taken name becomes `name (2).ext`. A directory the call
+  creates gets mode 0700; one that exists keeps its mode. Content that is
+  not strict RFC 4648 §4 base64 is never written; the decoded bytes per
+  call stop at `DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES` (64 MiB; `None`
+  disables it). Real I/O errors raise `OSError`. The TypeScript SDK's
+  `saveAttachments` behaves the same, on the shared cases in
+  `test-fixtures/attachments/`. Nothing on the wire changes.
+- **`HeartbeatPayload.extras`.** Unknown heartbeat fields are now kept
+  (`extra="allow"`), readable on `extras` and preserved verbatim on
+  re-encode, as the TypeScript SDK does; they used to be dropped on
+  decode.
+- `SenderSignatureRequiredError` exposes stable `code` (`401`),
+  `description` (`"signature required"`), and `subject` attributes for
+  handling local signed-target preflight failures without parsing a message.
+- `AgentSenderHeader.to_log_dict()` provides a structured-log view with
+  `nonce` and `sig` redacted. Those proof fields remain directly readable for
+  signing and wire serialization; generic dataclass reflection such as
+  `dataclasses.asdict()` must not be used for logging this type.
+- `resolve_nats_connection_bundle(...)` snapshots a selected `nats` CLI
+  context or direct URL plus `.creds` / nkey connection source exactly once.
+  `identity="off"` is the default and exposes no signer;
+  `identity="signed"` derives the signer from that same authentication
+  snapshot and fails clearly when the connection uses token, user/password,
+  JWT-without-seed, or anonymous authentication. The returned connection
+  options use captured JWT/signature callbacks for `.creds` reconnects, not
+  a mutable path; nkey files are normalized once before both connection auth
+  and signing. `wipe()` is idempotent and must run after the NATS connection
+  closes. Bundle representations are redacted; callers must still never log
+  the necessarily sensitive `connection_options` mapping.
+
+### Changed
+
+- Sender identity is now opt-in: omitting `identity` performs no lookup and
+  sends no `Agent-Sender` header; explicit `Identity()` enables unsigned
+  claims, and `send_unsigned_claim=False` performs no automatic identity
+  work.
+- Every identity-bearing request uses an uncached live
+  `$SYS.REQ.USER.INFO` answer. A configured signer's user and credentials-JWT
+  account must match that live connection; any failure is fatal and never
+  downgrades to unsigned or headerless delivery. Explicit diagnostic
+  `self_id()` calls remain memoised.
+- NATS URL errors redact token and user/password userinfo. URL and context
+  bundle resolution preserve WebSocket paths and query strings. The existing
+  `load_context_options` API and auth precedence remain compatible.
+
+### Fixed
+
+- **`Agent.prompt(envelope)` sends the envelope's extra fields (§5.6).** It
+  used to send only `prompt` and `attachments`, so an agent relaying the
+  envelope it received dropped the top-level fields the protocol does not
+  define, which §5.6 obliges a relay to preserve. Now they go out verbatim
+  (a `null` among them), after the protocol's fields, and count toward
+  `max_payload`; relaying a decoded envelope sends its bytes unchanged. A
+  prompt interceptor's field of the same name replaces one. A caller that
+  wants the old behaviour passes `Envelope(prompt=..., attachments=...)`.
+  The TypeScript SDK's `prompt()` takes text only, so it has no such path.
+
 ## [0.8.0] - 2026-08-29
 
 The caller side of the **sender-identity extension** (PR-P1 of the
@@ -17,8 +129,8 @@ identity plan). Every `prompt` / `status` request can now carry an
 ed25519 signature bound to the subject, the payload, a timestamp and a
 nonce. The wire protocol stays `0.3`; support is advertised by feature
 detection (`min_sender_trust` on the prompt endpoint ⇔ the agent
-implements the extension; `Agent-Sender` sent ⇔ the caller does). Spec:
-[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+implements the extension; `Agent-Sender` sent ⇔ the caller does). The
+extension is additive to protocol `0.3`.
 Byte-for-byte compatible with the TypeScript SDK (`@synadia-ai/agents`
 0.6.0): the shared known-answer vectors under
 `test-fixtures/identity/` are verified by both.

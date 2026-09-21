@@ -54,7 +54,7 @@ spec to catch up.
 | Pre-publish `max_payload` check              | `PayloadTooLargeError(limit, actual)` before any wire I/O. Effective limit is `min(endpoint.max_payload_bytes, nc.max_payload)` — caller's broker cap binds when smaller. | §5.4       |
 | Empty prompt rejected pre-publish            | `PromptEmptyError` before any wire I/O.                                               | §5.1, §5.3 |
 | Endpoint subject resolution                  | Always `endpoints[].subject` from discovery; never constructed from identity.         | §4.3, §12  |
-| Unknown envelope fields                      | `Envelope` uses `extra="allow"`; decode → encode round-trips lossless per §5.6. A stray inbound `session` from a non-compliant peer rides this bag — under v0.3 the request subject IS the session, so `Envelope.session` is no longer a first-class field. | §5.6 |
+| Unknown envelope fields                      | `Envelope` uses `extra="allow"`; decode → encode round-trips lossless per §5.6 (a `null` included), readable on `Envelope.extras`. A stray inbound `session` from a non-compliant peer rides this bag — under v0.3 the request subject IS the session, so `Envelope.session` is no longer a first-class field. `Agent.prompt(envelope)` sends them, so a relay forwarding what it received preserves them; a prompt interceptor's field of the same name replaces one. Prompt interceptors add fields here; request interceptors read them. | §5.6 |
 
 ## Response streaming (§6)
 
@@ -99,7 +99,8 @@ spec to catch up.
 | Subject                      | `agents.hb.{agent}.{owner}.{session_name}` (v0.3 verb-first; `hb` abbreviates `heartbeat`).      | §8.1       |
 | Default interval             | `AgentService(heartbeat_interval_s=30)` (spec recommendation).                                   | §8.2       |
 | Payload fields               | `{agent, owner, session, instance_id, ts, interval_s}` — `session` mirrors `metadata.session` (== subject token 5); decoder tolerates absence to interop with spec-compliant session-less peers that omit the field. | §8.3 |
-| `HeartbeatPayload` tolerance | `extra="ignore"` - unknown fields silently accepted per §8.3.                                    | §8.3       |
+| `HeartbeatPayload` tolerance | `extra="allow"` - unknown fields accepted per §8.3, readable on `HeartbeatPayload.extras`, preserved on re-encode. | §8.3       |
+| Heartbeat extras             | `AgentService(heartbeat_extras=...)` merges a provider's fields into every heartbeat and `status` reply, read per beat; a §8.3 field name, an unserialisable value or a raising provider costs that beat its extras, never the beat. Absent without a provider. | §8.3       |
 | `instance_id` source         | `service.id` assigned by nats-py's micro framework (matches `$SRV.INFO` `id`).                   | §3.4, §8.3 |
 | First heartbeat              | Published immediately after service registration so subscribe-then-discover sees liveness.       | §8.5       |
 | Tracker API                  | `Agents.liveness(instance_id)` → `Liveness \| None` (keyed on `payload.instance_id`).            | §8.2       |
@@ -120,13 +121,10 @@ spec to catch up.
 | Authentication                        | Delegated to NATS connection (`nats.connect(...)`); SDK adds no handshake.                     | §10.1    |
 | NATS context support (`~/.config/nats/context/`) | `load_context_options(name)` translates a `nats` CLI context into kwargs for `nats.connect(...)`. Supports `url`, `creds` (with `~` expansion), `nkey` (a seed-file path; the seed line is read → `nkeys_seed_str`), `user_jwt`, `user`/`password`/`token`, `inbox_prefix`. The TLS triple and `nsc://...` URLs raise `NatsContextError`.  | §10.2    |
 
-## Sender identity (extension — `agent-protocol-sender-identity.md`)
+## Sender identity (optional extension)
 
 The sender-identity extension is additive on top of the unchanged 0.3
-protocol; its
-[spec document](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
-lives in `synadia-ai/synadia-agent-fabric-docs`. Section names below refer
-to that document. This package ships the **caller** side and the shared
+protocol. This package ships the **caller** side and the shared
 codec; the receiver side (classification, nonce cache, `accept_sender`,
 registration metadata) is `synadia-ai-agent-service` 0.5.0 — see its
 [`docs/protocol-mapping.md`](../../../agent-sdk/python/docs/protocol-mapping.md).
@@ -134,8 +132,8 @@ registration metadata) is `synadia-ai-agent-service` 0.5.0 — see its
 | SDK | Wire behaviour | Spec ref |
 | --- | --- | --- |
 | `AgentId.new(account, user)` / `AgentId.parse(text)` / `.account` / `.user` | The canonical `{account}.{user}` form; regex shape check plus the nkeys prefix + CRC check on `user` always and on `account` when NKEY-shaped; no zero id. The only code that builds or splits the text form. | Canonical text form |
-| `Agents.self_id()` (`SelfID()`) | Credentials JWT first (`sub`, `nats.issuer_account` / `iss`) when the signer carries one; else one `$SYS.REQ.USER.INFO` request (2 s) on the SDK inbox. `NoIdentityError` vs `IdentityUnavailableError` as the spec's two errors; a permission violation fails at once (`Client.last_error` polled every 50 ms). Memoised per connection; every failure retried after 30 s; `refresh_self_id()` at once. | When the server reports no identity |
-| `Agent-Sender` on `prompt` / `status` | Attached to every request when the identity is known: signed with a signer, an unsigned claim otherwise (`Identity.send_unsigned_claim`, default on). Fresh NUID nonce (nats-py's `nats.nuid`); `ts` as `YYYY-MM-DDTHH:MM:SSZ`; canonical single-line JSON in the order `v, account, user, name?, sub?, ts?, nonce?, sig?` (`json.dumps(separators=(",", ":"), ensure_ascii=False)`). | The `Agent-Sender` header, Wire form |
+| `Agents.self_id()` (`SelfID()`) | `$SYS.REQ.USER.INFO` request (2 s) on the SDK inbox. A configured signer's user and JWT account are compared with the live answer. Signed and unsigned request paths perform an uncached lookup for every identity-bearing operation; signer-less diagnostic `self_id()` calls remain memoised. A permission violation fails at once (`Client.last_error` polled every 50 ms). | When the server reports no identity |
+| `Agent-Sender` on `prompt` / `status` | Omitted `identity` → no lookup/header; explicit `Identity()` → unsigned claim; `send_unsigned_claim=False` → no automatic lookup/header; signer → live-bound signed header. Fresh NUID nonce (nats-py's `nats.nuid`); `ts` as `YYYY-MM-DDTHH:MM:SSZ`; canonical single-line JSON in the order `v, account, user, name?, sub?, ts?, nonce?, sig?` (`json.dumps(separators=(",", ":"), ensure_ascii=False)`). | The `Agent-Sender` header, Wire form |
 | Signing | `AGENT-SENDER-V1\n{account}\n{user}\n{subject}\n{ts}\n{nonce}\n{sha256(payload) hex}\n`, ed25519 via nkeys, `sig` base64url unpadded. `sub` = the subject published to; behind a rename by the caller's own account `prompt(text, subject=…, sub=…)` signs the exporter's subject. Signed at publish time over the exact encoded bytes. | Signing |
 | `max_payload` with a header | The framed header (`NATS/1.0\r\nAgent-Sender: …\r\n\r\n` = 28 bytes + the JSON) counts; a sound bound is checked synchronously in `prompt()`, the exact size on the first `__anext__`. nats-py does not count headers itself. | Wire form |
 | `min_sender_trust` (`EndpointInfo.min_sender_trust`) | Absent → `"any"` with `AgentInfo.supports_sender_identity=False` (a 0.3 agent); `any`; `signed`; an unknown value → `"signed"`. A `signed` endpoint without a configured signer raises `SenderSignatureRequiredError` at call time; with a signer but no identity, the `self_id()` error on the first `__anext__`. | Declaring the requirement |
@@ -145,6 +143,7 @@ registration metadata) is `synadia-ai-agent-service` 0.5.0 — see its
 | `format_sender` / `str(sender)` | `<id> (verified)` only with an attested account; `<id> (verified user, claimed account)`; `<account>.<user> (claimed)`; `(no sender)`. | Registration (trust class next to the id) |
 | `publish_signed` / `request_signed` / `sign_sender` | The spec's `PublishSigned` / `RequestSigned` / `SignSender(subject, payload, sub?)`; `publish_signed` sets `Nats-Msg-Id` to the nonce for JetStream de-duplication; `request_signed` is a single-reply request on the SDK inbox. | Suggested SDK additions |
 | `Agent.status()` | Single request on the SDK inbox with the header attached and an empty payload (hashes to the SHA-256 of zero bytes); the receiver never rejects a status probe on identity grounds. | Declaring the requirement |
+| Prompt responses / query replies | Not independently signed. A response or approval actor is not inferred from the original prompt sender. | Protocol boundary |
 
 Not in the spec (SDK choices, shared with the TypeScript SDK): the 64-char
 `name` cap (counted in UTF-16 code units on both sides), the 64-byte
@@ -237,10 +236,13 @@ the gap is, **why** it matters, and a hint at the **next step**.
    PI and Claude Code stage base64-decoded attachments to disk under
    `ATTACHMENT_DIR/{requestId}` so handlers can pass file paths to
    tools (shell-outs, MCP servers, etc.). Python keeps attachments
-   in-memory on `Envelope.attachments` and leaves staging to the
-   developer. Next step: an `Attachment.stage_to(path)` helper that
-   handles tempdir creation, RFC 4648 base64 decode, and safe filename
-   sanitisation in one call.
+   in-memory on `Envelope.attachments`. **Partly addressed:**
+   `save_attachments(attachments, directory)` (TypeScript:
+   `saveAttachments`) creates the directory, decodes strict RFC 4648
+   base64, sanitises each name the same way on every OS and never
+   overwrites, in one call — for a reply's attachments as well as an
+   inbound envelope's. Choosing a per-request directory stays with the
+   developer.
 
 ### Behavioural divergences (both spec-valid, different shape)
 

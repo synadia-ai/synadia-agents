@@ -15,8 +15,8 @@ Dispatch order for a ``prompt`` request (plan §2.8)::
 A nonce is recorded only after every other check passed, so a stale or
 transplanted header cannot poison the set. ``status`` is classify-only.
 
-Spec: ``agent-protocol-sender-identity.md`` in
-`synadia-ai/synadia-agent-fabric-docs <https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md>`_.
+The extension is additive to protocol ``0.3`` and is enabled explicitly
+by caller and host configuration.
 """
 
 from __future__ import annotations
@@ -74,13 +74,19 @@ SenderResolverFn: TypeAlias = Callable[["AgentId"], Awaitable["AgentInfo | None"
 
 @dataclass(frozen=True, slots=True)
 class ServiceIdentity:
-    """Sender-identity options of the host: the signer for ``id_sig``.
+    """Sender-identity options of the host: the signer for ``id_sig`` and the heartbeats.
 
-    The host never sends ``Agent-Sender`` (so there is no display name
-    here); ``signer`` signs the ``AGENT-ID-V1`` registration signature
-    over the prompt subject and must hold the connection's user NKEY —
-    :meth:`AgentService.start` raises
-    :class:`~synadia_ai.agents.IdentityMismatchError` otherwise.
+    ``signer`` signs the ``AGENT-ID-V1`` registration signature over the
+    prompt subject and the ``Agent-Sender`` header on every heartbeat the
+    service publishes (``sub`` the heartbeat subject, ``ts`` the
+    heartbeat's own, a fresh nonce per beat, the payload hash over the
+    frame published). The host sends ``Agent-Sender`` nowhere else — never
+    on a reply — and carries no display name, so there is none here. The
+    signer must hold the live connection's user NKEY. When it carries a
+    credentials JWT, that JWT's user and account must also match the live
+    connection — :meth:`AgentService.start` raises an identity error if
+    binding cannot be established. Without a signer the service beats
+    unsigned, as plain protocol 0.3.
     """
 
     signer: SenderSigner | None = None
@@ -344,7 +350,7 @@ class SenderGate:
                     SenderRejection(
                         401,
                         SENDER_REJECTED_DESCRIPTION,
-                        f"nonce {header.nonce!r} already seen for {header.user}",
+                        f"nonce already seen for {header.user}",
                     ),
                 )
 
@@ -352,7 +358,10 @@ class SenderGate:
             try:
                 accepted = await _call_hook(self._accept_sender, sender)
             except Exception:
-                log.exception(
+                # Hook exceptions are application-controlled and may contain
+                # credentials, header values, or other secrets. Log only the
+                # a generic marker; neither its type, message, nor traceback is safe.
+                log.error(
                     "accept_sender hook raised on %s (sender %s); request not served",
                     msg.subject,
                     format_sender(sender),

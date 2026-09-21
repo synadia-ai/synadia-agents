@@ -59,6 +59,24 @@ describe.skipIf(!natsUrl)("Agents.discover", () => {
     expect(match!.promptEndpoint.attachmentsOk).toBe(true);
   });
 
+  it("reports the reference agent's required metadata even when extraMetadata forges it", async () => {
+    const agent = await startAgent({
+      extraMetadata: {
+        agent: "forged-agent",
+        owner: "forged-owner",
+        protocol_version: "9.9",
+        role: "probe",
+      },
+    });
+    const found = await client.discover({ timeoutMs: 1000 });
+    const match = found.find((a) => a.instanceId === agent.instanceId);
+    expect(match).toBeDefined();
+    expect(match!.agent).toBe("ref-agent");
+    expect(match!.owner).toBe("testers");
+    expect(match!.protocolVersion).toBe("0.3");
+    expect(match!.metadata["role"]).toBe("probe");
+  });
+
   it("finds multiple agents with distinct identities", async () => {
     const a1 = await startAgent({ agent: "ref-a", name: "one" });
     const a2 = await startAgent({ agent: "ref-b", name: "two" });

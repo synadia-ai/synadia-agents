@@ -1,6 +1,6 @@
 # examples/dspy - building an agent with the SDK
 
-An example of **building a new agent from scratch** using the TypeScript SDK pair: caller-side primitives from `@synadia-ai/agents` (subjects, the `parseNatsUrl` helper) and the host-side `AgentService` from `@synadia-ai/agent-service` (registration, prompt + status endpoints, heartbeat loop, terminator). It runs a [ax-llm](https://github.com/ax-llm/ax) (DSPy-style signatures + ReAct) loop with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Once started it appears as a normal Synadia Agent Protocol for NATS service and can be driven by any caller - the CLI examples in `../../client-sdk/typescript/examples/`, the web UI in `../agent-web-ui/`, or your own code.
+An example of **building a new agent from scratch** using the TypeScript SDK pair: caller-side connection and identity plumbing from `@synadia-ai/agents` and the host-side `AgentService` from `@synadia-ai/agent-service` (registration, prompt + status endpoints, heartbeat loop, terminator). It runs a [ax-llm](https://github.com/ax-llm/ax) (DSPy-style signatures + ReAct) loop with four sandboxed tools: `list_files`, `read_file`, `write_file`, `bash`. Once started it appears as a normal Synadia Agent Protocol for NATS service and can be driven by any caller - the CLI examples in `../../client-sdk/typescript/examples/`, the web UI in `../agent-web-ui/`, or your own code.
 
 - `list_files` / `read_file` / `write_file` refuse any path that escapes the sandbox root.
 - `bash` runs commands with `cwd` set to the sandbox root, a 30 s timeout, and 8000-char output truncation. **Note:** a shell is a soft boundary - the model can `cd ..`, `curl`, etc. Don't point this at anything you care about.
@@ -48,7 +48,17 @@ Environment variables:
 | `DSPY_SANDBOX` | `./sandbox` | Root directory for the sandboxed `list_files` / `read_file` / `write_file` / `bash` tools |
 | `DSPY_DEBUG` | (off) | Set to `1` to log every ReAct trace step to stderr |
 | `NATS_URL` | `nats://127.0.0.1:4222` | NATS server URL |
+| `NATS_CONTEXT` | (unset) | NATS CLI context; when set, it wins over URL mode |
+| `NATS_CREDS` | (unset) | Connection credentials file for URL mode |
+| `NATS_SENDER_IDENTITY` | `off` | `signed` derives the host signer from the same connection credentials |
+| `NATS_MIN_SENDER_TRUST` | `any` | `signed` rejects headerless or invalidly signed prompts |
 | `USER` | system username | Owner subject token (3rd segment, fallback to `anon`) |
+
+The connection-bundle helper reads the selected NATS credentials once and
+supplies both connection authentication and, in signed mode, the matching
+signer. There is no separate identity credential. Identity and incoming trust
+remain independent; the default `off` / `any` combination preserves the
+identity-free behavior.
 
 ## Try it
 

@@ -18,6 +18,25 @@ export interface RequestAttachment {
 export interface RequestEnvelope {
   readonly prompt: string;
   readonly attachments?: ReadonlyArray<RequestAttachment>;
+  /**
+   * Top-level fields the protocol does not define (§5.6), by wire name.
+   * The encoder writes them next to the protocol's own fields — which win
+   * a clash — and the decoder keeps every field it does not know here, so
+   * an extension reads what a peer sent without the SDK knowing about it.
+   * Absent when there are none.
+   */
+  readonly extras?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * Wire names the envelope codec owns. An extra under one of these is
+ * never written, and the decoder never reports one as unknown.
+ */
+const ENVELOPE_FIELDS: ReadonlySet<string> = new Set(["prompt", "attachments"]);
+
+/** `true` iff `key` is a wire field the envelope codec owns, never an extra. */
+export function isEnvelopeField(key: string): boolean {
+  return ENVELOPE_FIELDS.has(key);
 }
 
 /** Serialize a request envelope to UTF-8 bytes per §5.1. */
@@ -37,6 +56,13 @@ function envelopeObject(env: RequestEnvelope): Record<string, unknown> {
       filename: a.filename,
       content: encodeBase64(a.content),
     }));
+  }
+  // After the protocol's own fields, in the order given — the order the
+  // Python SDK writes them in.
+  if (env.extras !== undefined) {
+    for (const [key, value] of Object.entries(env.extras)) {
+      if (!ENVELOPE_FIELDS.has(key) && value !== undefined) setOwn(obj, key, value);
+    }
   }
   return obj;
 }
@@ -147,9 +173,11 @@ export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
     throw new ProtocolError("envelope `prompt` must be a non-empty string");
   }
 
+  const unknown = unknownFields(obj);
+
   const rawAttachments = obj["attachments"];
   if (rawAttachments === undefined) {
-    return { prompt };
+    return { prompt, ...unknown };
   }
   if (!Array.isArray(rawAttachments)) {
     throw new ProtocolError("envelope `attachments` must be an array");
@@ -158,7 +186,28 @@ export function decodeEnvelope(data: Uint8Array): RequestEnvelope {
   const attachments: RequestAttachment[] = rawAttachments.map((item, idx) =>
     decodeAttachment(item, idx),
   );
-  return attachments.length > 0 ? { prompt, attachments } : { prompt };
+  return attachments.length > 0 ? { prompt, attachments, ...unknown } : { prompt, ...unknown };
+}
+
+/**
+ * §5.6: the fields a decoded envelope does not define, kept verbatim as
+ * `extras` — `{}` (no key at all) when there are none, so a plain
+ * envelope decodes to exactly `{ prompt, attachments? }`.
+ */
+function unknownFields(obj: Record<string, unknown>): { extras?: Record<string, unknown> } {
+  let extras: Record<string, unknown> | undefined;
+  for (const [key, value] of Object.entries(obj)) {
+    if (ENVELOPE_FIELDS.has(key)) continue;
+    setOwn((extras ??= {}), key, value);
+  }
+  return extras !== undefined ? { extras: Object.freeze(extras) } : {};
+}
+
+// A field named `__proto__` is data on the wire. Plain assignment would set
+// the object's prototype instead, losing the field; define it as an own
+// property, which is what `JSON.parse` does.
+function setOwn(obj: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(obj, key, { value, enumerable: true, writable: true, configurable: true });
 }
 
 /**

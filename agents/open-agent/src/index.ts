@@ -20,7 +20,8 @@ export {
 export { translatePart, type UIPart } from "./chunk-translator.js";
 export {
   connectFrom,
-  resolveConnectionOptions,
+  resolveConnectionBundle,
+  type ConnectedNats,
   type ResolveNatsOptions,
 } from "./nats-context.js";
 export { connectLocalSandbox, type LocalSandboxState } from "../vendor/sandbox/local.js";

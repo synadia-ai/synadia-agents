@@ -6,6 +6,7 @@ import {
   decodeBase64,
   decodeHeartbeatPayload,
   ProtocolError,
+  ServiceError,
   type StreamMessage,
 } from "@synadia-ai/agents";
 import { AgentService } from "../../src/service.js";
@@ -62,6 +63,39 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect(service.subject.prompt).toMatch(/^agents\.prompt\.svc-test\.testers\./);
     expect(service.subject.heartbeat).toMatch(/^agents\.hb\.svc-test\.testers\./);
     expect(service.subject.status).toMatch(/^agents\.status\.svc-test\.testers\./);
+  });
+
+  it("registers extraMetadata but the required keys win over it", async () => {
+    const service = startService({
+      session: "real-session",
+      extraMetadata: {
+        agent: "forged-agent",
+        owner: "forged-owner",
+        session: "forged-session",
+        protocol_version: "9.9",
+        role: "controller",
+      },
+    });
+    service.onPrompt(async (_envelope, response) => {
+      await response.send("ok");
+    });
+    await service.start();
+
+    const found = await client.discover({
+      timeoutMs: 1000,
+      filter: { agent: "svc-test", name: service.subject.name },
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0]!.metadata).toEqual({
+      agent: "svc-test",
+      owner: "testers",
+      session: "real-session",
+      protocol_version: "0.3",
+      role: "controller",
+    });
+    expect(await client.discover({ timeoutMs: 1000, filter: { agent: "forged-agent" } })).toEqual(
+      [],
+    );
   });
 
   it("streams response chunks and emits the §6.5 terminator", async () => {
@@ -298,6 +332,45 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect(errorMsg).toBeDefined();
     expect(errorMsg?.headers?.get("Nats-Service-Error")).toContain("attachments are not supported");
     expect(messages.find((m) => !m.headers && m.data.length === 0)).toBeDefined();
+  });
+
+  it("redacts unexpected handler exceptions from the wire and structured logs", async () => {
+    const secret = "SUASECRET-SEED eyJSECRET.JWT signature-secret nonce-secret";
+    const logs: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
+    const record = (msg: string, ctx?: Record<string, unknown>): void => {
+      logs.push(ctx === undefined ? { msg } : { msg, ctx });
+    };
+    const logger = {
+      debug: record,
+      info: record,
+      warn: record,
+      error: record,
+    };
+    const service = startService({ logger });
+    service.onPrompt(() => {
+      const error = new Error(secret);
+      error.name = secret;
+      throw error;
+    });
+    await service.start();
+
+    const [remote] = await client.discover({
+      timeoutMs: 1000,
+      filter: { agent: "svc-test", name: service.subject.name },
+    });
+    expect(remote).toBeDefined();
+    let caught: unknown;
+    try {
+      for await (const _ of await remote!.prompt("trigger")) {
+        // drain until the error frame
+      }
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ServiceError);
+    expect(caught).toMatchObject({ code: 500, description: "handler error" });
+    expect(String(caught)).not.toContain(secret);
+    expect(JSON.stringify(logs)).not.toContain(secret);
   });
 
   it("answers the v0.3 status endpoint with a heartbeat-shaped payload", async () => {

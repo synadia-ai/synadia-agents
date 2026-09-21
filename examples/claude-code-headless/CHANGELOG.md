@@ -8,11 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Optional connection-bound service identity through `senderIdentity` /
+  `NATS_SENDER_IDENTITY`, plus independent signed-only prompt admission through
+  `minSenderTrust` / `NATS_MIN_SENDER_TRUST`. Defaults remain identity off and
+  trust any.
 - **Identity env vars adopt the `SYNADIA_*` convention** shared with
   `agents/*`: `CLAUDE_CODE_HEADLESS_OWNER|NAME` resolve as CLI flag >
   `SYNADIA_CLAUDE_CODE_HEADLESS_OWNER|NAME` (per-agent) > `SYNADIA_OWNER|NAME`
-  (fleet-wide) > `CLAUDE_CODE_HEADLESS_OWNER|NAME` (legacy, keeps working) > config /
-  derived fallback.
+  (fleet-wide) > `CLAUDE_CODE_HEADLESS_OWNER|NAME` (legacy, keeps working) >
+  derived owner / configured name fallback.
+
+### Changed
+
+- Migrated the controller and every logical Claude session from hand-rolled or
+  testing-only services to production `AgentService`. The controller retains
+  `spawn`, `stop`, and `list` through `extraEndpoints`; prompt admission,
+  replay protection, status classification, acknowledgements, keep-alives,
+  heartbeats, errors, and termination now use the shared implementation.
+- All services derive identity from the one immutable connection credential
+  snapshot and share that connection's signer. Logical sessions are separate
+  routing/conversation instances, not separate cryptographic identities.
+- Permission questions now use `PromptResponse.ask()`.
+- Pinned the already-locked Claude Agent SDK, NATS, build, TypeScript, and type
+  package versions; removed mutable `latest` and external range selectors.
 
 ### Security
 
