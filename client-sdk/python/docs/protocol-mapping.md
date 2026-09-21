@@ -124,9 +124,9 @@ spec to catch up.
 
 The sender-identity extension is additive on top of the unchanged 0.3
 protocol; its
-[spec document](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
-lives in `synadia-ai/synadia-agent-fabric-docs`. Section names below refer
-to that document. This package ships the **caller** side and the shared
+[specification](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension)
+is §13 of `core-protocol.md`. Section names below refer
+to the matching parts of that chapter. This package ships the **caller** side and the shared
 codec; the receiver side (classification, nonce cache, `accept_sender`,
 registration metadata) is `synadia-ai-agent-service` 0.5.0 — see its
 [`docs/protocol-mapping.md`](../../../agent-sdk/python/docs/protocol-mapping.md).

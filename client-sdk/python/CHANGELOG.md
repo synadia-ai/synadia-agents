@@ -18,7 +18,7 @@ ed25519 signature bound to the subject, the payload, a timestamp and a
 nonce. The wire protocol stays `0.3`; support is advertised by feature
 detection (`min_sender_trust` on the prompt endpoint ⇔ the agent
 implements the extension; `Agent-Sender` sent ⇔ the caller does). Spec:
-[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+[`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension).
 Byte-for-byte compatible with the TypeScript SDK (`@synadia-ai/agents`
 0.6.0): the shared known-answer vectors under
 `test-fixtures/identity/` are verified by both.

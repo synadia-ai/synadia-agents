@@ -101,8 +101,8 @@ Every SDK call mapped to its Synadia Agent Protocol for NATS section, for implem
 ## Sender identity (extension — `agent-protocol-sender-identity.md`)
 
 The extension is additive to protocol `0.3`; section names below refer to the
-[spec document](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md)
-in `synadia-agent-fabric-docs`, not to `core-protocol.md`.
+[sender-identity chapter](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension)
+of `core-protocol.md` (§13).
 
 | SDK                                                                                                   | Wire behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Spec ref                                    |
 | ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |

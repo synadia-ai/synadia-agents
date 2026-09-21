@@ -70,7 +70,7 @@ to run them.
 ## Sender identity
 
 `AgentService` implements the receiver side of the
-[sender-identity extension](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md):
+[sender-identity extension](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension):
 every `prompt` request is classified **before** the §6.4 ack, and the
 handler sees the result as `stream.sender`.
 
@@ -136,8 +136,7 @@ What to know:
   shared set), never rejected — a liveness probe must not depend on the
   prober's credentials.
 - **`account_token_position`** is for a service behind an export that
-  inserts the caller's account token (`account_token_position`, the
-  ScratchPad shape): the receiver checks the token against the header's
+  inserts the caller's account token (`account_token_position`): the receiver checks the token against the header's
   `account` and accepts `sub` with the token removed. The inserted token
   is a server stamp only on a **closed** endpoint. Note that
   `AgentService` hosts five-token `agents.{verb}.a.o.n` subjects, which

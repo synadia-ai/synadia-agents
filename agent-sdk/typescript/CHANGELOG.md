@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `PromptResponse.sender` (`VerifiedSender` with `id`, `ClaimedSender`
   without — never authorize on a claim — or `undefined`). `status` is
   classified and logged, never rejected. Spec:
-  [`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+  [`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension).
   - Registration: `user_nkey` / `account` when the connection has an
     identity, `id_sig` (`AGENT-ID-V1` over the prompt subject) when
     `identity.signer` is set; identity keys override `extraMetadata`.
