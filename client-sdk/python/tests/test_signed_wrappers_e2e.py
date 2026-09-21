@@ -1,7 +1,7 @@
 """``sign_sender`` / ``publish_signed`` / ``request_signed``, and ``account_token_position``.
 
-The ``account-token-position.conf`` rows are the ScratchPad shape (plan
-§2.3b): a hand-rolled responder on ``svc.*.prompt`` verifies with
+The ``account-token-position.conf`` rows are a service behind an export that inserts the
+caller's account token: a hand-rolled responder on ``svc.*.prompt`` verifies with
 ``account_token_position=2`` — the arrival subject carries the caller's
 account token the server inserted; ``sub`` is what the caller published.
 """

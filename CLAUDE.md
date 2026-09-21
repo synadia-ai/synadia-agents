@@ -129,10 +129,8 @@ Two distinct version axes:
     on PyPI first) — both published to PyPI; versions diverge per
     package.
 - **Sender-identity extension** — additive on top of `0.3`, no
-  protocol bump. Spec: `docs/agent-protocol-sender-identity.md` in
-  `synadia-ai/synadia-agent-fabric-docs`; the implementation plan with
-  its per-PR log is `docs/plans/agent-identity-sdk-implementation-plan.md`
-  in that repo (read its §12 before touching identity code). Shared
+  protocol bump. Spec: §13 of `core-protocol.md` in
+  `synadia-ai/synadia-agent-sdk-docs`. Shared
   fixtures and the TS-generated known-answer vectors live under
   `test-fixtures/identity/`.
 

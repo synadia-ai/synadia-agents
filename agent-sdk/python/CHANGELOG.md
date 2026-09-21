@@ -18,7 +18,7 @@ carries the agent's own identity; `min_sender_trust` is always
 advertised. The wire protocol stays `0.3` — support is advertised by
 feature detection (`min_sender_trust` on the prompt endpoint ⇔ the agent
 implements the extension). Spec:
-[`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+[`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension).
 Behaviour-equal with `@synadia-ai/agent-service` 0.6.0 (same dispatch
 order, wire descriptions, nonce-cache semantics); the reverse interop
 test runs the TS client probe signed against this host.

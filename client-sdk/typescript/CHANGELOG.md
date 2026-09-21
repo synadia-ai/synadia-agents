@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   advertised by feature detection (`min_sender_trust` on the prompt
   endpoint ⇔ the agent implements the extension; `Agent-Sender` sent ⇔
   the caller does). Spec:
-  [`agent-protocol-sender-identity.md`](https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md).
+  [`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension).
   - `new Agents({ nc, identity: { signer?, name?, sendUnsignedClaim? } })`.
     `signerFromSeed` / `signerFromCreds` / `signerFromCredsFile` /
     `signerFromContext` build a `SenderSigner`; custom (HSM / KMS)

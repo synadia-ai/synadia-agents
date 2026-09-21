@@ -15,8 +15,8 @@ Dispatch order for a ``prompt`` request (plan §2.8)::
 A nonce is recorded only after every other check passed, so a stale or
 transplanted header cannot poison the set. ``status`` is classify-only.
 
-Spec: ``agent-protocol-sender-identity.md`` in
-`synadia-ai/synadia-agent-fabric-docs <https://github.com/synadia-ai/synadia-agent-fabric-docs/blob/master/docs/agent-protocol-sender-identity.md>`_.
+Spec: §13 of ``core-protocol.md`` in
+`synadia-ai/synadia-agent-sdk-docs <https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension>`_.
 """
 
 from __future__ import annotations
