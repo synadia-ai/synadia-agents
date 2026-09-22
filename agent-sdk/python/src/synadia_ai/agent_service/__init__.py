@@ -25,6 +25,9 @@ Public API:
   :class:`RequestRejectedError` — the hook around the prompt handler
   (``AgentService(interceptors=[...])``); ``heartbeat_extras=`` adds
   fields to every heartbeat and status reply.
+* :class:`AgentServiceExtraEndpoint` — a harness endpoint registered on the
+  same micro service after ``prompt`` and ``status``
+  (``AgentService(extra_endpoints=[...])``).
 * :data:`AcceptSenderHook`, :class:`SenderGate`, :class:`NonceCache`,
   :class:`SenderAdmission`, :class:`SenderRejection` — the stateful
   classification parts, exposed for hand-rolled services.
@@ -72,6 +75,7 @@ from .service import (
     DEFAULT_KEEPALIVE_INTERVAL_S,
     DEFAULT_MAX_PAYLOAD,
     AgentService,
+    AgentServiceExtraEndpoint,
     PromptHandler,
     PromptStream,
 )
@@ -85,6 +89,7 @@ __all__ = [
     "DEFAULT_REPLAY_WINDOW_S",
     "AcceptSenderHook",
     "AgentService",
+    "AgentServiceExtraEndpoint",
     "CallNext",
     "NonceCache",
     "PromptHandler",

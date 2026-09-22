@@ -86,7 +86,7 @@ Same concepts in each language; names adapt to each language's idioms.
 | Serve `status`           | Reply with the §8.7 (v0.3) heartbeat-shaped payload on demand.                            |
 | Publish heartbeats       | Beacon liveness on `agents.hb.<agent>.<owner>.<name>` at the configured cadence.          |
 | Per-request keep-alive   | Emit `{type:"status",data:"ack"}` chunks while a slow handler runs (§6.6 / §6.4).         |
-| Custom endpoints         | Register `spawn` / `stop` / `list` etc. alongside `prompt` (TS: `extraEndpoints`).        |
+| Custom endpoints         | Add `spawn` / `stop` / `list` next to `prompt` (`extraEndpoints` / `extra_endpoints`).    |
 | Reference agent          | Spec-compliant counterparty for tests and interop checks.                                 |
 
 The SDKs also share the wire helpers — `encodeChunk`, `splitResponseText`, `buildHeartbeatPayload` — so a hand-rolled harness that doesn't fit the closed-handler shape (e.g. event-driven streaming agents) can use the primitives directly without re-implementing the wire format.
