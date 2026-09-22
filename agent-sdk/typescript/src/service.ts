@@ -320,7 +320,11 @@ export interface AgentServiceExtraEndpoint {
   readonly name: string;
   /** Full subject the endpoint listens on. AgentService does NOT prefix. */
   readonly subject: string;
-  /** NATS queue group. Defaults to no queue group (undefined). */
+  /**
+   * NATS queue group. Without one, `@nats-io/services` sets its default
+   * `"q"`, so an extra endpoint is always shared between the instances of
+   * an agent: each request reaches one of them. The Python host does the same.
+   */
   readonly queue?: string;
   /** Endpoint handler. Same shape as `service.addEndpoint(...)`'s handler. */
   readonly handler: ServiceHandler;

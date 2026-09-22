@@ -19,9 +19,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   discover and prompt other agents — `discover_agents`, `prompt_agent`,
   `wait_agent`, `answer_agent`, `cancel_agent`, `list_agent_calls` — as one
   helper, to the contract in
-  [`docs/agent-tools.md`](../../docs/agent-tools.md). `tools.definitions`
-  (and `agentToolDefinitions()`) are the six definitions, a copy of
-  `test-fixtures/agent-tools/`; `await tools.execute(name, args,
+  [`docs/agent-tools.md`](../../docs/agent-tools.md). `agentToolDefinitions()`
+  are the six definitions, a copy of `test-fixtures/agent-tools/`, and
+  `tools.definitions` those the helper offers; `await tools.execute(name, args,
 { toolCallId, signal })` runs one call and returns the JSON result.
   - `prompt_agent` blocks by default and returns the reply, a question with
     its `call_id`, or an error, now with `state`; `wait: false` returns at
@@ -45,7 +45,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     `wait_agent`'s `timeout_ms`, `maxCalls` per scope (256; finished calls
     are dropped, the one that finished longest ago first), the roots files
     may be sent from, the staging directory where returned files are saved
-    with `saveAttachments`, one directory per call.
+    with `saveAttachments`, one directory per call. The staging directory
+    is always a root, the default one or `stagingDir`, so a returned file
+    can be sent on; `attachmentRoots` adds to it and names none by default,
+    so the working directory, which may hold a `.env`, is out unless a host
+    names it.
+  - `tools` offers a subset of the six: `definitions` holds only those,
+    in the contract's order, and `execute` refuses any other in words.
+    Without `wait_agent` nothing can be detached: `prompt_agent` and
+    `answer_agent` lose their `wait` parameter, a description that
+    mentions `wait_agent` reads its blocking-only words
+    (`test-fixtures/agent-tools/blocking.json`), and `wait: false` is
+    refused. A subset that makes no sense — none, a tool that works on
+    calls without `prompt_agent`, or `prompt_agent` without `answer_agent`,
+    which a question from the prompted agent needs — throws at
+    construction. What a result tells the model to do next points only to
+    tools offered.
   - Loop guards: the agent's own address, and the agent whose signed
     prompt is being served. Errors come back as results, in words.
   - The model's tool-call ID reaches every prompt interceptor as

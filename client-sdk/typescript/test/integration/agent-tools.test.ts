@@ -414,6 +414,41 @@ describe.skipIf(!bin)("agent tools", () => {
     expect(result["error"]).toMatch(/has no open question: it is completed/);
   });
 
+  it("the blocking three: nothing is detached, and a question is answered with answer_agent", async () => {
+    const t = tools({ tools: ["discover_agents", "prompt_agent", "answer_agent"] });
+    const refused = await t.execute("prompt_agent", {
+      address: workerAddress,
+      prompt: "echo:x",
+      wait: false,
+    });
+    conforms(refused);
+    expect(refused["error"]).toMatch(/"wait" cannot be false/);
+    const asked = call(
+      await t.execute("prompt_agent", { address: workerAddress, prompt: "ask:ok?" }),
+    );
+    expect(asked).toMatchObject({
+      state: "input_required",
+      question: "ok?",
+      open_calls: 1,
+      open_calls_note: "1 call you started is still open: answer its questions with answer_agent.",
+    });
+    const done = call(await t.execute("answer_agent", { call_id: asked.call_id, answer: "yes" }));
+    expect(done.reply).toBe("answered:yes");
+    const after = await t.execute("answer_agent", { call_id: asked.call_id, answer: "again" });
+    expect(after).toEqual({
+      error: `call "${asked.call_id}" has no open question: it is completed`,
+    });
+    await t.runInPromptScope(async () => {
+      const scoped = call(
+        await t.execute("prompt_agent", { address: workerAddress, prompt: "ask:more?" }),
+      );
+      expect(scoped.open_calls_note).toBe(
+        "1 call you started is still open. Calls end with the prompt you are answering: " +
+          "answer its questions with answer_agent before you answer.",
+      );
+    });
+  });
+
   // --- detached calls and wait_agent ------------------------------------------
 
   it("wait: false returns at once; wait_agent returns the earliest, with remaining, polls and times out", async () => {
@@ -956,6 +991,40 @@ describe.skipIf(!bin)("agent tools", () => {
       }
     });
 
+    it("by default sends nothing from the working directory; a root that names it does", async () => {
+      const work = join(dir, "work");
+      await mkdir(work);
+      await writeFile(join(work, ".env"), "TOKEN=secret");
+      // The helper takes the working directory at construction.
+      const before = process.cwd();
+      process.chdir(work);
+      let byDefault: AgentTools;
+      let named: AgentTools;
+      try {
+        byDefault = tools();
+        named = tools({ attachmentRoots: [work] });
+      } finally {
+        process.chdir(before);
+      }
+      for (const path of [".env", join(work, ".env")]) {
+        const refused = await byDefault.execute("prompt_agent", {
+          address: workerAddress,
+          prompt: "attach:",
+          attachments: [path],
+        });
+        conforms(refused);
+        expect(refused["error"]).toMatch(/outside the directories you may send files from/);
+      }
+      const sent = call(
+        await named.execute("prompt_agent", {
+          address: workerAddress,
+          prompt: "attach:",
+          attachments: [".env"],
+        }),
+      );
+      expect(sent.reply).toBe("got:.env=TOKEN=secret");
+    });
+
     it("saves returned files, one directory per call, and lists each", async () => {
       const staging = join(dir, "staging");
       const t = tools({ stagingDir: staging });
@@ -986,26 +1055,33 @@ describe.skipIf(!bin)("agent tools", () => {
     });
 
     it("saves a question's files, and a saved file can be sent on from the staging directory", async () => {
-      const t = tools();
-      const asked = call(
-        await t.execute("prompt_agent", { address: workerAddress, prompt: "ask-file:" }),
-      );
-      expect(asked).toMatchObject({ state: "input_required", question: "look at this" });
-      const [file] = asked.attachments!;
-      expect(file).toMatchObject({ filename: "q.txt", size_bytes: 13 });
-      expect(await readFile(file!.path!, "utf8")).toBe("question file");
-      expect(
-        call(await t.execute("answer_agent", { call_id: asked.call_id, answer: "seen" })).reply,
-      ).toBe("answered:seen");
-      // The staging directory is a default root.
-      const forwarded = call(
-        await t.execute("prompt_agent", {
-          address: workerAddress,
-          prompt: "attach:",
-          attachments: [file!.path!],
-        }),
-      );
-      expect(forwarded.reply).toBe(`got:${basename(file!.path!)}=question file`);
+      // The staging directory is always a root, the default one or one
+      // given, and roots named add to it.
+      const root = join(dir, "root");
+      for (const t of [
+        tools(),
+        tools({ attachmentRoots: [root] }),
+        tools({ attachmentRoots: [root], stagingDir: join(dir, "given-staging") }),
+      ]) {
+        const asked = call(
+          await t.execute("prompt_agent", { address: workerAddress, prompt: "ask-file:" }),
+        );
+        expect(asked).toMatchObject({ state: "input_required", question: "look at this" });
+        const [file] = asked.attachments!;
+        expect(file).toMatchObject({ filename: "q.txt", size_bytes: 13 });
+        expect(await readFile(file!.path!, "utf8")).toBe("question file");
+        expect(
+          call(await t.execute("answer_agent", { call_id: asked.call_id, answer: "seen" })).reply,
+        ).toBe("answered:seen");
+        const forwarded = call(
+          await t.execute("prompt_agent", {
+            address: workerAddress,
+            prompt: "attach:",
+            attachments: [file!.path!],
+          }),
+        );
+        expect(forwarded.reply).toBe(`got:${basename(file!.path!)}=question file`);
+      }
     });
   });
 

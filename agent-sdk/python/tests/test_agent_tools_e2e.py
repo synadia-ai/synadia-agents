@@ -405,6 +405,35 @@ async def test_answer_agent_refuses_a_call_with_no_open_question(world: World) -
     assert "has no open question: it is completed" in result["error"]
 
 
+async def test_the_blocking_three_detach_nothing_and_a_question_is_answered_with_answer_agent(
+    world: World,
+) -> None:
+    tools = world.tools(tools=["discover_agents", "prompt_agent", "answer_agent"])
+    address = world.worker_address
+    refused = await tools.execute(
+        "prompt_agent", {"address": address, "prompt": "echo:x", "wait": False}
+    )
+    conforms(refused)
+    assert '"wait" cannot be false' in refused["error"]
+    asked = call(await tools.execute("prompt_agent", {"address": address, "prompt": "ask:ok?"}))
+    assert (asked["state"], asked["question"], asked["open_calls"]) == ("input_required", "ok?", 1)
+    assert asked["open_calls_note"] == (
+        "1 call you started is still open: answer its questions with answer_agent."
+    )
+    done = call(await tools.execute("answer_agent", {"call_id": asked["call_id"], "answer": "yes"}))
+    assert done["reply"] == "answered:yes"
+    after = await tools.execute("answer_agent", {"call_id": asked["call_id"], "answer": "again"})
+    assert after == {"error": f'call "{asked["call_id"]}" has no open question: it is completed'}
+    async with tools.prompt_scope():
+        scoped = call(
+            await tools.execute("prompt_agent", {"address": address, "prompt": "ask:more?"})
+        )
+        assert scoped["open_calls_note"] == (
+            "1 call you started is still open. Calls end with the prompt you are answering: "
+            "answer its questions with answer_agent before you answer."
+        )
+
+
 # --- detached calls and wait_agent ---------------------------------------------
 
 
@@ -954,6 +983,32 @@ async def test_files_are_sent_only_from_under_the_configured_roots(
         assert words in refused["error"]
 
 
+async def test_by_default_nothing_is_sent_from_the_working_directory_a_root_naming_it_is(
+    world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / ".env").write_text("TOKEN=secret")
+    # The helper takes the working directory at construction.
+    with monkeypatch.context() as patch:
+        patch.chdir(work)
+        by_default = world.tools()
+        named = world.tools(attachment_roots=[work])
+    address = world.worker_address
+    for path in [".env", str(work / ".env")]:
+        refused = await by_default.execute(
+            "prompt_agent", {"address": address, "prompt": "attach:", "attachments": [path]}
+        )
+        conforms(refused)
+        assert "outside the directories you may send files from" in refused["error"]
+    sent = call(
+        await named.execute(
+            "prompt_agent", {"address": address, "prompt": "attach:", "attachments": [".env"]}
+        )
+    )
+    assert sent["reply"] == "got:.env=TOKEN=secret"
+
+
 async def test_returned_files_are_saved_one_directory_per_call(
     world: World, tmp_path: Path
 ) -> None:
@@ -986,27 +1041,36 @@ async def test_saving_stops_at_the_total_per_call(world: World) -> None:
 
 
 async def test_a_questions_files_are_saved_and_can_be_sent_on_from_staging(
-    world: World,
+    world: World, tmp_path: Path
 ) -> None:
-    tools = world.tools()
+    # The staging directory is always a root, the default one or one given,
+    # and roots named add to it.
+    root = tmp_path / "root"
+    root.mkdir()
     address = world.worker_address
-    asked = call(await tools.execute("prompt_agent", {"address": address, "prompt": "ask-file:"}))
-    assert (asked["state"], asked["question"]) == ("input_required", "look at this")
-    (file,) = asked["attachments"]
-    assert (file["filename"], file["size_bytes"]) == ("q.txt", 13)
-    assert Path(file["path"]).read_text() == "question file"
-    done = call(
-        await tools.execute("answer_agent", {"call_id": asked["call_id"], "answer": "seen"})
-    )
-    assert done["reply"] == "answered:seen"
-    # The staging directory is a default root.
-    forwarded = call(
-        await tools.execute(
-            "prompt_agent",
-            {"address": address, "prompt": "attach:", "attachments": [file["path"]]},
+    for tools in [
+        world.tools(),
+        world.tools(attachment_roots=[root]),
+        world.tools(attachment_roots=[root], staging_dir=tmp_path / "given-staging"),
+    ]:
+        asked = call(
+            await tools.execute("prompt_agent", {"address": address, "prompt": "ask-file:"})
         )
-    )
-    assert forwarded["reply"] == f"got:{Path(file['path']).name}=question file"
+        assert (asked["state"], asked["question"]) == ("input_required", "look at this")
+        (file,) = asked["attachments"]
+        assert (file["filename"], file["size_bytes"]) == ("q.txt", 13)
+        assert Path(file["path"]).read_text() == "question file"
+        done = call(
+            await tools.execute("answer_agent", {"call_id": asked["call_id"], "answer": "seen"})
+        )
+        assert done["reply"] == "answered:seen"
+        forwarded = call(
+            await tools.execute(
+                "prompt_agent",
+                {"address": address, "prompt": "attach:", "attachments": [file["path"]]},
+            )
+        )
+        assert forwarded["reply"] == f"got:{Path(file['path']).name}=question file"
 
 
 # --- loop guards -------------------------------------------------------------------------

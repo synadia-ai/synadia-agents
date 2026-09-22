@@ -328,6 +328,12 @@ content = json.dumps(result)
   `call_id` at once and the model collects the result with `wait_agent`. A
   question the prompted agent asks goes to the model, which answers it
   with `answer_agent`.
+- `tools=` offers fewer than the six. Each definition costs input tokens
+  on every model call, about 1.5k for all six, so an agent that needs no
+  async calls offers `["discover_agents", "prompt_agent", "answer_agent"]`.
+  Without `wait_agent` nothing is detached: `prompt_agent` and
+  `answer_agent` lose their `wait` parameter, and their descriptions read
+  blocking-only words.
 - A call started while a prompt is served belongs to it: still open when
   that prompt ends, it is cancelled and its open question refused. A host
   that serves prompts without `AgentService` wraps each in
@@ -337,6 +343,11 @@ content = json.dumps(result)
   `max_calls` (256), `attachment_roots`, `staging_dir`,
   `max_saved_bytes_per_call`. `self_address` is left out of discovery and
   refused.
+- Files are sent only from the staging directory, where returned files are
+  saved, so the model can send one on, and from under `attachment_roots`,
+  which add to it. The default names none, so nothing else can be sent: the
+  working directory may hold a `.env`. A host that wants the working
+  directory, a coding agent's project say, names it.
 - The model's tool-call ID reaches every prompt interceptor as
   `ctx.context["tool_call_id"]`. `extensions` (subclasses of
   `AgentToolsExtension`) add discovery fields, rewrite a prompt before it

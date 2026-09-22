@@ -64,9 +64,10 @@ A blocking `prompt_agent` keeps the fields a blocking call has always had:
 
 **A refusal** is `{"error": "..."}` alone, without `call_id` or `state`: the
 tool did nothing. Nothing was sent and no call changed. Refusals cover bad
-arguments, an unknown address, an unknown `call_id`, a loop (section 3.8), a
-file outside the allowed roots (section 3.9), a prompt the SDK refuses before sending
-(too large for the target, attachments to an agent that takes none), and the
+arguments, a tool the helper does not offer (section 5), an unknown
+address, an unknown `call_id`, a loop (section 3.8), a file outside the
+allowed roots (section 3.9), a prompt the SDK refuses before sending (too
+large for the target, attachments to an agent that takes none), and the
 limit on tracked calls (section 5).
 
 **Open calls.** While calls in the current scope are open, every result of
@@ -91,7 +92,8 @@ says they end with that prompt, so the model collects them before it answers.
 prompt, reply — stays one call, and a model that never passes `wait` gets
 exactly the blocking behaviour. `wait: false` is for running several prompts
 at once: the model starts them, keeps working, and collects each result
-with `wait_agent`.
+with `wait_agent`. A host that offers no `wait_agent` makes blocking the only
+mode (section 5).
 
 ### 3.2 Questions go to the model
 
@@ -202,10 +204,17 @@ attachment (§5.2), inside the message.
 - **Sending.** `prompt_agent` passes the model's paths to the SDK's
   `prompt()`, which reads and encodes each file, and refuses before sending
   when the target does not accept attachments or the message is over its
-  `max_payload` (§5.4). The tool accepts only paths under configured roots,
-  by default the working directory and the staging directory, and refuses
-  any other path. A path is checked after following its links. Without the
-  limit a model could send any file the process can read.
+  `max_payload` (§5.4). The tool accepts only paths under configured roots
+  and refuses any other path. A path is checked after following its links.
+  Without the limit a model could send any file the process can read.
+- **The staging directory is always a root**, the default one or one the
+  host sets. It holds the helper's own output, the files other agents sent
+  back, so the model can send one on with no configuration. Roots a host
+  names add to it, and by default there are none: the working directory is
+  not a root unless named. It can hold the agent's own `.env` with its
+  credentials, and a model can be talked into attaching it. A host that
+  wants the working directory, or any other, names it (section 5); a coding
+  agent's host names its project directory.
 - **Receiving.** Every file that comes back, with the reply or with a
   question (§6.3, §7.1), is saved on the caller's machine before the result
   that lists it is returned: with the SDK's `saveAttachments` /
@@ -268,16 +277,49 @@ Limits are configuration, never parameters, except `wait_agent`'s
 | Setting | TypeScript | Python | Default |
 | --- | --- | --- | --- |
 | The caller-side client | `agents` | `agents` | required |
+| The tools offered | `tools` | `tools` | all six |
 | The agent's own address, left out of discovery and refused | `selfAddress` | `self_address` | none |
 | How long one discovery waits | `discoverTimeoutMs` | `discover_timeout` (s) | the SDK's discovery default |
 | The runtime limit per call; past it the call is `expired` | `maxWaitMs` | `max_wait_s` | 10 minutes, the SDK's default |
 | The cap on `wait_agent`'s `timeout_ms` | `maxWaitAgentMs` | `max_wait_agent_s` | the runtime limit |
 | Calls tracked per scope | `maxCalls` | `max_calls` | 256 |
-| The roots files may be sent from | `attachmentRoots` | `attachment_roots` | the working directory and the staging directory |
+| The roots files may be sent from, besides the staging directory | `attachmentRoots` | `attachment_roots` | none |
 | The staging directory for returned files | `stagingDir` | `staging_dir` | a new private directory under the system's temporary directory, removed when the helper closes |
 | The total saved per call | `maxSavedBytesPerCall` | `max_saved_bytes_per_call` | 64 MiB |
 | Finished calls outside a served prompt | `onSettled` | `on_settled` | none |
 | Extensions | `extensions` | `extensions` | none |
+
+The staging directory is always a root, whether the default or set, and
+roots given add to it: a host that names its project directory still lets
+the model send returned files on.
+
+**Offering fewer tools.** Every definition a model is shown costs input
+tokens on every model call: about 1.5k for all six, a little over half that
+for three. An agent that does not need to run calls at once offers
+`discover_agents`, `prompt_agent` and `answer_agent`. The helper shows only
+the definitions of the tools it offers, in the order of section 1, and
+refuses any other tool in words.
+
+- **Without `wait_agent` nothing can be detached**, or the model could start
+  a call it cannot collect. `prompt_agent` and `answer_agent` have no `wait`
+  parameter, and a `wait: false` that arrives anyway is refused.
+- **The definitions are derived, never rewritten:** the same definitions
+  without their `wait` parameter, and the same descriptions, except that a
+  description that mentions `wait_agent` is replaced by its blocking-only
+  words in [`test-fixtures/agent-tools/blocking.json`](../test-fixtures/agent-tools/blocking.json).
+- **A set that makes no sense is refused** when the helper is made, with
+  the reason in the error:
+  - no tool at all;
+  - `answer_agent`, `wait_agent`, `cancel_agent` or `list_agent_calls`
+    without `prompt_agent`, which starts the calls they work on;
+  - `prompt_agent` without `answer_agent`: a question the prompted agent
+    asks would reach a model with no way to answer it, and the asking agent
+    would wait out its timeout.
+- **A result points the model only to tools offered.** The note on open
+  calls (section 2) and a refusal's advice (list your calls, discover the
+  current agents, collect or stop some calls) name a tool only when the
+  helper offers it. Without `wait_agent`, the note tells the model to answer
+  the calls' questions with `answer_agent` rather than to collect them.
 
 Whether the tools are offered at all is the host's choice: a role that must
 never delegate is offered none.
@@ -286,15 +328,19 @@ never delegate is offered none.
 
 ### 6.1 Definitions and execution
 
-The helper offers the six definitions and executes a tool call by name. Each
-host maps the definitions to its own tool format and hands the result, as
-JSON text, back to the model.
+The helper holds the definitions of its tools, all six unless `tools` names
+fewer (section 5), and executes a tool call by name. Each host maps the
+definitions to its own tool format and hands the result, as JSON text, back
+to the model.
 
 - TypeScript: `tools.definitions`; `await tools.execute(name, args, { toolCallId, signal })`.
   `args` is an object or the JSON text a model produced. `signal` aborts a
   blocking call (section 3.10).
 - Python: `tools.definitions`; `await tools.execute(name, args, tool_call_id=...)`.
   Cancelling the task that runs a blocking call cancels the call.
+- Fewer tools: `new AgentTools({ agents, tools: ["discover_agents", "prompt_agent", "answer_agent"] })`
+  in TypeScript, `AgentTools(agents, tools=["discover_agents", "prompt_agent", "answer_agent"])`
+  in Python.
 
 ### 6.2 The scope
 
