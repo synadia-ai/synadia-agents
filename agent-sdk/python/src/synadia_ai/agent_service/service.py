@@ -36,17 +36,24 @@ sender, the subject and the headers, may refuse the request with a §9
 error before the handler runs, and runs the rest of the request inside a
 context of its own (see :mod:`synadia_ai.agent_service.interceptor`);
 ``heartbeat_extras`` adds fields to every heartbeat and status reply.
+
+Concurrency: one instance serves one prompt at a time by default.
+``max_concurrent_prompts`` above 1 serves up to that many at once, each in
+a task of its own; nothing changes on the wire.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
+import functools
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 from nats.micro import ServiceConfig, add_service
 from nats.micro.service import EndpointConfig
@@ -344,6 +351,20 @@ class AgentService:
       ``status`` reply, read when each is built. A §8.3 field name, a
       value that does not serialise, or a provider that raises costs that
       beat its extras — never the beat — and is logged.
+
+    ``max_concurrent_prompts`` (default 1, at least 1) is how many prompts
+    one instance serves at once. At 1 the prompt endpoint awaits each
+    request in turn: the next one waits in the subscription until the
+    handler is done. Above 1 the endpoint waits for a free slot, starts the
+    request in an :mod:`asyncio` task of its own — in its own copy of the
+    :mod:`contextvars` context — and takes the next; with every slot busy,
+    the next request waits in the subscription as at 1. The handler then
+    runs interleaved with itself: state it shares must be safe at every
+    ``await``. :meth:`stop` cancels the prompts in flight in both modes;
+    above 1 it also waits for their tasks to end. The endpoint's
+    ``$SRV.STATS`` count each request, the time from its start to its
+    terminator (excluding any wait for a slot) and each exception the
+    request's task ended with, as at 1.
     """
 
     def __init__(
@@ -367,11 +388,21 @@ class AgentService:
         operator_attested: bool = False,
         interceptors: Sequence[RequestInterceptor] = (),
         heartbeat_extras: ExtrasProvider | None = None,
+        max_concurrent_prompts: int = 1,
     ) -> None:
         if heartbeat_interval_s <= 0:
             raise ValueError("heartbeat_interval_s must be > 0 (heartbeat is mandatory in v0.3)")
         if keepalive_interval_s is not None and keepalive_interval_s <= 0:
             raise ValueError("keepalive_interval_s must be > 0 or None (None disables keep-alive)")
+        if (
+            isinstance(max_concurrent_prompts, bool)
+            or not isinstance(max_concurrent_prompts, int)
+            or max_concurrent_prompts < 1
+        ):
+            raise ValueError(
+                f"max_concurrent_prompts must be an int >= 1 (got {max_concurrent_prompts!r}); "
+                "1, the default, serves one prompt at a time"
+            )
         if identity is not None and not isinstance(identity, ServiceIdentity):
             raise TypeError(
                 "identity must be a ServiceIdentity(signer=...) (the host's Agent-Sender, "
@@ -401,6 +432,13 @@ class AgentService:
         self._service: Service | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._heartbeat_stop = asyncio.Event()
+        # Concurrent serving (`max_concurrent_prompts` > 1 only): the slots,
+        # created by start(); the prompts in flight, each in a task of its
+        # own; and the prompt endpoint's stats, which the tasks complete.
+        self._max_concurrent_prompts = max_concurrent_prompts
+        self._prompt_slots: asyncio.Semaphore | None = None
+        self._prompt_tasks: set[asyncio.Task[None]] = set()
+        self._prompt_stats: _EndpointStats | None = None
         # Sender identity: the gate validates `min_sender_trust`,
         # `replay_window_s` and `operator_attested` eagerly; the resolver
         # behind `sender.resolve()` enumerates
@@ -557,7 +595,7 @@ class AgentService:
             EndpointConfig(
                 name=PROMPT_ENDPOINT_NAME,
                 subject=self.subject.prompt,
-                handler=self._on_prompt_request,
+                handler=self._prompt_endpoint_handler(),
                 # §3.3: the `prompt` endpoint MUST use queue group `"agents"`
                 # so multiple instances of the same logical agent load-balance
                 # requests. Framework defaults differ between SDKs, which
@@ -575,6 +613,7 @@ class AgentService:
                 },
             )
         )
+        self._bind_prompt_stats(self._service)
         # v0.3 §-TBD: the status endpoint returns a freshly-built heartbeat-
         # shaped payload. Same queue group as `prompt` so callers load-balance
         # to one responder per logical agent. `status` declares nothing about
@@ -617,6 +656,35 @@ class AgentService:
         )
         log.info("agent started on %s (instance_id=%s)", self.subject.inbox, self._service.id)
 
+    def _prompt_endpoint_handler(self) -> Callable[[Request], Awaitable[None]]:
+        """The prompt endpoint's handler for this ``max_concurrent_prompts``.
+
+        At the default of 1 the endpoint awaits each request itself, in
+        turn. Above 1 it hands each to a task of its own once one of the
+        slots created here is free.
+        """
+        if self._max_concurrent_prompts == 1:
+            return self._on_prompt_request
+        self._prompt_slots = asyncio.Semaphore(self._max_concurrent_prompts)
+        return self._dispatch_prompt_request
+
+    def _bind_prompt_stats(self, service: Service) -> None:
+        """Above ``max_concurrent_prompts=1``, reach the prompt endpoint's stats.
+
+        The prompt tasks complete them (see :class:`_EndpointStats`).
+        """
+        if self._prompt_slots is None:
+            return
+        self._prompt_stats = _EndpointStats.find(service, PROMPT_ENDPOINT_NAME)
+        if self._prompt_stats is None:
+            log.warning(
+                "cannot reach the stats of the prompt endpoint on %s in this nats-py; "
+                "with max_concurrent_prompts=%d its $SRV.STATS time only the dispatch "
+                "of each request",
+                self.subject.prompt,
+                self._max_concurrent_prompts,
+            )
+
     async def stop(self) -> None:
         self._heartbeat_stop.set()
         if self._heartbeat_task is not None:
@@ -628,9 +696,34 @@ class AgentService:
                 await self._heartbeat_task
             self._heartbeat_task = None
         if self._service is not None:
+            # Unsubscribing the prompt endpoint cancels its subscription
+            # task. At the default that task is serving the prompt in flight,
+            # which is cancelled: its handler gets `CancelledError`, and the
+            # caller the terminator from `_on_prompt_request`'s `finally`.
+            # Requests still queued get no reply.
             await self._service.stop()
             self._service = None
+        if self._prompt_tasks:
+            # Above 1 that task at most waits for a slot, so the prompts in
+            # flight are cancelled here — after the endpoint is gone, so no
+            # freed slot starts another — and awaited, so their terminators
+            # are out before stop() returns.
+            await self._cancel_prompt_tasks()
+        self._prompt_stats = None
         log.info("agent stopped on %s", self.subject.inbox)
+
+    async def _cancel_prompt_tasks(self) -> None:
+        """Cancel the prompts in flight and wait for their tasks to end.
+
+        A prompt that calls :meth:`stop` itself is neither cancelled nor
+        waited for: its task runs on once ``stop()`` returns.
+        """
+        current = asyncio.current_task()
+        tasks = [task for task in self._prompt_tasks if task is not current]
+        for task in tasks:
+            task.cancel()
+        # Each task's outcome is logged and counted by `_prompt_task_done`.
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def _heartbeat_extras(self) -> dict[str, object]:
         """What goes on the heartbeat beyond the §8.3 required fields.
@@ -770,6 +863,73 @@ class AgentService:
             )
             return None
         return envelope
+
+    async def _dispatch_prompt_request(self, request: Request) -> None:
+        """The prompt endpoint's handler when ``max_concurrent_prompts`` > 1.
+
+        Waits for a free slot, starts :meth:`_on_prompt_request` in a task of
+        its own and returns, so the endpoint takes the next request while
+        this one is served. With every slot busy it holds the endpoint's
+        subscription, and the next request waits there, as every request
+        does at the default.
+        """
+        slots = self._prompt_slots
+        if slots is None:  # pragma: no cover — start() sets it before registering this handler
+            raise RuntimeError("prompt dispatch invoked before start()")
+        entered_ns = time.perf_counter_ns()
+        await slots.acquire()
+        # No `await` from here on: a stop() that cancels the endpoint's
+        # subscription task finds this request either waiting for a slot
+        # (no reply, like a request still queued at the default) or in a task.
+        served_from_ns = time.perf_counter_ns()
+        task = asyncio.create_task(
+            self._on_prompt_request(request),
+            name=f"prompt-{request.subject}",
+            # Its own copy, so what one prompt binds in a context variable
+            # (an interceptor, the handler) stays with that prompt.
+            context=contextvars.copy_context(),
+        )
+        self._prompt_tasks.add(task)
+        task.add_done_callback(
+            functools.partial(
+                self._prompt_task_done,
+                subject=request.subject,
+                slots=slots,
+                stats=self._prompt_stats,
+                served_from_ns=served_from_ns,
+                # What nats-py is about to count for this request: this call.
+                dispatch_ns=time.perf_counter_ns() - entered_ns,
+            )
+        )
+
+    def _prompt_task_done(
+        self,
+        task: asyncio.Task[None],
+        *,
+        subject: str,
+        slots: asyncio.Semaphore,
+        stats: _EndpointStats | None,
+        served_from_ns: int,
+        dispatch_ns: int,
+    ) -> None:
+        """Free the task's slot and complete its request's endpoint stats.
+
+        nats-py counted the request, and timed only its dispatch. The prompt
+        adds its own time from the slot to the end; a cancelled one adds
+        none, as a cancelled request adds none at the default. An exception
+        the task ended with is logged — not its details, like a handler's —
+        and counted as nats-py counts one that escapes the endpoint handler.
+        """
+        self._prompt_tasks.discard(task)
+        slots.release()
+        served_ns = 0 if task.cancelled() else time.perf_counter_ns() - served_from_ns
+        exc = None if task.cancelled() else task.exception()
+        if stats is not None:
+            stats.add_processing_time(served_ns - dispatch_ns)
+            if exc is not None:
+                stats.add_error(exc)
+        if exc is not None:
+            log.error("prompt request failed on %s (exception)", subject)
 
     async def _on_prompt_request(self, request: Request) -> None:
         keepalive_task: asyncio.Task[None] | None = None
@@ -955,6 +1115,57 @@ async def _keepalive_loop(request: Request, interval_s: float) -> None:
                 request.subject,
             )
             return
+
+
+class _EndpointCounters(Protocol):
+    """The fields of a nats-py ``Endpoint`` that its service's ``stats()`` reads."""
+
+    _num_requests: int
+    _num_errors: int
+    _last_error: str | None
+    _processing_time: int
+    _average_processing_time: int
+
+
+_COUNTER_FIELDS = ("_num_requests", "_num_errors", "_processing_time", "_average_processing_time")
+
+
+class _EndpointStats:
+    """Completes a nats-py endpoint's ``$SRV.STATS`` for requests served in tasks.
+
+    nats-py counts a request, times it, and counts an exception that
+    escapes around its call of the endpoint handler. Above
+    ``max_concurrent_prompts=1`` that call returns once the request's task
+    is started, so the service adds each request's own time, and the
+    exception its task ended with, when the task is done. nats-py has no
+    public API for it: these are the private fields its ``stats()`` reads,
+    updated the way its own handler wrapper updates them.
+    """
+
+    def __init__(self, counters: _EndpointCounters) -> None:
+        self._counters = counters
+
+    @classmethod
+    def find(cls, service: Service, name: str) -> _EndpointStats | None:
+        """The stats of ``service``'s endpoint ``name``; ``None`` if this nats-py has none."""
+        for endpoint in getattr(service, "_endpoints", ()):
+            if getattr(endpoint, "_name", None) != name:
+                continue
+            if all(isinstance(getattr(endpoint, field, None), int) for field in _COUNTER_FIELDS):
+                return cls(cast("_EndpointCounters", endpoint))
+        return None
+
+    def add_processing_time(self, delta_ns: int) -> None:
+        counters = self._counters
+        counters._processing_time += delta_ns
+        if counters._num_requests > 0:
+            counters._average_processing_time = int(
+                counters._processing_time / counters._num_requests
+            )
+
+    def add_error(self, exc: BaseException) -> None:
+        self._counters._num_errors += 1
+        self._counters._last_error = repr(exc)
 
 
 # NATS message headers are single-line (CR/LF delimited in the wire format),

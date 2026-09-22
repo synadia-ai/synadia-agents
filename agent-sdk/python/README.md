@@ -260,6 +260,50 @@ service = AgentService(
   built. A provider that raises, a §8.3 field name, or a value that does
   not serialise costs that beat its extras, never the beat.
 
+## Concurrency
+
+By default one `AgentService` instance serves **one prompt at a time**:
+the prompt endpoint awaits your handler for each request in turn, and the
+next request waits in the subscription until the handler is done. Every
+earlier release worked this way. Handler code written for it, such as a
+conversation history shared across prompts, stays correct without a lock.
+
+`max_concurrent_prompts=N` serves up to N prompts at once. It must be an
+`int` of at least 1; anything else raises `ValueError`.
+
+```python
+service = AgentService(
+    agent="my-agent", owner="me", session_name="demo", nc=nc,
+    max_concurrent_prompts=8,
+)
+```
+
+- Above 1, each request runs in an `asyncio` task of its own, in its own
+  copy of the `contextvars` context, so what a request interceptor binds
+  stays with its prompt. With all N slots busy, the next request waits in
+  the subscription, as at 1. Nothing changes on the wire.
+- Your handler and interceptors then run interleaved with themselves:
+  any state they share across prompts must be safe at every `await`.
+  Guard it with an `asyncio.Lock`, or keep it per prompt.
+- `stop()` cancels the prompts in flight in both modes: the handler gets
+  `CancelledError`, and the caller gets the terminator. Above 1 it also
+  waits for those tasks to end. A request still waiting for a slot gets no
+  reply, like one still queued at 1.
+- The prompt endpoint's `$SRV.STATS` report the same as at 1: each
+  request, its time from start to terminator (without the wait for a
+  slot), and each error. nats-py measures only its call to the endpoint
+  handler, which above 1 returns once the task starts, so the SDK adds each
+  task's share to nats-py's counters. If it cannot reach them in a given
+  nats-py version, `start()` logs a warning and the stats time only the
+  dispatch.
+- Concurrency matters most when an agent prompts another agent while it
+  serves a prompt. At 1, a loop A → B → A cannot complete: A takes B's
+  prompt only after its own call has ended, so the loop waits for a
+  timeout.
+
+The TypeScript host (`@synadia-ai/agent-service`) already serves every
+prompt as it arrives, with no limit.
+
 ## Where things live
 
 - This package — `synadia_ai.agent_service`: `AgentService`,
