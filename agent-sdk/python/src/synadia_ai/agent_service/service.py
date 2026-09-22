@@ -277,7 +277,7 @@ class AgentServiceExtraEndpoint:
     Passed to ``AgentService(extra_endpoints=[...])``, which checks it at
     construction and registers it in :meth:`AgentService.start`. The
     handler has nats-py micro's handler shape: it gets each request as a
-    ``nats.micro.Request`` and answers with ``request.respond(...)`` or
+    ``nats.micro.request.Request`` and answers with ``request.respond(...)`` or
     ``request.respond_error(code, description)``. An exception it raises
     is answered by nats-py with a ``500`` whose description is the
     exception's ``repr()``, so a handler catches what it would not send.

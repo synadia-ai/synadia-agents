@@ -10,6 +10,26 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
+- **`extra_endpoints`: an addition that changes nothing by default.**
+  `AgentService(extra_endpoints=[AgentServiceExtraEndpoint(...)])`
+  registers harness endpoints, such as a controller's `spawn` / `stop` /
+  `list`, on the agent's micro service, as the TypeScript host's
+  `extraEndpoints` does. `AgentServiceExtraEndpoint` is a frozen
+  dataclass with `name`, `subject`, `handler` (nats-py micro's handler
+  shape: an async callable taking a `Request`), `queue=None` and
+  `metadata=None`. `start()` registers the endpoints after `prompt` and
+  `status`, in the order given. Each subject is used as given, never
+  prefixed, and the metadata is advertised on `$SRV.INFO`. Without a
+  `queue` the endpoint gets nats-py's default queue group, `"q"`, which is
+  also what the TypeScript host registers. The constructor checks the
+  entries before anything is registered. A name that is `prompt`,
+  `status` or a repeat raises `ValueError`, as does a name, subject or
+  queue group nats-py refuses. A wrong entry type, a handler that is not
+  callable, or metadata that is not `str` → `str` raises `TypeError`.
+  nats-py awaits each endpoint's handler for each request in turn;
+  `max_concurrent_prompts` governs only the prompt endpoint. `stop()`
+  removes the endpoints. Without the option the service registers exactly
+  `prompt` and `status`, as before.
 - **`max_concurrent_prompts`: an addition that changes nothing by
   default.** `AgentService(max_concurrent_prompts=N)` serves up to N
   prompts at once on one instance. The default, 1, keeps the existing

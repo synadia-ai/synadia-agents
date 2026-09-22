@@ -260,6 +260,57 @@ service = AgentService(
   built. A provider that raises, a §8.3 field name, or a value that does
   not serialise costs that beat its extras, never the beat.
 
+## Custom endpoints
+
+A controller-style agent often needs more than `prompt` and `status`.
+Declare its own endpoints with `extra_endpoints`, as the TypeScript host's
+`extraEndpoints`:
+
+```python
+from nats.micro.request import Request
+from synadia_ai.agent_service import AgentService, AgentServiceExtraEndpoint
+
+async def spawn(request: Request) -> None:
+    worker = request.data.decode()
+    ...  # start the worker
+    await request.respond(f"spawned {worker}".encode())
+
+service = AgentService(
+    agent="my-agent", owner="me", session_name="controller", nc=nc,
+    extra_endpoints=[
+        AgentServiceExtraEndpoint(
+            name="spawn",
+            subject="agents.spawn.my-agent.me.controller",
+            handler=spawn,
+            queue="controllers",              # optional
+            metadata={"role": "controller"},  # optional, on $SRV.INFO
+        ),
+    ],
+)
+```
+
+- `start()` registers them on the same micro service, after `prompt` and
+  `status`, in the order given. The subject is used as given: the SDK
+  does not prefix it, so a harness that wants its endpoint under
+  `agents.*` assembles the subject itself.
+- An endpoint without a `queue` joins nats-py's default queue group,
+  `"q"`, as it does in the TypeScript host, so instances that register the
+  same subject share its requests.
+- The constructor checks the entries, so a bad one fails before anything
+  is registered: a name that is `prompt`, `status` or another entry's
+  raises `ValueError`, as does a name, subject or queue group nats-py
+  refuses. Metadata is `str` → `str`.
+- The handler gets each request as a nats-py micro `Request` and answers
+  with `request.respond(...)` or
+  `request.respond_error(code, description)`. An exception it raises is
+  answered by nats-py with a `500` whose description is the exception's
+  `repr()`: catch what you would not send.
+- nats-py awaits the handler for each request in turn, and
+  `max_concurrent_prompts` governs only the prompt endpoint. A handler
+  that wants to serve requests concurrently starts a task of its own for
+  each. A slow handler holds up only its own endpoint.
+- `stop()` removes them with the service.
+
 ## Concurrency
 
 By default one `AgentService` instance serves **one prompt at a time**:
