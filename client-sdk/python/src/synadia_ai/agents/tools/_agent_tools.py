@@ -620,13 +620,12 @@ class AgentTools:
         if isinstance(paths, ArgsError):
             return {"error": paths.error}
         if not self._reserve(scope):
-            actions = [a for a in self._open_call_actions("some", "their") if a is not None]
-            then = (
-                f"{' or '.join(actions)} before you start another"
-                if actions
-                else "another can start when one of them finishes"
-            )
-            return {"error": f"all {self._max_calls} tracked calls are still open; {then}"}
+            collect, stop = self._open_call_actions("some", "their")
+            then = collect if stop is None else f"{collect} or {stop}"
+            return {
+                "error": f"all {self._max_calls} tracked calls are still open; "
+                f"{then} before you start another"
+            }
 
         reserved = True
         try:
@@ -1064,18 +1063,18 @@ class AgentTools:
             "discover_agents", "; call discover_agents for the current list"
         )
 
-    def _open_call_actions(self, them: str, their: str) -> tuple[str | None, str | None]:
+    def _open_call_actions(self, them: str, their: str) -> tuple[str, str | None]:
         """What the model can do about open calls with the tools it has: collect, stop.
 
         Without ``wait_agent`` nothing is detached, so collecting a call is
-        answering its questions.
+        answering its questions. Calls are open only where ``prompt_agent`` is
+        offered, and it always comes with ``answer_agent``, so there is always
+        a way to collect them.
         """
         if "wait_agent" in self._offered:
-            collect: str | None = f"collect {them} with wait_agent"
-        elif "answer_agent" in self._offered:
-            collect = f"answer {their} questions with answer_agent"
+            collect = f"collect {them} with wait_agent"
         else:
-            collect = None
+            collect = f"answer {their} questions with answer_agent"
         stop = f"stop {them} with cancel_agent" if "cancel_agent" in self._offered else None
         return collect, stop
 
@@ -1115,12 +1114,13 @@ class AgentTools:
             "it" if open_calls == 1 else "them", "its" if open_calls == 1 else "their"
         )
         if scope.served:
-            then = f": {collect} before you answer." if collect is not None else "."
-            note = f"{counted} still open. Calls end with the prompt you are answering{then}"
+            note = (
+                f"{counted} still open. Calls end with the prompt you are answering: "
+                f"{collect} before you answer."
+            )
         else:
-            actions = [a for a in (collect, stop) if a is not None]
-            then = f": {', or '.join(actions)}." if actions else "."
-            note = f"{counted} still open{then}"
+            then = collect if stop is None else f"{collect}, or {stop}"
+            note = f"{counted} still open: {then}."
         return {**result, "open_calls": open_calls, "open_calls_note": note}
 
     # --- files and housekeeping ----------------------------------------------

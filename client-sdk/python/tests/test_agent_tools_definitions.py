@@ -6,16 +6,19 @@ place they are defined, so the model reads the same words from the Python
 and the TypeScript SDK. A subset of the tools shows the same definitions,
 less ``wait`` and with the blocking-only words when it has no
 ``wait_agent``. The argument parser turns every mistake a model makes into
-words. The
-tools themselves run end to end against real agents in the host package's
-suite (``agent-sdk/python/tests/test_agent_tools_e2e.py``), where
+words, and each subset's results say what to do about open calls in words
+it can act on, shown against a stand-in agent that keeps every call open.
+The tools themselves run end to end against real agents in the host
+package's suite (``agent-sdk/python/tests/test_agent_tools_e2e.py``), where
 ``AgentService`` is at hand.
 """
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import json
+from collections.abc import AsyncIterator
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -67,6 +70,80 @@ SUBSETS = [
     for size in range(len(NAMES) + 1)
     for chosen in itertools.combinations(NAMES, size)
 ]
+
+ASKER = "agents.prompt.fake.o.asker"
+
+
+class _Question:
+    prompt = "may I?"
+    attachments = None
+
+    async def reply(self, _answer: str) -> None:
+        return None
+
+
+class _Asker:
+    """An agent at ``ASKER`` that asks a question on every prompt, then waits until dropped."""
+
+    prompt_subject = ASKER
+    id_sig_verified = False
+    identity = None
+
+    def prompt(self, _text: str, **_options: Any) -> AsyncIterator[Any]:
+        return self._ask()
+
+    async def _ask(self) -> AsyncIterator[Any]:
+        yield _Question()
+        await asyncio.Event().wait()
+
+
+class _AskingAgents:
+    """A client that finds one agent, the asker: every call stays open."""
+
+    async def discover(self, **_options: Any) -> list[Any]:
+        return [_Asker()]
+
+
+#: The words about open calls, with one call open and room for one, by what
+#: collects a call (``wait_agent``, or else answering its questions) and
+#: whether ``cancel_agent`` stops one. No other tool changes them.
+OPEN_CALL_WORDS: dict[str, dict[str, str]] = {
+    "answer only": {
+        "note": "1 call you started is still open: answer its questions with answer_agent.",
+        "served": "1 call you started is still open. Calls end with the prompt you are "
+        "answering: answer its questions with answer_agent before you answer.",
+        "refusal": "all 1 tracked calls are still open; "
+        "answer their questions with answer_agent before you start another",
+    },
+    "answer or cancel": {
+        "note": "1 call you started is still open: "
+        "answer its questions with answer_agent, or stop it with cancel_agent.",
+        "served": "1 call you started is still open. Calls end with the prompt you are "
+        "answering: answer its questions with answer_agent before you answer.",
+        "refusal": "all 1 tracked calls are still open; answer their questions with "
+        "answer_agent or stop some with cancel_agent before you start another",
+    },
+    "wait only": {
+        "note": "1 call you started is still open: collect it with wait_agent.",
+        "served": "1 call you started is still open. Calls end with the prompt you are "
+        "answering: collect it with wait_agent before you answer.",
+        "refusal": "all 1 tracked calls are still open; "
+        "collect some with wait_agent before you start another",
+    },
+    "wait or cancel": {
+        "note": "1 call you started is still open: "
+        "collect it with wait_agent, or stop it with cancel_agent.",
+        "served": "1 call you started is still open. Calls end with the prompt you are "
+        "answering: collect it with wait_agent before you answer.",
+        "refusal": "all 1 tracked calls are still open; collect some with wait_agent "
+        "or stop some with cancel_agent before you start another",
+    },
+}
+
+
+def _open_call_words(tools: list[str]) -> dict[str, str]:
+    collect = "wait" if "wait_agent" in tools else "answer"
+    return OPEN_CALL_WORDS[f"{collect} {'or cancel' if 'cancel_agent' in tools else 'only'}"]
 
 
 def _derived(offered: list[str]) -> list[dict[str, Any]]:
@@ -307,6 +384,28 @@ async def test_a_tool_not_offered_and_wait_false_without_wait_agent_are_refused_
     assert await everything.execute("answer_agent", {"call_id": "c", "answer": "a"}) == {
         "error": '"c": no such call in your calls; list_agent_calls shows them'
     }
+
+
+async def test_every_subset_that_starts_calls_is_told_about_them_in_words_it_can_act_on() -> None:
+    # prompt_agent always comes with answer_agent, so every subset that starts
+    # a call can collect it: there are no words for having no way.
+    starting = [tools for tools in SUBSETS if _sensible(tools) and "prompt_agent" in tools]
+    assert len(starting) == 16
+    for tools in starting:
+        words = _open_call_words(tools)
+        asking: Any = _AskingAgents()
+        async with AgentTools(asking, tools=tools, max_calls=1) as helper:
+            asked = await helper.execute("prompt_agent", {"address": ASKER, "prompt": "go"})
+            assert (asked["state"], asked["open_calls"]) == ("input_required", 1), tools
+            assert asked["open_calls_note"] == words["note"], tools
+            assert await helper.execute("prompt_agent", {"address": ASKER, "prompt": "go"}) == {
+                "error": words["refusal"],
+                "open_calls": 1,
+                "open_calls_note": words["note"],
+            }, tools
+            async with helper.prompt_scope():
+                served = await helper.execute("prompt_agent", {"address": ASKER, "prompt": "go"})
+                assert served["open_calls_note"] == words["served"], tools
 
 
 def test_misconfiguration_is_a_bug_and_raises() -> None:

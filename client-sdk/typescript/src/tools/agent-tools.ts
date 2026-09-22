@@ -593,13 +593,10 @@ export class AgentTools {
     if (isArgsError(attachments)) return { error: attachments.error };
     if (!this.reserve(scope)) {
       const { collect, stop } = this.openCallActions("some", "their");
-      const actions = [collect, stop].filter((action) => action !== undefined);
       return {
         error:
           `all ${this.maxCalls} tracked calls are still open; ` +
-          (actions.length > 0
-            ? `${actions.join(" or ")} before you start another`
-            : "another can start when one of them finishes"),
+          `${stop !== undefined ? `${collect} or ${stop}` : collect} before you start another`,
       };
     }
 
@@ -1056,17 +1053,17 @@ export class AgentTools {
   /**
    * What the model can do about open calls with the tools it has: collect
    * them, or answer their questions when nothing is detached, and stop them.
+   * Calls are open only where `prompt_agent` is offered, and it always comes
+   * with `answer_agent`, so there is always a way to collect them.
    */
   private openCallActions(
     them: string,
     their: string,
-  ): { collect: string | undefined; stop: string | undefined } {
+  ): { collect: string; stop: string | undefined } {
     return {
       collect: this.offered.has("wait_agent")
         ? `collect ${them} with wait_agent`
-        : this.offered.has("answer_agent")
-          ? `answer ${their} questions with answer_agent`
-          : undefined,
+        : `answer ${their} questions with answer_agent`,
       stop: this.offered.has("cancel_agent") ? `stop ${them} with cancel_agent` : undefined,
     };
   }
@@ -1114,15 +1111,9 @@ export class AgentTools {
       open === 1 ? "it" : "them",
       open === 1 ? "its" : "their",
     );
-    let note: string;
-    if (scope.served) {
-      note =
-        `${counted} still open. Calls end with the prompt you are answering` +
-        (collect !== undefined ? `: ${collect} before you answer.` : ".");
-    } else {
-      const actions = [collect, stop].filter((action) => action !== undefined);
-      note = `${counted} still open` + (actions.length > 0 ? `: ${actions.join(", or ")}.` : ".");
-    }
+    const note = scope.served
+      ? `${counted} still open. Calls end with the prompt you are answering: ${collect} before you answer.`
+      : `${counted} still open: ${stop !== undefined ? `${collect}, or ${stop}` : collect}.`;
     return { ...result, open_calls: open, open_calls_note: note };
   }
 

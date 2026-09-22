@@ -4,7 +4,8 @@
 // TypeScript and the Python SDK. A subset of the tools shows the same
 // definitions, less `wait` and with the blocking-only words when it has no
 // `wait_agent`. Also the argument parsing, which turns every mistake a model
-// makes into words.
+// makes into words, and the words each subset's results say about open
+// calls, against a stand-in agent that keeps every call open.
 
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -94,6 +95,81 @@ function refusal(tools: ReadonlyArray<AgentToolName>): RegExp {
 
 const BLOCKING_THREE: AgentToolName[] = ["discover_agents", "prompt_agent", "answer_agent"];
 const agents = {} as Agents;
+
+const ASKER = "agents.prompt.fake.o.asker";
+
+/**
+ * A client that finds one agent, at `ASKER`, which asks a question on every
+ * prompt and then waits until the call is dropped: every call stays open.
+ */
+function askingAgents(): Agents {
+  const asker = {
+    promptSubject: ASKER,
+    idSigVerified: false,
+    prompt: () => {
+      let drop!: () => void;
+      const dropped = new Promise<void>((resolve) => (drop = resolve));
+      return Promise.resolve({
+        cancel: drop,
+        async *[Symbol.asyncIterator]() {
+          yield { type: "query", prompt: "may I?", reply: () => Promise.resolve() };
+          await dropped;
+        },
+      });
+    },
+  };
+  return { discover: () => Promise.resolve([asker]) } as unknown as Agents;
+}
+
+/**
+ * The words about open calls, with one call open and room for one, by what
+ * collects a call (wait_agent, or else answering its questions) and whether
+ * cancel_agent stops one. No other tool changes them.
+ */
+const OPEN_CALL_WORDS: Record<string, { note: string; served: string; refusal: string }> = {
+  "answer only": {
+    note: "1 call you started is still open: answer its questions with answer_agent.",
+    served:
+      "1 call you started is still open. Calls end with the prompt you are answering: " +
+      "answer its questions with answer_agent before you answer.",
+    refusal:
+      "all 1 tracked calls are still open; " +
+      "answer their questions with answer_agent before you start another",
+  },
+  "answer or cancel": {
+    note:
+      "1 call you started is still open: " +
+      "answer its questions with answer_agent, or stop it with cancel_agent.",
+    served:
+      "1 call you started is still open. Calls end with the prompt you are answering: " +
+      "answer its questions with answer_agent before you answer.",
+    refusal:
+      "all 1 tracked calls are still open; answer their questions with answer_agent " +
+      "or stop some with cancel_agent before you start another",
+  },
+  "wait only": {
+    note: "1 call you started is still open: collect it with wait_agent.",
+    served:
+      "1 call you started is still open. Calls end with the prompt you are answering: " +
+      "collect it with wait_agent before you answer.",
+    refusal:
+      "all 1 tracked calls are still open; collect some with wait_agent before you start another",
+  },
+  "wait or cancel": {
+    note: "1 call you started is still open: collect it with wait_agent, or stop it with cancel_agent.",
+    served:
+      "1 call you started is still open. Calls end with the prompt you are answering: " +
+      "collect it with wait_agent before you answer.",
+    refusal:
+      "all 1 tracked calls are still open; collect some with wait_agent " +
+      "or stop some with cancel_agent before you start another",
+  },
+};
+
+function openCallWords(tools: ReadonlyArray<AgentToolName>): (typeof OPEN_CALL_WORDS)[string] {
+  const collect = tools.includes("wait_agent") ? "wait" : "answer";
+  return OPEN_CALL_WORDS[`${collect} ${tools.includes("cancel_agent") ? "or cancel" : "only"}`]!;
+}
 
 describe("agent tool definitions", () => {
   it("equal the shared fixtures, in the contract's order", async () => {
@@ -282,5 +358,35 @@ describe("the tools a helper offers", () => {
     expect(
       await new AgentTools({ agents }).execute("answer_agent", { call_id: "c", answer: "a" }),
     ).toEqual({ error: '"c": no such call in your calls; list_agent_calls shows them' });
+  });
+
+  it("say what to do about open calls in words every subset that starts calls can act on", async () => {
+    // prompt_agent always comes with answer_agent, so every subset that
+    // starts a call can collect it: there are no words for having no way.
+    const starting = SUBSETS.filter((tools) => sensible(tools) && tools.includes("prompt_agent"));
+    expect(starting).toHaveLength(16);
+    for (const tools of starting) {
+      const words = openCallWords(tools);
+      const t = new AgentTools({ agents: askingAgents(), tools, maxCalls: 1 });
+      try {
+        const asked = await t.execute("prompt_agent", { address: ASKER, prompt: "go" });
+        expect(asked, tools.join(",")).toMatchObject({
+          state: "input_required",
+          open_calls: 1,
+          open_calls_note: words.note,
+        });
+        expect(await t.execute("prompt_agent", { address: ASKER, prompt: "go" })).toEqual({
+          error: words.refusal,
+          open_calls: 1,
+          open_calls_note: words.note,
+        });
+        await t.runInPromptScope(async () => {
+          const served = await t.execute("prompt_agent", { address: ASKER, prompt: "go" });
+          expect(served["open_calls_note"], tools.join(",")).toBe(words.served);
+        });
+      } finally {
+        await t.close();
+      }
+    }
   });
 });
