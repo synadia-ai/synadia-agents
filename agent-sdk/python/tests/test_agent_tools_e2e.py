@@ -233,6 +233,25 @@ class World:
         self.closers.append(tools.aclose)
         return tools
 
+    async def asker(self, name: str, **options: Any) -> tuple[str, list[str]]:
+        """An agent that asks one question with a file and records the answer.
+
+        It waits up to 10 seconds: a refusal shows up at once, a dropped
+        question only after the test's own wait has given up. Returns its
+        address and what it got.
+        """
+        got: list[str] = []
+
+        async def ask(_envelope: Envelope, stream: PromptStream) -> None:
+            answer = await stream.ask(
+                "may I?",
+                timeout=10,
+                attachments=[Attachment.from_bytes("q.txt", b"question file")],
+            )
+            got.append(answer.prompt)
+
+        return (await self.service(name, ask, **options)).subject.prompt, got
+
 
 @pytest.fixture
 async def world(
@@ -637,6 +656,62 @@ async def test_the_longest_finished_call_is_dropped_and_all_open_is_refused(
     assert "no such call" in gone["error"]
     listed = await tools.execute("list_agent_calls")
     assert [x["call_id"] for x in listed["calls"]] == [b["call_id"], c["call_id"]]
+
+
+# --- failing and expiring with a question open -----------------------------------------
+
+
+async def test_a_call_that_expires_refuses_its_open_question(world: World) -> None:
+    address, got = await world.asker("asker-expire")
+    tools = world.tools(max_wait_s=0.3)
+    asked = call(await tools.execute("prompt_agent", {"address": address, "prompt": "go"}))
+    assert (asked["state"], asked["question"]) == ("input_required", "may I?")
+    await wait_for(lambda: bool(got), timeout_s=5, what="the refusal")
+    assert got == [AGENT_TOOLS_QUESTION_REFUSAL]
+    expired = call(await tools.execute("wait_agent", {"call_ids": [asked["call_id"]]}))
+    assert expired["state"] == "expired"
+    assert "runtime limit of 300 ms" in expired["error"]
+
+
+async def test_a_call_that_stalls_refuses_its_open_question(world: World) -> None:
+    # No acks while it waits for the answer, and still there to hear the refusal.
+    address, got = await world.asker("asker-stall", keepalive_interval_s=None)
+    tools = world.tools(world.client(stream_inactivity_timeout=0.3))
+    asked = call(await tools.execute("prompt_agent", {"address": address, "prompt": "go"}))
+    assert asked["state"] == "input_required"
+    await wait_for(lambda: bool(got), timeout_s=5, what="the refusal")
+    assert got == [AGENT_TOOLS_QUESTION_REFUSAL]
+    failed = call(await tools.execute("wait_agent", {"call_ids": [asked["call_id"]]}))
+    assert failed["state"] == "failed"
+    assert "sent nothing for 300 ms" in failed["error"]
+
+
+async def test_a_question_whose_reply_look_fails_or_whose_file_cannot_be_saved_is_refused(
+    world: World, tmp_path: Path
+) -> None:
+    class Exploding(AgentToolsExtension):
+        async def after_reply(self, ctx: AgentToolsReplyContext) -> Mapping[str, Any] | None:
+            if ctx.kind == "question":
+                raise RuntimeError("boom")
+            return None
+
+    address, got = await world.asker("asker-look")
+    tools = world.tools(extensions=[Exploding()])
+    failed = call(await tools.execute("prompt_agent", {"address": address, "prompt": "go"}))
+    assert failed["state"] == "failed"
+    assert "an extension failed on the question: boom" in failed["error"]
+    await wait_for(lambda: bool(got), timeout_s=5, what="the refusal")
+    assert got == [AGENT_TOOLS_QUESTION_REFUSAL]
+
+    # The staging directory cannot be made: its parent is a file.
+    (tmp_path / "file").write_text("")
+    address, got = await world.asker("asker-save")
+    tools = world.tools(staging_dir=tmp_path / "file" / "staging")
+    unsaved = call(await tools.execute("prompt_agent", {"address": address, "prompt": "go"}))
+    assert unsaved["state"] == "failed"
+    assert "a file the agent sent could not be saved" in unsaved["error"]
+    await wait_for(lambda: bool(got), timeout_s=5, what="the refusal")
+    assert got == [AGENT_TOOLS_QUESTION_REFUSAL]
 
 
 # --- scopes ----------------------------------------------------------------------------

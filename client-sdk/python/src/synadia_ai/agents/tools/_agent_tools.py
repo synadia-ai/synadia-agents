@@ -88,9 +88,9 @@ log = logging.getLogger(__name__)
 DEFAULT_AGENT_TOOLS_MAX_CALLS = 256
 
 #: What an open question is answered with when its call is cancelled — by
-#: ``cancel_agent``, a host's cancellation, or the end of the served prompt.
-#: It starts with ``no``, so an agent that asked for a permission reads a
-#: denial.
+#: ``cancel_agent``, a host's cancellation, or the end of the served prompt —
+#: and when it fails or expires. It starts with ``no``, so an agent that asked
+#: for a permission reads a denial.
 AGENT_TOOLS_QUESTION_REFUSAL = "no: the caller stopped waiting for this prompt and cannot answer"
 
 AgentCallState = Literal["running", "input_required", "completed", "failed", "cancelled", "expired"]
@@ -639,6 +639,9 @@ class AgentTools:
 
     async def _read(self, call: _Call) -> None:  # noqa: PLR0912
         """Read a call's stream to its end; see the module docstring."""
+        # A question whose files are being saved and whose reply look runs:
+        # not yet in `call.questions`, and either step may fail the call.
+        arriving: Query | None = None
         try:
             async for msg in call.stream:
                 if isinstance(msg, StatusChunk):
@@ -653,8 +656,10 @@ class AgentTools:
                     if msg.attachments:
                         call.reply_files.extend(await self._save(call, msg.attachments))
                     continue
+                arriving = msg
                 files = await self._save(call, msg.attachments) if msg.attachments else []
                 fields = await self._after_reply(call, "question", msg.prompt, files)
+                arriving = None
                 if not call.open:
                     await _refuse(msg)
                     continue
@@ -670,15 +675,24 @@ class AgentTools:
             # `_cancel` stops this task after it set the call's state.
             if call.open:
                 raise
-        except StreamMaxWaitExceededError as err:
-            self._finish(
-                call,
-                "expired",
-                f"the call ran past its runtime limit of {_duration(err.max_wait_s)} and was "
-                "stopped; the agent may still be working on it",
-            )
         except Exception as err:
-            self._finish(call, "failed", self._failure(call, err))
+            if call.open:
+                if isinstance(err, StreamMaxWaitExceededError):
+                    open_questions = self._finish(
+                        call,
+                        "expired",
+                        f"the call ran past its runtime limit of {_duration(err.max_wait_s)} and "
+                        "was stopped; the agent may still be working on it",
+                    )
+                else:
+                    open_questions = self._finish(call, "failed", self._failure(call, err))
+                # Nobody can answer them now: the asking agent hears so at
+                # once rather than waiting out its own timeout.
+                questions = [q.query for q in open_questions]
+                if arriving is not None:
+                    questions.append(arriving)
+                for query in questions:
+                    await _refuse(query)
         finally:
             await _aclose(call.stream)
 
@@ -781,20 +795,27 @@ class AgentTools:
         call: _Call,
         state: Literal["completed", "failed", "cancelled", "expired"],
         error: str | None = None,
-    ) -> None:
-        """The call's final state. The first one wins; open questions become moot."""
+    ) -> list[_OpenQuestion]:
+        """The call's final state; the first one wins.
+
+        Returns the questions that were open, taken off the call: the caller
+        refuses them, except on ``completed``, where the stream has ended and
+        they are moot.
+        """
         if not call.open:
-            return
+            return []
         awaited = call.awaited
         call.state = state
         call.error = error
         call.ended_at = datetime.now(UTC)
         self._seq += 1
         call.seq = self._seq
+        open_questions = list(call.questions)
         call.questions.clear()
         call.notify()
         if call.scope is self._root and self._on_settled is not None:
             self._spawn(self._report(self._on_settled, self._call_result(call), awaited, call.id))
+        return open_questions
 
     async def _report(
         self, report: OnSettled, result: AgentToolResult, awaited: bool, call_id: str
@@ -810,8 +831,7 @@ class AgentTools:
         """Refuse the call's open questions and drop its stream."""
         if not call.open:
             return
-        questions = list(call.questions)
-        self._finish(call, "cancelled")
+        questions = self._finish(call, "cancelled")
         if call.task is not None and call.task is not asyncio.current_task():
             call.task.cancel()
         for question in questions:

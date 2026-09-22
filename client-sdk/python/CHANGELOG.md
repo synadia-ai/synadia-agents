@@ -26,7 +26,8 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
     `remaining`; `answer_agent` answers a question and goes on in the
     call's mode; `cancel_agent` refuses open questions and drops the
     stream. States: `running`, `input_required`, `completed`, `failed`,
-    `cancelled`, `expired`.
+    `cancelled`, `expired`. A call that fails or expires refuses its open
+    questions too, so the asking agent does not wait out its own timeout.
   - A call belongs to the prompt being served: pass
     `tools.request_interceptor` in `AgentService(interceptors=[...])` —
     structurally a `RequestInterceptor` (`around_request(ctx, call_next)`),
