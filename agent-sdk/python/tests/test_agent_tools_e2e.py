@@ -53,6 +53,7 @@ from tests.harness.wait import wait_for
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
+    from nats.aio.msg import Msg
 
     from tests.conftest import ConnectNkeyUser, NkeyUser
     from tests.harness.nats_server import RunningServer
@@ -287,6 +288,43 @@ async def serve(agents: Agents, name: str, text: str = "go") -> str:
         if isinstance(msg, ResponseChunk):
             reply += msg.text
     return reply
+
+
+class HeldLook(AgentToolsExtension):
+    """A reply look that holds each question until the test lets it go.
+
+    A cancel lands while the question is taken in.
+    """
+
+    def __init__(self) -> None:
+        self.held = False
+        self.released = asyncio.Event()
+
+    async def after_reply(self, ctx: AgentToolsReplyContext) -> Mapping[str, Any] | None:
+        if ctx.kind == "question":
+            self.held = True
+            await self.released.wait()
+        return None
+
+
+@contextlib.asynccontextmanager
+async def refusals_sent(nc: NATSClient) -> AsyncIterator[list[str]]:
+    """The refusals that go out on the wire, by the subject each went to.
+
+    The asking agent hears only the first, so a second shows up only here.
+    """
+    subjects: list[str] = []
+
+    async def seen(msg: Msg) -> None:
+        if msg.data == AGENT_TOOLS_QUESTION_REFUSAL.encode():
+            subjects.append(msg.subject)
+
+    sub = await nc.subscribe("_INBOX.>", cb=seen)
+    await nc.flush()
+    try:
+        yield subjects
+    finally:
+        await sub.unsubscribe()
 
 
 # --- blocking ----------------------------------------------------------------
@@ -712,6 +750,53 @@ async def test_a_question_whose_reply_look_fails_or_whose_file_cannot_be_saved_i
     assert "a file the agent sent could not be saved" in unsaved["error"]
     await wait_for(lambda: bool(got), timeout_s=5, what="the refusal")
     assert got == [AGENT_TOOLS_QUESTION_REFUSAL]
+
+
+# --- cancelling while a question is taken in -------------------------------------------
+
+
+async def test_cancel_agent_refuses_a_question_still_being_taken_in_once(world: World) -> None:
+    address, got = await world.asker("asker-held")
+    look = HeldLook()
+    tools = world.tools(extensions=[look])
+    async with refusals_sent(world.nc) as wire:
+        started = call(
+            await tools.execute("prompt_agent", {"address": address, "prompt": "go", "wait": False})
+        )
+        await wait_for(lambda: look.held, what="the question to reach the reply look")
+        cancelled = await tools.execute("cancel_agent", {"call_ids": [started["call_id"]]})
+        assert cancelled["calls"] == [{"call_id": started["call_id"], "state": "cancelled"}]
+        await wait_for(lambda: bool(got), timeout_s=5, what="the refusal")
+        assert got == [AGENT_TOOLS_QUESTION_REFUSAL]
+        # The reply look was cancelled with the reader: letting it go sends nothing more.
+        look.released.set()
+        await asyncio.sleep(0.1)
+        assert len(wire) == 1
+    after = call(await tools.execute("wait_agent", {"call_ids": [started["call_id"]]}))
+    assert after == {"call_id": started["call_id"], "state": "cancelled", "remaining": []}
+
+
+async def test_the_end_of_a_served_prompt_refuses_a_question_still_being_taken_in_once(
+    world: World,
+) -> None:
+    address, got = await world.asker("asker-held-scope")
+    look = HeldLook()
+    tools = world.tools(extensions=[look])
+
+    async def handler(_envelope: Envelope, stream: PromptStream) -> None:
+        await tools.execute("prompt_agent", {"address": address, "prompt": "go", "wait": False})
+        await wait_for(lambda: look.held, what="the question to reach the reply look")
+        await stream.send("done")
+
+    await world.service("host-held", handler, interceptors=[tools.request_interceptor])
+    async with refusals_sent(world.nc) as wire:
+        # Unsigned, as in the scope tests: the caller guard stays out of it.
+        assert await serve(world.client(signed=False), "host-held") == "done"
+        await wait_for(lambda: bool(got), timeout_s=5, what="the refusal")
+        assert got == [AGENT_TOOLS_QUESTION_REFUSAL]
+        look.released.set()
+        await asyncio.sleep(0.1)
+        assert len(wire) == 1
 
 
 # --- scopes ----------------------------------------------------------------------------

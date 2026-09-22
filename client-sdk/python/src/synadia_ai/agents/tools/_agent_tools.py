@@ -639,9 +639,6 @@ class AgentTools:
 
     async def _read(self, call: _Call) -> None:  # noqa: PLR0912
         """Read a call's stream to its end; see the module docstring."""
-        # A question whose files are being saved and whose reply look runs:
-        # not yet in `call.questions`, and either step may fail the call.
-        arriving: Query | None = None
         try:
             async for msg in call.stream:
                 if isinstance(msg, StatusChunk):
@@ -656,13 +653,13 @@ class AgentTools:
                     if msg.attachments:
                         call.reply_files.extend(await self._save(call, msg.attachments))
                     continue
-                arriving = msg
+                call.arriving = msg
                 files = await self._save(call, msg.attachments) if msg.attachments else []
                 fields = await self._after_reply(call, "question", msg.prompt, files)
-                arriving = None
+                # Cancelled meanwhile: `_cancel` took the question and refused it.
                 if not call.open:
-                    await _refuse(msg)
                     continue
+                call.arriving = None
                 call.questions.append(_OpenQuestion(query=msg, files=files, fields=fields))
                 if call.state == "running":
                     self._set_state(call, "input_required")
@@ -672,7 +669,8 @@ class AgentTools:
                 )
                 self._finish(call, "completed")
         except asyncio.CancelledError:
-            # `_cancel` stops this task after it set the call's state.
+            # `_cancel` stops this task after it set the call's state, and
+            # refuses the questions itself, the one being taken in too.
             if call.open:
                 raise
         except Exception as err:
@@ -688,10 +686,7 @@ class AgentTools:
                     open_questions = self._finish(call, "failed", self._failure(call, err))
                 # Nobody can answer them now: the asking agent hears so at
                 # once rather than waiting out its own timeout.
-                questions = [q.query for q in open_questions]
-                if arriving is not None:
-                    questions.append(arriving)
-                for query in questions:
+                for query in open_questions:
                     await _refuse(query)
         finally:
             await _aclose(call.stream)
@@ -795,12 +790,12 @@ class AgentTools:
         call: _Call,
         state: Literal["completed", "failed", "cancelled", "expired"],
         error: str | None = None,
-    ) -> list[_OpenQuestion]:
+    ) -> list[Query]:
         """The call's final state; the first one wins.
 
-        Returns the questions that were open, taken off the call: the caller
-        refuses them, except on ``completed``, where the stream has ended and
-        they are moot.
+        Returns the questions that were open and the one being taken in,
+        taken off the call: the caller refuses them, except on ``completed``,
+        where the stream has ended and they are moot.
         """
         if not call.open:
             return []
@@ -810,8 +805,11 @@ class AgentTools:
         call.ended_at = datetime.now(UTC)
         self._seq += 1
         call.seq = self._seq
-        open_questions = list(call.questions)
+        open_questions = [q.query for q in call.questions]
         call.questions.clear()
+        if call.arriving is not None:
+            open_questions.append(call.arriving)
+            call.arriving = None
         call.notify()
         if call.scope is self._root and self._on_settled is not None:
             self._spawn(self._report(self._on_settled, self._call_result(call), awaited, call.id))
@@ -828,14 +826,14 @@ class AgentTools:
             self._log.error("AgentTools on_settled failed (call_id=%s)", call_id)
 
     async def _cancel(self, call: _Call) -> None:
-        """Refuse the call's open questions and drop its stream."""
+        """Refuse the call's open questions, and the one being taken in; drop its stream."""
         if not call.open:
             return
         questions = self._finish(call, "cancelled")
         if call.task is not None and call.task is not asyncio.current_task():
             call.task.cancel()
-        for question in questions:
-            await _refuse(question.query)
+        for query in questions:
+            await _refuse(query)
 
     async def _close_scope(self, scope: _Scope) -> None:
         scope.closed = True
@@ -1077,6 +1075,9 @@ class _Call:
     reply_files: list[dict[str, Any]] = field(default_factory=list)
     #: Oldest first; the first is the one the call's result shows.
     questions: list[_OpenQuestion] = field(default_factory=list)
+    #: A question whose files are being saved and whose reply look runs: not
+    #: yet in ``questions``, and either step may fail the call.
+    arriving: Query | None = None
     error: str | None = None
     reply_fields: dict[str, Any] = field(default_factory=dict)
     saved_bytes: int = 0
