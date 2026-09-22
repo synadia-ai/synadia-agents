@@ -1,10 +1,10 @@
 // The agent tools' definitions: what a model is shown (docs/agent-tools.md).
 //
 // A copy of `test-fixtures/agent-tools/<name>.json`, one entry per tool, in
-// the order the contract lists them. A published package cannot read files
-// outside its own directory, so the words are embedded here;
-// `test/unit/agent-tools-definitions.test.ts` checks that they equal the
-// fixtures. Change the fixtures first, then copy them here.
+// the order the contract lists them, and of `blocking.json`. A published
+// package cannot read files outside its own directory, so the words are
+// embedded here; `test/unit/agent-tools-definitions.test.ts` checks that
+// they equal the fixtures. Change the fixtures first, then copy them here.
 
 /** The six agent tools, by name. */
 export type AgentToolName =
@@ -25,6 +25,16 @@ export interface AgentToolDefinition {
   readonly description: string;
   readonly parameters: Readonly<Record<string, unknown>>;
 }
+
+/** The six, in the contract's order. */
+export const AGENT_TOOL_NAMES: ReadonlyArray<AgentToolName> = [
+  "discover_agents",
+  "prompt_agent",
+  "wait_agent",
+  "answer_agent",
+  "cancel_agent",
+  "list_agent_calls",
+];
 
 const DEFINITIONS: ReadonlyArray<AgentToolDefinition> = [
   {
@@ -190,4 +200,33 @@ const DEFINITIONS: ReadonlyArray<AgentToolDefinition> = [
  */
 export function agentToolDefinitions(): AgentToolDefinition[] {
   return structuredClone(DEFINITIONS) as AgentToolDefinition[];
+}
+
+// The descriptions that mention `wait_agent`, as a model reads them when
+// the helper offers no `wait_agent`.
+const BLOCKING_DESCRIPTIONS: Readonly<Partial<Record<AgentToolName, string>>> = {
+  prompt_agent:
+    "Send a prompt to one agent and get its reply. Use an address returned by discover_agents. Keep the prompt self-contained: the other agent sees nothing of your conversation. Do not prompt the agent that prompted you; answer it instead. The call waits for the complete reply. If the other agent asks a question while it works, you get the question and a call_id instead: answer it with answer_agent. Calls you start while you are answering a prompt end with that prompt, so answer their questions before you answer. The other agent runs on another machine, so never put a local file path in the prompt: attach the file instead (small files only, and only to an agent that accepts attachments). Files the other agent sends back are saved on this machine, and the result gives each file's path.",
+  answer_agent:
+    "Answer the question an agent asked while working on your call, using the call_id that came with the question. Then it waits for the reply or the agent's next question. A permission question asks you to allow or deny an action the other agent wants to take: allow it only if the task you gave needs it; when unsure, deny. Answer promptly: the asking agent waits only so long, and a question still open when the prompt you are answering ends is refused.",
+};
+
+/**
+ * The definitions of the tools offered, in the contract's order, as a fresh
+ * copy. Without `wait_agent` nothing can be detached: each definition loses
+ * its `wait` parameter, and a description that mentions `wait_agent` is
+ * replaced by its blocking-only words. Nothing else changes.
+ */
+export function offeredToolDefinitions(offered: ReadonlySet<AgentToolName>): AgentToolDefinition[] {
+  const definitions = agentToolDefinitions().filter((d) => offered.has(d.name));
+  if (offered.has("wait_agent")) return definitions;
+  return definitions.map((definition) => {
+    delete (definition.parameters["properties"] as Record<string, unknown>)["wait"];
+    if (!definition.description.includes("wait_agent")) return definition;
+    const description = BLOCKING_DESCRIPTIONS[definition.name];
+    if (description === undefined) {
+      throw new Error(`AgentTools: no blocking-only description for ${definition.name}`);
+    }
+    return { ...definition, description };
+  });
 }

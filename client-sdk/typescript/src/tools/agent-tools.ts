@@ -13,6 +13,10 @@
 // `Agent.prompt()`, `QueryEvent.reply()`, `saveAttachments()` — so nothing
 // changes on the wire: the agent being prompted sees an ordinary prompt.
 //
+// A host may offer a subset of the six (`tools`). Without `wait_agent`
+// nothing can be detached, and a result points the model only to tools it
+// has.
+//
 // A call is one prompt. Every call, blocking or not, is read by a task of
 // its own from the moment it is sent: it collects the text, saves returned
 // files, and queues questions, so its acks keep the stream alive while
@@ -63,7 +67,12 @@ import {
   parsePromptArgs,
   parseWaitArgs,
 } from "./args.js";
-import { agentToolDefinitions, type AgentToolDefinition } from "./definitions.js";
+import {
+  AGENT_TOOL_NAMES,
+  offeredToolDefinitions,
+  type AgentToolDefinition,
+  type AgentToolName,
+} from "./definitions.js";
 
 /** Default for {@link AgentToolsOptions.maxCalls}: calls tracked per scope. */
 export const DEFAULT_AGENT_TOOLS_MAX_CALLS = 256;
@@ -226,6 +235,17 @@ export interface PromptScopeOptions {
 export interface AgentToolsOptions {
   /** The caller-side client every discovery and prompt goes through. */
   readonly agents: Agents;
+  /**
+   * The tools offered, of the six; default all six. {@link AgentTools.definitions}
+   * holds only these, in the contract's order, and `execute` refuses any
+   * other. Without `wait_agent` nothing can be detached: `prompt_agent` and
+   * `answer_agent` lose their `wait` parameter and refuse `wait: false`.
+   * Every tool but `discover_agents` needs `prompt_agent`, which starts the
+   * calls they work on. Each definition costs input tokens on every model
+   * call, so an agent that needs no async calls offers `discover_agents`,
+   * `prompt_agent` and `answer_agent`.
+   */
+  readonly tools?: ReadonlyArray<AgentToolName>;
   /** The agent's own address: left out of discovery, and refused. */
   readonly selfAddress?: string;
   /** How long one discovery waits; unset, the SDK's discovery default. */
@@ -296,14 +316,16 @@ const DISCOVERY_ENTRY_FIELDS = [
 /** The helper. See the module comment and `docs/agent-tools.md`. */
 export class AgentTools {
   /**
-   * The six definitions, the helper's own copy: a host maps them to its
-   * tool format, and may change this copy without touching another's.
+   * The definitions of the tools offered, the helper's own copy: a host
+   * maps them to its tool format, and may change this copy without
+   * touching another's.
    */
   readonly definitions: AgentToolDefinition[];
   /** Opens a scope per served prompt; see {@link AgentToolsRequestInterceptor}. */
   readonly requestInterceptor: AgentToolsRequestInterceptor;
 
   private readonly agents: Agents;
+  private readonly offered: ReadonlySet<AgentToolName>;
   private readonly selfAddress: string | undefined;
   private readonly discoverTimeoutMs: number | undefined;
   private readonly maxWaitMs: number;
@@ -330,6 +352,7 @@ export class AgentTools {
 
   constructor(options: AgentToolsOptions) {
     this.agents = options.agents;
+    this.offered = offeredTools(options.tools);
     this.selfAddress = options.selfAddress;
     this.discoverTimeoutMs = positive("discoverTimeoutMs", options.discoverTimeoutMs);
     this.maxWaitMs = positive("maxWaitMs", options.maxWaitMs) ?? DEFAULT_PROMPT_MAX_WAIT_MS;
@@ -350,7 +373,7 @@ export class AgentTools {
     this.cwd = process.cwd();
     this.scopeStore = new AsyncLocalStorage<Scope>();
     this.root = new Scope(false, undefined);
-    this.definitions = agentToolDefinitions();
+    this.definitions = offeredToolDefinitions(this.offered);
     this.requestInterceptor = {
       aroundRequest: (ctx, next) => {
         // A closed helper must not keep an agent from serving.
@@ -368,8 +391,8 @@ export class AgentTools {
    * Execute one tool call from the model and return its result, which the
    * host hands back as JSON text (`JSON.stringify(result)`). `args` is the
    * call's arguments as the model produced them: an object, or the JSON
-   * text; none counts as `{}`. Never throws for something the model got
-   * wrong.
+   * text; none counts as `{}`. A tool the helper does not offer is refused
+   * like any other mistake. Never throws for something the model got wrong.
    */
   async execute(
     name: string,
@@ -378,6 +401,11 @@ export class AgentTools {
   ): Promise<AgentToolResult> {
     this.ensureOpen();
     const scope = this.scopeStore.getStore() ?? this.root;
+    if (isAgentToolName(name) && !this.offered.has(name)) {
+      return this.withOpenCalls(scope, {
+        error: `the tool "${name}" is not offered; your tools are ${[...this.offered].join(", ")}`,
+      });
+    }
     let result: AgentToolResult;
     switch (name) {
       case "discover_agents":
@@ -529,6 +557,12 @@ export class AgentTools {
   ): Promise<AgentToolResult> {
     const parsed = parsePromptArgs(args);
     if (isArgsError(parsed)) return { error: parsed.error };
+    if (!parsed.wait && !this.offered.has("wait_agent")) {
+      return {
+        error:
+          'prompt_agent: "wait" cannot be false here; the call waits for the reply or a question',
+      };
+    }
     const { address } = parsed;
     if (scope.closed) {
       return { error: "the prompt you were answering has ended; no call can start in it" };
@@ -542,11 +576,7 @@ export class AgentTools {
     } catch (err) {
       return { error: `could not look up "${address}": ${describe(err)}` };
     }
-    if (target === undefined) {
-      return {
-        error: `no agent answers at "${address}"; call discover_agents for the current list`,
-      };
-    }
+    if (target === undefined) return { error: this.noAgentAt(address) };
     if (scope.caller !== undefined && target.identity === scope.caller) {
       return {
         error:
@@ -557,10 +587,14 @@ export class AgentTools {
     const attachments = await this.resolveAttachments(parsed.attachments);
     if (isArgsError(attachments)) return { error: attachments.error };
     if (!this.reserve(scope)) {
+      const { collect, stop } = this.openCallActions("some", "their");
+      const actions = [collect, stop].filter((action) => action !== undefined);
       return {
         error:
-          `all ${this.maxCalls} tracked calls are still open; collect some with wait_agent ` +
-          "or stop some with cancel_agent before you start another",
+          `all ${this.maxCalls} tracked calls are still open; ` +
+          (actions.length > 0
+            ? `${actions.join(" or ")} before you start another`
+            : "another can start when one of them finishes"),
       };
     }
 
@@ -804,7 +838,7 @@ export class AgentTools {
       );
     }
     if (err instanceof Error && err.name === "NoRespondersError") {
-      return `no agent answers at "${call.address}" any more; call discover_agents for the current list`;
+      return this.noAgentAt(call.address, " any more");
     }
     if (err instanceof Error && err.name === "AbortError") {
       return "the client the call ran on was closed";
@@ -921,14 +955,20 @@ export class AgentTools {
   ): Promise<AgentToolResult> {
     const parsed = parseAnswerArgs(args);
     if (isArgsError(parsed)) return { error: parsed.error };
+    if (parsed.wait === false && !this.offered.has("wait_agent")) {
+      return {
+        error:
+          'answer_agent: "wait" cannot be false here; the call waits for the reply or the next question',
+      };
+    }
     const call = scope.calls.get(parsed.callId);
-    if (call === undefined) return { error: unknownCall(parsed.callId) };
+    if (call === undefined) return { error: this.unknownCalls([parsed.callId]) };
     const question = call.questions[0];
     if (call.state !== "input_required" || question === undefined) {
       return {
         error:
           `call "${call.id}" has no open question: it is ${call.state}` +
-          (call.open ? "" : "; wait_agent returns its result"),
+          (call.open ? "" : this.ifOffered("wait_agent", "; wait_agent returns its result")),
       };
     }
     // Taken off before the answer goes out, so a concurrent tool call never
@@ -956,7 +996,7 @@ export class AgentTools {
     for (const id of parsed.callIds) {
       const call = scope.calls.get(id);
       if (call === undefined) {
-        calls.push({ call_id: id, error: unknownCall(id) });
+        calls.push({ call_id: id, error: this.unknownCalls([id]) });
         continue;
       }
       await this.cancel(call);
@@ -981,13 +1021,49 @@ export class AgentTools {
   /** The calls `ids` name in `scope`, or an error naming the ones it does not track. */
   private calls(scope: Scope, ids: ReadonlyArray<string>): Call[] | ArgsError {
     const unknown = ids.filter((id) => !scope.calls.has(id));
-    if (unknown.length > 0) {
-      return new ArgsError(
-        `${unknown.map((id) => `"${id}"`).join(", ")}: no such call in your calls; ` +
-          "list_agent_calls shows them",
-      );
-    }
+    if (unknown.length > 0) return new ArgsError(this.unknownCalls(unknown));
     return ids.map((id) => scope.calls.get(id)!);
+  }
+
+  // --- words -------------------------------------------------------------------
+  //
+  // What a result tells the model to do next points only to tools the
+  // helper offers: the model can call no other.
+
+  private ifOffered(tool: AgentToolName, words: string): string {
+    return this.offered.has(tool) ? words : "";
+  }
+
+  private unknownCalls(ids: ReadonlyArray<string>): string {
+    return (
+      `${ids.map((id) => `"${id}"`).join(", ")}: no such call in your calls` +
+      this.ifOffered("list_agent_calls", "; list_agent_calls shows them")
+    );
+  }
+
+  private noAgentAt(address: string, still = ""): string {
+    return (
+      `no agent answers at "${address}"${still}` +
+      this.ifOffered("discover_agents", "; call discover_agents for the current list")
+    );
+  }
+
+  /**
+   * What the model can do about open calls with the tools it has: collect
+   * them, or answer their questions when nothing is detached, and stop them.
+   */
+  private openCallActions(
+    them: string,
+    their: string,
+  ): { collect: string | undefined; stop: string | undefined } {
+    return {
+      collect: this.offered.has("wait_agent")
+        ? `collect ${them} with wait_agent`
+        : this.offered.has("answer_agent")
+          ? `answer ${their} questions with answer_agent`
+          : undefined,
+      stop: this.offered.has("cancel_agent") ? `stop ${them} with cancel_agent` : undefined,
+    };
   }
 
   // --- results -------------------------------------------------------------
@@ -1028,12 +1104,20 @@ export class AgentTools {
     let open = 0;
     for (const call of scope.calls.values()) if (call.open) open += 1;
     if (open === 0) return result;
-    const them = open === 1 ? "it" : "them";
     const counted = open === 1 ? "1 call you started is" : `${open} calls you started are`;
-    const note = scope.served
-      ? `${counted} still open. Calls end with the prompt you are answering: ` +
-        `collect ${them} with wait_agent before you answer.`
-      : `${counted} still open: collect ${them} with wait_agent, or stop ${them} with cancel_agent.`;
+    const { collect, stop } = this.openCallActions(
+      open === 1 ? "it" : "them",
+      open === 1 ? "its" : "their",
+    );
+    let note: string;
+    if (scope.served) {
+      note =
+        `${counted} still open. Calls end with the prompt you are answering` +
+        (collect !== undefined ? `: ${collect} before you answer.` : ".");
+    } else {
+      const actions = [collect, stop].filter((action) => action !== undefined);
+      note = `${counted} still open` + (actions.length > 0 ? `: ${actions.join(", or ")}.` : ".");
+    }
     return { ...result, open_calls: open, open_calls_note: note };
   }
 
@@ -1205,8 +1289,38 @@ function newCallId(): string {
   return `call_${randomBytes(6).toString("hex")}`;
 }
 
-function unknownCall(id: string): string {
-  return `"${id}": no such call in your calls; list_agent_calls shows them`;
+function isAgentToolName(name: string): name is AgentToolName {
+  return (AGENT_TOOL_NAMES as ReadonlyArray<string>).includes(name);
+}
+
+/**
+ * The tools offered, in the contract's order. A set that makes no sense is
+ * a misconfiguration and throws: a name not of the six, no tool at all, or
+ * a tool that works on calls without `prompt_agent`, which starts them.
+ */
+function offeredTools(tools: ReadonlyArray<string> | undefined): ReadonlySet<AgentToolName> {
+  if (tools === undefined) return new Set(AGENT_TOOL_NAMES);
+  for (const name of tools) {
+    if (!isAgentToolName(name)) {
+      throw new RangeError(
+        `AgentTools: tools names "${name}", which is not one of ${AGENT_TOOL_NAMES.join(", ")}`,
+      );
+    }
+  }
+  const offered = new Set(AGENT_TOOL_NAMES.filter((name) => tools.includes(name)));
+  if (offered.size === 0) {
+    throw new RangeError(
+      "AgentTools: tools names no tool; a role that must not delegate needs no AgentTools",
+    );
+  }
+  const orphans = [...offered].filter((name) => name !== "discover_agents");
+  if (!offered.has("prompt_agent") && orphans.length > 0) {
+    throw new RangeError(
+      `AgentTools: tools offers ${orphans.join(", ")} without prompt_agent, which starts the calls ` +
+        (orphans.length === 1 ? "it works on" : "they work on"),
+    );
+  }
+  return offered;
 }
 
 function describe(err: unknown): string {

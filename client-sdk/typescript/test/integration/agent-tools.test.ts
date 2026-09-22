@@ -414,6 +414,41 @@ describe.skipIf(!bin)("agent tools", () => {
     expect(result["error"]).toMatch(/has no open question: it is completed/);
   });
 
+  it("the blocking three: nothing is detached, and a question is answered with answer_agent", async () => {
+    const t = tools({ tools: ["discover_agents", "prompt_agent", "answer_agent"] });
+    const refused = await t.execute("prompt_agent", {
+      address: workerAddress,
+      prompt: "echo:x",
+      wait: false,
+    });
+    conforms(refused);
+    expect(refused["error"]).toMatch(/"wait" cannot be false/);
+    const asked = call(
+      await t.execute("prompt_agent", { address: workerAddress, prompt: "ask:ok?" }),
+    );
+    expect(asked).toMatchObject({
+      state: "input_required",
+      question: "ok?",
+      open_calls: 1,
+      open_calls_note: "1 call you started is still open: answer its questions with answer_agent.",
+    });
+    const done = call(await t.execute("answer_agent", { call_id: asked.call_id, answer: "yes" }));
+    expect(done.reply).toBe("answered:yes");
+    const after = await t.execute("answer_agent", { call_id: asked.call_id, answer: "again" });
+    expect(after).toEqual({
+      error: `call "${asked.call_id}" has no open question: it is completed`,
+    });
+    await t.runInPromptScope(async () => {
+      const scoped = call(
+        await t.execute("prompt_agent", { address: workerAddress, prompt: "ask:more?" }),
+      );
+      expect(scoped.open_calls_note).toBe(
+        "1 call you started is still open. Calls end with the prompt you are answering: " +
+          "answer its questions with answer_agent before you answer.",
+      );
+    });
+  });
+
   // --- detached calls and wait_agent ------------------------------------------
 
   it("wait: false returns at once; wait_agent returns the earliest, with remaining, polls and times out", async () => {
