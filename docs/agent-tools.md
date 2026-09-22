@@ -207,13 +207,14 @@ attachment (§5.2), inside the message.
   `max_payload` (§5.4). The tool accepts only paths under configured roots
   and refuses any other path. A path is checked after following its links.
   Without the limit a model could send any file the process can read.
-- **The default root is the staging directory alone.** It holds the files
-  other agents sent back, so the model can send one on with no
-  configuration. The working directory is not a root by default: it can
-  hold the agent's own `.env` with its credentials, and a model can be
-  talked into attaching it. A host that wants the working directory, or any
-  other, names it (section 5); a coding agent's host names its project
-  directory.
+- **The staging directory is always a root**, the default one or one the
+  host sets. It holds the helper's own output, the files other agents sent
+  back, so the model can send one on with no configuration. Roots a host
+  names add to it, and by default there are none: the working directory is
+  not a root unless named. It can hold the agent's own `.env` with its
+  credentials, and a model can be talked into attaching it. A host that
+  wants the working directory, or any other, names it (section 5); a coding
+  agent's host names its project directory.
 - **Receiving.** Every file that comes back, with the reply or with a
   question (§6.3, §7.1), is saved on the caller's machine before the result
   that lists it is returned: with the SDK's `saveAttachments` /
@@ -282,15 +283,15 @@ Limits are configuration, never parameters, except `wait_agent`'s
 | The runtime limit per call; past it the call is `expired` | `maxWaitMs` | `max_wait_s` | 10 minutes, the SDK's default |
 | The cap on `wait_agent`'s `timeout_ms` | `maxWaitAgentMs` | `max_wait_agent_s` | the runtime limit |
 | Calls tracked per scope | `maxCalls` | `max_calls` | 256 |
-| The roots files may be sent from | `attachmentRoots` | `attachment_roots` | the staging directory |
+| The roots files may be sent from, besides the staging directory | `attachmentRoots` | `attachment_roots` | none |
 | The staging directory for returned files | `stagingDir` | `staging_dir` | a new private directory under the system's temporary directory, removed when the helper closes |
 | The total saved per call | `maxSavedBytesPerCall` | `max_saved_bytes_per_call` | 64 MiB |
 | Finished calls outside a served prompt | `onSettled` | `on_settled` | none |
 | Extensions | `extensions` | `extensions` | none |
 
-Roots given replace the default. A host that names roots and still wants
-the model to send returned files on sets the staging directory and names it
-too.
+The staging directory is always a root, whether the default or set, and
+roots given add to it: a host that names its project directory still lets
+the model send returned files on.
 
 **Offering fewer tools.** Every definition a model is shown costs input
 tokens on every model call: about 1.5k for all six, a little over half that

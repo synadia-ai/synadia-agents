@@ -45,10 +45,11 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
     `max_calls` per scope (256; finished calls are dropped, the one that
     finished longest ago first), the roots files may be sent from, the
     staging directory where returned files are saved with
-    `save_attachments`, one directory per call. The only default root is
-    the staging directory, so a returned file can be sent on and the
-    working directory, which may hold a `.env`, cannot; a host that wants
-    it names it in `attachment_roots`.
+    `save_attachments`, one directory per call. The staging directory is
+    always a root, the default one or `staging_dir`, so a returned file can
+    be sent on; `attachment_roots` adds to it and names none by default, so
+    the working directory, which may hold a `.env`, is out unless a host
+    names it.
   - `tools=` offers a subset of the six: `definitions` holds only those,
     in the contract's order, and `execute` refuses any other in words.
     Without `wait_agent` nothing can be detached: `prompt_agent` and

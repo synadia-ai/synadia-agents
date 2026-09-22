@@ -1041,27 +1041,36 @@ async def test_saving_stops_at_the_total_per_call(world: World) -> None:
 
 
 async def test_a_questions_files_are_saved_and_can_be_sent_on_from_staging(
-    world: World,
+    world: World, tmp_path: Path
 ) -> None:
-    tools = world.tools()
+    # The staging directory is always a root, the default one or one given,
+    # and roots named add to it.
+    root = tmp_path / "root"
+    root.mkdir()
     address = world.worker_address
-    asked = call(await tools.execute("prompt_agent", {"address": address, "prompt": "ask-file:"}))
-    assert (asked["state"], asked["question"]) == ("input_required", "look at this")
-    (file,) = asked["attachments"]
-    assert (file["filename"], file["size_bytes"]) == ("q.txt", 13)
-    assert Path(file["path"]).read_text() == "question file"
-    done = call(
-        await tools.execute("answer_agent", {"call_id": asked["call_id"], "answer": "seen"})
-    )
-    assert done["reply"] == "answered:seen"
-    # The staging directory is the default root.
-    forwarded = call(
-        await tools.execute(
-            "prompt_agent",
-            {"address": address, "prompt": "attach:", "attachments": [file["path"]]},
+    for tools in [
+        world.tools(),
+        world.tools(attachment_roots=[root]),
+        world.tools(attachment_roots=[root], staging_dir=tmp_path / "given-staging"),
+    ]:
+        asked = call(
+            await tools.execute("prompt_agent", {"address": address, "prompt": "ask-file:"})
         )
-    )
-    assert forwarded["reply"] == f"got:{Path(file['path']).name}=question file"
+        assert (asked["state"], asked["question"]) == ("input_required", "look at this")
+        (file,) = asked["attachments"]
+        assert (file["filename"], file["size_bytes"]) == ("q.txt", 13)
+        assert Path(file["path"]).read_text() == "question file"
+        done = call(
+            await tools.execute("answer_agent", {"call_id": asked["call_id"], "answer": "seen"})
+        )
+        assert done["reply"] == "answered:seen"
+        forwarded = call(
+            await tools.execute(
+                "prompt_agent",
+                {"address": address, "prompt": "attach:", "attachments": [file["path"]]},
+            )
+        )
+        assert forwarded["reply"] == f"got:{Path(file['path']).name}=question file"
 
 
 # --- loop guards -------------------------------------------------------------------------

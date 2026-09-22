@@ -345,12 +345,13 @@ class AgentTools:
         - ``max_wait_agent_s``: the cap on ``wait_agent``'s ``timeout_ms``, and its
           default; ``None`` means ``max_wait_s``.
         - ``max_calls``: calls tracked per scope.
-        - ``attachment_roots``: the directories files may be sent from, checked after
-          links are followed; a relative path is taken from the working directory
-          at construction. ``None`` means the staging directory alone, so a
-          returned file can be sent on and nothing else can. A list given here
-          replaces it: name the working directory, say, to allow its files, and
-          to keep sending returned files on, set ``staging_dir`` and name it too.
+        - ``attachment_roots``: directories files may be sent from besides the
+          staging directory, which always is one, the default or ``staging_dir``:
+          it holds the files other agents sent back, so the model can send one on.
+          A path is checked after its links are followed, and a relative one is
+          taken from the working directory at construction. ``None`` means none,
+          so only returned files can be sent. Name the working directory, say, to
+          allow its files.
         - ``staging_dir``: where returned files are saved, one directory per call;
           ``None`` means a new private directory under the system's temporary
           directory, removed by :meth:`aclose`. A directory given here is kept.
@@ -382,9 +383,7 @@ class AgentTools:
         self._max_wait_s = max_wait_s
         self._max_wait_agent_s = max_wait_agent_s if max_wait_agent_s is not None else max_wait_s
         self._max_calls = max_calls
-        self._attachment_roots = (
-            [Path(r) for r in attachment_roots] if attachment_roots is not None else None
-        )
+        self._attachment_roots = [Path(r) for r in attachment_roots or ()]
         self._staging_option = Path(staging_dir) if staging_dir is not None else None
         self._max_saved_bytes = max_saved_bytes_per_call
         self._on_settled = on_settled
@@ -696,11 +695,7 @@ class AgentTools:
         """Each path, links followed, if it is a file under an allowed root."""
         if not paths:
             return ()
-        configured = (
-            self._attachment_roots
-            if self._attachment_roots is not None
-            else [await self._staging_dir()]
-        )
+        configured = [await self._staging_dir(), *self._attachment_roots]
         roots = [Path(os.path.realpath(r)) for r in configured]
         out: list[str] = []
         for path in paths:

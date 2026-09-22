@@ -1055,26 +1055,33 @@ describe.skipIf(!bin)("agent tools", () => {
     });
 
     it("saves a question's files, and a saved file can be sent on from the staging directory", async () => {
-      const t = tools();
-      const asked = call(
-        await t.execute("prompt_agent", { address: workerAddress, prompt: "ask-file:" }),
-      );
-      expect(asked).toMatchObject({ state: "input_required", question: "look at this" });
-      const [file] = asked.attachments!;
-      expect(file).toMatchObject({ filename: "q.txt", size_bytes: 13 });
-      expect(await readFile(file!.path!, "utf8")).toBe("question file");
-      expect(
-        call(await t.execute("answer_agent", { call_id: asked.call_id, answer: "seen" })).reply,
-      ).toBe("answered:seen");
-      // The staging directory is the default root.
-      const forwarded = call(
-        await t.execute("prompt_agent", {
-          address: workerAddress,
-          prompt: "attach:",
-          attachments: [file!.path!],
-        }),
-      );
-      expect(forwarded.reply).toBe(`got:${basename(file!.path!)}=question file`);
+      // The staging directory is always a root, the default one or one
+      // given, and roots named add to it.
+      const root = join(dir, "root");
+      for (const t of [
+        tools(),
+        tools({ attachmentRoots: [root] }),
+        tools({ attachmentRoots: [root], stagingDir: join(dir, "given-staging") }),
+      ]) {
+        const asked = call(
+          await t.execute("prompt_agent", { address: workerAddress, prompt: "ask-file:" }),
+        );
+        expect(asked).toMatchObject({ state: "input_required", question: "look at this" });
+        const [file] = asked.attachments!;
+        expect(file).toMatchObject({ filename: "q.txt", size_bytes: 13 });
+        expect(await readFile(file!.path!, "utf8")).toBe("question file");
+        expect(
+          call(await t.execute("answer_agent", { call_id: asked.call_id, answer: "seen" })).reply,
+        ).toBe("answered:seen");
+        const forwarded = call(
+          await t.execute("prompt_agent", {
+            address: workerAddress,
+            prompt: "attach:",
+            attachments: [file!.path!],
+          }),
+        );
+        expect(forwarded.reply).toBe(`got:${basename(file!.path!)}=question file`);
+      }
     });
   });
 

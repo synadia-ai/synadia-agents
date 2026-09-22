@@ -257,12 +257,12 @@ export interface AgentToolsOptions {
   /** Calls tracked per scope. Default {@link DEFAULT_AGENT_TOOLS_MAX_CALLS}. */
   readonly maxCalls?: number;
   /**
-   * The directories files may be sent from; a path is checked after its
-   * links are followed, and a relative one is taken from the working
-   * directory at construction. Default: the staging directory alone, so a
-   * returned file can be sent on and nothing else can. A list given here
-   * replaces it: name the working directory, say, to allow its files, and
-   * to keep sending returned files on, set `stagingDir` and name it too.
+   * Directories files may be sent from besides the staging directory, which
+   * always is one, the default or `stagingDir`: it holds the files other
+   * agents sent back, so the model can send one on. A path is checked after
+   * its links are followed, and a relative one is taken from the working
+   * directory at construction. Default: none, so only returned files can be
+   * sent. Name the working directory, say, to allow its files.
    */
   readonly attachmentRoots?: ReadonlyArray<string>;
   /**
@@ -331,7 +331,7 @@ export class AgentTools {
   private readonly maxWaitMs: number;
   private readonly maxWaitAgentMs: number;
   private readonly maxCalls: number;
-  private readonly attachmentRoots: ReadonlyArray<string> | undefined;
+  private readonly attachmentRoots: ReadonlyArray<string>;
   private readonly stagingOption: string | undefined;
   private readonly maxSavedBytes: number;
   private readonly onSettled: AgentToolsOptions["onSettled"];
@@ -361,8 +361,7 @@ export class AgentTools {
     if (!Number.isInteger(this.maxCalls)) {
       throw new RangeError(`AgentTools: maxCalls must be a whole number (got ${this.maxCalls})`);
     }
-    this.attachmentRoots =
-      options.attachmentRoots !== undefined ? [...options.attachmentRoots] : undefined;
+    this.attachmentRoots = [...(options.attachmentRoots ?? [])];
     this.stagingOption = options.stagingDir;
     this.maxSavedBytes =
       nonNegative("maxSavedBytesPerCall", options.maxSavedBytesPerCall) ??
@@ -682,7 +681,7 @@ export class AgentTools {
   private async resolveAttachments(paths: ReadonlyArray<string>): Promise<string[] | ArgsError> {
     if (paths.length === 0) return [];
     const roots = await Promise.all(
-      (this.attachmentRoots ?? [await this.stagingDir()]).map((root) =>
+      [await this.stagingDir(), ...this.attachmentRoots].map((root) =>
         realpath(resolve(root)).catch(() => resolve(root)),
       ),
     );

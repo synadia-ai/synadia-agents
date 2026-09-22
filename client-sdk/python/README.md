@@ -343,11 +343,11 @@ content = json.dumps(result)
   `max_calls` (256), `attachment_roots`, `staging_dir`,
   `max_saved_bytes_per_call`. `self_address` is left out of discovery and
   refused.
-- Files are sent only from under `attachment_roots`. The default is the
-  staging directory alone, where returned files are saved, so the model can
-  send one on and nothing else: the working directory may hold a `.env`. A
-  host that wants the working directory, a coding agent's project say,
-  names it.
+- Files are sent only from the staging directory, where returned files are
+  saved, so the model can send one on, and from under `attachment_roots`,
+  which add to it. The default names none, so nothing else can be sent: the
+  working directory may hold a `.env`. A host that wants the working
+  directory, a coding agent's project say, names it.
 - The model's tool-call ID reaches every prompt interceptor as
   `ctx.context["tool_call_id"]`. `extensions` (subclasses of
   `AgentToolsExtension`) add discovery fields, rewrite a prompt before it
