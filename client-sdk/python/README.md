@@ -347,7 +347,9 @@ content = json.dumps(result)
   saved, so the model can send one on, and from under `attachment_roots`,
   which add to it. The default names none, so nothing else can be sent: the
   working directory may hold a `.env`. A host that wants the working
-  directory, a coding agent's project say, names it.
+  directory, a coding agent's project say, names it. A relative root, or
+  `staging_dir`, is taken from the working directory when the helper is
+  made.
 - The model's tool-call ID reaches every prompt interceptor as
   `ctx.context["tool_call_id"]`. `extensions` (subclasses of
   `AgentToolsExtension`) add discovery fields, rewrite a prompt before it

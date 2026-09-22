@@ -291,7 +291,10 @@ Limits are configuration, never parameters, except `wait_agent`'s
 
 The staging directory is always a root, whether the default or set, and
 roots given add to it: a host that names its project directory still lets
-the model send returned files on.
+the model send returned files on. A relative root or staging directory is
+taken from the working directory when the helper is made, as the model's
+relative paths are, so a process that changes its directory later sends
+from and saves to the same places.
 
 **Offering fewer tools.** Every definition a model is shown costs input
 tokens on every model call: about 1.5k for all six, a little over half that

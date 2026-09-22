@@ -49,7 +49,9 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
     always a root, the default one or `staging_dir`, so a returned file can
     be sent on; `attachment_roots` adds to it and names none by default, so
     the working directory, which may hold a `.env`, is out unless a host
-    names it.
+    names it. A relative root or `staging_dir` is taken from the working
+    directory at construction, so a later change of directory moves none of
+    them.
   - `tools=` offers a subset of the six: `definitions` holds only those,
     in the contract's order, and `execute` refuses any other in words.
     Without `wait_agent` nothing can be detached: `prompt_agent` and

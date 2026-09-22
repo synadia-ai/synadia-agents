@@ -49,7 +49,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     is always a root, the default one or `stagingDir`, so a returned file
     can be sent on; `attachmentRoots` adds to it and names none by default,
     so the working directory, which may hold a `.env`, is out unless a host
-    names it.
+    names it. A relative root or `stagingDir` is taken from the working
+    directory at construction, so a later change of directory moves none
+    of them.
   - `tools` offers a subset of the six: `definitions` holds only those,
     in the contract's order, and `execute` refuses any other in words.
     Without `wait_agent` nothing can be detached: `prompt_agent` and

@@ -1009,6 +1009,49 @@ async def test_by_default_nothing_is_sent_from_the_working_directory_a_root_nami
     assert sent["reply"] == "got:.env=TOKEN=secret"
 
 
+async def test_a_relative_root_and_staging_directory_are_taken_at_construction(
+    world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two directories alike: the helper is made in one, and the process then
+    # moves to the other. What the model may send, and where returned files
+    # are saved, stay where they were.
+    made = tmp_path / "made"
+    moved = tmp_path / "moved"
+    for base in (made, moved):
+        (base / "root").mkdir(parents=True)
+        (base / "root" / "here.txt").write_text(base.name)
+    address = world.worker_address
+    with monkeypatch.context() as patch:
+        patch.chdir(made)
+        tools = world.tools(attachment_roots=["root"], staging_dir="staging")
+        patch.chdir(moved)
+        sent = call(
+            await tools.execute(
+                "prompt_agent",
+                {
+                    "address": address,
+                    "prompt": "attach:",
+                    "attachments": [str(made / "root/here.txt")],
+                },
+            )
+        )
+        assert sent["reply"] == "got:here.txt=made"
+        refused = await tools.execute(
+            "prompt_agent",
+            {
+                "address": address,
+                "prompt": "attach:",
+                "attachments": [str(moved / "root/here.txt")],
+            },
+        )
+        conforms(refused)
+        assert "outside the directories you may send files from" in refused["error"]
+        saved = call(await tools.execute("prompt_agent", {"address": address, "prompt": "files:"}))
+        assert saved["attachments"][0]["path"] == str(
+            made.resolve() / "staging" / saved["call_id"] / "report.txt"
+        )
+
+
 async def test_returned_files_are_saved_one_directory_per_call(
     world: World, tmp_path: Path
 ) -> None:

@@ -361,6 +361,7 @@ class AgentTools:
           so only returned files can be sent. Name the working directory, say, to
           allow its files.
         - ``staging_dir``: where returned files are saved, one directory per call;
+          a relative path is taken from the working directory at construction.
           ``None`` means a new private directory under the system's temporary
           directory, removed by :meth:`aclose`. A directory given here is kept.
         - ``max_saved_bytes_per_call``: the total of returned files saved per call;
@@ -391,13 +392,15 @@ class AgentTools:
         self._max_wait_s = max_wait_s
         self._max_wait_agent_s = max_wait_agent_s if max_wait_agent_s is not None else max_wait_s
         self._max_calls = max_calls
-        self._attachment_roots = [Path(r) for r in attachment_roots or ()]
-        self._staging_option = Path(staging_dir) if staging_dir is not None else None
+        self._cwd = Path.cwd()
+        # Relative roots are taken from the working directory now, as the
+        # model's paths are: a later change of directory moves none of them.
+        self._attachment_roots = [self._cwd / r for r in attachment_roots or ()]
+        self._staging_option = self._cwd / staging_dir if staging_dir is not None else None
         self._max_saved_bytes = max_saved_bytes_per_call
         self._on_settled = on_settled
         self._extensions = tuple(extensions)
         self._log = logger if logger is not None else log
-        self._cwd = Path.cwd()
         self._root = _Scope(served=False, caller=None)
         self._served: set[_Scope] = set()
         # Live handles by address, from the last discovery that saw them:
