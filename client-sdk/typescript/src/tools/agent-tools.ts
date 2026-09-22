@@ -30,6 +30,12 @@
 // Errors the model can act on come back as results in words; the helper
 // throws only for bugs (a misconfiguration, an extension that breaks the
 // contract, use after `close()`).
+//
+// An application that imports this package without the tools should not
+// carry them, and a bundler keeps a class it cannot prove inert even when
+// nothing uses it. So members are TypeScript-private rather than
+// `#`-private, and a field whose initial value takes a call is set in the
+// constructor.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
@@ -292,55 +298,58 @@ export class AgentTools {
   /** Opens a scope per served prompt; see {@link AgentToolsRequestInterceptor}. */
   readonly requestInterceptor: AgentToolsRequestInterceptor;
 
-  readonly #agents: Agents;
-  readonly #selfAddress: string | undefined;
-  readonly #discoverTimeoutMs: number | undefined;
-  readonly #maxWaitMs: number;
-  readonly #maxWaitAgentMs: number;
-  readonly #maxCalls: number;
-  readonly #attachmentRoots: ReadonlyArray<string> | undefined;
-  readonly #stagingOption: string | undefined;
-  readonly #maxSavedBytes: number;
-  readonly #onSettled: AgentToolsOptions["onSettled"];
-  readonly #extensions: ReadonlyArray<AgentToolsExtension>;
-  readonly #logger: Logger;
-  readonly #cwd = process.cwd();
-  readonly #scopeStore = new AsyncLocalStorage<Scope>();
-  readonly #root = new Scope(false, undefined);
-  readonly #served = new Set<Scope>();
+  private readonly agents: Agents;
+  private readonly selfAddress: string | undefined;
+  private readonly discoverTimeoutMs: number | undefined;
+  private readonly maxWaitMs: number;
+  private readonly maxWaitAgentMs: number;
+  private readonly maxCalls: number;
+  private readonly attachmentRoots: ReadonlyArray<string> | undefined;
+  private readonly stagingOption: string | undefined;
+  private readonly maxSavedBytes: number;
+  private readonly onSettled: AgentToolsOptions["onSettled"];
+  private readonly extensions: ReadonlyArray<AgentToolsExtension>;
+  private readonly logger: Logger;
+  private readonly cwd: string;
+  private readonly scopeStore: AsyncLocalStorage<Scope>;
+  private readonly root: Scope;
+  private readonly served = new Set<Scope>();
   // Live handles by address, from the last discovery that saw them:
   // `prompt_agent` needs a handle, and the model only has the address.
-  readonly #known = new Map<string, Agent>();
-  #staging: Promise<string> | undefined;
-  #ownsStaging = false;
+  private readonly known = new Map<string, Agent>();
+  private staging: Promise<string> | undefined;
+  private ownsStaging = false;
   // Orders the events `wait_agent` picks from: a question, or a finish.
-  #seq = 0;
-  #closed = false;
+  private seq = 0;
+  private closed = false;
 
   constructor(options: AgentToolsOptions) {
-    this.#agents = options.agents;
-    this.#selfAddress = options.selfAddress;
-    this.#discoverTimeoutMs = positive("discoverTimeoutMs", options.discoverTimeoutMs);
-    this.#maxWaitMs = positive("maxWaitMs", options.maxWaitMs) ?? DEFAULT_PROMPT_MAX_WAIT_MS;
-    this.#maxWaitAgentMs = nonNegative("maxWaitAgentMs", options.maxWaitAgentMs) ?? this.#maxWaitMs;
-    this.#maxCalls = positive("maxCalls", options.maxCalls) ?? DEFAULT_AGENT_TOOLS_MAX_CALLS;
-    if (!Number.isInteger(this.#maxCalls)) {
-      throw new RangeError(`AgentTools: maxCalls must be a whole number (got ${this.#maxCalls})`);
+    this.agents = options.agents;
+    this.selfAddress = options.selfAddress;
+    this.discoverTimeoutMs = positive("discoverTimeoutMs", options.discoverTimeoutMs);
+    this.maxWaitMs = positive("maxWaitMs", options.maxWaitMs) ?? DEFAULT_PROMPT_MAX_WAIT_MS;
+    this.maxWaitAgentMs = nonNegative("maxWaitAgentMs", options.maxWaitAgentMs) ?? this.maxWaitMs;
+    this.maxCalls = positive("maxCalls", options.maxCalls) ?? DEFAULT_AGENT_TOOLS_MAX_CALLS;
+    if (!Number.isInteger(this.maxCalls)) {
+      throw new RangeError(`AgentTools: maxCalls must be a whole number (got ${this.maxCalls})`);
     }
-    this.#attachmentRoots =
+    this.attachmentRoots =
       options.attachmentRoots !== undefined ? [...options.attachmentRoots] : undefined;
-    this.#stagingOption = options.stagingDir;
-    this.#maxSavedBytes =
+    this.stagingOption = options.stagingDir;
+    this.maxSavedBytes =
       nonNegative("maxSavedBytesPerCall", options.maxSavedBytesPerCall) ??
       DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES;
-    this.#onSettled = options.onSettled;
-    this.#extensions = [...(options.extensions ?? [])];
-    this.#logger = options.logger ?? SILENT_LOGGER;
+    this.onSettled = options.onSettled;
+    this.extensions = [...(options.extensions ?? [])];
+    this.logger = options.logger ?? SILENT_LOGGER;
+    this.cwd = process.cwd();
+    this.scopeStore = new AsyncLocalStorage<Scope>();
+    this.root = new Scope(false, undefined);
     this.definitions = agentToolDefinitions();
     this.requestInterceptor = {
       aroundRequest: (ctx, next) => {
         // A closed helper must not keep an agent from serving.
-        if (this.#closed) return next();
+        if (this.closed) return next();
         const sender = ctx.sender;
         return this.runInPromptScope(
           next,
@@ -362,32 +371,32 @@ export class AgentTools {
     args?: unknown,
     options: AgentToolCallOptions = {},
   ): Promise<AgentToolResult> {
-    this.#ensureOpen();
-    const scope = this.#scopeStore.getStore() ?? this.#root;
+    this.ensureOpen();
+    const scope = this.scopeStore.getStore() ?? this.root;
     let result: AgentToolResult;
     switch (name) {
       case "discover_agents":
-        result = await this.#discoverAgents(args);
+        result = await this.discoverAgents(args);
         break;
       case "prompt_agent":
-        result = await this.#promptAgent(scope, args, options);
+        result = await this.promptAgent(scope, args, options);
         break;
       case "wait_agent":
-        result = await this.#waitAgent(scope, args, options.signal);
+        result = await this.waitAgent(scope, args, options.signal);
         break;
       case "answer_agent":
-        result = await this.#answerAgent(scope, args, options.signal);
+        result = await this.answerAgent(scope, args, options.signal);
         break;
       case "cancel_agent":
-        result = await this.#cancelAgent(scope, args);
+        result = await this.cancelAgent(scope, args);
         break;
       case "list_agent_calls":
-        result = this.#listAgentCalls(scope);
+        result = this.listAgentCalls(scope);
         break;
       default:
         result = { error: `unknown tool "${name}"` };
     }
-    return this.#withOpenCalls(scope, result);
+    return this.withOpenCalls(scope, result);
   }
 
   /**
@@ -400,14 +409,14 @@ export class AgentTools {
     fn: () => T | Promise<T>,
     options: PromptScopeOptions = {},
   ): Promise<T> {
-    this.#ensureOpen();
+    this.ensureOpen();
     const scope = new Scope(true, options.caller);
-    this.#served.add(scope);
+    this.served.add(scope);
     try {
-      return await this.#scopeStore.run(scope, fn);
+      return await this.scopeStore.run(scope, fn);
     } finally {
-      this.#served.delete(scope);
-      await this.#closeScope(scope);
+      this.served.delete(scope);
+      await this.closeScope(scope);
     }
   }
 
@@ -416,23 +425,23 @@ export class AgentTools {
    * directory when the helper created it. Idempotent.
    */
   async close(): Promise<void> {
-    if (this.#closed) return;
-    this.#closed = true;
-    await Promise.all([this.#root, ...this.#served].map((scope) => this.#closeScope(scope)));
-    if (this.#ownsStaging && this.#staging !== undefined) {
-      const dir = await this.#staging.catch(() => undefined);
+    if (this.closed) return;
+    this.closed = true;
+    await Promise.all([this.root, ...this.served].map((scope) => this.closeScope(scope)));
+    if (this.ownsStaging && this.staging !== undefined) {
+      const dir = await this.staging.catch(() => undefined);
       if (dir !== undefined) await rm(dir, { recursive: true, force: true });
     }
   }
 
   // --- discover_agents ----------------------------------------------------
 
-  async #discoverAgents(args: unknown): Promise<AgentToolResult> {
+  private async discoverAgents(args: unknown): Promise<AgentToolResult> {
     const parsed = parseDiscoverArgs(args);
     if (isArgsError(parsed)) return { error: parsed.error };
     let found: Agent[];
     try {
-      found = await this.#discover(parsed);
+      found = await this.discover(parsed);
     } catch (err) {
       return { error: `discovery failed: ${describe(err)}` };
     }
@@ -441,7 +450,7 @@ export class AgentTools {
     const byAddress = new Map<string, { handle: Agent; instances: number }>();
     for (const handle of found) {
       const address = handle.promptSubject;
-      if (address === this.#selfAddress) continue;
+      if (address === this.selfAddress) continue;
       const seen = byAddress.get(address);
       if (seen === undefined) byAddress.set(address, { handle, instances: 1 });
       else {
@@ -452,7 +461,7 @@ export class AgentTools {
     const agents: Fields[] = [];
     for (const [address, { handle, instances }] of byAddress) {
       const extra: Record<string, unknown> = {};
-      for (const extension of this.#extensions) {
+      for (const extension of this.extensions) {
         if (extension.discoveryFields === undefined) continue;
         addFields(
           extra,
@@ -480,31 +489,35 @@ export class AgentTools {
   }
 
   /** Discover, and remember the handle behind each address. */
-  async #discover(filter: { agent?: string; owner?: string; name?: string }): Promise<Agent[]> {
-    const found = await this.#agents.discover({
+  private async discover(filter: {
+    agent?: string;
+    owner?: string;
+    name?: string;
+  }): Promise<Agent[]> {
+    const found = await this.agents.discover({
       ...(Object.keys(filter).length > 0 ? { filter } : {}),
-      ...(this.#discoverTimeoutMs !== undefined ? { timeoutMs: this.#discoverTimeoutMs } : {}),
+      ...(this.discoverTimeoutMs !== undefined ? { timeoutMs: this.discoverTimeoutMs } : {}),
     });
     for (const handle of found) {
-      const known = this.#known.get(handle.promptSubject);
+      const known = this.known.get(handle.promptSubject);
       if (known === undefined || handle.idSigVerified || !known.idSigVerified) {
-        this.#known.set(handle.promptSubject, handle);
+        this.known.set(handle.promptSubject, handle);
       }
     }
     return found;
   }
 
   /** The handle for an address: from an earlier discovery, else from a fresh one. */
-  async #lookup(address: string): Promise<Agent | undefined> {
-    const known = this.#known.get(address);
+  private async lookup(address: string): Promise<Agent | undefined> {
+    const known = this.known.get(address);
     if (known !== undefined) return known;
-    await this.#discover({});
-    return this.#known.get(address);
+    await this.discover({});
+    return this.known.get(address);
   }
 
   // --- prompt_agent -------------------------------------------------------
 
-  async #promptAgent(
+  private async promptAgent(
     scope: Scope,
     args: unknown,
     options: AgentToolCallOptions,
@@ -515,12 +528,12 @@ export class AgentTools {
     if (scope.closed) {
       return { error: "the prompt you were answering has ended; no call can start in it" };
     }
-    if (address === this.#selfAddress) {
+    if (address === this.selfAddress) {
       return { error: `"${address}" is your own address; answer the prompt yourself` };
     }
     let target: Agent | undefined;
     try {
-      target = await this.#lookup(address);
+      target = await this.lookup(address);
     } catch (err) {
       return { error: `could not look up "${address}": ${describe(err)}` };
     }
@@ -536,12 +549,12 @@ export class AgentTools {
           "answer it rather than prompting it back",
       };
     }
-    const attachments = await this.#resolveAttachments(parsed.attachments);
+    const attachments = await this.resolveAttachments(parsed.attachments);
     if (isArgsError(attachments)) return { error: attachments.error };
-    if (!this.#reserve(scope)) {
+    if (!this.reserve(scope)) {
       return {
         error:
-          `all ${this.#maxCalls} tracked calls are still open; collect some with wait_agent ` +
+          `all ${this.maxCalls} tracked calls are still open; collect some with wait_agent ` +
           "or stop some with cancel_agent before you start another",
       };
     }
@@ -552,7 +565,7 @@ export class AgentTools {
       let text = parsed.prompt;
       const context: Record<string, unknown> = {};
       const fields: Record<string, unknown> = {};
-      for (const extension of this.#extensions) {
+      for (const extension of this.extensions) {
         if (extension.beforePrompt === undefined) continue;
         const rewrite = await extension.beforePrompt({
           address,
@@ -572,7 +585,7 @@ export class AgentTools {
       }
       if (options.toolCallId !== undefined) context["toolCallId"] = options.toolCallId;
       const promptOptions: PromptOptions = {
-        maxWaitMs: this.#maxWaitMs,
+        maxWaitMs: this.maxWaitMs,
         context,
         ...(attachments.length > 0 ? { attachments } : {}),
       };
@@ -601,9 +614,9 @@ export class AgentTools {
       scope.reserved -= 1;
       reserved = false;
       scope.calls.set(callId, call);
-      void this.#read(call);
-      if (!parsed.wait) return this.#callResult(call);
-      return await this.#untilReady(call, options.signal);
+      void this.read(call);
+      if (!parsed.wait) return this.callResult(call);
+      return await this.untilReady(call, options.signal);
     } finally {
       if (reserved) scope.reserved -= 1;
     }
@@ -613,8 +626,8 @@ export class AgentTools {
    * Make room for one more call in `scope`: drop finished calls, the one
    * that finished longest ago first. `false` when every tracked call is open.
    */
-  #reserve(scope: Scope): boolean {
-    while (scope.calls.size + scope.reserved >= this.#maxCalls) {
+  private reserve(scope: Scope): boolean {
+    while (scope.calls.size + scope.reserved >= this.maxCalls) {
       let oldest: Call | undefined;
       for (const call of scope.calls.values()) {
         if (!call.open && (oldest === undefined || call.seq < oldest.seq)) oldest = call;
@@ -627,10 +640,10 @@ export class AgentTools {
   }
 
   /** Each path, links followed, if it is a file under an allowed root. */
-  async #resolveAttachments(paths: ReadonlyArray<string>): Promise<string[] | ArgsError> {
+  private async resolveAttachments(paths: ReadonlyArray<string>): Promise<string[] | ArgsError> {
     if (paths.length === 0) return [];
     const roots = await Promise.all(
-      (this.#attachmentRoots ?? [this.#cwd, await this.#stagingDir()]).map((root) =>
+      (this.attachmentRoots ?? [this.cwd, await this.stagingDir()]).map((root) =>
         realpath(resolve(root)).catch(() => resolve(root)),
       ),
     );
@@ -638,7 +651,7 @@ export class AgentTools {
     for (const path of paths) {
       let real: string;
       try {
-        real = await realpath(resolve(this.#cwd, path));
+        real = await realpath(resolve(this.cwd, path));
       } catch {
         return new ArgsError(`prompt_agent: the attachment "${path}" does not exist`);
       }
@@ -660,7 +673,7 @@ export class AgentTools {
   // --- the call's own task -------------------------------------------------
 
   /** Read a call's stream to its end; see the module comment. */
-  async #read(call: Call): Promise<void> {
+  private async read(call: Call): Promise<void> {
     try {
       for await (const msg of call.stream) {
         if (msg.type === "status") continue;
@@ -672,47 +685,50 @@ export class AgentTools {
         if (msg.type === "response") {
           call.text += msg.text;
           if (msg.attachments !== undefined && msg.attachments.length > 0) {
-            call.replyFiles.push(...(await this.#save(call, msg.attachments)));
+            call.replyFiles.push(...(await this.save(call, msg.attachments)));
           }
           continue;
         }
         const files =
           msg.attachments !== undefined && msg.attachments.length > 0
-            ? await this.#save(call, msg.attachments)
+            ? await this.save(call, msg.attachments)
             : [];
-        const fields = await this.#afterReply(call, "question", msg.prompt, files);
+        const fields = await this.afterReply(call, "question", msg.prompt, files);
         if (!call.open) {
           await refuse(msg);
           continue;
         }
         call.questions.push({ event: msg, files, fields });
-        if (call.state === "running") this.#setState(call, "input_required");
+        if (call.state === "running") this.setState(call, "input_required");
       }
       if (call.open) {
-        call.replyFields = await this.#afterReply(call, "reply", call.text, call.replyFiles);
-        this.#finish(call, "completed");
+        call.replyFields = await this.afterReply(call, "reply", call.text, call.replyFiles);
+        this.finish(call, "completed");
       }
     } catch (err) {
       if (!call.open) return;
       if (err instanceof StreamMaxWaitExceededError) {
-        this.#finish(
+        this.finish(
           call,
           "expired",
           `the call ran past its runtime limit of ${duration(err.maxWaitMs)} and was stopped; ` +
             "the agent may still be working on it",
         );
       } else {
-        this.#finish(call, "failed", this.#failure(call, err));
+        this.finish(call, "failed", this.failure(call, err));
       }
     }
   }
 
-  async #save(call: Call, attachments: ReadonlyArray<ResponseAttachment>): Promise<ReturnedFile[]> {
+  private async save(
+    call: Call,
+    attachments: ReadonlyArray<ResponseAttachment>,
+  ): Promise<ReturnedFile[]> {
     let saved;
     try {
-      const dir = join(await this.#stagingDir(), call.id);
+      const dir = join(await this.stagingDir(), call.id);
       saved = await saveAttachments(attachments, dir, {
-        maxTotalBytes: Math.max(0, this.#maxSavedBytes - call.savedBytes),
+        maxTotalBytes: Math.max(0, this.maxSavedBytes - call.savedBytes),
       });
     } catch (err) {
       throw new CallFailure(`a file the agent sent could not be saved: ${describe(err)}`);
@@ -728,7 +744,7 @@ export class AgentTools {
     });
   }
 
-  async #afterReply(
+  private async afterReply(
     call: Call,
     kind: "reply" | "question",
     text: string,
@@ -736,7 +752,7 @@ export class AgentTools {
   ): Promise<Fields> {
     const fields: Record<string, unknown> = {};
     try {
-      for (const extension of this.#extensions) {
+      for (const extension of this.extensions) {
         if (extension.afterReply === undefined) continue;
         const added = await extension.afterReply({
           callId: call.id,
@@ -754,7 +770,7 @@ export class AgentTools {
     return fields;
   }
 
-  #failure(call: Call, err: unknown): string {
+  private failure(call: Call, err: unknown): string {
     if (err instanceof CallFailure) return err.message;
     if (err instanceof ServiceError) {
       const detail = err.description !== "" ? ` ${err.description}` : "";
@@ -777,14 +793,14 @@ export class AgentTools {
 
   // --- state ---------------------------------------------------------------
 
-  #setState(call: Call, state: "running" | "input_required"): void {
+  private setState(call: Call, state: "running" | "input_required"): void {
     call.state = state;
-    if (state === "input_required") call.seq = ++this.#seq;
+    if (state === "input_required") call.seq = ++this.seq;
     call.notify();
   }
 
   /** The call's final state. The first one wins; open questions become moot. */
-  #finish(
+  private finish(
     call: Call,
     state: Exclude<AgentCallState, "running" | "input_required">,
     error?: string,
@@ -794,61 +810,61 @@ export class AgentTools {
     call.state = state;
     call.error = error;
     call.endedAt = new Date();
-    call.seq = ++this.#seq;
+    call.seq = ++this.seq;
     call.questions.length = 0;
     call.notify();
-    if (call.scope === this.#root && this.#onSettled !== undefined) {
-      const report = this.#onSettled;
-      const result = this.#callResult(call);
+    if (call.scope === this.root && this.onSettled !== undefined) {
+      const report = this.onSettled;
+      const result = this.callResult(call);
       void (async () => {
         try {
           await report(result, { awaited });
         } catch {
-          this.#logger.error("AgentTools onSettled failed", { call_id: call.id });
+          this.logger.error("AgentTools onSettled failed", { call_id: call.id });
         }
       })();
     }
   }
 
   /** Refuse the call's open questions and drop its stream. */
-  async #cancel(call: Call): Promise<void> {
+  private async cancel(call: Call): Promise<void> {
     if (!call.open) return;
     const questions = call.questions.splice(0);
-    this.#finish(call, "cancelled");
+    this.finish(call, "cancelled");
     call.stream.cancel();
     await Promise.all(questions.map((q) => refuse(q.event)));
   }
 
-  async #closeScope(scope: Scope): Promise<void> {
+  private async closeScope(scope: Scope): Promise<void> {
     scope.closed = true;
-    await Promise.all([...scope.calls.values()].map((call) => this.#cancel(call)));
+    await Promise.all([...scope.calls.values()].map((call) => this.cancel(call)));
   }
 
   /** Wait until the call is no longer `running`; an abort cancels it. */
-  async #untilReady(call: Call, signal: AbortSignal | undefined): Promise<AgentCallResult> {
+  private async untilReady(call: Call, signal: AbortSignal | undefined): Promise<AgentCallResult> {
     while (call.state === "running") {
       if (signal?.aborted) {
-        await this.#cancel(call);
+        await this.cancel(call);
         break;
       }
       await nextChange([call], undefined, signal);
     }
-    return this.#callResult(call);
+    return this.callResult(call);
   }
 
   // --- wait_agent, answer_agent, cancel_agent, list_agent_calls -----------
 
-  async #waitAgent(
+  private async waitAgent(
     scope: Scope,
     args: unknown,
     signal: AbortSignal | undefined,
   ): Promise<AgentToolResult> {
     const parsed = parseWaitArgs(args);
     if (isArgsError(parsed)) return { error: parsed.error };
-    const calls = this.#calls(scope, parsed.callIds);
+    const calls = this.calls(scope, parsed.callIds);
     if (isArgsError(calls)) return { error: calls.error };
     const deadline =
-      Date.now() + Math.min(parsed.timeoutMs ?? this.#maxWaitAgentMs, this.#maxWaitAgentMs);
+      Date.now() + Math.min(parsed.timeoutMs ?? this.maxWaitAgentMs, this.maxWaitAgentMs);
     for (;;) {
       let first: Call | undefined;
       for (const call of calls) {
@@ -859,7 +875,7 @@ export class AgentTools {
       if (first !== undefined) {
         const ready = first;
         return {
-          ...this.#callResult(ready),
+          ...this.callResult(ready),
           remaining: calls.filter((call) => call !== ready && call.open).map((call) => call.id),
         };
       }
@@ -870,7 +886,7 @@ export class AgentTools {
     }
   }
 
-  async #answerAgent(
+  private async answerAgent(
     scope: Scope,
     args: unknown,
     signal: AbortSignal | undefined,
@@ -890,22 +906,22 @@ export class AgentTools {
     // Taken off before the answer goes out, so a concurrent tool call never
     // sees a question that is being answered.
     call.questions.shift();
-    if (call.questions.length > 0) this.#setState(call, "input_required");
-    else this.#setState(call, "running");
+    if (call.questions.length > 0) this.setState(call, "input_required");
+    else this.setState(call, "running");
     try {
       await question.event.reply(parsed.answer);
     } catch (err) {
       if (call.open) {
         call.questions.unshift(question);
-        this.#setState(call, "input_required");
+        this.setState(call, "input_required");
       }
       return { error: `the answer could not be sent: ${describe(err)}` };
     }
-    if (!(parsed.wait ?? !call.detached)) return this.#callResult(call);
-    return this.#untilReady(call, signal);
+    if (!(parsed.wait ?? !call.detached)) return this.callResult(call);
+    return this.untilReady(call, signal);
   }
 
-  async #cancelAgent(scope: Scope, args: unknown): Promise<AgentToolResult> {
+  private async cancelAgent(scope: Scope, args: unknown): Promise<AgentToolResult> {
     const parsed = parseCancelArgs(args);
     if (isArgsError(parsed)) return { error: parsed.error };
     const calls: Fields[] = [];
@@ -915,13 +931,13 @@ export class AgentTools {
         calls.push({ call_id: id, error: unknownCall(id) });
         continue;
       }
-      await this.#cancel(call);
-      calls.push(this.#callResult(call));
+      await this.cancel(call);
+      calls.push(this.callResult(call));
     }
     return { calls };
   }
 
-  #listAgentCalls(scope: Scope): AgentToolResult {
+  private listAgentCalls(scope: Scope): AgentToolResult {
     return {
       calls: [...scope.calls.values()].map((call) => ({
         call_id: call.id,
@@ -935,7 +951,7 @@ export class AgentTools {
   }
 
   /** The calls `ids` name in `scope`, or an error naming the ones it does not track. */
-  #calls(scope: Scope, ids: ReadonlyArray<string>): Call[] | ArgsError {
+  private calls(scope: Scope, ids: ReadonlyArray<string>): Call[] | ArgsError {
     const unknown = ids.filter((id) => !scope.calls.has(id));
     if (unknown.length > 0) {
       return new ArgsError(
@@ -948,7 +964,7 @@ export class AgentTools {
 
   // --- results -------------------------------------------------------------
 
-  #callResult(call: Call): AgentCallResult {
+  private callResult(call: Call): AgentCallResult {
     const base = {
       ...call.fields,
       call_id: call.id,
@@ -980,7 +996,7 @@ export class AgentTools {
   }
 
   /** Say how many calls are open, when any is. */
-  #withOpenCalls(scope: Scope, result: AgentToolResult): AgentToolResult {
+  private withOpenCalls(scope: Scope, result: AgentToolResult): AgentToolResult {
     let open = 0;
     for (const call of scope.calls.values()) if (call.open) open += 1;
     if (open === 0) return result;
@@ -995,25 +1011,25 @@ export class AgentTools {
 
   // --- files -------------------------------------------------------------------
 
-  #stagingDir(): Promise<string> {
-    this.#staging ??= (async (): Promise<string> => {
-      if (this.#stagingOption !== undefined) {
-        const dir = resolve(this.#stagingOption);
+  private stagingDir(): Promise<string> {
+    this.staging ??= (async (): Promise<string> => {
+      if (this.stagingOption !== undefined) {
+        const dir = resolve(this.stagingOption);
         await mkdir(dir, { recursive: true, mode: 0o700 });
         return dir;
       }
       const dir = await mkdtemp(join(tmpdir(), "agent-tools-"));
-      this.#ownsStaging = true;
+      this.ownsStaging = true;
       return dir;
     })().catch((err: unknown) => {
-      this.#staging = undefined;
+      this.staging = undefined;
       throw err;
     });
-    return this.#staging;
+    return this.staging;
   }
 
-  #ensureOpen(): void {
-    if (this.#closed) throw new Error("AgentTools: the helper is closed");
+  private ensureOpen(): void {
+    if (this.closed) throw new Error("AgentTools: the helper is closed");
   }
 }
 
@@ -1043,7 +1059,7 @@ class Call {
   state: AgentCallState = "running";
   /** When it last became ready (a question, or its finish), for `wait_agent`'s order. */
   seq = 0;
-  readonly startedAt = new Date();
+  readonly startedAt: Date;
   endedAt: Date | undefined;
   text = "";
   readonly replyFiles: ReturnedFile[] = [];
@@ -1052,7 +1068,7 @@ class Call {
   error: string | undefined;
   replyFields: Fields = {};
   savedBytes = 0;
-  readonly #waiters = new Set<() => void>();
+  private readonly waiters = new Set<() => void>();
 
   constructor(
     readonly id: string,
@@ -1065,7 +1081,9 @@ class Call {
     /** Fields a prompt rewrite added. */
     readonly fields: Fields,
     readonly stream: PromptStream,
-  ) {}
+  ) {
+    this.startedAt = new Date();
+  }
 
   get open(): boolean {
     return this.state === "running" || this.state === "input_required";
@@ -1073,21 +1091,21 @@ class Call {
 
   /** Whether a tool call waits for this call right now. */
   get awaited(): boolean {
-    return this.#waiters.size > 0;
+    return this.waiters.size > 0;
   }
 
   watch(waiter: () => void): void {
-    this.#waiters.add(waiter);
+    this.waiters.add(waiter);
   }
 
   unwatch(waiter: () => void): void {
-    this.#waiters.delete(waiter);
+    this.waiters.delete(waiter);
   }
 
   /** Wake every tool call waiting for this call. */
   notify(): void {
-    const waiters = [...this.#waiters];
-    this.#waiters.clear();
+    const waiters = [...this.waiters];
+    this.waiters.clear();
     for (const waiter of waiters) waiter();
   }
 }
