@@ -81,6 +81,7 @@ Both error types extend `ValidationError` → `NatsAgentError`. See [Error handl
 | `saveAttachments(msg.attachments, dir, { maxTotalBytes? })`                                                        | Save a reply's files to disk: safe names, never overwrites; returns the absolute paths.  |
 | `agents.liveness(id)` / `onHeartbeat(id, cb)` / `ping(id)`                                                         | Heartbeat tracking and on-demand ping.                                                   |
 | `agent.status({ subject?, sub?, timeoutMs? })`                                                                     | §8.7 status probe; returns the agent's heartbeat payload.                                |
+| `new AgentTools({ agents, ... })`                                                                                  | The agent tools a model calls to discover and prompt other agents — see below.           |
 | `agents.close()`                                                                                                   | Tear down SDK state; aborts all in-flight streams.                                       |
 | `loadContextOptions(name)` / `parseNatsUrl(url)`                                                                   | Bridge `nats` CLI context files / URLs into `NodeConnectionOptions` for `connect()`.     |
 | `resolveNatsConnectionBundle(source, { identity })`                                                                | Resolve connection auth and an optional signer from one immutable credential snapshot.   |
@@ -212,6 +213,42 @@ await agent.prompt("hi", { context: { requestId: "r-1" } });
 - `fields` are written as top-level envelope fields next to the protocol's (§5.6 obliges receivers to tolerate them); a host reads them back from `RequestEnvelope.extras`. `prompt`, `attachments` and the `Agent-Sender` header are refused.
 - `ctx.identity.publishSigned(subject, payload, { nonce })` signs with the prompting client's identity; pass `nonce` when the body carries its own id, and it is the header's nonce and the `Nats-Msg-Id` too (also on `agents.publishSigned`).
 - Without interceptors nothing changes on the wire.
+
+### Agent tools
+
+`AgentTools` gives a model six tools to discover and prompt other agents: `discover_agents`, `prompt_agent`, `wait_agent`, `answer_agent`, `cancel_agent` and `list_agent_calls`. The contract — parameters, results, states, rules and limits — is [`docs/agent-tools.md`](../../docs/agent-tools.md); the definitions are in [`test-fixtures/agent-tools/`](../../test-fixtures/agent-tools/). Nothing changes on the wire.
+
+```ts
+import { Agents, AgentTools } from "@synadia-ai/agents";
+import { AgentService } from "@synadia-ai/agent-service";
+
+const tools = new AgentTools({ agents: new Agents({ nc, identity: { signer } }) });
+
+// On a host, a call belongs to the prompt being served: it ends with it.
+const service = new AgentService({
+  nc,
+  agent: "researcher",
+  owner: "acme",
+  name: "r1",
+  interceptors: [tools.requestInterceptor],
+});
+
+// Show the model the tools, in your model API's format …
+const modelTools = tools.definitions.map((d) => ({
+  type: "function",
+  function: { name: d.name, description: d.description, parameters: d.parameters },
+}));
+
+// … and run each tool call it makes; the result goes back as JSON text.
+const result = await tools.execute(toolCall.name, toolCall.arguments, { toolCallId: toolCall.id });
+const content = JSON.stringify(result);
+```
+
+- `prompt_agent` waits for the reply by default; `wait: false` returns a `call_id` at once and the model collects the result with `wait_agent`. A question the prompted agent asks goes to the model, which answers it with `answer_agent`.
+- A call started while a prompt is served belongs to it: still open when that prompt ends, it is cancelled and its open question refused. A host that serves prompts without `AgentService` wraps each in `tools.runInPromptScope(fn, { caller })`. Outside a served prompt, `onSettled` reports each call that finishes.
+- Limits are configuration: `maxWaitMs` (10 minutes), `maxWaitAgentMs`, `maxCalls` (256), `attachmentRoots`, `stagingDir`, `maxSavedBytesPerCall`. `selfAddress` is left out of discovery and refused.
+- The model's tool-call ID reaches every prompt interceptor as `ctx.context.toolCallId`. `extensions` add discovery fields, rewrite a prompt before it is sent, and look at a reply.
+- `await tools.close()` cancels open calls and removes the staging directory it created.
 
 Subpath exports:
 
