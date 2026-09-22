@@ -64,9 +64,10 @@ A blocking `prompt_agent` keeps the fields a blocking call has always had:
 
 **A refusal** is `{"error": "..."}` alone, without `call_id` or `state`: the
 tool did nothing. Nothing was sent and no call changed. Refusals cover bad
-arguments, an unknown address, an unknown `call_id`, a loop (section 3.8), a
-file outside the allowed roots (section 3.9), a prompt the SDK refuses before sending
-(too large for the target, attachments to an agent that takes none), and the
+arguments, a tool the helper does not offer (section 5), an unknown
+address, an unknown `call_id`, a loop (section 3.8), a file outside the
+allowed roots (section 3.9), a prompt the SDK refuses before sending (too
+large for the target, attachments to an agent that takes none), and the
 limit on tracked calls (section 5).
 
 **Open calls.** While calls in the current scope are open, every result of
@@ -91,7 +92,8 @@ says they end with that prompt, so the model collects them before it answers.
 prompt, reply — stays one call, and a model that never passes `wait` gets
 exactly the blocking behaviour. `wait: false` is for running several prompts
 at once: the model starts them, keeps working, and collects each result
-with `wait_agent`.
+with `wait_agent`. A host that offers no `wait_agent` makes blocking the only
+mode (section 5).
 
 ### 3.2 Questions go to the model
 
@@ -274,6 +276,7 @@ Limits are configuration, never parameters, except `wait_agent`'s
 | Setting | TypeScript | Python | Default |
 | --- | --- | --- | --- |
 | The caller-side client | `agents` | `agents` | required |
+| The tools offered | `tools` | `tools` | all six |
 | The agent's own address, left out of discovery and refused | `selfAddress` | `self_address` | none |
 | How long one discovery waits | `discoverTimeoutMs` | `discover_timeout` (s) | the SDK's discovery default |
 | The runtime limit per call; past it the call is `expired` | `maxWaitMs` | `max_wait_s` | 10 minutes, the SDK's default |
@@ -289,6 +292,30 @@ Roots given replace the default. A host that names roots and still wants
 the model to send returned files on sets the staging directory and names it
 too.
 
+**Offering fewer tools.** Every definition a model is shown costs input
+tokens on every model call: about 1.5k for all six, a little over half that
+for three. An agent that does not need to run calls at once offers
+`discover_agents`, `prompt_agent` and `answer_agent`. The helper shows only
+the definitions of the tools it offers, in the order of section 1, and
+refuses any other tool in words.
+
+- **Without `wait_agent` nothing can be detached**, or the model could start
+  a call it cannot collect. `prompt_agent` and `answer_agent` have no `wait`
+  parameter, and a `wait: false` that arrives anyway is refused.
+- **The definitions are derived, never rewritten:** the same definitions
+  without their `wait` parameter, and the same descriptions, except that a
+  description that mentions `wait_agent` is replaced by its blocking-only
+  words in [`test-fixtures/agent-tools/blocking.json`](../test-fixtures/agent-tools/blocking.json).
+- **A set that makes no sense is refused** when the helper is made: no tool
+  at all, or `answer_agent`, `wait_agent`, `cancel_agent` or
+  `list_agent_calls` without `prompt_agent`, which starts the calls they
+  work on.
+- **A result points the model only to tools offered.** The note on open
+  calls (section 2) and a refusal's advice (list your calls, discover the
+  current agents, collect or stop some calls) name a tool only when the
+  helper offers it. Without `wait_agent`, the note tells the model to answer
+  the calls' questions with `answer_agent` rather than to collect them.
+
 Whether the tools are offered at all is the host's choice: a role that must
 never delegate is offered none.
 
@@ -296,15 +323,19 @@ never delegate is offered none.
 
 ### 6.1 Definitions and execution
 
-The helper offers the six definitions and executes a tool call by name. Each
-host maps the definitions to its own tool format and hands the result, as
-JSON text, back to the model.
+The helper holds the definitions of its tools, all six unless `tools` names
+fewer (section 5), and executes a tool call by name. Each host maps the
+definitions to its own tool format and hands the result, as JSON text, back
+to the model.
 
 - TypeScript: `tools.definitions`; `await tools.execute(name, args, { toolCallId, signal })`.
   `args` is an object or the JSON text a model produced. `signal` aborts a
   blocking call (section 3.10).
 - Python: `tools.definitions`; `await tools.execute(name, args, tool_call_id=...)`.
   Cancelling the task that runs a blocking call cancels the call.
+- Fewer tools: `new AgentTools({ agents, tools: ["discover_agents", "prompt_agent", "answer_agent"] })`
+  in TypeScript, `AgentTools(agents, tools=["discover_agents", "prompt_agent", "answer_agent"])`
+  in Python.
 
 ### 6.2 The scope
 
