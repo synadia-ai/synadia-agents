@@ -278,8 +278,11 @@ class AgentTools:
           default; ``None`` means ``max_wait_s``.
         - ``max_calls``: calls tracked per scope.
         - ``attachment_roots``: the directories files may be sent from, checked after
-          links are followed; ``None`` means the working directory at construction
-          and the staging directory.
+          links are followed; a relative path is taken from the working directory
+          at construction. ``None`` means the staging directory alone, so a
+          returned file can be sent on and nothing else can. A list given here
+          replaces it: name the working directory, say, to allow its files, and
+          to keep sending returned files on, set ``staging_dir`` and name it too.
         - ``staging_dir``: where returned files are saved, one directory per call;
           ``None`` means a new private directory under the system's temporary
           directory, removed by :meth:`aclose`. A directory given here is kept.
@@ -616,7 +619,7 @@ class AgentTools:
         configured = (
             self._attachment_roots
             if self._attachment_roots is not None
-            else [self._cwd, await self._staging_dir()]
+            else [await self._staging_dir()]
         )
         roots = [Path(os.path.realpath(r)) for r in configured]
         out: list[str] = []

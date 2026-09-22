@@ -247,6 +247,7 @@ const content = JSON.stringify(result);
 - `prompt_agent` waits for the reply by default; `wait: false` returns a `call_id` at once and the model collects the result with `wait_agent`. A question the prompted agent asks goes to the model, which answers it with `answer_agent`.
 - A call started while a prompt is served belongs to it: still open when that prompt ends, it is cancelled and its open question refused. A host that serves prompts without `AgentService` wraps each in `tools.runInPromptScope(fn, { caller })`. Outside a served prompt, `onSettled` reports each call that finishes.
 - Limits are configuration: `maxWaitMs` (10 minutes), `maxWaitAgentMs`, `maxCalls` (256), `attachmentRoots`, `stagingDir`, `maxSavedBytesPerCall`. `selfAddress` is left out of discovery and refused.
+- Files are sent only from under `attachmentRoots`. The default is the staging directory alone, where returned files are saved, so the model can send one on and nothing else: the working directory may hold a `.env`. A host that wants the working directory, a coding agent's project say, names it.
 - The model's tool-call ID reaches every prompt interceptor as `ctx.context.toolCallId`. `extensions` add discovery fields, rewrite a prompt before it is sent, and look at a reply.
 - `await tools.close()` cancels open calls and removes the staging directory it created.
 

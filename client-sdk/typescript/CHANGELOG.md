@@ -45,7 +45,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     `wait_agent`'s `timeout_ms`, `maxCalls` per scope (256; finished calls
     are dropped, the one that finished longest ago first), the roots files
     may be sent from, the staging directory where returned files are saved
-    with `saveAttachments`, one directory per call.
+    with `saveAttachments`, one directory per call. The only default root
+    is the staging directory, so a returned file can be sent on and the
+    working directory, which may hold a `.env`, cannot; a host that wants
+    it names it in `attachmentRoots`.
   - Loop guards: the agent's own address, and the agent whose signed
     prompt is being served. Errors come back as results, in words.
   - The model's tool-call ID reaches every prompt interceptor as

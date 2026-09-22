@@ -954,6 +954,32 @@ async def test_files_are_sent_only_from_under_the_configured_roots(
         assert words in refused["error"]
 
 
+async def test_by_default_nothing_is_sent_from_the_working_directory_a_root_naming_it_is(
+    world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / ".env").write_text("TOKEN=secret")
+    # The helper takes the working directory at construction.
+    with monkeypatch.context() as patch:
+        patch.chdir(work)
+        by_default = world.tools()
+        named = world.tools(attachment_roots=[work])
+    address = world.worker_address
+    for path in [".env", str(work / ".env")]:
+        refused = await by_default.execute(
+            "prompt_agent", {"address": address, "prompt": "attach:", "attachments": [path]}
+        )
+        conforms(refused)
+        assert "outside the directories you may send files from" in refused["error"]
+    sent = call(
+        await named.execute(
+            "prompt_agent", {"address": address, "prompt": "attach:", "attachments": [".env"]}
+        )
+    )
+    assert sent["reply"] == "got:.env=TOKEN=secret"
+
+
 async def test_returned_files_are_saved_one_directory_per_call(
     world: World, tmp_path: Path
 ) -> None:
@@ -999,7 +1025,7 @@ async def test_a_questions_files_are_saved_and_can_be_sent_on_from_staging(
         await tools.execute("answer_agent", {"call_id": asked["call_id"], "answer": "seen"})
     )
     assert done["reply"] == "answered:seen"
-    # The staging directory is a default root.
+    # The staging directory is the default root.
     forwarded = call(
         await tools.execute(
             "prompt_agent",

@@ -956,6 +956,40 @@ describe.skipIf(!bin)("agent tools", () => {
       }
     });
 
+    it("by default sends nothing from the working directory; a root that names it does", async () => {
+      const work = join(dir, "work");
+      await mkdir(work);
+      await writeFile(join(work, ".env"), "TOKEN=secret");
+      // The helper takes the working directory at construction.
+      const before = process.cwd();
+      process.chdir(work);
+      let byDefault: AgentTools;
+      let named: AgentTools;
+      try {
+        byDefault = tools();
+        named = tools({ attachmentRoots: [work] });
+      } finally {
+        process.chdir(before);
+      }
+      for (const path of [".env", join(work, ".env")]) {
+        const refused = await byDefault.execute("prompt_agent", {
+          address: workerAddress,
+          prompt: "attach:",
+          attachments: [path],
+        });
+        conforms(refused);
+        expect(refused["error"]).toMatch(/outside the directories you may send files from/);
+      }
+      const sent = call(
+        await named.execute("prompt_agent", {
+          address: workerAddress,
+          prompt: "attach:",
+          attachments: [".env"],
+        }),
+      );
+      expect(sent.reply).toBe("got:.env=TOKEN=secret");
+    });
+
     it("saves returned files, one directory per call, and lists each", async () => {
       const staging = join(dir, "staging");
       const t = tools({ stagingDir: staging });
@@ -997,7 +1031,7 @@ describe.skipIf(!bin)("agent tools", () => {
       expect(
         call(await t.execute("answer_agent", { call_id: asked.call_id, answer: "seen" })).reply,
       ).toBe("answered:seen");
-      // The staging directory is a default root.
+      // The staging directory is the default root.
       const forwarded = call(
         await t.execute("prompt_agent", {
           address: workerAddress,

@@ -238,8 +238,11 @@ export interface AgentToolsOptions {
   readonly maxCalls?: number;
   /**
    * The directories files may be sent from; a path is checked after its
-   * links are followed. Default: the working directory at construction and
-   * the staging directory.
+   * links are followed, and a relative one is taken from the working
+   * directory at construction. Default: the staging directory alone, so a
+   * returned file can be sent on and nothing else can. A list given here
+   * replaces it: name the working directory, say, to allow its files, and
+   * to keep sending returned files on, set `stagingDir` and name it too.
    */
   readonly attachmentRoots?: ReadonlyArray<string>;
   /**
@@ -645,7 +648,7 @@ export class AgentTools {
   private async resolveAttachments(paths: ReadonlyArray<string>): Promise<string[] | ArgsError> {
     if (paths.length === 0) return [];
     const roots = await Promise.all(
-      (this.attachmentRoots ?? [this.cwd, await this.stagingDir()]).map((root) =>
+      (this.attachmentRoots ?? [await this.stagingDir()]).map((root) =>
         realpath(resolve(root)).catch(() => resolve(root)),
       ),
     );

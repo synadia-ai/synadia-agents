@@ -44,7 +44,10 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
     `max_calls` per scope (256; finished calls are dropped, the one that
     finished longest ago first), the roots files may be sent from, the
     staging directory where returned files are saved with
-    `save_attachments`, one directory per call.
+    `save_attachments`, one directory per call. The only default root is
+    the staging directory, so a returned file can be sent on and the
+    working directory, which may hold a `.env`, cannot; a host that wants
+    it names it in `attachment_roots`.
   - Loop guards: the agent's own address, and the agent whose signed
     prompt is being served. Errors come back as results, in words.
   - The model's tool-call ID reaches every prompt interceptor as
