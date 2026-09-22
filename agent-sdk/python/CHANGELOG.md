@@ -10,6 +10,18 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
+- **`max_concurrent_prompts`: an addition that changes nothing by
+  default.** `AgentService(max_concurrent_prompts=N)` serves up to N
+  prompts at once on one instance. The default, 1, keeps the existing
+  service on the existing code path: the prompt endpoint awaits the
+  handler for each request in turn. Above 1, the endpoint waits for a free
+  slot, starts the request in an `asyncio` task of its own (with its own
+  `contextvars` copy), and takes the next; with every slot busy, the next
+  request waits in the subscription. Anything but an `int` of at least 1
+  raises `ValueError`. `stop()` cancels the prompts in flight in both
+  modes, and above 1 also waits for their tasks. The prompt endpoint's
+  `$SRV.STATS` time each prompt as at 1. Nothing changes on the wire. The
+  TypeScript host already serves prompts concurrently.
 - **Request interceptors.** `AgentService(interceptors=[...])`: each
   `RequestInterceptor`'s `async around_request(ctx, call_next)` runs around
   the prompt handler for every admitted request — after the envelope is
