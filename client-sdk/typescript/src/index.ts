@@ -254,6 +254,32 @@ export {
 export { type IdentityOptions } from "./identity/context.js";
 export { base64UrlDecode, base64UrlEncode, sha256, sha256Hex } from "./identity/crypto.js";
 
+// The agent tools (docs/agent-tools.md): discover, prompt, wait, answer,
+// cancel and list other agents, as tools a model calls.
+export {
+  AGENT_TOOLS_QUESTION_REFUSAL,
+  AgentTools,
+  DEFAULT_AGENT_TOOLS_MAX_CALLS,
+  type AgentCallResult,
+  type AgentCallState,
+  type AgentToolCallOptions,
+  type AgentToolResult,
+  type AgentToolsExtension,
+  type AgentToolsOptions,
+  type AgentToolsPromptContext,
+  type AgentToolsPromptRewrite,
+  type AgentToolsReplyContext,
+  type AgentToolsRequestInterceptor,
+  type PromptScopeOptions,
+  type ReturnedFile,
+  type SettledInfo,
+} from "./tools/agent-tools.js";
+export {
+  agentToolDefinitions,
+  type AgentToolDefinition,
+  type AgentToolName,
+} from "./tools/definitions.js";
+
 // Logging
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";
 
