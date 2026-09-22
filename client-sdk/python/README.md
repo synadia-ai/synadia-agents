@@ -329,12 +329,14 @@ content = json.dumps(result)
   question the prompted agent asks goes to the model, which answers it
   with `answer_agent`.
 - `tools=` offers fewer than the six. Each definition costs input tokens
-  on every model call, about 1.5k for all six, so an agent that needs no
-  async calls offers three: `AgentTools(agents, tools=BLOCKING_AGENT_TOOLS)`,
-  which are `discover_agents`, `prompt_agent` and `answer_agent`.
-  `AGENT_TOOL_NAMES` names all six. Without `wait_agent` nothing is detached: `prompt_agent` and
-  `answer_agent` lose their `wait` parameter, and their descriptions read
-  blocking-only words.
+  on every model call: as an estimate that varies with the model and its
+  tokenizer, roughly 2k for all six and a little over 1k for three. So an
+  agent that needs no async calls offers three:
+  `AgentTools(agents, tools=BLOCKING_AGENT_TOOLS)`, which are
+  `discover_agents`, `prompt_agent` and `answer_agent`. `AGENT_TOOL_NAMES`
+  names all six. Without `wait_agent` nothing is detached: `prompt_agent`
+  and `answer_agent` lose their `wait` parameter, and their descriptions
+  read blocking-only words.
 - A call started while a prompt is served belongs to it: still open when
   that prompt ends, it is cancelled and its open question refused. A host
   that serves prompts without `AgentService` wraps each in
