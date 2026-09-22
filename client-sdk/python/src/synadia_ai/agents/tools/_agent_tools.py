@@ -190,8 +190,9 @@ def _offered_tools(tools: Sequence[str] | None) -> frozenset[str]:
     """The tools offered, checked.
 
     A set that makes no sense is a misconfiguration and raises: a name not of
-    the six, no tool at all, or a tool that works on calls without
-    ``prompt_agent``, which starts them.
+    the six, no tool at all, a tool that works on calls without
+    ``prompt_agent``, which starts them, or ``prompt_agent`` without
+    ``answer_agent``, which answers their questions.
     """
     if tools is None:
         return frozenset(_TOOL_NAMES)
@@ -208,6 +209,12 @@ def _offered_tools(tools: Sequence[str] | None) -> frozenset[str]:
         them = "it works on" if len(orphans) == 1 else "they work on"
         raise ValueError(
             f"tools offers {', '.join(orphans)} without prompt_agent, which starts the calls {them}"
+        )
+    if "prompt_agent" in offered and "answer_agent" not in offered:
+        raise ValueError(
+            "tools offers prompt_agent without answer_agent, so a question the prompted agent "
+            "asks would reach a model with no way to answer it, and the asking agent would wait "
+            "out its timeout"
         )
     return offered
 
@@ -334,10 +341,11 @@ class AgentTools:
           :meth:`execute` refuses any other. Without ``wait_agent`` nothing can be
           detached: ``prompt_agent`` and ``answer_agent`` lose their ``wait``
           parameter and refuse ``wait: false``. Every tool but ``discover_agents``
-          needs ``prompt_agent``, which starts the calls they work on. Each
-          definition costs input tokens on every model call, so an agent that
-          needs no async calls offers ``discover_agents``, ``prompt_agent`` and
-          ``answer_agent``.
+          needs ``prompt_agent``, which starts the calls they work on, and
+          ``prompt_agent`` needs ``answer_agent``, or a question the prompted
+          agent asks could not be answered. Each definition costs input tokens
+          on every model call, so an agent that needs no async calls offers
+          ``discover_agents``, ``prompt_agent`` and ``answer_agent``.
         - ``self_address``: the agent's own address, left out of discovery and refused.
         - ``discover_timeout``: how long one discovery waits, in seconds; ``None``
           uses the SDK's discovery default.

@@ -91,10 +91,25 @@ def _derived(offered: list[str]) -> list[dict[str, Any]]:
 
 
 def _sensible(tools: list[str]) -> bool:
-    """A subset makes sense when it has a tool, and prompt_agent for any that works on calls."""
-    return bool(tools) and (
-        "prompt_agent" in tools or all(name == "discover_agents" for name in tools)
-    )
+    """Whether a subset makes sense.
+
+    It has a tool, prompt_agent for any that works on calls, and answer_agent
+    with prompt_agent.
+    """
+    if not tools:
+        return False
+    if "prompt_agent" in tools:
+        return "answer_agent" in tools
+    return all(name == "discover_agents" for name in tools)
+
+
+def _refusal(tools: list[str]) -> str:
+    """Why a subset that makes no sense is refused."""
+    if not tools:
+        return "names no tool"
+    if "prompt_agent" in tools:
+        return "prompt_agent without answer_agent, so a question .* would wait out its timeout"
+    return "without prompt_agent"
 
 
 def test_the_definitions_equal_the_shared_fixtures_in_the_contracts_order() -> None:
@@ -226,12 +241,11 @@ def test_the_tools_keep_the_contracts_order_and_drop_repeats() -> None:
 
 
 def test_a_subset_that_makes_no_sense_is_refused_at_construction() -> None:
-    for tools in SUBSETS:
-        if _sensible(tools):
-            continue
-        words = "names no tool" if not tools else "without prompt_agent"
-        with pytest.raises(ValueError, match=words):
+    refused = [tools for tools in SUBSETS if not _sensible(tools)]
+    for tools in refused:
+        with pytest.raises(ValueError, match=_refusal(tools)):
             AgentTools(AGENTS, tools=tools)
+    assert len([tools for tools in refused if "prompt_agent" in tools]) == 16
     with pytest.raises(ValueError, match="'ask_agent', which is not one of"):
         AgentTools(AGENTS, tools=["prompt_agent", "ask_agent"])
     with pytest.raises(ValueError, match="a list of tool names"):

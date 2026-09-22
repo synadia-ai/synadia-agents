@@ -71,12 +71,23 @@ const SUBSETS: AgentToolName[][] = Array.from({ length: 2 ** NAMES.length }, (_,
   NAMES.filter((_name, i) => (mask & (2 ** i)) !== 0),
 );
 
-/** A subset makes sense when it has a tool, and prompt_agent for any that works on calls. */
+/**
+ * A subset makes sense when it has a tool, prompt_agent for any that works
+ * on calls, and answer_agent with prompt_agent.
+ */
 function sensible(tools: ReadonlyArray<AgentToolName>): boolean {
-  return (
-    tools.length > 0 &&
-    (tools.includes("prompt_agent") || tools.every((name) => name === "discover_agents"))
-  );
+  if (tools.length === 0) return false;
+  return tools.includes("prompt_agent")
+    ? tools.includes("answer_agent")
+    : tools.every((name) => name === "discover_agents");
+}
+
+/** Why a subset that makes no sense is refused. */
+function refusal(tools: ReadonlyArray<AgentToolName>): RegExp {
+  if (tools.length === 0) return /names no tool/;
+  return tools.includes("prompt_agent")
+    ? /prompt_agent without answer_agent, so a question .* would wait out its timeout/
+    : /without prompt_agent/;
 }
 
 const BLOCKING_THREE: AgentToolName[] = ["discover_agents", "prompt_agent", "answer_agent"];
@@ -207,11 +218,11 @@ describe("the tools a helper offers", () => {
   });
 
   it("refuse a subset that makes no sense, at construction", () => {
-    for (const tools of SUBSETS.filter((subset) => !sensible(subset))) {
-      expect(() => new AgentTools({ agents, tools }), tools.join(",")).toThrow(
-        tools.length === 0 ? /names no tool/ : /without prompt_agent/,
-      );
+    const refused = SUBSETS.filter((subset) => !sensible(subset));
+    for (const tools of refused) {
+      expect(() => new AgentTools({ agents, tools }), tools.join(",")).toThrow(refusal(tools));
     }
+    expect(refused.filter((tools) => tools.includes("prompt_agent"))).toHaveLength(16);
     expect(
       () => new AgentTools({ agents, tools: ["prompt_agent", "ask_agent" as AgentToolName] }),
     ).toThrow(/"ask_agent", which is not one of/);

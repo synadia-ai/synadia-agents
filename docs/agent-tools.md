@@ -307,10 +307,14 @@ refuses any other tool in words.
   without their `wait` parameter, and the same descriptions, except that a
   description that mentions `wait_agent` is replaced by its blocking-only
   words in [`test-fixtures/agent-tools/blocking.json`](../test-fixtures/agent-tools/blocking.json).
-- **A set that makes no sense is refused** when the helper is made: no tool
-  at all, or `answer_agent`, `wait_agent`, `cancel_agent` or
-  `list_agent_calls` without `prompt_agent`, which starts the calls they
-  work on.
+- **A set that makes no sense is refused** when the helper is made, with
+  the reason in the error:
+  - no tool at all;
+  - `answer_agent`, `wait_agent`, `cancel_agent` or `list_agent_calls`
+    without `prompt_agent`, which starts the calls they work on;
+  - `prompt_agent` without `answer_agent`: a question the prompted agent
+    asks would reach a model with no way to answer it, and the asking agent
+    would wait out its timeout.
 - **A result points the model only to tools offered.** The note on open
   calls (section 2) and a refusal's advice (list your calls, discover the
   current agents, collect or stop some calls) name a tool only when the
