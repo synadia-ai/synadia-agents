@@ -15,6 +15,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **The agent tools: `AgentTools`.** The tools an agent gives its model to
+  discover and prompt other agents — `discover_agents`, `prompt_agent`,
+  `wait_agent`, `answer_agent`, `cancel_agent`, `list_agent_calls` — as one
+  helper, to the contract in
+  [`docs/agent-tools.md`](../../docs/agent-tools.md). `tools.definitions`
+  (and `agentToolDefinitions()`) are the six definitions, a copy of
+  `test-fixtures/agent-tools/`; `await tools.execute(name, args,
+{ toolCallId, signal })` runs one call and returns the JSON result.
+  - `prompt_agent` blocks by default and returns the reply, a question with
+    its `call_id`, or an error, now with `state`; `wait: false` returns at
+    once and the call keeps reading its stream in the background.
+    `wait_agent` returns the earliest call that finished or asked, with
+    `remaining`; `answer_agent` answers a question and goes on in the
+    call's mode; `cancel_agent` refuses open questions and drops the
+    stream. States: `running`, `input_required`, `completed`, `failed`,
+    `cancelled`, `expired`. A call that fails or expires refuses its open
+    questions too, so the asking agent does not wait out its own timeout.
+  - A call belongs to the prompt being served: pass
+    `tools.requestInterceptor` in `new AgentService({ interceptors })` —
+    structurally a `RequestInterceptor`, so this package still does not
+    depend on `@synadia-ai/agent-service` — or wrap a handler in
+    `tools.runInPromptScope(fn, { caller })`. When the prompt ends, its open
+    calls are cancelled and their questions refused
+    (`AGENT_TOOLS_QUESTION_REFUSAL`); while calls are open, every result
+    carries `open_calls` and `open_calls_note`. Outside a served prompt,
+    `onSettled(result, { awaited })` reports each call that finishes.
+  - Configuration, never parameters: `maxWaitMs` (10 minutes), the cap on
+    `wait_agent`'s `timeout_ms`, `maxCalls` per scope (256; finished calls
+    are dropped, the one that finished longest ago first), the roots files
+    may be sent from, the staging directory where returned files are saved
+    with `saveAttachments`, one directory per call.
+  - Loop guards: the agent's own address, and the agent whose signed
+    prompt is being served. Errors come back as results, in words.
+  - The model's tool-call ID reaches every prompt interceptor as
+    `ctx.context.toolCallId`. Extensions add discovery fields, rewrite a
+    prompt before it is sent, and look at a reply. One that sets a field the
+    contract defines is a bug: the discovery and prompt hooks throw; a reply
+    look fails the call and logs an error through `logger`.
+
+  Nothing changes on the wire, and the protocol version stays `0.3`.
+
 - **Prompt interceptors.** `new Agents({ nc, interceptors: [...] })` — every
   `Agent` it hands out inherits them; `new Agent(...)` takes them (and the
   client's `logger`) as its last arguments. A `PromptInterceptor` runs at

@@ -97,6 +97,7 @@ asyncio.run(main())
 | `Agents.self_id()`, `Agents.sign_sender` / `publish_signed` / `request_signed`, `Agents.resolve_sender` | [`agents.py`](src/synadia_ai/agents/agents.py) | The connection's own agent ID; signed publishes for any subject; the reverse lookup. |
 | `Agent.status()` | [`agent.py`](src/synadia_ai/agents/agent.py) | The §8.7 status probe (header attached) → `HeartbeatPayload`. |
 | `save_attachments` | [`attachments.py`](src/synadia_ai/agents/attachments.py) | Save a reply's attachments to disk under safe, never-overwriting names; returns the absolute paths. |
+| `AgentTools` | [`tools/`](src/synadia_ai/agents/tools/) | The agent tools a model calls to discover and prompt other agents — see below. |
 | `AgentId`, `verify_sender_header`, `parse_sender_header`, `format_sender` | [`identity/`](src/synadia_ai/agents/identity/) | The shared identity codec (also used by the host package). |
 | `AgentService` | [`synadia-ai-agent-service`](../../agent-sdk/python/) | Server-side; ships in a separate distribution. Import from `synadia_ai.agent_service`. |
 
@@ -287,6 +288,62 @@ async for msg in agent.prompt("do the thing"):
 Server-side, the handler asks via `stream.ask(...)` — see
 [`synadia-ai-agent-service`](../../agent-sdk/python/) for the host-side
 API.
+
+## Agent tools
+
+`AgentTools` gives a model six tools to discover and prompt other agents:
+`discover_agents`, `prompt_agent`, `wait_agent`, `answer_agent`,
+`cancel_agent` and `list_agent_calls`. The contract — parameters, results,
+states, rules and limits — is [`docs/agent-tools.md`](../../docs/agent-tools.md);
+the definitions are in [`test-fixtures/agent-tools/`](../../test-fixtures/agent-tools/).
+Nothing changes on the wire.
+
+```python
+import json
+
+from synadia_ai.agents import Agents, AgentTools, Identity
+from synadia_ai.agent_service import AgentService
+
+tools = AgentTools(Agents(nc=nc, identity=Identity(signer=signer)))
+
+# On a host, a call belongs to the prompt being served: it ends with it.
+service = AgentService(
+    nc=nc, agent="researcher", owner="acme", session_name="r1",
+    interceptors=[tools.request_interceptor],
+)
+
+# Show the model the tools, in your model API's format ...
+model_tools = [
+    {"type": "function", "function": {"name": d["name"], "description": d["description"],
+                                      "parameters": d["parameters"]}}
+    for d in tools.definitions
+]
+
+# ... and run each tool call it makes; the result goes back as JSON text.
+result = await tools.execute(call.name, call.arguments, tool_call_id=call.id)
+content = json.dumps(result)
+```
+
+- `prompt_agent` waits for the reply by default; `wait: false` returns a
+  `call_id` at once and the model collects the result with `wait_agent`. A
+  question the prompted agent asks goes to the model, which answers it
+  with `answer_agent`.
+- A call started while a prompt is served belongs to it: still open when
+  that prompt ends, it is cancelled and its open question refused. A host
+  that serves prompts without `AgentService` wraps each in
+  `async with tools.prompt_scope(caller=...)`. Outside a served prompt,
+  `on_settled` reports each call that finishes.
+- Limits are configuration: `max_wait_s` (10 minutes), `max_wait_agent_s`,
+  `max_calls` (256), `attachment_roots`, `staging_dir`,
+  `max_saved_bytes_per_call`. `self_address` is left out of discovery and
+  refused.
+- The model's tool-call ID reaches every prompt interceptor as
+  `ctx.context["tool_call_id"]`. `extensions` (subclasses of
+  `AgentToolsExtension`) add discovery fields, rewrite a prompt before it
+  is sent, and look at a reply. Cancelling the task that runs a blocking
+  call cancels the call.
+- `await tools.aclose()` (or `async with AgentTools(...)`) cancels open
+  calls and removes the staging directory it created.
 
 ## Try the examples
 

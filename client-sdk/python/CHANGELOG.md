@@ -10,6 +10,51 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
+- **The agent tools: `AgentTools`.** The tools an agent gives its model to
+  discover and prompt other agents — `discover_agents`, `prompt_agent`,
+  `wait_agent`, `answer_agent`, `cancel_agent`, `list_agent_calls` — as one
+  helper, to the contract in
+  [`docs/agent-tools.md`](../../docs/agent-tools.md), the same as the
+  TypeScript SDK's. `tools.definitions` (and `agent_tool_definitions()`)
+  are the six definitions, embedded as `synadia_ai/agents/tools/definitions.json`,
+  a copy of `test-fixtures/agent-tools/`; `await tools.execute(name, args,
+  tool_call_id=...)` runs one call and returns the JSON result as a dict.
+  - `prompt_agent` blocks by default and returns the reply, a question with
+    its `call_id`, or an error, now with `state`; `wait: false` returns at
+    once and the call keeps reading its stream in a task of its own.
+    `wait_agent` returns the earliest call that finished or asked, with
+    `remaining`; `answer_agent` answers a question and goes on in the
+    call's mode; `cancel_agent` refuses open questions and drops the
+    stream. States: `running`, `input_required`, `completed`, `failed`,
+    `cancelled`, `expired`. A call that fails or expires refuses its open
+    questions too, so the asking agent does not wait out its own timeout.
+  - A call belongs to the prompt being served: pass
+    `tools.request_interceptor` in `AgentService(interceptors=[...])` —
+    structurally a `RequestInterceptor` (`around_request(ctx, call_next)`),
+    so this package still does not depend on `synadia-ai-agent-service` —
+    or serve inside `async with tools.prompt_scope(caller=...)`; the scope
+    rides a `contextvars` variable. When the prompt ends, its open calls are
+    cancelled and their questions refused (`AGENT_TOOLS_QUESTION_REFUSAL`);
+    while calls are open, every result carries `open_calls` and
+    `open_calls_note`. Outside a served prompt,
+    `on_settled(result, SettledInfo(awaited=...))` reports each call that
+    finishes.
+  - Configuration, never parameters: `max_wait_s` (10 minutes),
+    `max_wait_agent_s` (the cap on `wait_agent`'s `timeout_ms`),
+    `max_calls` per scope (256; finished calls are dropped, the one that
+    finished longest ago first), the roots files may be sent from, the
+    staging directory where returned files are saved with
+    `save_attachments`, one directory per call.
+  - Loop guards: the agent's own address, and the agent whose signed
+    prompt is being served. Errors come back as results, in words.
+  - The model's tool-call ID reaches every prompt interceptor as
+    `ctx.context["tool_call_id"]`. `AgentToolsExtension` subclasses add
+    discovery fields, rewrite a prompt before it is sent, and look at a
+    reply. One that sets a field the contract defines is a bug: the
+    discovery and prompt hooks raise; a reply look fails the call and logs
+    an error through `logger`.
+
+  Nothing changes on the wire, and the protocol version stays `0.3`.
 - **Prompt interceptors.** `Agents(nc=nc, interceptors=[...])` — every
   `Agent` it hands out inherits them; `Agent(..., interceptors=...)` takes
   them directly. A `PromptInterceptor` runs at publish time — on the

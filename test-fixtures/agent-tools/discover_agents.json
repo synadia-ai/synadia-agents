@@ -1,0 +1,25 @@
+{
+  "name": "discover_agents",
+  "description": "List the agents you can prompt, one entry per address. Each entry gives the address to use with prompt_agent, the agent's kind, owner and name, what it says it does, its identity and whether that identity is verified, whether it requires signed prompts or accepts attachments, and how many instances answer at the address. The filters are optional, exact and combined; call it without them to see every agent. Call it before prompt_agent when you do not already know an address.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "agent": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Only agents of this kind, exactly as they registered (for example `claude-code`)."
+      },
+      "owner": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Only agents run by this owner, exactly as they registered."
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Only the agent with this instance name."
+      }
+    },
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,154 @@
+[
+  {
+    "name": "discover_agents",
+    "description": "List the agents you can prompt, one entry per address. Each entry gives the address to use with prompt_agent, the agent's kind, owner and name, what it says it does, its identity and whether that identity is verified, whether it requires signed prompts or accepts attachments, and how many instances answer at the address. The filters are optional, exact and combined; call it without them to see every agent. Call it before prompt_agent when you do not already know an address.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Only agents of this kind, exactly as they registered (for example `claude-code`)."
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Only agents run by this owner, exactly as they registered."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Only the agent with this instance name."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "prompt_agent",
+    "description": "Send a prompt to one agent and get its reply. Use an address returned by discover_agents. Keep the prompt self-contained: the other agent sees nothing of your conversation. Do not prompt the agent that prompted you; answer it instead. By default the call waits for the complete reply. If the other agent asks a question while it works, you get the question and a call_id instead: answer it with answer_agent. With wait set to false the call returns at once with a call_id while the other agent works, and you collect the result later with wait_agent; use it to have several agents work at once. Calls you start while you are answering a prompt end with that prompt, so collect their results before you answer. The other agent runs on another machine, so never put a local file path in the prompt: attach the file instead (small files only, and only to an agent that accepts attachments). Files the other agent sends back are saved on this machine, and the result gives each file's path.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "address": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The agent's address, exactly as discover_agents returned it."
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The task for the other agent, complete in itself."
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Optional paths of local files to send with the prompt, only from the directories you may send from, and only to an agent that accepts attachments (see discover_agents). The files travel inside the message, so keep them small."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional short description of this call, for your own lists (list_agent_calls). It is never sent to the other agent."
+        },
+        "wait": {
+          "type": "boolean",
+          "description": "true (the default): wait for the reply or a question. false: return at once with a call_id, and collect the result with wait_agent."
+        }
+      },
+      "required": [
+        "address",
+        "prompt"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "wait_agent",
+    "description": "Wait for calls you started with prompt_agent. Returns the first of the given calls that finished or asked a question (the earliest, if several have), with remaining: the ids of the other given calls that are still open. A finished call's result can be fetched again, the same each time, until the call is dropped from list_agent_calls. If none of the calls is ready within timeout_ms, returns state running with the call_ids still running. A question is answered with answer_agent.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "call_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "description": "The calls to wait for, as prompt_agent returned their call_id."
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How long to wait, in milliseconds; 0 checks without waiting. A longer wait than the configured limit is shortened to it, and the limit is the default."
+        }
+      },
+      "required": [
+        "call_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "answer_agent",
+    "description": "Answer the question an agent asked while working on your call, using the call_id that came with the question. Then, by default, it goes on as the call was started: a call started with wait true waits for the reply or the agent's next question; a call started with wait false returns at once, and you collect the result with wait_agent. A permission question asks you to allow or deny an action the other agent wants to take: allow it only if the task you gave needs it; when unsure, deny. Answer promptly: the asking agent waits only so long, and a question still open when the prompt you are answering ends is refused.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The call_id that came with the question."
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Your answer, in the form the question asks for (for a permission question, `yes` or `no`)."
+        },
+        "wait": {
+          "type": "boolean",
+          "description": "true: wait for the reply or the next question. false: return at once. Defaults to the way the call was started."
+        }
+      },
+      "required": [
+        "call_id",
+        "answer"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cancel_agent",
+    "description": "Stop calls you started. Each open call becomes cancelled, and an open question gets a refusal. The result gives each call's state and the reply text received so far. The other agent is not told and may keep working; whatever it sends later is discarded. A call that already finished keeps its result.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "call_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "description": "The calls to stop, as prompt_agent returned their call_id."
+        }
+      },
+      "required": [
+        "call_ids"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_agent_calls",
+    "description": "List the calls you started that are still tracked, oldest first: each with its call_id, label, address, state and times. Open calls are running, or input_required when a question waits for answer_agent. Finished calls are completed, failed, cancelled or expired; they are dropped, the longest finished first, when the list is full.",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  }
+]
