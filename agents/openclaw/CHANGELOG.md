@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- README: how to load the plugin from a source checkout, which has no `dist/`
+  (build first, or point `plugins.load.paths` at `index.ts`).
 - Optional `senderIdentity: "signed"` mode derives registration identity from
   the same immutable NATS credential snapshot used to connect. The default is
   `off`, so existing identity-free setups do no identity lookup.

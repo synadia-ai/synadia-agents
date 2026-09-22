@@ -324,6 +324,33 @@ The agent subject layout has no per-tenant slot. For real isolation between tena
 - **`400 attachment[N] has unsafe filename`** — send the basename only (`"pic.png"`), not a path (`"./images/pic.png"`).
 - **`plugins.allow is empty` warning** — harmless, plugins still load. To silence it, add `"nats"` (and any other plugins you want enabled) to `plugins.allow`.
 
+### From a source checkout
+
+The published package runs from compiled entries under `dist/`
+(`openclaw.runtimeExtensions` and `openclaw.runtimeSetupEntry` in
+`package.json`). A fresh checkout has no `dist/`, so pointing OpenClaw at the
+plugin *directory* fails to load it. Either build first:
+
+```bash
+cd agents/openclaw && bun install && bun run build   # writes ./dist
+```
+
+or, to iterate without a build step, point `plugins.load.paths` at the
+TypeScript entry and let OpenClaw compile it on load:
+
+```json
+{
+  "plugins": {
+    "allow": ["nats"],
+    "load": { "paths": ["/path/to/synadia-agents/agents/openclaw/index.ts"] },
+    "entries": { "nats": { "enabled": true } }
+  }
+}
+```
+
+Both need the SDK packages built once (`README-DEV.md` at the repo root). The
+`index.ts` route is for local development only; the tarball always ships `dist/`.
+
 ## Development
 
 ```bash
