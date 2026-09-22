@@ -35,7 +35,10 @@ the decoded envelope (its unknown fields in ``extras``), the classified
 sender, the subject and the headers, may refuse the request with a §9
 error before the handler runs, and runs the rest of the request inside a
 context of its own (see :mod:`synadia_ai.agent_service.interceptor`);
-``heartbeat_extras`` adds fields to every heartbeat and status reply.
+``heartbeat_extras`` adds fields to every heartbeat and status reply;
+``extra_endpoints`` registers harness endpoints (see
+:class:`AgentServiceExtraEndpoint`) on the same micro service, after
+``prompt`` and ``status``.
 
 Concurrency: one instance serves one prompt at a time by default.
 ``max_concurrent_prompts`` above 1 serves up to that many at once, each in
@@ -50,7 +53,8 @@ import contextvars
 import functools
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from typing import TYPE_CHECKING, Protocol, cast
@@ -266,6 +270,31 @@ class PromptStream:
                 await sub.unsubscribe()
 
 
+@dataclass(frozen=True, slots=True)
+class AgentServiceExtraEndpoint:
+    """A harness endpoint on the agent's micro service, next to ``prompt`` and ``status``.
+
+    Passed to ``AgentService(extra_endpoints=[...])``, which checks it at
+    construction and registers it in :meth:`AgentService.start`. The
+    handler has nats-py micro's handler shape: it gets each request as a
+    ``nats.micro.Request`` and answers with ``request.respond(...)`` or
+    ``request.respond_error(code, description)``. An exception it raises
+    is answered by nats-py with a ``500`` whose description is the
+    exception's ``repr()``, so a handler catches what it would not send.
+    """
+
+    #: The endpoint name, unique on the service: ``prompt`` and ``status`` are the protocol's.
+    name: str
+    #: The full subject the endpoint listens on, used as given: the service does not prefix it.
+    subject: str
+    #: Called for each request; nats-py awaits it before taking the endpoint's next request.
+    handler: Callable[[Request], Awaitable[None]]
+    #: The queue group; without one, nats-py's default ``"q"``, as in the TypeScript host.
+    queue: str | None = None
+    #: Advertised for the endpoint on ``$SRV.INFO``; keys and values are ``str``.
+    metadata: Mapping[str, str] | None = None
+
+
 class AgentService:
     """A protocol-compliant agent (§12 implementation checklist).
 
@@ -308,6 +337,22 @@ class AgentService:
     under one of them is overwritten, or dropped when the service
     registers no such key, so a harness can neither advertise a subject
     it does not serve nor register a forged identity.
+
+    ``extra_endpoints`` adds harness endpoints (a controller's ``spawn`` /
+    ``stop`` / ``list``, say) to the same micro service; see
+    :class:`AgentServiceExtraEndpoint`. :meth:`start` registers them after
+    ``prompt`` and ``status``, in the order given, each on its subject as
+    given (never prefixed) and with its metadata on ``$SRV.INFO``. One
+    without a ``queue`` gets nats-py's default queue group, ``"q"``, as it
+    does in the TypeScript host, so instances that register the same
+    subject share its requests. The constructor checks the entries, so a
+    bad one fails before anything is registered: a name that is
+    ``prompt``, ``status`` or an earlier entry's raises
+    :class:`ValueError`, as does a name, subject or queue group nats-py
+    would refuse. nats-py awaits an endpoint's handler for each request in
+    turn, and ``max_concurrent_prompts`` governs only the prompt endpoint:
+    a handler that wants to serve requests concurrently starts a task of
+    its own for each. :meth:`stop` removes the endpoints with the service.
 
     Sender identity (extension) — all optional, all additive:
 
@@ -380,6 +425,7 @@ class AgentService:
         attachments_ok: bool = DEFAULT_ATTACHMENTS_OK,
         keepalive_interval_s: float | None = DEFAULT_KEEPALIVE_INTERVAL_S,
         extra_metadata: dict[str, str] | None = None,
+        extra_endpoints: Sequence[AgentServiceExtraEndpoint] = (),
         identity: ServiceIdentity | None = None,
         min_sender_trust: MinSenderTrust = DEFAULT_MIN_SENDER_TRUST,
         replay_window_s: float = DEFAULT_REPLAY_WINDOW_S,
@@ -414,6 +460,9 @@ class AgentService:
         # Validated into a private copy: mutating the caller's dict afterwards
         # can neither bypass the check nor change what start() registers.
         self._extra_metadata = _validate_extra_metadata(extra_metadata)
+        # Checked here rather than in start(), so a bad entry fails before
+        # anything is registered; the configs are copies, like the metadata.
+        self._extra_endpoints = _extra_endpoint_configs(extra_endpoints)
         # Validate max_payload eagerly so misconfiguration fails at construction
         # rather than surfacing later via caller-side validation (§5.4).
         parse_human_bytes(max_payload)
@@ -626,6 +675,11 @@ class AgentService:
                 queue_group=STATUS_QUEUE_GROUP,
             )
         )
+        # The harness's own endpoints, after the protocol's and in the order
+        # given, as the constructor checked them: subject as given, and
+        # without a queue group nats-py's default, as in the TypeScript host.
+        for endpoint in self._extra_endpoints:
+            await self._service.add_endpoint(endpoint)
         # "Started" means "registered at the server": a caller on another
         # connection that discovers or prompts right after `start()` returns
         # must not race the endpoint subscriptions (→ no responders).
@@ -700,7 +754,8 @@ class AgentService:
             # task. At the default that task is serving the prompt in flight,
             # which is cancelled: its handler gets `CancelledError`, and the
             # caller the terminator from `_on_prompt_request`'s `finally`.
-            # Requests still queued get no reply.
+            # Requests still queued get no reply. The `extra_endpoints` go
+            # the same way: a handler in flight is cancelled.
             await self._service.stop()
             self._service = None
         if self._prompt_tasks:
@@ -1203,17 +1258,86 @@ def _validate_extra_metadata(extra_metadata: dict[str, str] | None) -> dict[str,
         raise TypeError(
             f"extra_metadata must be a dict[str, str] or None; got {type(extra_metadata).__name__}"
         )
+    return _string_map(extra_metadata, "extra_metadata")
+
+
+def _string_map(mapping: Mapping[str, str], what: str) -> dict[str, str]:
+    """Return a copy of ``mapping`` after checking every key and value is a ``str``.
+
+    ``what`` names the mapping in the :class:`TypeError`; a value is never
+    echoed, only its key and type.
+    """
     validated: dict[str, str] = {}
-    for key, value in extra_metadata.items():
+    for key, value in mapping.items():
         if not isinstance(key, str):
-            raise TypeError(f"extra_metadata key {key!r} must be a str; got {type(key).__name__}")
+            raise TypeError(f"{what} key {key!r} must be a str; got {type(key).__name__}")
         if not isinstance(value, str):
             raise TypeError(
-                f"extra_metadata[{key!r}] must be a str; got {type(value).__name__} "
+                f"{what}[{key!r}] must be a str; got {type(value).__name__} "
                 '(registration metadata is string-valued: encode it, e.g. "true" or "42")'
             )
         validated[key] = value
     return validated
+
+
+def _extra_endpoint_configs(
+    extra_endpoints: Sequence[AgentServiceExtraEndpoint],
+) -> tuple[EndpointConfig, ...]:
+    """The endpoint configs :meth:`AgentService.start` registers after ``prompt`` and ``status``.
+
+    Everything that could refuse an entry runs here, at construction, so a
+    bad one fails before anything is registered and never leaves a service
+    half started: a name that is ``prompt``, ``status`` or an earlier
+    entry's raises :class:`ValueError` (nats-py itself allows a repeated
+    name), and so does a name, subject or queue group nats-py refuses —
+    building the ``EndpointConfig`` runs its checks. The metadata must be
+    ``str`` → ``str``, as ``extra_metadata`` must, and is copied.
+    """
+    configs: list[EndpointConfig] = []
+    first_index: dict[str, int] = {}
+    for index, endpoint in enumerate(extra_endpoints):
+        where = f"extra_endpoints[{index}]"
+        if not isinstance(endpoint, AgentServiceExtraEndpoint):
+            raise TypeError(
+                f"{where} must be an AgentServiceExtraEndpoint; got {type(endpoint).__name__}"
+            )
+        if endpoint.name in (PROMPT_ENDPOINT_NAME, STATUS_ENDPOINT_NAME):
+            raise ValueError(
+                f"{where}.name={endpoint.name!r} is the name of an endpoint the protocol "
+                f"requires; the service registers {PROMPT_ENDPOINT_NAME!r} and "
+                f"{STATUS_ENDPOINT_NAME!r} itself, so give this endpoint another name"
+            )
+        if endpoint.name in first_index:
+            raise ValueError(
+                f"{where}.name={endpoint.name!r} is already the name of "
+                f"extra_endpoints[{first_index[endpoint.name]}]; endpoint names must be unique"
+            )
+        first_index[endpoint.name] = index
+        if not callable(endpoint.handler):
+            raise TypeError(
+                f"{where}.handler must be an async callable taking a nats.micro Request; "
+                f"got {type(endpoint.handler).__name__}"
+            )
+        metadata: dict[str, str] | None = None
+        if endpoint.metadata is not None:
+            if not isinstance(endpoint.metadata, Mapping):
+                raise TypeError(
+                    f"{where}.metadata must be a Mapping[str, str] or None; "
+                    f"got {type(endpoint.metadata).__name__}"
+                )
+            metadata = _string_map(endpoint.metadata, f"{where}.metadata")
+        try:
+            config = EndpointConfig(
+                name=endpoint.name,
+                subject=endpoint.subject,
+                handler=endpoint.handler,
+                queue_group=endpoint.queue,
+                metadata=metadata,
+            )
+        except ValueError as exc:
+            raise ValueError(f"{where} (name={endpoint.name!r}): {exc}") from exc
+        configs.append(config)
+    return tuple(configs)
 
 
 __all__ = [
@@ -1221,6 +1345,7 @@ __all__ = [
     "DEFAULT_KEEPALIVE_INTERVAL_S",
     "DEFAULT_MAX_PAYLOAD",
     "AgentService",
+    "AgentServiceExtraEndpoint",
     "PromptHandler",
     "PromptStream",
 ]
