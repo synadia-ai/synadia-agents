@@ -94,7 +94,7 @@ const DEFINITIONS: ReadonlyArray<AgentToolDefinition> = [
           type: "string",
           minLength: 1,
           description:
-            "Optional short description of this call, for your own lists (list_agent_calls). It is never sent to the other agent.",
+            "Optional short name for this call, shown in its results. It is never sent to the other agent.",
         },
         wait: {
           type: "boolean",

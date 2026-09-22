@@ -232,6 +232,14 @@ def test_a_subset_shows_the_fixtures_without_wait_agent_nothing_waits_later() ->
         assert "wait_agent" not in definition["description"]
 
 
+def test_the_blocking_three_name_no_tool_outside_the_three() -> None:
+    # A model shown a tool's name it does not have would try to call it.
+    shown = json.dumps(AgentTools(AGENTS, tools=BLOCKING_THREE).definitions)
+    for name in NAMES:
+        if name not in BLOCKING_THREE:
+            assert name not in shown, name
+
+
 def test_the_tools_keep_the_contracts_order_and_drop_repeats() -> None:
     tools = AgentTools(
         AGENTS,

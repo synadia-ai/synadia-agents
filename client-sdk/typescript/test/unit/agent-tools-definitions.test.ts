@@ -209,6 +209,14 @@ describe("the tools a helper offers", () => {
     }
   });
 
+  it("name no tool outside the blocking three when those are offered", () => {
+    // A model shown a tool's name it does not have would try to call it.
+    const shown = JSON.stringify(new AgentTools({ agents, tools: BLOCKING_THREE }).definitions);
+    for (const name of NAMES.filter((name) => !BLOCKING_THREE.includes(name))) {
+      expect(shown, name).not.toContain(name);
+    }
+  });
+
   it("keep the contract's order and drop repeats, whatever the order given", () => {
     const tools = new AgentTools({
       agents,
