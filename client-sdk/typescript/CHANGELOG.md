@@ -49,7 +49,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     prompt is being served. Errors come back as results, in words.
   - The model's tool-call ID reaches every prompt interceptor as
     `ctx.context.toolCallId`. Extensions add discovery fields, rewrite a
-    prompt before it is sent, and look at a reply.
+    prompt before it is sent, and look at a reply. One that sets a field the
+    contract defines is a bug: the discovery and prompt hooks throw; a reply
+    look fails the call and logs an error through `logger`.
 
   Nothing changes on the wire, and the protocol version stays `0.3`.
 

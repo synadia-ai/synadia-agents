@@ -215,7 +215,8 @@ class AgentToolsExtension:
     """An extension: override any of the three hooks.
 
     Several extensions run in the order given. A hook may not set a field
-    the contract defines; one that does is a bug, and the helper raises.
+    the contract defines; one that does is a bug. The discovery and prompt
+    hooks raise it; a reply look fails the call and logs an error.
     """
 
     async def discovery_fields(self, agent: Agent) -> Mapping[str, Any] | None:
@@ -287,6 +288,8 @@ class AgentTools:
         - ``on_settled``: called for every call that finishes outside a served
           prompt, with its result; a signal only. An exception is logged.
         - ``extensions``: run in order.
+        - ``logger``: for a failing ``on_settled``, and an extension's bug in a
+          reply look; ``None`` means this module's logger.
         """
         if discover_timeout is not None and not discover_timeout > 0:
             raise ValueError(f"discover_timeout must be > 0 (got {discover_timeout!r})")
@@ -729,6 +732,21 @@ class AgentTools:
                     )
                 )
                 _add_fields(fields, added, _CALL_RESULT_FIELDS, "a call's result")
+        except _ReservedFieldError as err:
+            # The discovery and prompt hooks raise this bug. The reply look
+            # runs in the call's reader, outside any tool call, with nobody to
+            # raise to: it fails the call, loudly.
+            self._log.error(
+                'AgentTools: an extension bug: after_reply set "%s", a field the contract '
+                "defines; the call fails (call_id=%s, kind=%s)",
+                err.field,
+                call.id,
+                kind,
+            )
+            raise _CallFailure(
+                f'an extension of these tools has a bug (it set "{err.field}" on the {kind}, '
+                f'a field the tools define); the agent at "{call.address}" is not at fault'
+            ) from err
         except Exception as err:
             raise _CallFailure(f"an extension failed on the {kind}: {_describe(err)}") from err
         return fields
@@ -1067,6 +1085,14 @@ class _CallFailure(Exception):
     """A call's failure, in words, raised inside its task."""
 
 
+class _ReservedFieldError(ValueError):
+    """An extension set a field the contract defines: a bug in the extension."""
+
+    def __init__(self, field: str, where: str) -> None:
+        super().__init__(f'AgentTools: an extension may not set "{field}" on {where}')
+        self.field = field
+
+
 async def _next_change(calls: Sequence[_Call], deadline: float | None) -> None:
     """Return on the next change of any of ``calls``, or at ``deadline`` (loop time)."""
     loop = asyncio.get_running_loop()
@@ -1106,7 +1132,7 @@ def _add_fields(
         return
     for key, value in added.items():
         if key in reserved:
-            raise ValueError(f'AgentTools: an extension may not set "{key}" on {where}')
+            raise _ReservedFieldError(key, where)
         into[key] = value
 
 

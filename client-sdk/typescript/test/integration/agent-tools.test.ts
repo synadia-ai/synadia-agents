@@ -25,6 +25,7 @@ import {
   type AgentToolResult,
   type AgentToolsExtension,
   type AgentToolsOptions,
+  type Logger,
   type PromptInterceptor,
   type RequestEnvelope,
   type SettledInfo,
@@ -107,6 +108,20 @@ function conforms(result: AgentToolResult, extensionFields: string[] = []): void
 function call(result: AgentToolResult): AgentCallResult {
   conforms(result);
   return result as AgentCallResult;
+}
+
+type ErrorLine = [msg: string, ctx: Record<string, unknown> | undefined];
+
+/** A logger that keeps its error lines. */
+function errorLog(): { logger: Logger; errors: ErrorLine[] } {
+  const errors: ErrorLine[] = [];
+  const logger: Logger = {
+    debug: () => undefined,
+    info: () => undefined,
+    warn: () => undefined,
+    error: (msg, ctx) => void errors.push([msg, ctx]),
+  };
+  return { logger, errors };
 }
 
 // --- the gates the worker waits on ---------------------------------------------
@@ -981,9 +996,11 @@ describe.skipIf(!bin)("agent tools", () => {
   });
 
   it("a reply look that throws fails the call", async () => {
+    const { logger, errors } = errorLog();
     const t = new AgentTools({
       agents: client(),
       discoverTimeoutMs: 250,
+      logger,
       extensions: [
         {
           afterReply: () => {
@@ -998,5 +1015,45 @@ describe.skipIf(!bin)("agent tools", () => {
     );
     expect(result).toMatchObject({ state: "failed", partial_reply: "echo:x" });
     expect(result.error).toMatch(/an extension failed on the reply: boom/);
+    // The extension's own failure, not a bug the helper names.
+    expect(errors).toEqual([]);
+  });
+
+  it("a reply look that sets a field the contract defines fails the call and logs the bug", async () => {
+    // Asks, and nobody answers: the call fails on the question.
+    const asker = await service("asker", async (_envelope, response) => {
+      await response.ask("may I?", { timeoutMs: 500 }).catch(() => undefined);
+    });
+    const { logger, errors } = errorLog();
+    const t = new AgentTools({
+      agents: client(),
+      discoverTimeoutMs: 250,
+      logger,
+      extensions: [{ afterReply: () => ({ state: "mine" }) }],
+    });
+    open.push(t);
+    const bug = (kind: string, address: string): string =>
+      `an extension of these tools has a bug (it set "state" on the ${kind}, ` +
+      `a field the tools define); the agent at "${address}" is not at fault`;
+
+    const reply = call(
+      await t.execute("prompt_agent", { address: workerAddress, prompt: "echo:x" }),
+    );
+    expect(reply).toMatchObject({ state: "failed", partial_reply: "echo:x" });
+    expect(reply.error).toBe(bug("reply", workerAddress));
+
+    const question = call(
+      await t.execute("prompt_agent", { address: asker.subject.prompt, prompt: "go" }),
+    );
+    expect(question.state).toBe("failed");
+    expect(question.error).toBe(bug("question", asker.subject.prompt));
+
+    const line =
+      'AgentTools: an extension bug: afterReply set "state", a field the contract defines; the call fails';
+    expect(errors).toEqual([
+      [line, { call_id: reply.call_id, kind: "reply", field: "state" }],
+      [line, { call_id: question.call_id, kind: "question", field: "state" }],
+    ]);
+    await asker.stop();
   });
 });

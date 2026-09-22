@@ -185,7 +185,8 @@ type MaybePromise<T> = T | Promise<T>;
 /**
  * An extension: any of three hooks, run in the order the extensions are
  * given. A hook may not set a field the contract defines; one that does is
- * a bug, and the helper throws.
+ * a bug. The discovery and prompt hooks throw it; a reply look fails the
+ * call and logs an error.
  */
 export interface AgentToolsExtension {
   /** Extra fields for a `discover_agents` entry. */
@@ -256,7 +257,7 @@ export interface AgentToolsOptions {
   readonly onSettled?: (result: AgentCallResult, info: SettledInfo) => void | Promise<void>;
   /** Extensions, run in order. */
   readonly extensions?: ReadonlyArray<AgentToolsExtension>;
-  /** For a failing `onSettled`. Default: silent. */
+  /** For a failing `onSettled`, and an extension's bug in a reply look. Default: silent. */
   readonly logger?: Logger;
 }
 
@@ -765,6 +766,19 @@ export class AgentTools {
         addFields(fields, added, CALL_RESULT_FIELDS, "a call's result");
       }
     } catch (err) {
+      if (err instanceof ReservedFieldError) {
+        // The discovery and prompt hooks throw this bug. The reply look runs
+        // in the call's reader, outside any tool call, with nobody to throw
+        // to: it fails the call, loudly.
+        this.logger.error(
+          `AgentTools: an extension bug: afterReply set "${err.field}", a field the contract defines; the call fails`,
+          { call_id: call.id, kind, field: err.field },
+        );
+        throw new CallFailure(
+          `an extension of these tools has a bug (it set "${err.field}" on the ${kind}, ` +
+            `a field the tools define); the agent at "${call.address}" is not at fault`,
+        );
+      }
       throw new CallFailure(`an extension failed on the ${kind}: ${describe(err)}`);
     }
     return fields;
@@ -1113,6 +1127,16 @@ class Call {
 /** A call's failure, in words, raised inside its task. */
 class CallFailure extends Error {}
 
+/** An extension set a field the contract defines: a bug in the extension. */
+class ReservedFieldError extends Error {
+  constructor(
+    readonly field: string,
+    where: string,
+  ) {
+    super(`AgentTools: an extension may not set "${field}" on ${where}`);
+  }
+}
+
 /** Resolves on the next change of any of `calls`, at `deadline`, or on abort. */
 function nextChange(
   calls: ReadonlyArray<Call>,
@@ -1152,7 +1176,7 @@ function addFields(
   if (added === undefined || added === null) return;
   for (const [key, value] of Object.entries(added)) {
     if (reserved.includes(key)) {
-      throw new Error(`AgentTools: an extension may not set "${key}" on ${where}`);
+      throw new ReservedFieldError(key, where);
     }
     into[key] = value;
   }

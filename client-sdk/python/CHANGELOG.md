@@ -49,7 +49,9 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   - The model's tool-call ID reaches every prompt interceptor as
     `ctx.context["tool_call_id"]`. `AgentToolsExtension` subclasses add
     discovery fields, rewrite a prompt before it is sent, and look at a
-    reply.
+    reply. One that sets a field the contract defines is a bug: the
+    discovery and prompt hooks raise; a reply look fails the call and logs
+    an error through `logger`.
 
   Nothing changes on the wire, and the protocol version stays `0.3`.
 - **Prompt interceptors.** `Agents(nc=nc, interceptors=[...])` — every

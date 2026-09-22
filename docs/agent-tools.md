@@ -314,8 +314,11 @@ three hooks; several extensions run in the order given.
 | prompt rewrite | before `prompt_agent` sends, after the guards, with the address, the text, the attachment paths, the target, the `call_id`, the label, the tool-call ID and the served caller | change the prompt's text, add prompt `context`, add fields to the call's results, or refuse the prompt with an error in words |
 | reply look | when a reply completes and when a question arrives, with the text and the saved files | add fields to that result |
 
-A hook may not replace a field the contract defines; one that tries is a bug,
-and the helper throws. A reply look that throws fails the call.
+A hook may not replace a field the contract defines; one that tries is a bug.
+The discovery fields and the prompt rewrite throw it. The reply look runs in
+the call's reader, outside any tool call, so there is nothing to throw to: it
+fails the call and logs an error, and the call's `error` says an extension
+has a bug, not the prompted agent. A reply look that throws fails the call.
 
 ## 7. Stated honestly
 

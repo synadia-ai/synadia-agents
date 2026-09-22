@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
+import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -62,6 +64,8 @@ CALL_FIELDS = set(
     ]
 )
 STATES = {"running", "input_required", "completed", "failed", "cancelled", "expired"}
+#: The helper's logger in the tests that read what it logs.
+TOOLS_LOG = logging.getLogger("tests.agent_tools")
 
 
 def conforms(result: Mapping[str, Any], extension_fields: frozenset[str] = frozenset()) -> None:
@@ -96,6 +100,15 @@ def conforms(result: Mapping[str, Any], extension_fields: frozenset[str] = froze
 def call(result: Mapping[str, Any]) -> dict[str, Any]:
     conforms(result)
     return dict(result)
+
+
+def errors_logged(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The error lines the helper logged through ``TOOLS_LOG``."""
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == TOOLS_LOG.name and r.levelno == logging.ERROR
+    ]
 
 
 def b64(text: str) -> str:
@@ -1012,14 +1025,59 @@ async def test_an_extensions_three_hooks_run(world: World) -> None:
         await broken.execute("prompt_agent", {"address": world.worker_address, "prompt": "echo:x"})
 
 
-async def test_a_reply_look_that_raises_fails_the_call(world: World) -> None:
+async def test_a_reply_look_that_raises_fails_the_call(
+    world: World, caplog: pytest.LogCaptureFixture
+) -> None:
     class Exploding(AgentToolsExtension):
         async def after_reply(self, ctx: AgentToolsReplyContext) -> Mapping[str, Any] | None:
             raise RuntimeError("boom")
 
-    tools = world.tools(extensions=[Exploding()])
+    tools = world.tools(extensions=[Exploding()], logger=TOOLS_LOG)
     result = call(
         await tools.execute("prompt_agent", {"address": world.worker_address, "prompt": "echo:x"})
     )
     assert (result["state"], result["partial_reply"]) == ("failed", "echo:x")
     assert "an extension failed on the reply: boom" in result["error"]
+    # The extension's own failure, not a bug the helper names.
+    assert errors_logged(caplog) == []
+
+
+async def test_a_reply_look_that_sets_a_field_the_contract_defines_fails_and_logs(
+    world: World, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Broken(AgentToolsExtension):
+        async def after_reply(self, ctx: AgentToolsReplyContext) -> Mapping[str, Any] | None:
+            return {"state": "mine"}
+
+    async def ask(_envelope: Envelope, stream: PromptStream) -> None:
+        # Asks, and nobody answers: the call fails on the question.
+        with contextlib.suppress(Exception):
+            await stream.ask("may I?", timeout=0.5)
+
+    asker = (await world.service("asker", ask)).subject.prompt
+    tools = world.tools(extensions=[Broken()], logger=TOOLS_LOG)
+
+    def bug(kind: str, address: str) -> str:
+        return (
+            f'an extension of these tools has a bug (it set "state" on the {kind}, '
+            f'a field the tools define); the agent at "{address}" is not at fault'
+        )
+
+    reply = call(
+        await tools.execute("prompt_agent", {"address": world.worker_address, "prompt": "echo:x"})
+    )
+    assert (reply["state"], reply["partial_reply"]) == ("failed", "echo:x")
+    assert reply["error"] == bug("reply", world.worker_address)
+
+    question = call(await tools.execute("prompt_agent", {"address": asker, "prompt": "go"}))
+    assert question["state"] == "failed"
+    assert question["error"] == bug("question", asker)
+
+    line = (
+        'AgentTools: an extension bug: after_reply set "state", a field the contract '
+        "defines; the call fails (call_id={}, kind={})"
+    )
+    assert errors_logged(caplog) == [
+        line.format(reply["call_id"], "reply"),
+        line.format(question["call_id"], "question"),
+    ]
