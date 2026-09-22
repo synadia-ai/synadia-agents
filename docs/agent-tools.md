@@ -213,9 +213,11 @@ attachment (§5.2), inside the message.
 ### 3.10 Cancelling drops the stream
 
 `cancel_agent`, a host's abort of a blocking tool call, and the end of a
-served prompt all do the same: refuse the call's open questions, then drop
-its subscription. The protocol has no cancel message (§6.7). The prompted
-agent works on until it finishes, and whatever it sends is discarded.
+served prompt all do the same: end the call as `cancelled`, drop its
+subscription, then refuse its open questions. A refusal goes to the
+question's own reply subject, so it reaches the asking agent without the
+subscription. The protocol has no cancel message (§6.7). The prompted agent
+works on until it finishes, and whatever it sends is discarded.
 
 `wait_agent` is different: aborting it stops the wait, and the calls it
 waited for keep running.
