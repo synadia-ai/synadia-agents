@@ -1,0 +1,41 @@
+{
+  "name": "prompt_agent",
+  "description": "Send a prompt to one agent and get its reply. Use an address returned by discover_agents. Keep the prompt self-contained: the other agent sees nothing of your conversation. Do not prompt the agent that prompted you; answer it instead. By default the call waits for the complete reply. If the other agent asks a question while it works, you get the question and a call_id instead: answer it with answer_agent. With wait set to false the call returns at once with a call_id while the other agent works, and you collect the result later with wait_agent; use it to have several agents work at once. Calls you start while you are answering a prompt end with that prompt, so collect their results before you answer. The other agent runs on another machine, so never put a local file path in the prompt: attach the file instead (small files only, and only to an agent that accepts attachments). Files the other agent sends back are saved on this machine, and the result gives each file's path.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "address": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The agent's address, exactly as discover_agents returned it."
+      },
+      "prompt": {
+        "type": "string",
+        "minLength": 1,
+        "description": "The task for the other agent, complete in itself."
+      },
+      "attachments": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": "Optional paths of local files to send with the prompt, only from the directories you may send from, and only to an agent that accepts attachments (see discover_agents). The files travel inside the message, so keep them small."
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Optional short description of this call, for your own lists (list_agent_calls). It is never sent to the other agent."
+      },
+      "wait": {
+        "type": "boolean",
+        "description": "true (the default): wait for the reply or a question. false: return at once with a call_id, and collect the result with wait_agent."
+      }
+    },
+    "required": [
+      "address",
+      "prompt"
+    ],
+    "additionalProperties": false
+  }
+}

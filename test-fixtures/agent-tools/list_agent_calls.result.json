@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "list_agent_calls result",
+  "description": "What list_agent_calls hands back to the model (docs/agent-tools.md, section 2): the calls tracked in the current scope, in the order they were started.",
+  "type": "object",
+  "required": [
+    "calls"
+  ],
+  "additionalProperties": false,
+  "dependentRequired": {
+    "open_calls": [
+      "open_calls_note"
+    ],
+    "open_calls_note": [
+      "open_calls"
+    ]
+  },
+  "properties": {
+    "calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "call_id",
+          "address",
+          "state",
+          "started_at"
+        ],
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "description": "the label prompt_agent was given, when it was given one"
+          },
+          "address": {
+            "type": "string",
+            "description": "the address the call went to"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "input_required",
+              "completed",
+              "failed",
+              "cancelled",
+              "expired"
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "when prompt_agent started the call, UTC"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "when the call finished, UTC; absent while it is open"
+          }
+        }
+      }
+    },
+    "open_calls": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "how many calls in the current scope are still open (running or input_required); absent when none is"
+    },
+    "open_calls_note": {
+      "type": "string",
+      "description": "the same, in words, with what happens to them"
+    }
+  }
+}

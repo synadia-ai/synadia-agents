@@ -1,0 +1,22 @@
+{
+  "name": "cancel_agent",
+  "description": "Stop calls you started. Each open call becomes cancelled, and an open question gets a refusal. The result gives each call's state and the reply text received so far. The other agent is not told and may keep working; whatever it sends later is discarded. A call that already finished keeps its result.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "call_ids": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "description": "The calls to stop, as prompt_agent returned their call_id."
+      }
+    },
+    "required": [
+      "call_ids"
+    ],
+    "additionalProperties": false
+  }
+}
