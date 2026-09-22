@@ -15,10 +15,11 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
   `wait_agent`, `answer_agent`, `cancel_agent`, `list_agent_calls` — as one
   helper, to the contract in
   [`docs/agent-tools.md`](../../docs/agent-tools.md), the same as the
-  TypeScript SDK's. `tools.definitions` (and `agent_tool_definitions()`)
-  are the six definitions, embedded as `synadia_ai/agents/tools/definitions.json`,
-  a copy of `test-fixtures/agent-tools/`; `await tools.execute(name, args,
-  tool_call_id=...)` runs one call and returns the JSON result as a dict.
+  TypeScript SDK's. `agent_tool_definitions()` are the six definitions,
+  embedded as `synadia_ai/agents/tools/definitions.json`, a copy of
+  `test-fixtures/agent-tools/`, and `tools.definitions` those the helper
+  offers; `await tools.execute(name, args, tool_call_id=...)` runs one call
+  and returns the JSON result as a dict.
   - `prompt_agent` blocks by default and returns the reply, a question with
     its `call_id`, or an error, now with `state`; `wait: false` returns at
     once and the call keeps reading its stream in a task of its own.
@@ -48,6 +49,16 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
     the staging directory, so a returned file can be sent on and the
     working directory, which may hold a `.env`, cannot; a host that wants
     it names it in `attachment_roots`.
+  - `tools=` offers a subset of the six: `definitions` holds only those,
+    in the contract's order, and `execute` refuses any other in words.
+    Without `wait_agent` nothing can be detached: `prompt_agent` and
+    `answer_agent` lose their `wait` parameter, a description that
+    mentions `wait_agent` reads its blocking-only words (embedded as
+    `synadia_ai/agents/tools/blocking.json`, a copy of
+    `test-fixtures/agent-tools/blocking.json`), and `wait: false` is
+    refused. A subset that makes no sense — none, or a tool that works on
+    calls without `prompt_agent` — raises `ValueError` at construction.
+    What a result tells the model to do next points only to tools offered.
   - Loop guards: the agent's own address, and the agent whose signed
     prompt is being served. Errors come back as results, in words.
   - The model's tool-call ID reaches every prompt interceptor as

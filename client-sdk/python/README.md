@@ -328,6 +328,12 @@ content = json.dumps(result)
   `call_id` at once and the model collects the result with `wait_agent`. A
   question the prompted agent asks goes to the model, which answers it
   with `answer_agent`.
+- `tools=` offers fewer than the six. Each definition costs input tokens
+  on every model call, about 1.5k for all six, so an agent that needs no
+  async calls offers `["discover_agents", "prompt_agent", "answer_agent"]`.
+  Without `wait_agent` nothing is detached: `prompt_agent` and
+  `answer_agent` lose their `wait` parameter, and their descriptions read
+  blocking-only words.
 - A call started while a prompt is served belongs to it: still open when
   that prompt ends, it is cancelled and its open question refused. A host
   that serves prompts without `AgentService` wraps each in

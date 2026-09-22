@@ -405,6 +405,35 @@ async def test_answer_agent_refuses_a_call_with_no_open_question(world: World) -
     assert "has no open question: it is completed" in result["error"]
 
 
+async def test_the_blocking_three_detach_nothing_and_a_question_is_answered_with_answer_agent(
+    world: World,
+) -> None:
+    tools = world.tools(tools=["discover_agents", "prompt_agent", "answer_agent"])
+    address = world.worker_address
+    refused = await tools.execute(
+        "prompt_agent", {"address": address, "prompt": "echo:x", "wait": False}
+    )
+    conforms(refused)
+    assert '"wait" cannot be false' in refused["error"]
+    asked = call(await tools.execute("prompt_agent", {"address": address, "prompt": "ask:ok?"}))
+    assert (asked["state"], asked["question"], asked["open_calls"]) == ("input_required", "ok?", 1)
+    assert asked["open_calls_note"] == (
+        "1 call you started is still open: answer its questions with answer_agent."
+    )
+    done = call(await tools.execute("answer_agent", {"call_id": asked["call_id"], "answer": "yes"}))
+    assert done["reply"] == "answered:yes"
+    after = await tools.execute("answer_agent", {"call_id": asked["call_id"], "answer": "again"})
+    assert after == {"error": f'call "{asked["call_id"]}" has no open question: it is completed'}
+    async with tools.prompt_scope():
+        scoped = call(
+            await tools.execute("prompt_agent", {"address": address, "prompt": "ask:more?"})
+        )
+        assert scoped["open_calls_note"] == (
+            "1 call you started is still open. Calls end with the prompt you are answering: "
+            "answer its questions with answer_agent before you answer."
+        )
+
+
 # --- detached calls and wait_agent ---------------------------------------------
 
 

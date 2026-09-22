@@ -15,6 +15,10 @@ Everything is built on the caller API — :meth:`Agents.discover`,
 nothing changes on the wire: the agent being prompted sees an ordinary
 prompt.
 
+A host may offer a subset of the six (``tools``). Without ``wait_agent``
+nothing can be detached, and a result points the model only to tools it
+has.
+
 A call is one prompt. Every call, blocking or not, is read by a task of its
 own from the moment it is sent: it collects the text, saves returned files
 and queues questions, so its acks keep the stream alive while nobody waits
@@ -101,6 +105,16 @@ AgentToolResult = dict[str, Any]
 
 _OPEN_STATES = ("running", "input_required")
 
+#: The six, in the contract's order.
+_TOOL_NAMES = (
+    "discover_agents",
+    "prompt_agent",
+    "wait_agent",
+    "answer_agent",
+    "cancel_agent",
+    "list_agent_calls",
+)
+
 # The fields the contract defines. An extension may not set them.
 _CALL_RESULT_FIELDS = frozenset(
     {
@@ -137,9 +151,8 @@ _SERVICE_ERROR_RE = re.compile(r"^service error (\S+): ?(.*)$", re.DOTALL)
 
 
 @functools.cache
-def _definitions_json() -> str:
-    definitions = resources.files("synadia_ai.agents.tools").joinpath("definitions.json")
-    return definitions.read_text("utf-8")
+def _package_json(name: str) -> str:
+    return resources.files("synadia_ai.agents.tools").joinpath(name).read_text("utf-8")
 
 
 def agent_tool_definitions() -> list[dict[str, Any]]:
@@ -150,8 +163,53 @@ def agent_tool_definitions() -> list[dict[str, Any]]:
     may change its copy — add a parameter of its own, say — without touching
     anyone else's.
     """
-    definitions: list[dict[str, Any]] = json.loads(_definitions_json())
+    definitions: list[dict[str, Any]] = json.loads(_package_json("definitions.json"))
     return definitions
+
+
+def _offered_definitions(offered: frozenset[str]) -> list[dict[str, Any]]:
+    """The definitions of the tools offered, in the contract's order, as a fresh copy.
+
+    Without ``wait_agent`` nothing can be detached: each definition loses its
+    ``wait`` parameter, and a description that mentions ``wait_agent`` is
+    replaced by its blocking-only words, a copy of
+    ``test-fixtures/agent-tools/blocking.json``. Nothing else changes.
+    """
+    definitions = [d for d in agent_tool_definitions() if d["name"] in offered]
+    if "wait_agent" in offered:
+        return definitions
+    blocking: dict[str, str] = json.loads(_package_json("blocking.json"))
+    for definition in definitions:
+        definition["parameters"]["properties"].pop("wait", None)
+        if "wait_agent" in definition["description"]:
+            definition["description"] = blocking[definition["name"]]
+    return definitions
+
+
+def _offered_tools(tools: Sequence[str] | None) -> frozenset[str]:
+    """The tools offered, checked.
+
+    A set that makes no sense is a misconfiguration and raises: a name not of
+    the six, no tool at all, or a tool that works on calls without
+    ``prompt_agent``, which starts them.
+    """
+    if tools is None:
+        return frozenset(_TOOL_NAMES)
+    if isinstance(tools, str):
+        raise ValueError(f"tools must be a list of tool names (got {tools!r})")
+    for name in tools:
+        if name not in _TOOL_NAMES:
+            raise ValueError(f"tools names {name!r}, which is not one of {', '.join(_TOOL_NAMES)}")
+    offered = frozenset(tools)
+    if not offered:
+        raise ValueError("tools names no tool; a role that must not delegate needs no AgentTools")
+    orphans = [n for n in _TOOL_NAMES if n in offered and n != "discover_agents"]
+    if "prompt_agent" not in offered and orphans:
+        them = "it works on" if len(orphans) == 1 else "they work on"
+        raise ValueError(
+            f"tools offers {', '.join(orphans)} without prompt_agent, which starts the calls {them}"
+        )
+    return offered
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +314,7 @@ class AgentTools:
         self,
         agents: Agents,
         *,
+        tools: Sequence[str] | None = None,
         self_address: str | None = None,
         discover_timeout: float | None = None,
         max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
@@ -270,6 +329,15 @@ class AgentTools:
     ) -> None:
         """Configure the helper; every limit is configuration, never a parameter.
 
+        - ``tools``: the tools offered, of the six; ``None`` means all six.
+          :attr:`definitions` holds only these, in the contract's order, and
+          :meth:`execute` refuses any other. Without ``wait_agent`` nothing can be
+          detached: ``prompt_agent`` and ``answer_agent`` lose their ``wait``
+          parameter and refuse ``wait: false``. Every tool but ``discover_agents``
+          needs ``prompt_agent``, which starts the calls they work on. Each
+          definition costs input tokens on every model call, so an agent that
+          needs no async calls offers ``discover_agents``, ``prompt_agent`` and
+          ``answer_agent``.
         - ``self_address``: the agent's own address, left out of discovery and refused.
         - ``discover_timeout``: how long one discovery waits, in seconds; ``None``
           uses the SDK's discovery default.
@@ -294,6 +362,7 @@ class AgentTools:
         - ``logger``: for a failing ``on_settled``, and an extension's bug in a
           reply look; ``None`` means this module's logger.
         """
+        offered = _offered_tools(tools)
         if discover_timeout is not None and not discover_timeout > 0:
             raise ValueError(f"discover_timeout must be > 0 (got {discover_timeout!r})")
         if not max_wait_s > 0:
@@ -307,6 +376,7 @@ class AgentTools:
                 f"max_saved_bytes_per_call must be 0 or more (got {max_saved_bytes_per_call!r})"
             )
         self._agents = agents
+        self._offered = offered
         self._self_address = self_address
         self._discover_timeout = discover_timeout
         self._max_wait_s = max_wait_s
@@ -332,9 +402,10 @@ class AgentTools:
         self._seq = 0
         self._closed = False
         self._background: set[asyncio.Task[Any]] = set()
-        #: The six definitions, the helper's own copy: a host maps them to its
-        #: tool format, and may change this copy without touching another's.
-        self.definitions: list[dict[str, Any]] = agent_tool_definitions()
+        #: The definitions of the tools offered, the helper's own copy: a host
+        #: maps them to its tool format, and may change this copy without
+        #: touching another's.
+        self.definitions: list[dict[str, Any]] = _offered_definitions(offered)
         #: Opens a scope per served prompt. Structurally a ``RequestInterceptor``
         #: of ``synadia_ai.agent_service``, which depends on this package and not
         #: the other way round: pass it in ``AgentService(interceptors=[...])``.
@@ -362,13 +433,17 @@ class AgentTools:
         ``context`` as ``tool_call_id``, where every prompt interceptor of the
         client finds it in ``ctx.context``; it is never sent. Cancelling the
         task that runs a blocking ``prompt_agent`` or ``answer_agent``
-        cancels the call; cancelling ``wait_agent`` only stops the wait.
+        cancels the call; cancelling ``wait_agent`` only stops the wait. A
+        tool the helper does not offer is refused like any other mistake.
         Never raises for something the model got wrong.
         """
         self._ensure_open()
         scope = _SERVED.get({}).get(id(self), self._root)
         result: AgentToolResult
-        if name == "discover_agents":
+        if name in _TOOL_NAMES and name not in self._offered:
+            offered = ", ".join(n for n in _TOOL_NAMES if n in self._offered)
+            result = {"error": f'the tool "{name}" is not offered; your tools are {offered}'}
+        elif name == "discover_agents":
             result = await self._discover_agents(args)
         elif name == "prompt_agent":
             result = await self._prompt_agent(scope, args, tool_call_id)
@@ -501,6 +576,11 @@ class AgentTools:
         parsed = parse_prompt_args(args)
         if isinstance(parsed, ArgsError):
             return {"error": parsed.error}
+        if not parsed.wait and "wait_agent" not in self._offered:
+            return {
+                "error": 'prompt_agent: "wait" cannot be false here; '
+                "the call waits for the reply or a question"
+            }
         address = parsed.address
         if scope.closed:
             return {"error": "the prompt you were answering has ended; no call can start in it"}
@@ -511,10 +591,7 @@ class AgentTools:
         except Exception as err:
             return {"error": f'could not look up "{address}": {_describe(err)}'}
         if target is None:
-            return {
-                "error": f'no agent answers at "{address}"; '
-                "call discover_agents for the current list"
-            }
+            return {"error": self._no_agent_at(address)}
         if scope.caller is not None and target.identity == scope.caller:
             return {
                 "error": f'the agent at "{address}" sent the prompt you are answering; '
@@ -524,10 +601,13 @@ class AgentTools:
         if isinstance(paths, ArgsError):
             return {"error": paths.error}
         if not self._reserve(scope):
-            return {
-                "error": f"all {self._max_calls} tracked calls are still open; collect some with "
-                "wait_agent or stop some with cancel_agent before you start another"
-            }
+            actions = [a for a in self._open_call_actions("some", "their") if a is not None]
+            then = (
+                f"{' or '.join(actions)} before you start another"
+                if actions
+                else "another can start when one of them finishes"
+            )
+            return {"error": f"all {self._max_calls} tracked calls are still open; {then}"}
 
         reserved = True
         try:
@@ -880,15 +960,24 @@ class AgentTools:
                 return {"state": "running", "call_ids": [c.id for c in calls]}
             await _next_change(calls, deadline)
 
-    async def _answer_agent(self, scope: _Scope, args: Any) -> AgentToolResult:
+    async def _answer_agent(self, scope: _Scope, args: Any) -> AgentToolResult:  # noqa: PLR0911
         parsed = parse_answer_args(args)
         if isinstance(parsed, ArgsError):
             return {"error": parsed.error}
+        if parsed.wait is False and "wait_agent" not in self._offered:
+            return {
+                "error": 'answer_agent: "wait" cannot be false here; '
+                "the call waits for the reply or the next question"
+            }
         call = scope.calls.get(parsed.call_id)
         if call is None:
-            return {"error": _unknown_call(parsed.call_id)}
+            return {"error": self._unknown_calls([parsed.call_id])}
         if call.state != "input_required" or not call.questions:
-            suffix = "" if call.open else "; wait_agent returns its result"
+            suffix = (
+                ""
+                if call.open
+                else self._if_offered("wait_agent", "; wait_agent returns its result")
+            )
             return {"error": f'call "{call.id}" has no open question: it is {call.state}{suffix}'}
         # Taken off before the answer goes out, so a concurrent tool call never
         # sees a question that is being answered.
@@ -914,7 +1003,7 @@ class AgentTools:
         for call_id in parsed.call_ids:
             call = scope.calls.get(call_id)
             if call is None:
-                results.append({"call_id": call_id, "error": _unknown_call(call_id)})
+                results.append({"call_id": call_id, "error": self._unknown_calls([call_id])})
                 continue
             await self._cancel(call)
             results.append(self._call_result(call))
@@ -938,9 +1027,42 @@ class AgentTools:
         """The calls ``ids`` name in ``scope``, or an error naming the ones it does not track."""
         unknown = [i for i in ids if i not in scope.calls]
         if unknown:
-            listed = ", ".join(f'"{i}"' for i in unknown)
-            return ArgsError(f"{listed}: no such call in your calls; list_agent_calls shows them")
+            return ArgsError(self._unknown_calls(unknown))
         return [scope.calls[i] for i in ids]
+
+    # --- words ---------------------------------------------------------------
+    #
+    # What a result tells the model to do next points only to tools the
+    # helper offers: the model can call no other.
+
+    def _if_offered(self, tool: str, words: str) -> str:
+        return words if tool in self._offered else ""
+
+    def _unknown_calls(self, ids: Sequence[str]) -> str:
+        listed = ", ".join(f'"{i}"' for i in ids)
+        return f"{listed}: no such call in your calls" + self._if_offered(
+            "list_agent_calls", "; list_agent_calls shows them"
+        )
+
+    def _no_agent_at(self, address: str) -> str:
+        return f'no agent answers at "{address}"' + self._if_offered(
+            "discover_agents", "; call discover_agents for the current list"
+        )
+
+    def _open_call_actions(self, them: str, their: str) -> tuple[str | None, str | None]:
+        """What the model can do about open calls with the tools it has: collect, stop.
+
+        Without ``wait_agent`` nothing is detached, so collecting a call is
+        answering its questions.
+        """
+        if "wait_agent" in self._offered:
+            collect: str | None = f"collect {them} with wait_agent"
+        elif "answer_agent" in self._offered:
+            collect = f"answer {their} questions with answer_agent"
+        else:
+            collect = None
+        stop = f"stop {them} with cancel_agent" if "cancel_agent" in self._offered else None
+        return collect, stop
 
     # --- results ---------------------------------------------------------------
 
@@ -971,20 +1093,19 @@ class AgentTools:
         open_calls = sum(1 for c in scope.calls.values() if c.open)
         if open_calls == 0:
             return result
-        them = "it" if open_calls == 1 else "them"
         counted = (
             "1 call you started is" if open_calls == 1 else f"{open_calls} calls you started are"
         )
+        collect, stop = self._open_call_actions(
+            "it" if open_calls == 1 else "them", "its" if open_calls == 1 else "their"
+        )
         if scope.served:
-            note = (
-                f"{counted} still open. Calls end with the prompt you are answering: "
-                f"collect {them} with wait_agent before you answer."
-            )
+            then = f": {collect} before you answer." if collect is not None else "."
+            note = f"{counted} still open. Calls end with the prompt you are answering{then}"
         else:
-            note = (
-                f"{counted} still open: collect {them} with wait_agent, "
-                f"or stop {them} with cancel_agent."
-            )
+            actions = [a for a in (collect, stop) if a is not None]
+            then = f": {', or '.join(actions)}." if actions else "."
+            note = f"{counted} still open{then}"
         return {**result, "open_calls": open_calls, "open_calls_note": note}
 
     # --- files and housekeeping ----------------------------------------------
@@ -1162,10 +1283,6 @@ def _add_fields(
 
 def _new_call_id() -> str:
     return f"call_{secrets.token_hex(6)}"
-
-
-def _unknown_call(call_id: str) -> str:
-    return f'"{call_id}": no such call in your calls; list_agent_calls shows them'
 
 
 def _describe(err: BaseException) -> str:
