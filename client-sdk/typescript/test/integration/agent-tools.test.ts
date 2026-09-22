@@ -253,6 +253,30 @@ describe.skipIf(!bin)("agent tools", () => {
     return t;
   }
 
+  /**
+   * An agent that asks one question with a file, waits up to 10 seconds for
+   * the answer, and records it: a refusal shows up at once, a dropped
+   * question only after the tests' own wait has given up.
+   */
+  async function asker(
+    name: string,
+    extra: Partial<ConstructorParameters<typeof AgentService>[0]> = {},
+  ): Promise<{ address: string; got: string[] }> {
+    const got: string[] = [];
+    const svc = await service(
+      name,
+      async (_envelope, response) => {
+        const answer = await response.ask("may I?", {
+          timeoutMs: 10_000,
+          attachments: [{ filename: "q.txt", content: enc.encode("question file") }],
+        });
+        got.push(answer.prompt);
+      },
+      extra,
+    );
+    return { address: svc.subject.prompt, got };
+  }
+
   beforeAll(async () => {
     await server.start({ configPath: identityFixture("nkey-noaccounts.conf") });
     nc = await connect({
@@ -594,6 +618,68 @@ describe.skipIf(!bin)("agent tools", () => {
     expect(gone["error"]).toMatch(/no such call/);
     const listed = (await t.execute("list_agent_calls")) as { calls: Array<{ call_id: string }> };
     expect(listed.calls.map((x) => x.call_id)).toEqual([b.call_id, c.call_id]);
+  });
+
+  // --- failing and expiring with a question open -----------------------------------
+
+  it("a call that expires refuses its open question", async () => {
+    const { address, got } = await asker("asker-expire");
+    const t = tools({ maxWaitMs: 300 });
+    const asked = call(await t.execute("prompt_agent", { address, prompt: "go" }));
+    expect(asked).toMatchObject({ state: "input_required", question: "may I?" });
+    await until(() => got.length > 0, "the refusal");
+    expect(got).toEqual([AGENT_TOOLS_QUESTION_REFUSAL]);
+    const expired = call(await t.execute("wait_agent", { call_ids: [asked.call_id] }));
+    expect(expired.state).toBe("expired");
+    expect(expired.error).toMatch(/runtime limit of 300 ms/);
+  });
+
+  it("a call that stalls refuses its open question", async () => {
+    // No acks while it waits for the answer, and still there to hear the refusal.
+    const { address, got } = await asker("asker-stall", { keepaliveIntervalS: null });
+    const t = tools({ agents: client({ streamInactivityTimeoutMs: 300 }) });
+    const asked = call(await t.execute("prompt_agent", { address, prompt: "go" }));
+    expect(asked.state).toBe("input_required");
+    await until(() => got.length > 0, "the refusal");
+    expect(got).toEqual([AGENT_TOOLS_QUESTION_REFUSAL]);
+    const failed = call(await t.execute("wait_agent", { call_ids: [asked.call_id] }));
+    expect(failed.state).toBe("failed");
+    expect(failed.error).toMatch(/sent nothing for 300 ms/);
+  });
+
+  it("a question whose reply look fails, or whose file cannot be saved, is refused", async () => {
+    const look = await asker("asker-look");
+    const t = tools({
+      extensions: [
+        {
+          afterReply: (ctx) => {
+            if (ctx.kind === "question") throw new Error("boom");
+          },
+        },
+      ],
+    });
+    const failed = call(await t.execute("prompt_agent", { address: look.address, prompt: "go" }));
+    expect(failed.state).toBe("failed");
+    expect(failed.error).toMatch(/an extension failed on the question: boom/);
+    await until(() => look.got.length > 0, "the refusal");
+    expect(look.got).toEqual([AGENT_TOOLS_QUESTION_REFUSAL]);
+
+    // The staging directory cannot be made: its parent is a file.
+    const dir = await mkdtemp(join(tmpdir(), "agent-tools-test-"));
+    try {
+      await writeFile(join(dir, "file"), "");
+      const save = await asker("asker-save");
+      const u = tools({ stagingDir: join(dir, "file", "staging") });
+      const unsaved = call(
+        await u.execute("prompt_agent", { address: save.address, prompt: "go" }),
+      );
+      expect(unsaved.state).toBe("failed");
+      expect(unsaved.error).toMatch(/a file the agent sent could not be saved/);
+      await until(() => save.got.length > 0, "the refusal");
+      expect(save.got).toEqual([AGENT_TOOLS_QUESTION_REFUSAL]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   // --- scopes --------------------------------------------------------------------

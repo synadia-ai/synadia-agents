@@ -30,7 +30,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     `remaining`; `answer_agent` answers a question and goes on in the
     call's mode; `cancel_agent` refuses open questions and drops the
     stream. States: `running`, `input_required`, `completed`, `failed`,
-    `cancelled`, `expired`.
+    `cancelled`, `expired`. A call that fails or expires refuses its open
+    questions too, so the asking agent does not wait out its own timeout.
   - A call belongs to the prompt being served: pass
     `tools.requestInterceptor` in `new AgentService({ interceptors })` —
     structurally a `RequestInterceptor`, so this package still does not

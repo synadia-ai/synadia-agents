@@ -70,8 +70,9 @@ export const DEFAULT_AGENT_TOOLS_MAX_CALLS = 256;
 
 /**
  * What an open question is answered with when its call is cancelled — by
- * `cancel_agent`, a host's abort, or the end of the served prompt. It starts
- * with `no`, so an agent that asked for a permission reads a denial.
+ * `cancel_agent`, a host's abort, or the end of the served prompt — and when
+ * it fails or expires. It starts with `no`, so an agent that asked for a
+ * permission reads a denial.
  */
 export const AGENT_TOOLS_QUESTION_REFUSAL =
   "no: the caller stopped waiting for this prompt and cannot answer";
@@ -675,6 +676,9 @@ export class AgentTools {
 
   /** Read a call's stream to its end; see the module comment. */
   private async read(call: Call): Promise<void> {
+    // A question whose files are being saved and whose reply look runs: not
+    // yet in `call.questions`, and either step may fail the call.
+    let arriving: QueryEvent | undefined;
     try {
       for await (const msg of call.stream) {
         if (msg.type === "status") continue;
@@ -690,11 +694,13 @@ export class AgentTools {
           }
           continue;
         }
+        arriving = msg;
         const files =
           msg.attachments !== undefined && msg.attachments.length > 0
             ? await this.save(call, msg.attachments)
             : [];
         const fields = await this.afterReply(call, "question", msg.prompt, files);
+        arriving = undefined;
         if (!call.open) {
           await refuse(msg);
           continue;
@@ -708,16 +714,20 @@ export class AgentTools {
       }
     } catch (err) {
       if (!call.open) return;
-      if (err instanceof StreamMaxWaitExceededError) {
-        this.finish(
-          call,
-          "expired",
-          `the call ran past its runtime limit of ${duration(err.maxWaitMs)} and was stopped; ` +
-            "the agent may still be working on it",
-        );
-      } else {
-        this.finish(call, "failed", this.failure(call, err));
-      }
+      const open =
+        err instanceof StreamMaxWaitExceededError
+          ? this.finish(
+              call,
+              "expired",
+              `the call ran past its runtime limit of ${duration(err.maxWaitMs)} and was stopped; ` +
+                "the agent may still be working on it",
+            )
+          : this.finish(call, "failed", this.failure(call, err));
+      // Nobody can answer them now: the asking agent hears so at once
+      // rather than waiting out its own timeout.
+      const questions = open.map((q) => q.event);
+      if (arriving !== undefined) questions.push(arriving);
+      await Promise.all(questions.map(refuse));
     }
   }
 
@@ -813,19 +823,23 @@ export class AgentTools {
     call.notify();
   }
 
-  /** The call's final state. The first one wins; open questions become moot. */
+  /**
+   * The call's final state; the first one wins. Returns the questions that
+   * were open, taken off the call: the caller refuses them, except on
+   * `completed`, where the stream has ended and they are moot.
+   */
   private finish(
     call: Call,
     state: Exclude<AgentCallState, "running" | "input_required">,
     error?: string,
-  ): void {
-    if (!call.open) return;
+  ): OpenQuestion[] {
+    if (!call.open) return [];
     const awaited = call.awaited;
     call.state = state;
     call.error = error;
     call.endedAt = new Date();
     call.seq = ++this.seq;
-    call.questions.length = 0;
+    const open = call.questions.splice(0);
     call.notify();
     if (call.scope === this.root && this.onSettled !== undefined) {
       const report = this.onSettled;
@@ -838,13 +852,13 @@ export class AgentTools {
         }
       })();
     }
+    return open;
   }
 
   /** Refuse the call's open questions and drop its stream. */
   private async cancel(call: Call): Promise<void> {
     if (!call.open) return;
-    const questions = call.questions.splice(0);
-    this.finish(call, "cancelled");
+    const questions = this.finish(call, "cancelled");
     call.stream.cancel();
     await Promise.all(questions.map((q) => refuse(q.event)));
   }
