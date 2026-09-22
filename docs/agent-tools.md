@@ -299,8 +299,9 @@ from and saves to the same places.
 **Offering fewer tools.** Every definition a model is shown costs input
 tokens on every model call: about 1.5k for all six, a little over half that
 for three. An agent that does not need to run calls at once offers
-`discover_agents`, `prompt_agent` and `answer_agent`. The helper shows only
-the definitions of the tools it offers, in the order of section 1, and
+`discover_agents`, `prompt_agent` and `answer_agent`, which both SDKs export
+as `BLOCKING_AGENT_TOOLS`; `AGENT_TOOL_NAMES` names all six. The helper shows
+only the definitions of the tools it offers, in the order of section 1, and
 refuses any other tool in words.
 
 - **Without `wait_agent` nothing can be detached**, or the model could start
@@ -341,9 +342,8 @@ to the model.
   blocking call (section 3.10).
 - Python: `tools.definitions`; `await tools.execute(name, args, tool_call_id=...)`.
   Cancelling the task that runs a blocking call cancels the call.
-- Fewer tools: `new AgentTools({ agents, tools: ["discover_agents", "prompt_agent", "answer_agent"] })`
-  in TypeScript, `AgentTools(agents, tools=["discover_agents", "prompt_agent", "answer_agent"])`
-  in Python.
+- Fewer tools: `new AgentTools({ agents, tools: BLOCKING_AGENT_TOOLS })` in
+  TypeScript, `AgentTools(agents, tools=BLOCKING_AGENT_TOOLS)` in Python.
 
 ### 6.2 The scope
 

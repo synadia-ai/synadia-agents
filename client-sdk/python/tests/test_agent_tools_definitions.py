@@ -22,7 +22,12 @@ from typing import Any
 
 import pytest
 
-from synadia_ai.agents import AgentTools, agent_tool_definitions
+from synadia_ai.agents import (
+    AGENT_TOOL_NAMES,
+    BLOCKING_AGENT_TOOLS,
+    AgentTools,
+    agent_tool_definitions,
+)
 from synadia_ai.agents.tools._args import (
     AnswerArgs,
     ArgsError,
@@ -238,6 +243,24 @@ def test_the_blocking_three_name_no_tool_outside_the_three() -> None:
     for name in NAMES:
         if name not in BLOCKING_THREE:
             assert name not in shown, name
+
+
+def test_constants_name_the_six_and_the_blocking_three_construction_accepts() -> None:
+    assert isinstance(AGENT_TOOL_NAMES, tuple)
+    assert isinstance(BLOCKING_AGENT_TOOLS, tuple)
+    assert list(AGENT_TOOL_NAMES) == NAMES
+    # The three section 5 names for an agent that runs no calls at once: the
+    # smallest subset that makes sense and can discover and prompt.
+    assert list(BLOCKING_AGENT_TOOLS) == BLOCKING_THREE
+    smallest = min(
+        (t for t in SUBSETS if _sensible(t) and {"discover_agents", "prompt_agent"} <= set(t)),
+        key=len,
+    )
+    assert list(BLOCKING_AGENT_TOOLS) == smallest
+    in_order = [name for name in AGENT_TOOL_NAMES if name in BLOCKING_AGENT_TOOLS]
+    assert in_order == list(BLOCKING_AGENT_TOOLS)
+    tools = AgentTools(AGENTS, tools=BLOCKING_AGENT_TOOLS)
+    assert tools.definitions == _derived(BLOCKING_THREE)
 
 
 def test_the_tools_keep_the_contracts_order_and_drop_repeats() -> None:

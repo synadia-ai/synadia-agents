@@ -10,8 +10,10 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_TOOL_NAMES,
   agentToolDefinitions,
   AgentTools,
+  BLOCKING_AGENT_TOOLS,
   type AgentToolName,
   type Agents,
 } from "../../src/index.js";
@@ -215,6 +217,23 @@ describe("the tools a helper offers", () => {
     for (const name of NAMES.filter((name) => !BLOCKING_THREE.includes(name))) {
       expect(shown, name).not.toContain(name);
     }
+  });
+
+  it("are named by exported constants: the six, and the blocking three construction accepts", () => {
+    expect(AGENT_TOOL_NAMES).toEqual(NAMES);
+    // The three section 5 names for an agent that runs no calls at once:
+    // the smallest subset that makes sense and can discover and prompt.
+    expect(BLOCKING_AGENT_TOOLS).toEqual(BLOCKING_THREE);
+    const smallest = SUBSETS.filter(
+      (tools) =>
+        sensible(tools) && tools.includes("discover_agents") && tools.includes("prompt_agent"),
+    ).sort((a, b) => a.length - b.length)[0];
+    expect(BLOCKING_AGENT_TOOLS).toEqual(smallest);
+    const blocking: ReadonlyArray<AgentToolName> = BLOCKING_AGENT_TOOLS;
+    expect(AGENT_TOOL_NAMES.filter((name) => blocking.includes(name))).toEqual(blocking);
+    expect(new AgentTools({ agents, tools: BLOCKING_AGENT_TOOLS }).definitions).toEqual(
+      derived(BLOCKING_THREE),
+    );
   });
 
   it("keep the contract's order and drop repeats, whatever the order given", () => {

@@ -330,8 +330,9 @@ content = json.dumps(result)
   with `answer_agent`.
 - `tools=` offers fewer than the six. Each definition costs input tokens
   on every model call, about 1.5k for all six, so an agent that needs no
-  async calls offers `["discover_agents", "prompt_agent", "answer_agent"]`.
-  Without `wait_agent` nothing is detached: `prompt_agent` and
+  async calls offers three: `AgentTools(agents, tools=BLOCKING_AGENT_TOOLS)`,
+  which are `discover_agents`, `prompt_agent` and `answer_agent`.
+  `AGENT_TOOL_NAMES` names all six. Without `wait_agent` nothing is detached: `prompt_agent` and
   `answer_agent` lose their `wait` parameter, and their descriptions read
   blocking-only words.
 - A call started while a prompt is served belongs to it: still open when

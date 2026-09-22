@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from synadia_ai.agents import (
     AGENT_TOOLS_QUESTION_REFUSAL,
+    BLOCKING_AGENT_TOOLS,
     Agent,
     Agents,
     AgentTools,
@@ -408,7 +409,7 @@ async def test_answer_agent_refuses_a_call_with_no_open_question(world: World) -
 async def test_the_blocking_three_detach_nothing_and_a_question_is_answered_with_answer_agent(
     world: World,
 ) -> None:
-    tools = world.tools(tools=["discover_agents", "prompt_agent", "answer_agent"])
+    tools = world.tools(tools=BLOCKING_AGENT_TOOLS)
     address = world.worker_address
     refused = await tools.execute(
         "prompt_agent", {"address": address, "prompt": "echo:x", "wait": False}

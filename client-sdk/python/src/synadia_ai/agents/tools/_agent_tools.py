@@ -105,8 +105,8 @@ AgentToolResult = dict[str, Any]
 
 _OPEN_STATES = ("running", "input_required")
 
-#: The six, in the contract's order.
-_TOOL_NAMES = (
+#: The six agent tools, by name, in the contract's order.
+AGENT_TOOL_NAMES: tuple[str, ...] = (
     "discover_agents",
     "prompt_agent",
     "wait_agent",
@@ -114,6 +114,12 @@ _TOOL_NAMES = (
     "cancel_agent",
     "list_agent_calls",
 )
+
+#: The three an agent offers when it runs no calls at once, in the contract's
+#: order: ``AgentTools(agents, tools=BLOCKING_AGENT_TOOLS)``. Every definition
+#: costs input tokens on every model call, and without ``wait_agent`` nothing
+#: is detached (``docs/agent-tools.md``, section 5).
+BLOCKING_AGENT_TOOLS: tuple[str, ...] = ("discover_agents", "prompt_agent", "answer_agent")
 
 # The fields the contract defines. An extension may not set them.
 _CALL_RESULT_FIELDS = frozenset(
@@ -195,16 +201,18 @@ def _offered_tools(tools: Sequence[str] | None) -> frozenset[str]:
     ``answer_agent``, which answers their questions.
     """
     if tools is None:
-        return frozenset(_TOOL_NAMES)
+        return frozenset(AGENT_TOOL_NAMES)
     if isinstance(tools, str):
         raise ValueError(f"tools must be a list of tool names (got {tools!r})")
     for name in tools:
-        if name not in _TOOL_NAMES:
-            raise ValueError(f"tools names {name!r}, which is not one of {', '.join(_TOOL_NAMES)}")
+        if name not in AGENT_TOOL_NAMES:
+            raise ValueError(
+                f"tools names {name!r}, which is not one of {', '.join(AGENT_TOOL_NAMES)}"
+            )
     offered = frozenset(tools)
     if not offered:
         raise ValueError("tools names no tool; a role that must not delegate needs no AgentTools")
-    orphans = [n for n in _TOOL_NAMES if n in offered and n != "discover_agents"]
+    orphans = [n for n in AGENT_TOOL_NAMES if n in offered and n != "discover_agents"]
     if "prompt_agent" not in offered and orphans:
         them = "it works on" if len(orphans) == 1 else "they work on"
         raise ValueError(
@@ -345,7 +353,8 @@ class AgentTools:
           ``prompt_agent`` needs ``answer_agent``, or a question the prompted
           agent asks could not be answered. Each definition costs input tokens
           on every model call, so an agent that needs no async calls offers
-          ``discover_agents``, ``prompt_agent`` and ``answer_agent``.
+          :data:`BLOCKING_AGENT_TOOLS`: ``discover_agents``, ``prompt_agent``
+          and ``answer_agent``.
         - ``self_address``: the agent's own address, left out of discovery and refused.
         - ``discover_timeout``: how long one discovery waits, in seconds; ``None``
           uses the SDK's discovery default.
@@ -450,8 +459,8 @@ class AgentTools:
         self._ensure_open()
         scope = _SERVED.get({}).get(id(self), self._root)
         result: AgentToolResult
-        if name in _TOOL_NAMES and name not in self._offered:
-            offered = ", ".join(n for n in _TOOL_NAMES if n in self._offered)
+        if name in AGENT_TOOL_NAMES and name not in self._offered:
+            offered = ", ".join(n for n in AGENT_TOOL_NAMES if n in self._offered)
             result = {"error": f'the tool "{name}" is not offered; your tools are {offered}'}
         elif name == "discover_agents":
             result = await self._discover_agents(args)

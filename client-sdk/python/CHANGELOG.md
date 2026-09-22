@@ -63,7 +63,10 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
     calls without `prompt_agent`, or `prompt_agent` without `answer_agent`,
     which a question from the prompted agent needs — raises `ValueError` at
     construction. What a result tells the model to do next points only to
-    tools offered.
+    tools offered. `BLOCKING_AGENT_TOOLS` names the three an agent that runs
+    no calls at once offers — `discover_agents`, `prompt_agent`,
+    `answer_agent` — and `AGENT_TOOL_NAMES` all six, both tuples in the
+    contract's order.
   - Loop guards: the agent's own address, and the agent whose signed
     prompt is being served. Errors come back as results, in words.
   - The model's tool-call ID reaches every prompt interceptor as

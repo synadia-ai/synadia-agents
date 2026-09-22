@@ -20,6 +20,7 @@ import {
   AGENT_TOOLS_QUESTION_REFUSAL,
   Agents,
   AgentTools,
+  BLOCKING_AGENT_TOOLS,
   signerFromSeed,
   type AgentCallResult,
   type AgentToolResult,
@@ -415,7 +416,7 @@ describe.skipIf(!bin)("agent tools", () => {
   });
 
   it("the blocking three: nothing is detached, and a question is answered with answer_agent", async () => {
-    const t = tools({ tools: ["discover_agents", "prompt_agent", "answer_agent"] });
+    const t = tools({ tools: BLOCKING_AGENT_TOOLS });
     const refused = await t.execute("prompt_agent", {
       address: workerAddress,
       prompt: "echo:x",

@@ -244,7 +244,8 @@ export interface AgentToolsOptions {
    * calls they work on, and `prompt_agent` needs `answer_agent`, or a
    * question the prompted agent asks could not be answered. Each definition
    * costs input tokens on every model call, so an agent that needs no async
-   * calls offers `discover_agents`, `prompt_agent` and `answer_agent`.
+   * calls offers `BLOCKING_AGENT_TOOLS`: `discover_agents`, `prompt_agent`
+   * and `answer_agent`.
    */
   readonly tools?: ReadonlyArray<AgentToolName>;
   /** The agent's own address: left out of discovery, and refused. */
