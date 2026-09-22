@@ -676,9 +676,6 @@ export class AgentTools {
 
   /** Read a call's stream to its end; see the module comment. */
   private async read(call: Call): Promise<void> {
-    // A question whose files are being saved and whose reply look runs: not
-    // yet in `call.questions`, and either step may fail the call.
-    let arriving: QueryEvent | undefined;
     try {
       for await (const msg of call.stream) {
         if (msg.type === "status") continue;
@@ -694,17 +691,15 @@ export class AgentTools {
           }
           continue;
         }
-        arriving = msg;
+        call.arriving = msg;
         const files =
           msg.attachments !== undefined && msg.attachments.length > 0
             ? await this.save(call, msg.attachments)
             : [];
         const fields = await this.afterReply(call, "question", msg.prompt, files);
-        arriving = undefined;
-        if (!call.open) {
-          await refuse(msg);
-          continue;
-        }
+        // Cancelled meanwhile: `cancel()` took the question and refused it.
+        if (!call.open) continue;
+        call.arriving = undefined;
         call.questions.push({ event: msg, files, fields });
         if (call.state === "running") this.setState(call, "input_required");
       }
@@ -713,6 +708,7 @@ export class AgentTools {
         this.finish(call, "completed");
       }
     } catch (err) {
+      // Cancelled already: `cancel()` refused every question, the one being taken in too.
       if (!call.open) return;
       const open =
         err instanceof StreamMaxWaitExceededError
@@ -725,9 +721,7 @@ export class AgentTools {
           : this.finish(call, "failed", this.failure(call, err));
       // Nobody can answer them now: the asking agent hears so at once
       // rather than waiting out its own timeout.
-      const questions = open.map((q) => q.event);
-      if (arriving !== undefined) questions.push(arriving);
-      await Promise.all(questions.map(refuse));
+      await Promise.all(open.map(refuse));
     }
   }
 
@@ -825,21 +819,24 @@ export class AgentTools {
 
   /**
    * The call's final state; the first one wins. Returns the questions that
-   * were open, taken off the call: the caller refuses them, except on
-   * `completed`, where the stream has ended and they are moot.
+   * were open and the one being taken in, taken off the call: the caller
+   * refuses them, except on `completed`, where the stream has ended and they
+   * are moot.
    */
   private finish(
     call: Call,
     state: Exclude<AgentCallState, "running" | "input_required">,
     error?: string,
-  ): OpenQuestion[] {
+  ): QueryEvent[] {
     if (!call.open) return [];
     const awaited = call.awaited;
     call.state = state;
     call.error = error;
     call.endedAt = new Date();
     call.seq = ++this.seq;
-    const open = call.questions.splice(0);
+    const open = call.questions.splice(0).map((q) => q.event);
+    if (call.arriving !== undefined) open.push(call.arriving);
+    call.arriving = undefined;
     call.notify();
     if (call.scope === this.root && this.onSettled !== undefined) {
       const report = this.onSettled;
@@ -855,12 +852,12 @@ export class AgentTools {
     return open;
   }
 
-  /** Refuse the call's open questions and drop its stream. */
+  /** Refuse the call's open questions, and the one being taken in; drop its stream. */
   private async cancel(call: Call): Promise<void> {
     if (!call.open) return;
     const questions = this.finish(call, "cancelled");
     call.stream.cancel();
-    await Promise.all(questions.map((q) => refuse(q.event)));
+    await Promise.all(questions.map(refuse));
   }
 
   private async closeScope(scope: Scope): Promise<void> {
@@ -1093,6 +1090,11 @@ class Call {
   readonly replyFiles: ReturnedFile[] = [];
   /** Oldest first; the first is the one the call's result shows. */
   readonly questions: OpenQuestion[] = [];
+  /**
+   * A question whose files are being saved and whose reply look runs: not
+   * yet in `questions`, and either step may fail the call.
+   */
+  arriving: QueryEvent | undefined;
   error: string | undefined;
   replyFields: Fields = {};
   savedBytes = 0;

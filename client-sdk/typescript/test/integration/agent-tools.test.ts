@@ -277,6 +277,48 @@ describe.skipIf(!bin)("agent tools", () => {
     return { address: svc.subject.prompt, got };
   }
 
+  /**
+   * A reply look that holds each question until the test lets it go, and
+   * then returns or throws: a cancel lands while the question is taken in.
+   */
+  function heldLook(): {
+    extension: AgentToolsExtension;
+    held: () => boolean;
+    release: (outcome: "return" | "throw") => void;
+  } {
+    let held = false;
+    let release!: (outcome: "return" | "throw") => void;
+    const released = new Promise<"return" | "throw">((r) => (release = r));
+    return {
+      extension: {
+        afterReply: async (ctx) => {
+          if (ctx.kind !== "question") return;
+          held = true;
+          if ((await released) === "throw") throw new Error("boom");
+        },
+      },
+      held: () => held,
+      release,
+    };
+  }
+
+  /**
+   * The refusals that go out on the wire, by the subject each went to: the
+   * asking agent hears only the first, so a second shows up only here.
+   */
+  async function refusalsSent(): Promise<{ subjects: string[]; stop: () => void }> {
+    const subjects: string[] = [];
+    const sub = nc.subscribe("_INBOX.>", {
+      callback: (err, msg) => {
+        if (err === null && msg.string() === AGENT_TOOLS_QUESTION_REFUSAL) {
+          subjects.push(msg.subject);
+        }
+      },
+    });
+    await nc.flush();
+    return { subjects, stop: () => sub.unsubscribe() };
+  }
+
   beforeAll(async () => {
     await server.start({ configPath: identityFixture("nkey-noaccounts.conf") });
     nc = await connect({
@@ -679,6 +721,69 @@ describe.skipIf(!bin)("agent tools", () => {
       expect(save.got).toEqual([AGENT_TOOLS_QUESTION_REFUSAL]);
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // --- cancelling while a question is taken in ----------------------------------
+
+  it.each(["return", "throw"] as const)(
+    "cancel_agent refuses a question still being taken in, once (its reply look then does %s)",
+    async (outcome) => {
+      const { address, got } = await asker(`asker-held-${outcome}`);
+      const look = heldLook();
+      const t = tools({ extensions: [look.extension] });
+      const wire = await refusalsSent();
+      try {
+        const c = call(await t.execute("prompt_agent", { address, prompt: "go", wait: false }));
+        await until(look.held, "the question to reach the reply look");
+        const cancelled = await t.execute("cancel_agent", { call_ids: [c.call_id] });
+        expect(cancelled["calls"]).toEqual([{ call_id: c.call_id, state: "cancelled" }]);
+        // Refused while the reply look still holds it.
+        await until(() => got.length > 0, "the refusal");
+        expect(got).toEqual([AGENT_TOOLS_QUESTION_REFUSAL]);
+        look.release(outcome);
+        await delay(100);
+        expect(wire.subjects).toHaveLength(1);
+        const after = call(await t.execute("wait_agent", { call_ids: [c.call_id] }));
+        expect(after).toEqual({ call_id: c.call_id, state: "cancelled", remaining: [] });
+      } finally {
+        wire.stop();
+      }
+    },
+  );
+
+  it("the end of a served prompt refuses a question still being taken in, once", async () => {
+    const { address, got } = await asker("asker-held-scope");
+    const look = heldLook();
+    const t = tools({ extensions: [look.extension] });
+    const wire = await refusalsSent();
+    try {
+      const host = await service(
+        "host-held",
+        async (_envelope, response) => {
+          await t.execute("prompt_agent", { address, prompt: "go", wait: false });
+          await until(look.held, "the question to reach the reply look");
+          await response.send("done");
+        },
+        { interceptors: [t.requestInterceptor] },
+      );
+      // Unsigned, as in the scope tests: the caller guard stays out of it.
+      const agents = new Agents({ nc });
+      open.push(agents);
+      const [handle] = await agents.discover({ filter: { name: "host-held" }, timeoutMs: 250 });
+      let reply = "";
+      for await (const msg of await handle!.prompt("go"))
+        if (msg.type === "response") reply += msg.text;
+      expect(reply).toBe("done");
+      // Refused while the reply look still holds it.
+      await until(() => got.length > 0, "the refusal");
+      expect(got).toEqual([AGENT_TOOLS_QUESTION_REFUSAL]);
+      look.release("return");
+      await delay(100);
+      expect(wire.subjects).toHaveLength(1);
+      await host.stop();
+    } finally {
+      wire.stop();
     }
   });
 
