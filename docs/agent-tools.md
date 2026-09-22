@@ -108,8 +108,13 @@ mode, and no answer is ever preset.
   oldest open one; `answer_agent` answers it, and the next one follows.
 - The asking agent chooses how long it waits for an answer (§7.3). An answer
   after that is lost, or the agent ends the stream with an error and the call
-  becomes `failed`. If the stream ends while a question is still open, the
-  question is moot and the call takes the stream's end state.
+  becomes `failed`. If the stream ends with its terminator while a question
+  is still open, the question is moot and the call is `completed`.
+- A call that fails or expires while a question is open refuses that
+  question, as the end of a served prompt does (section 3.3), so the asking
+  agent does not wait out its own timeout for an answer that cannot come.
+  That includes a question whose files could not be saved or whose reply
+  look failed (section 6.3): it failed the call before the model saw it.
 
 ### 3.3 A call belongs to the prompt being served
 
@@ -330,7 +335,9 @@ has a bug, not the prompted agent. A reply look that throws fails the call.
 - **A question left unanswered is lost.** The asking agent waits only as long
   as it chooses (§7.3). After that an answer reaches nobody, and the agent
   either ends the stream with an error or goes on with a default of its own,
-  without telling the caller.
+  without telling the caller. A refusal (sections 3.2, 3.10) is sent once
+  and never confirmed: when the connection is gone, it reaches nobody
+  either, and the asking agent waits out its timeout.
 - **The caller guard needs a signed sender.** It compares the served
   prompt's verified sender with the target's registered identity. An unsigned
   or merely claimed sender, or a target that registered no identity, cannot
