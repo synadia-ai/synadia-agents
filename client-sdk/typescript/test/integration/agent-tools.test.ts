@@ -8,7 +8,7 @@
 // tools alone. Every result is checked against the shape the fixtures in
 // `test-fixtures/agent-tools/` define.
 
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ import {
   AGENT_TOOLS_QUESTION_REFUSAL,
   Agents,
   AgentTools,
+  BLOCKING_AGENT_TOOLS,
   signerFromSeed,
   type AgentCallResult,
   type AgentToolResult,
@@ -415,7 +416,7 @@ describe.skipIf(!bin)("agent tools", () => {
   });
 
   it("the blocking three: nothing is detached, and a question is answered with answer_agent", async () => {
-    const t = tools({ tools: ["discover_agents", "prompt_agent", "answer_agent"] });
+    const t = tools({ tools: BLOCKING_AGENT_TOOLS });
     const refused = await t.execute("prompt_agent", {
       address: workerAddress,
       prompt: "echo:x",
@@ -1023,6 +1024,47 @@ describe.skipIf(!bin)("agent tools", () => {
         }),
       );
       expect(sent.reply).toBe("got:.env=TOKEN=secret");
+    });
+
+    it("takes a relative root and staging directory from the working directory at construction", async () => {
+      // Two directories alike: the helper is made in one, and the process
+      // then moves to the other. What the model may send, and where
+      // returned files are saved, stay where they were.
+      const made = join(dir, "made");
+      const moved = join(dir, "moved");
+      for (const base of [made, moved]) {
+        await mkdir(join(base, "root"), { recursive: true });
+        await writeFile(join(base, "root", "here.txt"), basename(base));
+      }
+      const before = process.cwd();
+      process.chdir(made);
+      try {
+        const t = tools({ attachmentRoots: ["root"], stagingDir: "staging" });
+        process.chdir(moved);
+        const sent = call(
+          await t.execute("prompt_agent", {
+            address: workerAddress,
+            prompt: "attach:",
+            attachments: [join(made, "root", "here.txt")],
+          }),
+        );
+        expect(sent.reply).toBe("got:here.txt=made");
+        const refused = await t.execute("prompt_agent", {
+          address: workerAddress,
+          prompt: "attach:",
+          attachments: [join(moved, "root", "here.txt")],
+        });
+        conforms(refused);
+        expect(refused["error"]).toMatch(/outside the directories you may send files from/);
+        const saved = call(
+          await t.execute("prompt_agent", { address: workerAddress, prompt: "files:" }),
+        );
+        expect(saved.attachments![0]!.path).toBe(
+          join(await realpath(made), "staging", saved.call_id, "report.txt"),
+        );
+      } finally {
+        process.chdir(before);
+      }
     });
 
     it("saves returned files, one directory per call, and lists each", async () => {

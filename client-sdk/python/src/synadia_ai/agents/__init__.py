@@ -167,7 +167,9 @@ from .interceptor import (
 from .messages import Chunk, QueryChunk, ResponseChunk, StatusChunk
 from .subjects import AgentSubject
 from .tools import (
+    AGENT_TOOL_NAMES,
     AGENT_TOOLS_QUESTION_REFUSAL,
+    BLOCKING_AGENT_TOOLS,
     DEFAULT_AGENT_TOOLS_MAX_CALLS,
     AgentCallState,
     AgentToolResult,
@@ -185,6 +187,8 @@ __all__ = [
     "AGENT_SENDER_HEADER",
     "AGENT_SENDER_SIGNED_INPUT_TAG",
     "AGENT_TOOLS_QUESTION_REFUSAL",
+    "AGENT_TOOL_NAMES",
+    "BLOCKING_AGENT_TOOLS",
     "DEFAULT_AGENT_TOOLS_MAX_CALLS",
     "DEFAULT_DISCOVER_MAX_WAIT_S",
     "DEFAULT_DISCOVER_STALL_S",

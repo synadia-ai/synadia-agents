@@ -275,7 +275,9 @@ export {
   type SettledInfo,
 } from "./tools/agent-tools.js";
 export {
+  AGENT_TOOL_NAMES,
   agentToolDefinitions,
+  BLOCKING_AGENT_TOOLS,
   type AgentToolDefinition,
   type AgentToolName,
 } from "./tools/definitions.js";

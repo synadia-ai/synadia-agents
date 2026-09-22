@@ -244,7 +244,8 @@ export interface AgentToolsOptions {
    * calls they work on, and `prompt_agent` needs `answer_agent`, or a
    * question the prompted agent asks could not be answered. Each definition
    * costs input tokens on every model call, so an agent that needs no async
-   * calls offers `discover_agents`, `prompt_agent` and `answer_agent`.
+   * calls offers `BLOCKING_AGENT_TOOLS`: `discover_agents`, `prompt_agent`
+   * and `answer_agent`.
    */
   readonly tools?: ReadonlyArray<AgentToolName>;
   /** The agent's own address: left out of discovery, and refused. */
@@ -267,7 +268,8 @@ export interface AgentToolsOptions {
    */
   readonly attachmentRoots?: ReadonlyArray<string>;
   /**
-   * Where returned files are saved, one directory per call. Default: a new
+   * Where returned files are saved, one directory per call; a relative path
+   * is taken from the working directory at construction. Default: a new
    * private directory under the system's temporary directory, removed by
    * {@link AgentTools.close}. A directory given here is kept.
    */
@@ -362,15 +364,18 @@ export class AgentTools {
     if (!Number.isInteger(this.maxCalls)) {
       throw new RangeError(`AgentTools: maxCalls must be a whole number (got ${this.maxCalls})`);
     }
-    this.attachmentRoots = [...(options.attachmentRoots ?? [])];
-    this.stagingOption = options.stagingDir;
+    this.cwd = process.cwd();
+    // Relative roots are taken from the working directory now, as the
+    // model's paths are: a later change of directory moves none of them.
+    this.attachmentRoots = (options.attachmentRoots ?? []).map((root) => resolve(this.cwd, root));
+    this.stagingOption =
+      options.stagingDir !== undefined ? resolve(this.cwd, options.stagingDir) : undefined;
     this.maxSavedBytes =
       nonNegative("maxSavedBytesPerCall", options.maxSavedBytesPerCall) ??
       DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES;
     this.onSettled = options.onSettled;
     this.extensions = [...(options.extensions ?? [])];
     this.logger = options.logger ?? SILENT_LOGGER;
-    this.cwd = process.cwd();
     this.scopeStore = new AsyncLocalStorage<Scope>();
     this.root = new Scope(false, undefined);
     this.definitions = offeredToolDefinitions(this.offered);
@@ -588,13 +593,10 @@ export class AgentTools {
     if (isArgsError(attachments)) return { error: attachments.error };
     if (!this.reserve(scope)) {
       const { collect, stop } = this.openCallActions("some", "their");
-      const actions = [collect, stop].filter((action) => action !== undefined);
       return {
         error:
           `all ${this.maxCalls} tracked calls are still open; ` +
-          (actions.length > 0
-            ? `${actions.join(" or ")} before you start another`
-            : "another can start when one of them finishes"),
+          `${stop !== undefined ? `${collect} or ${stop}` : collect} before you start another`,
       };
     }
 
@@ -683,7 +685,7 @@ export class AgentTools {
     if (paths.length === 0) return [];
     const roots = await Promise.all(
       [await this.stagingDir(), ...this.attachmentRoots].map((root) =>
-        realpath(resolve(root)).catch(() => resolve(root)),
+        realpath(root).catch(() => root),
       ),
     );
     const out: string[] = [];
@@ -1051,17 +1053,17 @@ export class AgentTools {
   /**
    * What the model can do about open calls with the tools it has: collect
    * them, or answer their questions when nothing is detached, and stop them.
+   * Calls are open only where `prompt_agent` is offered, and it always comes
+   * with `answer_agent`, so there is always a way to collect them.
    */
   private openCallActions(
     them: string,
     their: string,
-  ): { collect: string | undefined; stop: string | undefined } {
+  ): { collect: string; stop: string | undefined } {
     return {
       collect: this.offered.has("wait_agent")
         ? `collect ${them} with wait_agent`
-        : this.offered.has("answer_agent")
-          ? `answer ${their} questions with answer_agent`
-          : undefined,
+        : `answer ${their} questions with answer_agent`,
       stop: this.offered.has("cancel_agent") ? `stop ${them} with cancel_agent` : undefined,
     };
   }
@@ -1109,15 +1111,9 @@ export class AgentTools {
       open === 1 ? "it" : "them",
       open === 1 ? "its" : "their",
     );
-    let note: string;
-    if (scope.served) {
-      note =
-        `${counted} still open. Calls end with the prompt you are answering` +
-        (collect !== undefined ? `: ${collect} before you answer.` : ".");
-    } else {
-      const actions = [collect, stop].filter((action) => action !== undefined);
-      note = `${counted} still open` + (actions.length > 0 ? `: ${actions.join(", or ")}.` : ".");
-    }
+    const note = scope.served
+      ? `${counted} still open. Calls end with the prompt you are answering: ${collect} before you answer.`
+      : `${counted} still open: ${stop !== undefined ? `${collect}, or ${stop}` : collect}.`;
     return { ...result, open_calls: open, open_calls_note: note };
   }
 
@@ -1126,7 +1122,7 @@ export class AgentTools {
   private stagingDir(): Promise<string> {
     this.staging ??= (async (): Promise<string> => {
       if (this.stagingOption !== undefined) {
-        const dir = resolve(this.stagingOption);
+        const dir = this.stagingOption;
         await mkdir(dir, { recursive: true, mode: 0o700 });
         return dir;
       }

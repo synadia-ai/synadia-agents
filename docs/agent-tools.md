@@ -291,14 +291,20 @@ Limits are configuration, never parameters, except `wait_agent`'s
 
 The staging directory is always a root, whether the default or set, and
 roots given add to it: a host that names its project directory still lets
-the model send returned files on.
+the model send returned files on. A relative root or staging directory is
+taken from the working directory when the helper is made, as the model's
+relative paths are, so a process that changes its directory later sends
+from and saves to the same places.
 
 **Offering fewer tools.** Every definition a model is shown costs input
-tokens on every model call: about 1.5k for all six, a little over half that
-for three. An agent that does not need to run calls at once offers
-`discover_agents`, `prompt_agent` and `answer_agent`. The helper shows only
-the definitions of the tools it offers, in the order of section 1, and
-refuses any other tool in words.
+tokens on every model call. As an estimate, measured on one current model,
+the six add roughly 2k input tokens to each call and the blocking three a
+little over 1k, so three save close to 1k a call; the count varies with the
+model and its tokenizer. An agent that does not need to run calls at once
+offers `discover_agents`, `prompt_agent` and `answer_agent`, which both SDKs
+export as `BLOCKING_AGENT_TOOLS`; `AGENT_TOOL_NAMES` names all six. The
+helper shows only the definitions of the tools it offers, in the order of
+section 1, and refuses any other tool in words.
 
 - **Without `wait_agent` nothing can be detached**, or the model could start
   a call it cannot collect. `prompt_agent` and `answer_agent` have no `wait`
@@ -338,9 +344,8 @@ to the model.
   blocking call (section 3.10).
 - Python: `tools.definitions`; `await tools.execute(name, args, tool_call_id=...)`.
   Cancelling the task that runs a blocking call cancels the call.
-- Fewer tools: `new AgentTools({ agents, tools: ["discover_agents", "prompt_agent", "answer_agent"] })`
-  in TypeScript, `AgentTools(agents, tools=["discover_agents", "prompt_agent", "answer_agent"])`
-  in Python.
+- Fewer tools: `new AgentTools({ agents, tools: BLOCKING_AGENT_TOOLS })` in
+  TypeScript, `AgentTools(agents, tools=BLOCKING_AGENT_TOOLS)` in Python.
 
 ### 6.2 The scope
 

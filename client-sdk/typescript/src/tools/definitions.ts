@@ -26,15 +26,27 @@ export interface AgentToolDefinition {
   readonly parameters: Readonly<Record<string, unknown>>;
 }
 
-/** The six, in the contract's order. */
-export const AGENT_TOOL_NAMES: ReadonlyArray<AgentToolName> = [
+/** The six agent tools, by name, in the contract's order. */
+export const AGENT_TOOL_NAMES = [
   "discover_agents",
   "prompt_agent",
   "wait_agent",
   "answer_agent",
   "cancel_agent",
   "list_agent_calls",
-];
+] as const satisfies ReadonlyArray<AgentToolName>;
+
+/**
+ * The three an agent offers when it runs no calls at once, in the contract's
+ * order: `new AgentTools({ agents, tools: BLOCKING_AGENT_TOOLS })`. Every
+ * definition costs input tokens on every model call, and without
+ * `wait_agent` nothing is detached (docs/agent-tools.md, section 5).
+ */
+export const BLOCKING_AGENT_TOOLS = [
+  "discover_agents",
+  "prompt_agent",
+  "answer_agent",
+] as const satisfies ReadonlyArray<AgentToolName>;
 
 const DEFINITIONS: ReadonlyArray<AgentToolDefinition> = [
   {

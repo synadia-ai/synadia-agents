@@ -105,8 +105,8 @@ AgentToolResult = dict[str, Any]
 
 _OPEN_STATES = ("running", "input_required")
 
-#: The six, in the contract's order.
-_TOOL_NAMES = (
+#: The six agent tools, by name, in the contract's order.
+AGENT_TOOL_NAMES: tuple[str, ...] = (
     "discover_agents",
     "prompt_agent",
     "wait_agent",
@@ -114,6 +114,12 @@ _TOOL_NAMES = (
     "cancel_agent",
     "list_agent_calls",
 )
+
+#: The three an agent offers when it runs no calls at once, in the contract's
+#: order: ``AgentTools(agents, tools=BLOCKING_AGENT_TOOLS)``. Every definition
+#: costs input tokens on every model call, and without ``wait_agent`` nothing
+#: is detached (``docs/agent-tools.md``, section 5).
+BLOCKING_AGENT_TOOLS: tuple[str, ...] = ("discover_agents", "prompt_agent", "answer_agent")
 
 # The fields the contract defines. An extension may not set them.
 _CALL_RESULT_FIELDS = frozenset(
@@ -195,16 +201,18 @@ def _offered_tools(tools: Sequence[str] | None) -> frozenset[str]:
     ``answer_agent``, which answers their questions.
     """
     if tools is None:
-        return frozenset(_TOOL_NAMES)
+        return frozenset(AGENT_TOOL_NAMES)
     if isinstance(tools, str):
         raise ValueError(f"tools must be a list of tool names (got {tools!r})")
     for name in tools:
-        if name not in _TOOL_NAMES:
-            raise ValueError(f"tools names {name!r}, which is not one of {', '.join(_TOOL_NAMES)}")
+        if name not in AGENT_TOOL_NAMES:
+            raise ValueError(
+                f"tools names {name!r}, which is not one of {', '.join(AGENT_TOOL_NAMES)}"
+            )
     offered = frozenset(tools)
     if not offered:
         raise ValueError("tools names no tool; a role that must not delegate needs no AgentTools")
-    orphans = [n for n in _TOOL_NAMES if n in offered and n != "discover_agents"]
+    orphans = [n for n in AGENT_TOOL_NAMES if n in offered and n != "discover_agents"]
     if "prompt_agent" not in offered and orphans:
         them = "it works on" if len(orphans) == 1 else "they work on"
         raise ValueError(
@@ -345,7 +353,8 @@ class AgentTools:
           ``prompt_agent`` needs ``answer_agent``, or a question the prompted
           agent asks could not be answered. Each definition costs input tokens
           on every model call, so an agent that needs no async calls offers
-          ``discover_agents``, ``prompt_agent`` and ``answer_agent``.
+          :data:`BLOCKING_AGENT_TOOLS`: ``discover_agents``, ``prompt_agent``
+          and ``answer_agent``.
         - ``self_address``: the agent's own address, left out of discovery and refused.
         - ``discover_timeout``: how long one discovery waits, in seconds; ``None``
           uses the SDK's discovery default.
@@ -361,6 +370,7 @@ class AgentTools:
           so only returned files can be sent. Name the working directory, say, to
           allow its files.
         - ``staging_dir``: where returned files are saved, one directory per call;
+          a relative path is taken from the working directory at construction.
           ``None`` means a new private directory under the system's temporary
           directory, removed by :meth:`aclose`. A directory given here is kept.
         - ``max_saved_bytes_per_call``: the total of returned files saved per call;
@@ -391,13 +401,15 @@ class AgentTools:
         self._max_wait_s = max_wait_s
         self._max_wait_agent_s = max_wait_agent_s if max_wait_agent_s is not None else max_wait_s
         self._max_calls = max_calls
-        self._attachment_roots = [Path(r) for r in attachment_roots or ()]
-        self._staging_option = Path(staging_dir) if staging_dir is not None else None
+        self._cwd = Path.cwd()
+        # Relative roots are taken from the working directory now, as the
+        # model's paths are: a later change of directory moves none of them.
+        self._attachment_roots = [self._cwd / r for r in attachment_roots or ()]
+        self._staging_option = self._cwd / staging_dir if staging_dir is not None else None
         self._max_saved_bytes = max_saved_bytes_per_call
         self._on_settled = on_settled
         self._extensions = tuple(extensions)
         self._log = logger if logger is not None else log
-        self._cwd = Path.cwd()
         self._root = _Scope(served=False, caller=None)
         self._served: set[_Scope] = set()
         # Live handles by address, from the last discovery that saw them:
@@ -447,8 +459,8 @@ class AgentTools:
         self._ensure_open()
         scope = _SERVED.get({}).get(id(self), self._root)
         result: AgentToolResult
-        if name in _TOOL_NAMES and name not in self._offered:
-            offered = ", ".join(n for n in _TOOL_NAMES if n in self._offered)
+        if name in AGENT_TOOL_NAMES and name not in self._offered:
+            offered = ", ".join(n for n in AGENT_TOOL_NAMES if n in self._offered)
             result = {"error": f'the tool "{name}" is not offered; your tools are {offered}'}
         elif name == "discover_agents":
             result = await self._discover_agents(args)
@@ -608,13 +620,12 @@ class AgentTools:
         if isinstance(paths, ArgsError):
             return {"error": paths.error}
         if not self._reserve(scope):
-            actions = [a for a in self._open_call_actions("some", "their") if a is not None]
-            then = (
-                f"{' or '.join(actions)} before you start another"
-                if actions
-                else "another can start when one of them finishes"
-            )
-            return {"error": f"all {self._max_calls} tracked calls are still open; {then}"}
+            collect, stop = self._open_call_actions("some", "their")
+            then = collect if stop is None else f"{collect} or {stop}"
+            return {
+                "error": f"all {self._max_calls} tracked calls are still open; "
+                f"{then} before you start another"
+            }
 
         reserved = True
         try:
@@ -1052,18 +1063,18 @@ class AgentTools:
             "discover_agents", "; call discover_agents for the current list"
         )
 
-    def _open_call_actions(self, them: str, their: str) -> tuple[str | None, str | None]:
+    def _open_call_actions(self, them: str, their: str) -> tuple[str, str | None]:
         """What the model can do about open calls with the tools it has: collect, stop.
 
         Without ``wait_agent`` nothing is detached, so collecting a call is
-        answering its questions.
+        answering its questions. Calls are open only where ``prompt_agent`` is
+        offered, and it always comes with ``answer_agent``, so there is always
+        a way to collect them.
         """
         if "wait_agent" in self._offered:
-            collect: str | None = f"collect {them} with wait_agent"
-        elif "answer_agent" in self._offered:
-            collect = f"answer {their} questions with answer_agent"
+            collect = f"collect {them} with wait_agent"
         else:
-            collect = None
+            collect = f"answer {their} questions with answer_agent"
         stop = f"stop {them} with cancel_agent" if "cancel_agent" in self._offered else None
         return collect, stop
 
@@ -1103,12 +1114,13 @@ class AgentTools:
             "it" if open_calls == 1 else "them", "its" if open_calls == 1 else "their"
         )
         if scope.served:
-            then = f": {collect} before you answer." if collect is not None else "."
-            note = f"{counted} still open. Calls end with the prompt you are answering{then}"
+            note = (
+                f"{counted} still open. Calls end with the prompt you are answering: "
+                f"{collect} before you answer."
+            )
         else:
-            actions = [a for a in (collect, stop) if a is not None]
-            then = f": {', or '.join(actions)}." if actions else "."
-            note = f"{counted} still open{then}"
+            then = collect if stop is None else f"{collect}, or {stop}"
+            note = f"{counted} still open: {then}."
         return {**result, "open_calls": open_calls, "open_calls_note": note}
 
     # --- files and housekeeping ----------------------------------------------
