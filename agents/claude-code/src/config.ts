@@ -4,6 +4,7 @@ import type { NatsConnectionSource } from '@synadia-ai/agents'
 export type PermissionMode = 'terminal' | 'query'
 export type SenderIdentityMode = 'off' | 'signed'
 export type MinSenderTrust = 'any' | 'signed'
+export type AgentToolsMode = 'blocking' | 'all' | 'off'
 
 export type NatsChannelConfig = {
   context?: string
@@ -16,6 +17,10 @@ export type NatsChannelConfig = {
     mode: PermissionMode | 'nats'
     subject?: string
   }
+  /** The agent tools offered to the model; `NATS_AGENT_TOOLS` wins. */
+  agentTools?: AgentToolsMode
+  /** Extension modules; read by `src/extensions.ts`, whose variables win. */
+  extensions?: unknown
 }
 
 export type RuntimeSettings = {
@@ -24,6 +29,7 @@ export type RuntimeSettings = {
   senderIdentity: SenderIdentityMode
   minSenderTrust: MinSenderTrust
   permissionMode: PermissionMode
+  agentTools: AgentToolsMode
 }
 
 export function loadConfig(path: string): NatsChannelConfig {
@@ -48,6 +54,7 @@ export function loadConfig(path: string): NatsChannelConfig {
   optionalString(parsed, 'sessionName')
   optionalString(parsed, 'senderIdentity')
   optionalString(parsed, 'minSenderTrust')
+  optionalString(parsed, 'agentTools')
   if (parsed.permissions !== undefined) {
     if (!isRecord(parsed.permissions)) {
       throw new Error('invalid permissions: expected an object')
@@ -78,6 +85,11 @@ export function resolveRuntimeSettings(
   const permissionMode = configuredPermission === 'nats'
     ? 'query'
     : enumSetting('permissions.mode', configuredPermission, ['terminal', 'query'])
+  // Unset or empty is the blocking three, as in the other plugins.
+  const agentToolsValue = env.NATS_AGENT_TOOLS ?? config.agentTools
+  const agentTools = agentToolsValue === undefined || agentToolsValue === ''
+    ? 'blocking'
+    : enumSetting('agentTools', agentToolsValue, ['blocking', 'all', 'off'])
 
   return {
     connectionSource: context
@@ -91,6 +103,7 @@ export function resolveRuntimeSettings(
     senderIdentity,
     minSenderTrust,
     permissionMode,
+    agentTools,
   }
 }
 
