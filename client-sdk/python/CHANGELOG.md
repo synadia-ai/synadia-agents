@@ -162,6 +162,11 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Changed
 
+- `discover_agents`' filter descriptions now say which token of the address
+  `agents.prompt.<agent>.<owner>.<name>` each one matches, so a model looks
+  an agent up by its kind or role rather than by its instance name. Nothing
+  on the wire changes.
+
 - Sender identity is now opt-in: omitting `identity` performs no lookup and
   sends no `Agent-Sender` header; explicit `Identity()` enables unsigned
   claims, and `send_unsigned_claim=False` performs no automatic identity

@@ -233,6 +233,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `discover_agents`' filter descriptions now say which token of the address
+  `agents.prompt.<agent>.<owner>.<name>` each one matches, so a model looks
+  an agent up by its kind or role rather than by its instance name. Nothing
+  on the wire changes.
+
 - `loadContextOptions` now parses context URLs through `parseNatsUrl`: it
   validates the supported scheme and host, extracts URL userinfo into auth
   options, rejects mixed credentials across server entries, and preserves
