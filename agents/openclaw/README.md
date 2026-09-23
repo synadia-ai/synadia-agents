@@ -5,7 +5,8 @@ NATS channel plugin for [OpenClaw](https://openclaw.ai). Every configured OpenCl
 The plugin uses the production `AgentService` for registration, prompt admission,
 status classification, heartbeats, acknowledgements, keepalives, error mapping,
 and stream termination. OpenClaw-specific code handles only channel dispatch,
-attachments, configuration, and the optional raw outbound extension.
+attachments, configuration, the registration of the SDK's agent tools with
+OpenClaw, the extension point, and the optional raw outbound extension.
 
 ## Install
 
@@ -14,6 +15,33 @@ openclaw plugins install @synadia-ai/nats-channel
 ```
 
 If your OpenClaw config has a non-empty `plugins.allow` list, add `"nats"` to it — that list, if set, gates which non-bundled plugins are enabled.
+
+### From a source checkout
+
+The published package runs from compiled entries under `dist/`
+(`openclaw.runtimeExtensions` and `openclaw.runtimeSetupEntry` in
+`package.json`). A fresh checkout has no `dist/`, so pointing OpenClaw at the
+plugin _directory_ fails to load it. Either build first:
+
+```bash
+cd agents/openclaw && npm install && npm run build   # writes ./dist
+```
+
+or, to iterate without a build step, point `plugins.load.paths` at the
+TypeScript entry and let OpenClaw compile it on load:
+
+```json
+{
+  "plugins": {
+    "allow": ["nats"],
+    "load": { "paths": ["/path/to/synadia-agents/agents/openclaw/index.ts"] },
+    "entries": { "nats": { "enabled": true } }
+  }
+}
+```
+
+Both need the SDK packages built once (`README-DEV.md` at the repo root). The
+`index.ts` route is for local development only; the tarball always ships `dist/`.
 
 ## Quickstart (env vars)
 
@@ -119,6 +147,8 @@ Restart with `openclaw gateway restart`.
 | `minSenderTrust` | no       | `any`                        | `any` accepts headerless and valid signed prompts; `signed` requires a verified sender. This is independent of `senderIdentity`.              |
 | `description`    | no       | `OpenClaw agent <agentName>` | Shown in `$SRV.INFO` so callers know what they discovered.                                                                                    |
 | `enabled`        | no       | `true`                       | Set to `false` to keep the account block in config but skip connecting.                                                                       |
+| `agentTools`     | no       | `blocking`                   | Which [agent tools](#agent-tools) the model is offered: `blocking` (`discover_agents`, `prompt_agent`, `answer_agent`), `all` (the six), or `off` (none). `NATS_AGENT_TOOLS` overrides this field. |
+| `extensions`     | no       | —                            | [Extension modules](#extensions) to load: an array of package names or absolute paths, or `{ "module": "…", "options": { … } }` objects. `SYNADIA_OPENCLAW_EXTENSIONS` and `SYNADIA_AGENT_EXTENSIONS` override this field. |
 
 > **`org` → `owner`.** The pre-0.3 `org` field is still accepted as a deprecated alias and logs a one-time warning until you rename it.
 
@@ -146,6 +176,9 @@ account config. The legacy vars keep working indefinitely.
 | `NATS_CREDS`             | `credentials`    | Alias — used only when `NATS_CREDENTIALS` is unset.     |
 | `NATS_SENDER_IDENTITY`   | `senderIdentity` | `off` or `signed`.                                      |
 | `NATS_MIN_SENDER_TRUST`  | `minSenderTrust` | `any` or `signed`; independent of sender identity.      |
+| `NATS_AGENT_TOOLS`       | `agentTools`     | `blocking`, `all` or `off`; overrides the account field. |
+| `SYNADIA_OPENCLAW_EXTENSIONS` | `extensions` | Comma-separated module specifiers — highest extensions precedence. Set but empty means no extensions. |
+| `SYNADIA_AGENT_EXTENSIONS` | `extensions`   | Comma-separated module specifiers, shared by every agent plugin — below the per-agent var, above the account field. |
 
 ### Resolution order
 
@@ -168,6 +201,44 @@ the plugin does not silently connect with a different credential source. NATS
 contexts support token, user/password, creds, nkey, JWT+seed, and TLS settings.
 Signed identity requires a user seed in that selected source (creds, nkey, or
 JWT+seed). It never accepts a second identity-only credentials path.
+
+For the agent tools: `$NATS_AGENT_TOOLS` > `agentTools` in the account block > `blocking`.
+
+For extensions: `$SYNADIA_OPENCLAW_EXTENSIONS` > `$SYNADIA_AGENT_EXTENSIONS` > `extensions` in the account block > none. A variable that is set wins even when empty, so a launcher can switch a config file's extensions off with `SYNADIA_OPENCLAW_EXTENSIONS=`.
+
+## Extensions
+
+The plugin can load extension modules that add behaviour around it:
+interceptors for its client and service, extensions for its agent tools,
+and handlers for the gateway's events, among them the dispatch of a turn.
+Name them in `SYNADIA_OPENCLAW_EXTENSIONS` or `SYNADIA_AGENT_EXTENSIONS`,
+or as `extensions` in the account's block under `channels.nats.accounts`.
+The `gateway starting` line lists the modules loaded. The contract is
+[`../EXTENSIONS.md`](../EXTENSIONS.md).
+
+## Agent tools
+
+Once the gateway is on the bus, OpenClaw's model is offered the SDK's agent tools ([`docs/agent-tools.md`](../../docs/agent-tools.md)), the same tools every agent built on `@synadia-ai/agents` can have. By default the blocking three:
+
+| Tool              | What OpenClaw's model can do with it                                                                                                             |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `discover_agents` | List the agents it can prompt, with the address each answers at, what it says it does, and whether it is signed. This agent's own address is left out. |
+| `prompt_agent`    | Send one of them a task and get its reply. A question the other agent asks comes back to the model instead of a reply.                           |
+| `answer_agent`    | Answer that question; the call then continues until the reply.                                                                                   |
+
+A prompt to another agent **blocks within OpenClaw's turn**: `prompt_agent` returns when the other agent has replied, asked a question, or failed, so the model works one delegation at a time and the turn lasts as long as the delegation. The other agent's questions — a permission prompt, a clarification — reach OpenClaw's model as the tool's result, and the model answers them with `answer_agent`; the caller of the served prompt is not asked.
+
+The `agentTools` account setting (or `NATS_AGENT_TOOLS`) picks the subset:
+
+- `"blocking"` (default) — the three above.
+- `"all"` — the six: `wait_agent`, `cancel_agent` and `list_agent_calls` are added, and `prompt_agent` takes `wait: false`, so the model can start several prompts and collect them later.
+- `"off"` — no tool is offered. The gateway still keeps its client.
+
+The tools prompt through one client with the agent's own identity: with `senderIdentity: "signed"`, the prompts OpenClaw sends are signed as this agent. The agent's own address is refused, so the model cannot prompt the OpenClaw it runs in. The tools are registered through OpenClaw's plugin API — `contracts.tools` in `openclaw.plugin.json` names the six — and are in a turn's tool list while the gateway is on the bus; the `registered at` log line lists the ones offered. OpenClaw's tool policy applies to them as to any plugin tool: a non-empty `tools.allow` must name them, or `group:plugins`.
+
+The calls a served prompt starts belong to that prompt: OpenClaw serves an account's prompts one turn at a time, in arrival order, and a tool call is attributed to the turn being served, whose open calls are cancelled when the turn ends.
+
+One thing is deliberately not done: OpenClaw's workspace is not offered as an attachment root (a file that came back from another agent can still be forwarded, since the tools' staging directory is always a root).
 
 ## Verify
 
@@ -351,7 +422,9 @@ the already-approved tarball without rebuilding it.
 The smoke test needs a `nats-server` running on `127.0.0.1:4222` — install per [the upstream docs](https://docs.nats.io/running-a-nats-service/introduction/installation) (`brew install nats-server` on macOS) then start it in another terminal with `nats-server`.
 
 The unit suite exercises the plugin's production `AgentService` wiring,
-including identity-off, signed, and strict-trust configuration. The wire smoke
+including identity-off, signed, and strict-trust configuration, the agent
+tools' registration by mode, and the extension point (loading, precedence,
+the interceptor order, the events around a served prompt). The wire smoke
 separately assembles a minimal service from the same shared protocol primitives
 and verifies `$SRV.INFO` shape, heartbeat fields, the
 `ack → response → terminator` cycle, and attachment staging + cleanup against a

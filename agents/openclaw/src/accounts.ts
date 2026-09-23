@@ -1,4 +1,6 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
+import { resolveExtensionEntries } from "./extensions.js";
+import { AGENT_TOOLS_VAR, parseAgentToolsMode } from "./tools.js";
 import type {
   NatsAccountConfig,
   ResolvedNatsAccount,
@@ -47,7 +49,8 @@ function applyEnvOverride(
     | "owner"
     | "credentials"
     | "senderIdentity"
-    | "minSenderTrust",
+    | "minSenderTrust"
+    | "agentTools",
   configValue: string | undefined,
   envValue: string | undefined,
   accountId: string,
@@ -77,6 +80,18 @@ function resolveSenderIdentity(
   if (value === undefined || value === "") return "off";
   if (value === "off" || value === "signed") return value;
   throw new Error(`${source} must be "off" or "signed"`);
+}
+
+// A malformed `extensions` entry is reported once per (accountId, message):
+// `resolveNatsAccount` runs for every wizard callback, and the gateway loads
+// the resolved list once, so one line per problem is enough.
+const loggedExtensionWarnings = new Set<string>();
+
+function warnExtensionsOnce(accountId: string, message: string): void {
+  const key = `${accountId}:${message}`;
+  if (loggedExtensionWarnings.has(key)) return;
+  loggedExtensionWarnings.add(key);
+  console.warn(`[nats] ${message} (account=${accountId})`);
 }
 
 function resolveSenderTrust(value: unknown, source: string): SenderTrustMode {
@@ -144,6 +159,11 @@ export function resolveNatsAccount(
     // Validate the final values after env overrides have been applied.
     senderIdentity: (raw.senderIdentity ?? "off") as SenderIdentityMode,
     minSenderTrust: (raw.minSenderTrust ?? "any") as SenderTrustMode,
+    agentTools: (raw.agentTools ?? "blocking") as ResolvedNatsAccount["agentTools"],
+    // The variables win over the field, a set one even when empty.
+    extensions: resolveExtensionEntries(raw.extensions, process.env, (message) =>
+      warnExtensionsOnce(id, message),
+    ),
     owner,
     config: raw,
     // Replaced below after the atomic source has been selected.
@@ -259,6 +279,14 @@ export function resolveNatsAccount(
     id,
     "NATS_MIN_SENDER_TRUST",
   );
+  applyEnvOverride(
+    resolved,
+    "agentTools",
+    raw.agentTools,
+    env[AGENT_TOOLS_VAR],
+    id,
+    AGENT_TOOLS_VAR,
+  );
 
   // ── $NATS_CONTEXT (highest precedence) ───────────────────────────────
   // Applied LAST so it wins over $NATS_URL and $NATS_CREDENTIALS as the
@@ -290,6 +318,12 @@ export function resolveNatsAccount(
     env.NATS_MIN_SENDER_TRUST !== undefined
       ? "NATS_MIN_SENDER_TRUST"
       : `channels.nats.accounts.${id}.minSenderTrust`,
+  );
+  resolved.agentTools = parseAgentToolsMode(
+    resolved.agentTools,
+    env[AGENT_TOOLS_VAR] !== undefined
+      ? AGENT_TOOLS_VAR
+      : `channels.nats.accounts.${id}.agentTools`,
   );
 
   if (resolved.context) {

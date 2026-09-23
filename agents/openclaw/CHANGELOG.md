@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent tools.** OpenClaw's model is offered the SDK's agent tools through
+  the plugin API's `registerTool()` while the gateway is on the bus:
+  `discover_agents`, `prompt_agent` and `answer_agent` by default (the SDK's
+  `BLOCKING_AGENT_TOOLS`), the six with `agentTools: "all"`, none with
+  `"off"`; `NATS_AGENT_TOOLS` overrides the account field. The gateway keeps
+  one persistent `Agents` client with the same signer as its service, and the
+  agent's own address is refused. A prompt to another agent blocks within
+  OpenClaw's turn, and the other agent's questions come back to the model.
+  The manifest declares the six names in `contracts.tools`.
+- **Extensions.** Optional modules named in `SYNADIA_OPENCLAW_EXTENSIONS`,
+  `SYNADIA_AGENT_EXTENSIONS` or the account's `extensions` array — a package
+  name or an absolute path, or `{ "module": "…", "options": { … } }` in the
+  config — add prompt and request interceptors, heartbeat extras and
+  agent-tools extensions to the gateway's client, service and tools, and
+  handlers for the gateway's events (`promptAccepted`, `promptEnded`,
+  `aroundDispatch`, `aroundToolCall`). Modules load once per account at
+  gateway start, before the connection; one that fails is logged once and
+  skipped. The contract is `agents/EXTENSIONS.md`; the types are exported
+  from `src/extensions.ts`.
+- The `gateway starting` and `registered at` log lines name the agent tools
+  offered and the extensions loaded; the account summary in
+  `openclaw channels status` names both settings.
+- README: how to load the plugin from a source checkout, which has no `dist/`
+  (build first, or point `plugins.load.paths` at `index.ts`).
 - Optional `senderIdentity: "signed"` mode derives registration identity from
   the same immutable NATS credential snapshot used to connect. The default is
   `off`, so existing identity-free setups do no identity lookup.

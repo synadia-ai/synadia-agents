@@ -5,6 +5,16 @@
   "activation": {
     "onStartup": true
   },
+  "contracts": {
+    "tools": [
+      "discover_agents",
+      "prompt_agent",
+      "wait_agent",
+      "answer_agent",
+      "cancel_agent",
+      "list_agent_calls"
+    ]
+  },
   "channelConfigs": {
     "nats": {
       "label": "NATS",
@@ -62,6 +72,29 @@
                 "org": {
                   "type": "string",
                   "description": "Deprecated alias of `owner`, still accepted for backward compatibility. Emits a warning at resolve time — please rename to `owner`."
+                },
+                "agentTools": {
+                  "type": "string",
+                  "enum": ["blocking", "all", "off"],
+                  "default": "blocking",
+                  "description": "Which agent tools the model is offered: \"blocking\" (discover_agents, prompt_agent, answer_agent), \"all\" (the six) or \"off\" (none). Overridden by $NATS_AGENT_TOOLS at runtime."
+                },
+                "extensions": {
+                  "type": "array",
+                  "description": "Extension modules to load at gateway start: package names or absolute paths, or { \"module\": \"…\", \"options\": { … } } objects. Overridden by $SYNADIA_OPENCLAW_EXTENSIONS and $SYNADIA_AGENT_EXTENSIONS at runtime.",
+                  "items": {
+                    "oneOf": [
+                      { "type": "string" },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "module": { "type": "string" },
+                          "options": { "type": "object" }
+                        },
+                        "required": ["module"]
+                      }
+                    ]
+                  }
                 }
               },
               "required": ["agentName"]
@@ -117,6 +150,29 @@
                 "org": {
                   "type": "string",
                   "description": "Deprecated alias of `owner`"
+                },
+                "agentTools": {
+                  "type": "string",
+                  "enum": ["blocking", "all", "off"],
+                  "default": "blocking",
+                  "description": "Agent tools offered to the model"
+                },
+                "extensions": {
+                  "type": "array",
+                  "description": "Extension modules to load at gateway start",
+                  "items": {
+                    "oneOf": [
+                      { "type": "string" },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "module": { "type": "string" },
+                          "options": { "type": "object" }
+                        },
+                        "required": ["module"]
+                      }
+                    ]
+                  }
                 }
               },
               "required": ["agentName"]
