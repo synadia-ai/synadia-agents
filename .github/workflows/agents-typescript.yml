@@ -86,7 +86,7 @@ jobs:
           npm install --no-package-lock --no-audit --no-fund
       - name: Unit tests
         working-directory: agents/pi
-        run: bun test test/owner.test.ts test/context.test.ts test/prompt-queue.test.ts
+        run: bun test test/owner.test.ts test/context.test.ts test/prompt-queue.test.ts test/extensions.test.ts test/tools.test.ts
       - name: Identity-mode smoke (spawns its own nats-server)
         working-directory: agents/pi
         run: bun run test:smoke
