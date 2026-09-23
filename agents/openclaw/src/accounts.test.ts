@@ -2,7 +2,7 @@
 // OpenClaw types only and delegates connection-source interpretation to the
 // shared SDK helper at connect time.
 
-import { afterEach, beforeEach, describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { listNatsAccountIds, resolveNatsAccount } from "./accounts.js";
 
 // Identity env vars that influence resolveNatsAccount. Cleared per-test so
@@ -20,6 +20,9 @@ const IDENTITY_ENV_VARS = [
   "NATS_CREDS",
   "NATS_SENDER_IDENTITY",
   "NATS_MIN_SENDER_TRUST",
+  "NATS_AGENT_TOOLS",
+  "SYNADIA_OPENCLAW_EXTENSIONS",
+  "SYNADIA_AGENT_EXTENSIONS",
 ] as const;
 
 function snapshotIdentityEnv(): Record<string, string | undefined> {
@@ -353,5 +356,97 @@ describe("sender identity and inbound trust", () => {
     expect(() => resolveNatsAccount({})).toThrow(
       'NATS_MIN_SENDER_TRUST must be "any" or "signed"',
     );
+  });
+});
+
+describe("agent tools and extensions", () => {
+  let savedIdentity: Record<string, string | undefined>;
+  beforeEach(() => {
+    savedIdentity = snapshotIdentityEnv();
+  });
+  afterEach(() => {
+    restoreIdentityEnv(savedIdentity);
+  });
+
+  const withAccount = (fields: Record<string, unknown>) => ({
+    channels: { nats: { accounts: { default: { agentName: "echo", ...fields } } } },
+  });
+
+  it("offers the blocking three by default and takes the account's agentTools", () => {
+    expect(resolveNatsAccount({}).agentTools).toBe("blocking");
+    expect(resolveNatsAccount(withAccount({ agentTools: "" })).agentTools).toBe("blocking");
+    expect(resolveNatsAccount(withAccount({ agentTools: "all" })).agentTools).toBe("all");
+    expect(resolveNatsAccount(withAccount({ agentTools: "off" })).agentTools).toBe("off");
+  });
+
+  it("NATS_AGENT_TOOLS wins over the account field; empty means the default", () => {
+    process.env.NATS_AGENT_TOOLS = "off";
+    expect(resolveNatsAccount(withAccount({ agentTools: "all" })).agentTools).toBe("off");
+    process.env.NATS_AGENT_TOOLS = "";
+    expect(resolveNatsAccount(withAccount({ agentTools: "all" })).agentTools).toBe("blocking");
+  });
+
+  it("an unknown agentTools value fails at resolve time, naming the setting", () => {
+    expect(() => resolveNatsAccount(withAccount({ agentTools: "some" }))).toThrow(
+      /channels.nats.accounts.default.agentTools must be one of blocking, all, off/,
+    );
+    process.env.NATS_AGENT_TOOLS = "many";
+    expect(() => resolveNatsAccount({})).toThrow(/NATS_AGENT_TOOLS must be one of/);
+  });
+
+  it("names no extension by default and takes the account's extensions array", () => {
+    expect(resolveNatsAccount({}).extensions).toEqual({ source: "none", entries: [] });
+    const account = resolveNatsAccount(
+      withAccount({ extensions: ["/abs/one", { module: "@scope/two", options: { level: 2 } }] }),
+    );
+    expect(account.extensions).toEqual({
+      source: "config",
+      entries: [
+        { module: "/abs/one", options: {} },
+        { module: "@scope/two", options: { level: 2 } },
+      ],
+    });
+    // The block is handed on as read, the field included.
+    expect(account.config.extensions).toEqual([
+      "/abs/one",
+      { module: "@scope/two", options: { level: 2 } },
+    ]);
+  });
+
+  it("SYNADIA_OPENCLAW_EXTENSIONS > SYNADIA_AGENT_EXTENSIONS > the account field; a set variable wins even when empty", () => {
+    const cfg = withAccount({ extensions: ["/abs/from-config"] });
+    process.env.SYNADIA_AGENT_EXTENSIONS = "shared-a, shared-b";
+    expect(resolveNatsAccount(cfg).extensions).toEqual({
+      source: "SYNADIA_AGENT_EXTENSIONS",
+      entries: [
+        { module: "shared-a", options: {} },
+        { module: "shared-b", options: {} },
+      ],
+    });
+    process.env.SYNADIA_OPENCLAW_EXTENSIONS = "openclaw-only";
+    expect(resolveNatsAccount(cfg).extensions).toEqual({
+      source: "SYNADIA_OPENCLAW_EXTENSIONS",
+      entries: [{ module: "openclaw-only", options: {} }],
+    });
+    process.env.SYNADIA_OPENCLAW_EXTENSIONS = "";
+    expect(resolveNatsAccount(cfg).extensions).toEqual({
+      source: "SYNADIA_OPENCLAW_EXTENSIONS",
+      entries: [],
+    });
+  });
+
+  it("a malformed extensions entry is skipped with one warning per account and problem", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const cfg = withAccount({ extensions: ["/abs/ok", 42] });
+      expect(resolveNatsAccount(cfg).extensions.entries.map((e) => e.module)).toEqual(["/abs/ok"]);
+      resolveNatsAccount(cfg);
+      const lines = warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("extensions["));
+      expect(lines).toEqual([
+        "[nats] extensions[1]: expected a module specifier or { module, options }; ignored (account=default)",
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

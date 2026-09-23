@@ -4,8 +4,9 @@ import type {
   PluginRuntime,
 } from "openclaw/plugin-sdk/core";
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
+import { AGENT_TOOL_NAMES } from "@synadia-ai/agents";
 import { natsPlugin } from "./src/channel.js";
-import { setNatsRuntime } from "./src/runtime.js";
+import { getActiveAgentTools, setNatsRuntime } from "./src/runtime.js";
 
 export default defineChannelPluginEntry({
   id: "nats",
@@ -24,6 +25,16 @@ export default defineChannelPluginEntry({
   },
   registerFull(api: OpenClawPluginApi) {
     ensureNatsChannelConfig(api.runtime);
+    // The agent tools of the running gateway (see `src/tools.ts`). OpenClaw
+    // calls the factory when it assembles a turn's tool list, so the tools
+    // appear once the gateway is on the bus and go when it stops. Every
+    // name the six can have is declared in `openclaw.plugin.json`'s
+    // `contracts.tools`; `optional` because the account's `agentTools`
+    // setting offers a subset, or none.
+    api.registerTool(() => getActiveAgentTools() ?? [], {
+      names: [...AGENT_TOOL_NAMES],
+      optional: true,
+    });
   },
 });
 

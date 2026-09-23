@@ -11,6 +11,7 @@ import { startNatsGateway, stopNatsGateway } from "./gateway.js";
 import {
   getActiveConnection,
   getActiveAgentName,
+  getActiveExtensionNames,
   getActiveOwner,
 } from "./runtime.js";
 import type { ResolvedNatsAccount } from "./types.js";
@@ -267,11 +268,13 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
       describeAccount: (account: ResolvedNatsAccount) => ({
         accountId: account.accountId,
         label: account.agentName,
-        summary: `agents.prompt.oc.${account.owner}.${account.agentName} @ ${
-          "context" in account.connectionSource
-            ? `context:${account.connectionSource.context}`
-            : account.url || "nats://demo.nats.io"
-        }`,
+        summary:
+          `agents.prompt.oc.${account.owner}.${account.agentName} @ ${
+            "context" in account.connectionSource
+              ? `context:${account.connectionSource.context}`
+              : account.url || "nats://demo.nats.io"
+          }` +
+          ` (agent tools: ${account.agentTools}; extensions: ${describeExtensions(account)})`,
       }),
     },
     setup: {
@@ -318,7 +321,8 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
           to: `nats:${(params.to as string) ?? "unknown"}`,
         }),
     },
-    agentTools: () => [],
+    // The agent tools are registered through the plugin API (`index.ts`),
+    // whose factory runs per turn; the channel contributes none here.
   },
   // OpenClaw's own direct-message policy remains open/no-pairing. Protocol
   // sender admission is independently enforced by AgentService.
@@ -352,6 +356,19 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
     },
   },
 }) as ChannelPlugin;
+
+/**
+ * The extensions an account runs with: the ones the gateway loaded while it
+ * runs (a module that failed to load is missing), else the ones its
+ * settings name.
+ */
+function describeExtensions(account: ResolvedNatsAccount): string {
+  const names =
+    getActiveAgentName() === account.agentName
+      ? (getActiveExtensionNames() ?? account.extensions.entries.map((e) => e.module))
+      : account.extensions.entries.map((e) => e.module);
+  return names.join(", ") || "none";
+}
 
 function inputValue(input: unknown): string {
   return typeof input === "object" && input !== null

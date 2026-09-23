@@ -1,4 +1,6 @@
 import type { NatsConnectionSource } from "@synadia-ai/agents";
+import type { ExtensionConfigEntry, ResolvedExtensionEntries } from "./extensions.js";
+import type { AgentToolsMode } from "./tools.js";
 
 export type SenderIdentityMode = "off" | "signed";
 export type SenderTrustMode = "any" | "signed";
@@ -28,6 +30,19 @@ export interface NatsAccountConfig {
   senderIdentity?: SenderIdentityMode;
   /** Minimum trust required for incoming prompts. Independent of senderIdentity. */
   minSenderTrust?: SenderTrustMode;
+  /**
+   * Which agent tools the model is offered: `"blocking"` (the default:
+   * `discover_agents`, `prompt_agent`, `answer_agent`), `"all"` (the six)
+   * or `"off"`. `NATS_AGENT_TOOLS` overrides this field.
+   */
+  agentTools?: AgentToolsMode;
+  /**
+   * Extension modules to load at gateway start: package names or absolute
+   * paths, or `{ "module": "…", "options": { … } }` objects.
+   * `SYNADIA_OPENCLAW_EXTENSIONS` and `SYNADIA_AGENT_EXTENSIONS` override
+   * this field.
+   */
+  extensions?: ReadonlyArray<ExtensionConfigEntry>;
 }
 
 export interface ResolvedNatsAccount {
@@ -44,5 +59,9 @@ export interface ResolvedNatsAccount {
   minSenderTrust: SenderTrustMode;
   /** Resolved owner token (never empty; defaults to "default"). */
   owner: string;
+  /** The agent tools offered, after `NATS_AGENT_TOOLS`. */
+  agentTools: AgentToolsMode;
+  /** The extension modules to load, after the variables, and the source that named them. */
+  extensions: ResolvedExtensionEntries;
   config: NatsAccountConfig;
 }
