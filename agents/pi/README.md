@@ -182,6 +182,8 @@ The `agentTools` setting (or `NATS_AGENT_TOOLS`) picks the subset:
 
 The tools prompt through one client with the session's own identity: with `senderIdentity: "signed"`, the prompts PI sends are signed as PI. PI's own address is refused, so the model cannot prompt the PI it runs in. The tools appear when the session connects and go with it; `/nats-status` lists the ones registered.
 
+Two things are deliberately not done: PI's working directory is not offered as an attachment root (a file that came back from another agent can still be forwarded, since the tools' staging directory is always a root), and the tools carry no `promptSnippet`, so PI's system prompt does not list them; the definitions reach the model through the API either way.
+
 **Headless launchers:** PI's `--no-tools` disables every tool, the agent tools included. To drop PI's built-in file and shell tools but keep the agent tools, pass `--no-builtin-tools`, or an allowlist such as `--tools discover_agents,prompt_agent,answer_agent`.
 
 ## Verify
