@@ -44,7 +44,9 @@ inside `aroundInject`, and asks `providerHeaders` for headers to add to
 the provider request of an active prompt. OpenClaw runs the turn's
 dispatch inside `aroundDispatch`. Claude Code reports `sessionStarted`
 and `turnStopped` from its hooks. A wrapper must call its `run` argument
-once, synchronously, and return its value.
+once, synchronously, and return its value. A wrapper may be an async
+function: the plugin still takes `run`'s own value, and the wrapper must
+call `run` once, before its first `await`, so the step keeps its timing.
 
 **Failure.** A module that cannot be loaded is logged once and the plugin
 starts without it. An event handler that throws is logged and ignored; a

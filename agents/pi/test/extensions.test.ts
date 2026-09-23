@@ -54,6 +54,10 @@ function loaded(name: string, extension: Omit<AgentExtension, "name">): LoadedEx
 	return { module: name, name, extension: { name, ...extension } };
 }
 
+async function delayTicks(n: number): Promise<void> {
+	for (let i = 0; i < n; i++) await Promise.resolve();
+}
+
 describe("resolveExtensionEntries: the variables and the config field", () => {
 	test("the config field is the fallback, as strings or { module, options }", () => {
 		const warnings: string[] = [];
@@ -498,7 +502,7 @@ describe("composeExtensions: PI's events, fail-open", () => {
 		expect(runs).toBe(1);
 		expect(logger.lines).toEqual([
 			'warn extension "throws-after" aroundInject failed: after run',
-			'warn extension "twice" aroundInject called run more than once; the later calls were ignored',
+			'warn extension "twice" aroundInject called run more than once, or after the plugin had run the step itself; the extra call was ignored',
 		]);
 	});
 
@@ -547,6 +551,86 @@ describe("composeExtensions: PI's events, fail-open", () => {
 		expect(composed.events.aroundInject(request, () => "run's")).toBe("run's");
 		expect(logger.lines).toEqual([
 			'warn extension "rewraps" aroundInject did not return run\'s value; the plugin used run\'s',
+		]);
+	});
+
+	test("an async passthrough wrapper is within the contract: no warning, run's value unchanged", async () => {
+		const logger = recordingLogger();
+		const als = new AsyncLocalStorage<string>();
+		let injected = 0;
+		const composed = composeExtensions(
+			[
+				loaded("async-passthrough", {
+					events: {
+						// An async function returns a promise of its own around
+						// run's; the plugin must not mistake that for a wrong value.
+						aroundToolCall: (async (_r: unknown, _n: string, run: () => unknown) => run()) as never,
+						aroundInject: (async (r: ServedRequest, run: () => unknown) =>
+							als.run(`bound:${r.id}`, run)) as never,
+					},
+				}),
+			],
+			logger,
+		);
+		const result = Promise.resolve({ call_id: "c1", state: "done", reply: "ok" });
+		const got = composed.events.aroundToolCall(request, "prompt_agent", () => result);
+		expect(got).toBe(result);
+		expect(await got).toEqual({ call_id: "c1", state: "done", reply: "ok" });
+		// aroundInject's step returns nothing, as pi.sendUserMessage does; run
+		// still ran once, synchronously, inside the wrapper's binding.
+		let seen: string | undefined;
+		composed.events.aroundInject(request, () => {
+			injected++;
+			seen = als.getStore();
+		});
+		expect(injected).toBe(1);
+		expect(seen).toBe("bound:7");
+		expect(logger.lines).toEqual([]);
+	});
+
+	test("a sync wrapper that returns a different plain value is still corrected and warned once", () => {
+		const logger = recordingLogger();
+		const composed = composeExtensions(
+			[
+				loaded("plain-wrong", {
+					events: {
+						aroundInject(_r, run) {
+							run();
+							return 42 as never;
+						},
+					},
+				}),
+			],
+			logger,
+		);
+		expect(composed.events.aroundInject(request, () => "run's")).toBe("run's");
+		expect(logger.lines).toEqual([
+			'warn extension "plain-wrong" aroundInject did not return run\'s value; the plugin used run\'s',
+		]);
+	});
+
+	test("an async wrapper that calls run only after an await: the plugin runs the step once, the late call is ignored", async () => {
+		const logger = recordingLogger();
+		let runs = 0;
+		const composed = composeExtensions(
+			[
+				loaded("late", {
+					events: {
+						aroundInject: (async (_r: unknown, run: () => unknown) => {
+							await Promise.resolve();
+							return run();
+						}) as never,
+					},
+				}),
+			],
+			logger,
+		);
+		expect(composed.events.aroundInject(request, () => ++runs)).toBe(1);
+		await delayTicks(3);
+		expect(runs).toBe(1);
+		expect(logger.lines).toEqual([
+			'warn extension "late" aroundInject returned without calling run; the plugin ran the step itself',
+			'warn extension "late" aroundInject called run more than once, or after the plugin had run the step itself; the extra call was ignored',
 		]);
 	});
 

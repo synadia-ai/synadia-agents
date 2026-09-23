@@ -97,7 +97,10 @@ export type Outcome = "ok" | "error" | "timeout";
  * and a wrapper, which the plugin calls around one of its own steps. A
  * wrapper must call `run` once, synchronously, and return its value — a
  * promise included — so binding an `AsyncLocalStorage` around `run`
- * changes nothing of the step's timing. PI calls `promptAccepted`,
+ * changes nothing of the step's timing. A wrapper may be an async
+ * function; the plugin still takes `run`'s own value, and the wrapper must
+ * call `run` once, before its first `await`, so the step keeps its timing.
+ * PI calls `promptAccepted`,
  * `promptEnded`, `aroundToolCall`, `aroundInject` and `providerHeaders`;
  * the other harnesses' events are listed so one shape serves all three.
  */
@@ -428,6 +431,14 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" || typeof value === "function") &&
+    value !== null &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
 export function composeExtensions(
   loaded: ReadonlyArray<LoadedExtension>,
   logger: Logger,
@@ -483,7 +494,7 @@ export function composeExtensions(
       if (called) {
         logOnce(
           `${key}:twice`,
-          `extension "${l.name}" ${event} called run more than once; the later calls were ignored`,
+          `extension "${l.name}" ${event} called run more than once, or after the plugin had run the step itself; the extra call was ignored`,
         );
         if (stepThrew) throw stepError;
         return value as T;
@@ -505,7 +516,8 @@ export function composeExtensions(
       // The step's own failure, passed through by the wrapper: not its fault.
       if (stepThrew && e === stepError) throw e;
       logOnce(key, `extension "${l.name}" ${event} failed: ${errorText(e)}`);
-      if (!called) return inner();
+      // Through `once`, so a late call by the wrapper cannot run it again.
+      if (!called) return once();
       if (stepThrew) throw stepError;
       return value as T;
     }
@@ -516,9 +528,12 @@ export function composeExtensions(
         key,
         `extension "${l.name}" ${event} returned without calling run; the plugin ran the step itself`,
       );
-      return inner();
+      return once();
     }
-    if (returned !== value) {
+    // The plugin takes run's own value in every case. Identity says nothing
+    // when a promise is involved: an async wrapper returns a promise of its
+    // own around run's, and run's promise may be re-wrapped on the way out.
+    if (!isThenable(value) && !isThenable(returned) && returned !== value) {
       logOnce(
         `${key}:value`,
         `extension "${l.name}" ${event} did not return run's value; the plugin used run's`,
