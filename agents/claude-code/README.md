@@ -19,7 +19,7 @@ channel does not install or update npm dependencies at runtime.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) - the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`, and make sure `bun` is on your `PATH`.
+- [Bun](https://bun.sh) - the MCP server and the plugin's [hooks](#hooks) run on Bun. Install with `curl -fsSL https://bun.sh/install | bash`, and make sure `bun` is on your `PATH`.
 - [NATS CLI](https://github.com/nats-io/natscli) - for managing contexts and testing.
 - A NATS server to connect to (local or remote) - the plugin defaults to `demo.nats.io`.
 
@@ -185,7 +185,41 @@ nats micro info agents
 | Tool | Purpose |
 | --- | --- |
 | `reply` | Send a response over NATS. Takes `request_id` + `text`. The server wraps the text in a `{"type":"response","data":...}` chunk. Set `done=false` for intermediate replies; `done=true` (default) emits the empty-body terminator. |
-| `request_info` | Return the safely classified sender of an active request. Identity is available only on explicit inspection and is never inserted into the incoming model prompt or channel metadata. |
+| `request_info` | Return the safely classified sender of an active request, and the [extensions](#extensions) loaded. Identity is available only on explicit inspection and is never inserted into the incoming model prompt or channel metadata. |
+| `discover_agents`, `prompt_agent`, `answer_agent` | The [agent tools](#agent-tools): find other agents on NATS, prompt one and wait for its reply, answer a question it asks back. Offered by default. |
+| `wait_agent`, `cancel_agent`, `list_agent_calls` | The rest of the agent tools, for calls that run while the model does other work. Offered with `agentTools: "all"`. |
+
+### Agent tools
+
+The channel offers the SDK's agent tools, so the session can reach other
+agents on the same NATS as tools of its own. They are built on the caller
+API: the agent being prompted sees an ordinary prompt, signed with the
+channel's identity when `senderIdentity` is `signed`.
+
+The `agentTools` setting (`NATS_AGENT_TOOLS` wins over it) picks the set:
+
+| Value | Tools |
+| --- | --- |
+| `blocking` (default) | `discover_agents`, `prompt_agent`, `answer_agent` |
+| `all` | the six, adding `wait_agent`, `cancel_agent`, `list_agent_calls` |
+| `off` | none |
+
+Each agent tool takes one more optional argument, `request_id`: the inbound
+channel request the call is made for, the last active request when it is
+omitted. A call made for a request belongs to it: it runs in that request's
+context, and the calls it started that are still open end when the request
+completes (`reply` with `done=true`). A call made while no request is active
+is the local user's and lives as long as the session. A `request_id` that
+names no active request is refused.
+
+When a prompted agent asks a question, it comes back as the tool's result
+for the model to answer with `answer_agent`. The channel's own address is
+left out of discovery and refused, so the session cannot prompt itself.
+Permission prompts are unaffected: they follow the [permissions](#permissions)
+setting.
+
+The model's id for each agent-tool call reaches the tools through the
+`PreToolUse` hook (see [Hooks](#hooks)); an MCP tool call does not carry it.
 
 ## Permissions
 
@@ -295,8 +329,9 @@ State lives in `~/.claude/channels/nats/`:
 
 | File | Purpose |
 | --- | --- |
-| `config.json` | Selected NATS context, owner and session name overrides, identity, trust, and permission settings |
+| `config.json` | Selected NATS context, owner and session name overrides, identity, trust, permission, agent-tools and extension settings |
 | `attachments/<request_id>/` | Per-request staged attachments; auto-cleaned on reply completion |
+| `sessions/` | What the plugin's [hooks](#hooks) record, per Claude Code process; a dead process's files are removed when a server starts |
 
 NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 
@@ -311,7 +346,9 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
   "minSenderTrust": "any",
   "permissions": {
     "mode": "query"
-  }
+  },
+  "agentTools": "blocking",
+  "extensions": ["some-extension", { "module": "/abs/path/to/extension", "options": {} }]
 }
 ```
 
@@ -323,6 +360,8 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 | `senderIdentity` | `off` | `off` or `signed`; signed mode uses the selected connection credentials |
 | `minSenderTrust` | `any` | `any` or `signed`; controls inbound prompt admission independently |
 | `permissions.mode` | `terminal` | `terminal` or `query` (`nats` accepted as legacy alias for `query`) |
+| `agentTools` | `blocking` | `blocking`, `all` or `off`; the [agent tools](#agent-tools) offered |
+| `extensions` | *(none)* | Extension modules: package names or absolute paths, or `{ "module", "options" }` objects; see [Extensions](#extensions) |
 
 ### Environment variables
 
@@ -339,5 +378,41 @@ shown below; environment settings override the corresponding config fields.
 | `NATS_URL` | Raw NATS URL; used when no context is set via env or config | `demo.nats.io` |
 | `NATS_SENDER_IDENTITY` | Host identity mode: `off` or `signed` | config `senderIdentity`, then `off` |
 | `NATS_MIN_SENDER_TRUST` | Inbound sender policy: `any` or `signed` | config `minSenderTrust`, then `any` |
+| `NATS_AGENT_TOOLS` | The agent tools offered: `blocking`, `all` or `off`; empty means `blocking` | config `agentTools`, then `blocking` |
+| `SYNADIA_CLAUDE_CODE_EXTENSIONS`, `SYNADIA_AGENT_EXTENSIONS` | Extension modules, comma-separated; per-agent var wins, then fleet-wide, then config `extensions`. A set variable wins even when empty | *(none)* |
 | `NATS_STATE_DIR` | State directory location | `~/.claude/channels/nats` |
 | `CLAUDE_CWD` | Working directory whose basename seeds the default session name | — |
+| `CLAUDE_PID` | Set by Claude Code for its MCP servers and hooks; keys the hooks' files | the server's parent pid |
+
+## Extensions
+
+The channel can load extension modules that add behaviour around it:
+interceptors for its client and service, extensions for its agent tools,
+and handlers for the session's events. The plugin's hooks
+(`hooks/hooks.json`) record the session id at `SessionStart`, the turn's
+end at `Stop` and the tool-call id at `PreToolUse` under
+`<state dir>/sessions/`, keyed by the Claude Code process; the server
+reads them to follow `/clear`, to close a turn when Claude Code is done,
+and to pass the model's tool-call id to its agent tools. Name extensions
+in `SYNADIA_CLAUDE_CODE_EXTENSIONS` or `SYNADIA_AGENT_EXTENSIONS`, or as
+the `extensions` array in `config.json`; `request_info` lists the modules
+loaded. The contract is [`../EXTENSIONS.md`](../EXTENSIONS.md).
+
+## Hooks
+
+The plugin ships Claude Code hooks (`hooks/hooks.json`), all running
+`hooks/session-event.ts` with `bun`. They record what the MCP server cannot
+see itself, under `<state dir>/sessions/`, keyed by the Claude Code process
+(`CLAUDE_PID`), each file written atomically:
+
+| Hook | File | Records | Why |
+| --- | --- | --- | --- |
+| `SessionStart` | `<pid>` | `{ "session_id", "source", "at_ms" }` | the session Claude Code uses now; `/clear` starts a new one under the same MCP server |
+| `Stop` | `<pid>.stop` | `{ "session_id", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call |
+| `PreToolUse` (agent tools only) | `<pid>.tools/<tool_use_id>` | `{ "tool_use_id", "tool_name", "tool_input", "at_ms" }` | the model's id for the tool call, which the server hands to the agent tools; the server removes the file when the call arrives |
+
+The hooks write whether or not an extension is loaded, print nothing, and
+always exit 0, so a failing hook never interrupts the session. Without
+them the channel still works: the session id falls back to
+`CLAUDE_CODE_SESSION_ID`, and agent-tool calls run without the model's
+tool-call id.

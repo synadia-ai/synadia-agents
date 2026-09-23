@@ -13,6 +13,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["server.ts", "src/**/*.ts"],
+  "include": ["server.ts", "src/**/*.ts", "hooks/**/*.ts"],
   "exclude": ["dist", "runtime", "node_modules"]
 }

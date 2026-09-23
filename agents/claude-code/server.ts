@@ -9,6 +9,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { connect, type NatsConnection } from "@nats-io/transport-node";
 import {
+  AgentSubject,
+  AgentTools,
   Agents,
   IdentityError,
   NatsContextError,
@@ -24,7 +26,9 @@ import {
   DEFAULT_MAX_PAYLOAD,
   PromptResponse,
   splitResponseText,
+  type RequestInterceptor,
 } from "@synadia-ai/agent-service";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -36,8 +40,35 @@ import {
   type NatsChannelConfig,
 } from "./src/config.js";
 import { loadPluginVersion } from "./src/plugin-version.js";
+import {
+  composeExtensions,
+  loadExtensions,
+  resolveExtensionEntries,
+  type ComposedExtensions,
+  type Outcome,
+  type ServedRequest,
+} from "./src/extensions.js";
+import {
+  claudePid,
+  resolveClaudeSessionId,
+  sweepDeadSessions,
+  takeToolUse,
+  type SessionIdSource,
+} from "./src/session-id.js";
+import {
+  watchSessionEvents,
+  type SessionEventWatcher,
+} from "./src/session-events.js";
+import {
+  chooseRequest,
+  mcpAgentTools,
+  runAgentTool,
+  toolNamesFor,
+  type ToolCallRequest,
+} from "./src/agent-tools.js";
 
 const AGENT_ID = "claude-code";
+const PLUGIN_NAME = "claude-channel-nats";
 const AGENT_SUBJECT_TOKEN = "cc";
 const HEARTBEAT_INTERVAL_S = 5;
 const KEEPALIVE_INTERVAL_S = 30;
@@ -62,6 +93,12 @@ type PendingRequest = {
   readonly completion: Deferred;
   readonly handlerClosed: Deferred;
   readonly attachmentDir?: string;
+  /** The request as the extensions' events name it. */
+  readonly served: ServedRequest;
+  /** Runs a function in the prompt handler's async context (a snapshot). */
+  readonly enter: <T>(fn: () => T) => T;
+  /** How and when the request settled, set by whoever settles it. */
+  ended?: { readonly outcome: Outcome; readonly atMs: number };
 };
 
 type StagedAttachment = { readonly filename: string; readonly path: string };
@@ -144,11 +181,10 @@ function safeProtocolContext(
 }
 
 async function resolveSessionName(
-  nc: NatsConnection,
+  client: Agents,
   base: string,
   owner: string,
 ): Promise<string> {
-  const client = new Agents({ nc });
   const taken = new Set<string>();
   try {
     const found = await client.discover({
@@ -158,8 +194,6 @@ async function resolveSessionName(
     for (const agent of found) taken.add(agent.name);
   } catch {
     // No existing services or a discovery timeout is fine; registration still validates collisions.
-  } finally {
-    await client.close();
   }
 
   let candidate = base;
@@ -270,6 +304,48 @@ async function closeConnectionBeforeWipe(
   return true;
 }
 
+/**
+ * Load the extensions named for this channel, once, before the connection.
+ * A module that fails is logged and skipped; the channel starts plain with
+ * the rest.
+ */
+async function loadChannelExtensions(
+  config: NatsChannelConfig,
+  base: {
+    readonly owner: string;
+    readonly name: string;
+    readonly senderIdentity: "off" | "signed";
+    readonly minSenderTrust: "any" | "signed";
+    readonly stateDir: string;
+    readonly pluginVersion: string;
+  },
+): Promise<ComposedExtensions> {
+  const { entries } = resolveExtensionEntries(
+    config.extensions,
+    process.env,
+    (message) => protocolLogger.warn(message),
+  );
+  if (entries.length === 0) return composeExtensions([], protocolLogger);
+  const loaded = await loadExtensions(
+    entries,
+    {
+      harness: "claude-code",
+      plugin: { name: PLUGIN_NAME, version: base.pluginVersion },
+      settings: {
+        owner: base.owner,
+        name: base.name,
+        senderIdentity: base.senderIdentity,
+        minSenderTrust: base.minSenderTrust,
+        stateDir: base.stateDir,
+        config: Object.freeze({ ...(config as Record<string, unknown>) }),
+      },
+      logger: protocolLogger,
+    },
+    protocolLogger,
+  );
+  return composeExtensions(loaded, protocolLogger);
+}
+
 async function run(): Promise<void> {
   const pluginVersion = loadPluginVersion(
     join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"),
@@ -279,13 +355,32 @@ async function run(): Promise<void> {
     join(homedir(), ".claude", "channels", "nats");
   const attachmentRoot = join(stateDir, "attachments");
   mkdirSync(attachmentRoot, { recursive: true });
+  // The hooks' files for this Claude Code process (`hooks/session-event.ts`).
+  sweepDeadSessions(stateDir);
+  const sessionSource: SessionIdSource = {
+    env: process.env,
+    stateDir,
+    parentPid: claudePid(process.env, process.ppid),
+  };
 
   const config = loadConfig(join(stateDir, "config.json"));
   const settings = resolveRuntimeSettings(config, process.env);
+  const owner = resolveOwner(config);
+  const extensions = await loadChannelExtensions(config, {
+    owner,
+    name: resolveRawSessionName(config),
+    senderIdentity: settings.senderIdentity,
+    minSenderTrust: settings.minSenderTrust,
+    stateDir,
+    pluginVersion,
+  });
   let bundle: NatsConnectionBundle | undefined;
   let nc: NatsConnection | undefined;
+  let agents: Agents | undefined;
+  let tools: AgentTools | undefined;
   let service: AgentService | undefined;
   let mcp: Server | undefined;
+  let sessionEvents: SessionEventWatcher | undefined;
 
   try {
     bundle = await resolveNatsConnectionBundle(settings.connectionSource, {
@@ -296,15 +391,53 @@ async function run(): Promise<void> {
       source: settings.connectionLabel,
       senderIdentity: settings.senderIdentity,
       minSenderTrust: settings.minSenderTrust,
+      agentTools: settings.agentTools,
+      extensions: extensions.names,
     });
     nc = await connect(withAgentReconnectDefaults(bundle.connectionOptions));
 
-    const owner = resolveOwner(config);
-    const sessionName = await resolveSessionName(
+    const identity =
+      settings.senderIdentity === "signed"
+        ? { identity: { signer: bundle.signer! } }
+        : {};
+    // One caller-side client for the agent tools, with the service's signer
+    // and the extensions' prompt interceptors. It outlives every prompt and
+    // closes with the service.
+    agents = new Agents({
       nc,
+      logger: protocolLogger,
+      ...identity,
+      interceptors: extensions.promptInterceptors,
+    });
+    const sessionName = await resolveSessionName(
+      agents,
       resolveRawSessionName(config),
       owner,
     );
+    const toolNames = toolNamesFor(settings.agentTools);
+    tools = toolNames
+      ? new AgentTools({
+          agents,
+          tools: toolNames,
+          // The session's own address is left out of discovery and refused,
+          // so the model cannot prompt the session it runs in.
+          selfAddress: AgentSubject.new(AGENT_ID, owner, sessionName, {
+            subjectToken: AGENT_SUBJECT_TOKEN,
+          }).prompt,
+          extensions: extensions.toolExtensions,
+          logger: protocolLogger,
+        })
+      : undefined;
+    // The extensions' request interceptors first, in load order, then the
+    // tools' scope: an extension's interceptor wraps the plugin's, and a
+    // request an extension refuses opens no tools scope.
+    const interceptors: RequestInterceptor[] = [
+      ...extensions.requestInterceptors,
+      ...(tools ? [tools.requestInterceptor] : []),
+    ];
+    const agentToolDefinitions = tools ? mcpAgentTools(tools) : [];
+    const agentToolNames = new Set(agentToolDefinitions.map((t) => t.name));
+
     const maxPayloadBytes = nc.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES;
     const pendingRequests = new Map<string, PendingRequest>();
     let requestCounter = 0;
@@ -319,6 +452,11 @@ async function run(): Promise<void> {
       if (lastActiveRequestId === requestId) {
         lastActiveRequestId = Array.from(pendingRequests.keys()).at(-1);
       }
+    };
+
+    const activeRequest = (requestId: string): ToolCallRequest | undefined => {
+      const pending = pendingRequests.get(requestId);
+      return pending && !pending.completion.settled() ? pending : undefined;
     };
 
     mcp = new Server(
@@ -343,6 +481,12 @@ async function run(): Promise<void> {
           "Use reply with the request_id. done=false streams an intermediate response; done=true completes the request.",
           "",
           "The reply tool may be listed as a deferred tool. Load it (ToolSearch) and call it; never answer a channel message only in this session's own output, which the sender cannot see.",
+          ...(tools
+            ? [
+                "",
+                `The agent tools (${[...agentToolNames].join(", ")}) reach other agents on NATS. While answering a channel message, pass its request_id to them; a call made for a request ends with it. When a prompted agent asks a question, it comes back as the tool's result: answer it with answer_agent.`,
+              ]
+            : []),
         ].join("\n"),
       },
     );
@@ -361,9 +505,11 @@ async function run(): Promise<void> {
       keepaliveIntervalS: KEEPALIVE_INTERVAL_S,
       minSenderTrust: settings.minSenderTrust,
       logger: protocolLogger,
-      ...(settings.senderIdentity === "signed"
-        ? { identity: { signer: bundle.signer! } }
+      interceptors,
+      ...(extensions.heartbeatExtras
+        ? { heartbeatExtras: extensions.heartbeatExtras }
         : {}),
+      ...identity,
     });
 
     service.onPrompt(async (envelope, response) => {
@@ -376,18 +522,35 @@ async function run(): Promise<void> {
       );
       const completion = deferred();
       const handlerClosed = deferred();
+      const sender = response.sender;
+      const sessionId = resolveClaudeSessionId(sessionSource);
+      const served: ServedRequest = Object.freeze({
+        id: requestId,
+        extras: Object.freeze({ ...(envelope.extras ?? {}) }),
+        ...(sender?.trust === "verified" ? { caller: String(sender.id) } : {}),
+        ...(sessionId !== undefined ? { sessionId } : {}),
+      });
       const pending: PendingRequest = {
         response,
-        sender: formatSender(response.sender),
+        sender: formatSender(sender),
         createdAt: Date.now(),
         completion,
         handlerClosed,
+        served,
+        // This handler runs inside every request interceptor, the tools'
+        // scope included, and stays open until the request completes; an
+        // agent-tool call, which arrives as an MCP request of its own, is
+        // put back into this context through the snapshot.
+        enter: AsyncLocalStorage.snapshot(),
         ...(staged.length > 0
           ? { attachmentDir: join(attachmentRoot, requestId) }
           : {}),
       };
       pendingRequests.set(requestId, pending);
       lastActiveRequestId = requestId;
+      // Synchronous, in the handler's context, so an extension reads here
+      // what its own request interceptor bound.
+      extensions.events.promptAccepted(served);
 
       logEvent("prompt admitted", { requestId, sender: pending.sender });
       const content =
@@ -411,12 +574,18 @@ async function run(): Promise<void> {
             },
           });
         } catch {
+          pending.ended = { outcome: "error", atMs: Date.now() };
           completion.resolve();
           throw new Error("channel delivery failed");
         }
         await completion.promise;
+      } catch (error) {
+        pending.ended ??= { outcome: "error", atMs: Date.now() };
+        throw error;
       } finally {
         removePending(requestId);
+        const ended = pending.ended ?? { outcome: "ok", atMs: Date.now() };
+        extensions.events.promptEnded(served, ended.outcome, ended.atMs);
         handlerClosed.resolve();
       }
     });
@@ -499,11 +668,53 @@ async function run(): Promise<void> {
             required: ["request_id"],
           },
         },
+        ...agentToolDefinitions,
       ],
     }));
 
-    mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
+    mcp.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+
+      if (tools && agentToolNames.has(request.params.name)) {
+        const name = request.params.name;
+        // The PreToolUse hook recorded the model's id for this call before
+        // Claude Code sent it; it goes to the helper only.
+        const toolCallId = takeToolUse(sessionSource, name, args);
+        const choice = chooseRequest(args, activeRequest, lastActiveRequestId);
+        if (choice.kind === "inactive") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `request "${choice.requestId}" is not active; omit request_id to call outside a request`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        try {
+          const result = await runAgentTool({
+            tools,
+            name,
+            args,
+            request: choice.kind === "request" ? choice.request : undefined,
+            toolCallId,
+            signal: extra.signal,
+            aroundToolCall: extensions.events.aroundToolCall,
+          });
+          return { content: [{ type: "text", text: JSON.stringify(result) }] };
+        } catch (error) {
+          logEvent("agent tool failed", {
+            tool: name,
+            error: error instanceof Error ? error.name : "unknown error",
+          });
+          return {
+            content: [{ type: "text", text: `${name} failed` }],
+            isError: true,
+          };
+        }
+      }
+
       const requestId =
         typeof args.request_id === "string" ? args.request_id : "";
       const pending = pendingRequests.get(requestId);
@@ -522,6 +733,7 @@ async function run(): Promise<void> {
               text: JSON.stringify({
                 request_id: requestId,
                 sender: pending.sender,
+                extensions: extensions.names,
               }),
             },
           ],
@@ -546,7 +758,10 @@ async function run(): Promise<void> {
         bytes: Buffer.byteLength(args.text),
         done,
       });
-      if (done) pending.completion.resolve();
+      if (done) {
+        pending.ended ??= { outcome: "ok", atMs: Date.now() };
+        pending.completion.resolve();
+      }
       return {
         content: [{ type: "text", text: done ? "sent and completed" : "sent" }],
       };
@@ -558,6 +773,7 @@ async function run(): Promise<void> {
         if (pending.createdAt >= cutoff || pending.completion.settled())
           continue;
         logEvent("request expired", { requestId, sender: pending.sender });
+        pending.ended ??= { outcome: "timeout", atMs: Date.now() };
         pending.completion.reject(new Error("request expired"));
       }
     }, 60_000);
@@ -572,15 +788,24 @@ async function run(): Promise<void> {
       subject: service.subject.prompt,
       identity: service.identity ?? "off",
       minSenderTrust: service.minSenderTrust,
+      agentTools: [...agentToolNames],
+      extensions: extensions.names,
     });
+    await extensions.started({ agents, service });
+    // The hooks' SessionStart and Stop, as the extensions' events.
+    sessionEvents = watchSessionEvents(sessionSource, extensions.events);
 
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = (): Promise<void> => {
       if (shutdownPromise) return shutdownPromise;
       shutdownPromise = (async () => {
+        const firstAttempt = !shuttingDown;
         shuttingDown = true;
         clearInterval(ttlTimer);
+        sessionEvents?.stop();
         logEvent("shutting down");
+        // The extensions hear of the stop before the service leaves the bus.
+        if (firstAttempt) await extensions.stopping();
         await service!.stop().catch(() => undefined);
 
         const closed = Array.from(
@@ -588,12 +813,15 @@ async function run(): Promise<void> {
           (pending) => pending.handlerClosed.promise,
         );
         for (const pending of pendingRequests.values()) {
+          pending.ended ??= { outcome: "error", atMs: Date.now() };
           pending.completion.reject(new Error("channel shutting down"));
         }
         await Promise.allSettled(closed);
         // Let AgentService turn rejected handlers into their error frame + terminator.
         await Promise.resolve();
         await Promise.resolve();
+        await tools?.close().catch(() => undefined);
+        await agents!.close().catch(() => undefined);
         await nc!.flush().catch(() => undefined);
         await mcp!.close().catch(() => undefined);
         if (!(await closeConnectionBeforeWipe(nc, bundle!, true))) {
@@ -627,7 +855,10 @@ async function run(): Promise<void> {
       }
     })();
   } catch (error) {
+    sessionEvents?.stop();
     await service?.stop().catch(() => undefined);
+    await tools?.close().catch(() => undefined);
+    await agents?.close().catch(() => undefined);
     await mcp?.close().catch(() => undefined);
     if (bundle) await closeConnectionBeforeWipe(nc, bundle, false);
     throw error;

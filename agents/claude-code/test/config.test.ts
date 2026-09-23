@@ -12,6 +12,7 @@ describe('resolveRuntimeSettings', () => {
       senderIdentity: 'off',
       minSenderTrust: 'any',
       permissionMode: 'terminal',
+      agentTools: 'blocking',
     })
   })
 
@@ -45,7 +46,18 @@ describe('resolveRuntimeSettings', () => {
       senderIdentity: 'signed',
       minSenderTrust: 'signed',
       permissionMode: 'terminal',
+      agentTools: 'blocking',
     })
+  })
+
+  test('agentTools: blocking by default, the config field, NATS_AGENT_TOOLS winning, empty meaning the default', () => {
+    expect(resolveRuntimeSettings({}, {}).agentTools).toBe('blocking')
+    expect(resolveRuntimeSettings({ agentTools: 'all' }, {}).agentTools).toBe('all')
+    expect(resolveRuntimeSettings({ agentTools: 'all' }, { NATS_AGENT_TOOLS: 'off' }).agentTools).toBe('off')
+    expect(resolveRuntimeSettings({ agentTools: 'all' }, { NATS_AGENT_TOOLS: '' }).agentTools).toBe('blocking')
+    expect(() => resolveRuntimeSettings({}, { NATS_AGENT_TOOLS: 'some' })).toThrow(
+      'invalid agentTools',
+    )
   })
 
   test('retains the legacy nats permission alias', () => {
@@ -72,6 +84,25 @@ describe('resolveRuntimeSettings', () => {
 
       writeFileSync(path, JSON.stringify({ senderIdentity: 42 }))
       expect(() => loadConfig(path)).toThrow('invalid senderIdentity')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('config.json keeps agentTools, extensions and unknown keys as read', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-channel-config-'))
+    try {
+      const path = join(dir, 'config.json')
+      const written = {
+        agentTools: 'all',
+        extensions: ['some-extension', { module: '/opt/ext', options: { level: 2 } }],
+        somethingElse: true,
+      }
+      writeFileSync(path, JSON.stringify(written))
+      expect(loadConfig(path)).toEqual(written)
+
+      writeFileSync(path, JSON.stringify({ agentTools: 3 }))
+      expect(() => loadConfig(path)).toThrow('invalid agentTools')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
