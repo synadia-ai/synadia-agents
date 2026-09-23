@@ -63,6 +63,8 @@ Config file lives at `~/.pi/agent/nats-channel.json`:
 | `owner`          | no       | `$USER`                   | The 4th subject token. Override to scope the session to a service account, deployment, or tenant instead of the OS user — sanitized to a legal subject token. The owner env vars (below) take precedence over this field. |
 | `senderIdentity` | no       | `"off"`                   | `"signed"` registers PI with the NATS user identity from the selected connection credentials.                                                                                                                             |
 | `minSenderTrust` | no       | `"any"`                   | `"signed"` accepts only prompts with a signature-valid sender. This is independent of `senderIdentity`.                                                                                                                   |
+| `agentTools`     | no       | `"blocking"`              | Which [agent tools](#agent-tools) PI's model is offered: `"blocking"` (`discover_agents`, `prompt_agent`, `answer_agent`), `"all"` (the six), or `"off"` (none). `NATS_AGENT_TOOLS` overrides this field. |
+| `extensions`     | no       | —                         | [Extension modules](#extensions) to load: an array of package names or absolute paths, or `{ "module": "…", "options": { … } }` objects. `SYNADIA_PI_EXTENSIONS` and `SYNADIA_AGENT_EXTENSIONS` override this field. |
 
 The `owner` token (4th) defaults to `$USER` but is overridable via the `SYNADIA_PI_OWNER` / `SYNADIA_OWNER` env vars (or the legacy `NATS_PI_OWNER`), or the `owner` config field — env wins over config. Useful for service-account or deployment-scoped sessions. For multi-tenant isolation, see [Multi-tenancy](#multi-tenancy) below.
 
@@ -85,6 +87,9 @@ identity and trust use the NATS-wide variables shown below.
 | `SYNADIA_PI_NAME`       | `sessionName`             | Per-agent override — highest session-name precedence.                                                                                                                       |
 | `SYNADIA_NAME`          | `sessionName`             | Fleet-wide override — below the per-agent var.                                                                                                                              |
 | `NATS_SESSION_NAME`     | `sessionName`             | Legacy alias, still honored below the `SYNADIA_*` vars.                                                                                                                     |
+| `NATS_AGENT_TOOLS`      | `agentTools`              | `blocking`, `all` or `off`; overrides the config file.                                                                                                                      |
+| `SYNADIA_PI_EXTENSIONS` | `extensions`              | Comma-separated module specifiers — highest extensions precedence. Set but empty means no extensions.                                                                       |
+| `SYNADIA_AGENT_EXTENSIONS` | `extensions`           | Comma-separated module specifiers, shared by every agent plugin — below the per-agent var, above the config field.                                                          |
 
 ### Resolution order
 
@@ -98,6 +103,10 @@ For `sessionName`: `$SYNADIA_PI_NAME` > `$SYNADIA_NAME` > `$NATS_SESSION_NAME` (
 For `owner`: `$SYNADIA_PI_OWNER` > `$SYNADIA_OWNER` > `$NATS_PI_OWNER` (legacy) > `config.owner` > `$USER` > `unknown`.
 
 For sender identity and trust: `$NATS_SENDER_IDENTITY` > `config.senderIdentity` > `off`, and `$NATS_MIN_SENDER_TRUST` > `config.minSenderTrust` > `any`.
+
+For the agent tools: `$NATS_AGENT_TOOLS` > `config.agentTools` > `blocking`.
+
+For extensions: `$SYNADIA_PI_EXTENSIONS` > `$SYNADIA_AGENT_EXTENSIONS` > `config.extensions` > none. A variable that is set wins even when empty, so a launcher can switch a config file's extensions off with `SYNADIA_PI_EXTENSIONS=`.
 
 ### Optional sender identity
 
@@ -131,8 +140,8 @@ Available inside a running PI session:
 
 | Command                                  | What it does                                                                        |
 | ---------------------------------------- | ----------------------------------------------------------------------------------- |
-| `/nats-status`                           | Show current subject, service, instance id, protocol version, pending/queued counts |
-| `/nats-configure`                        | Print current config                                                                |
+| `/nats-status`                           | Show current subject, service, instance id, protocol version, agent tools registered, extensions loaded, pending/queued counts |
+| `/nats-configure`                        | Print current config, `agentTools` and `extensions` included                        |
 | `/nats-configure <context>`              | Switch NATS context                                                                 |
 | `/nats-configure session <name>`         | Override session name                                                               |
 | `/nats-configure session clear`          | Revert to CWD basename                                                              |
@@ -142,6 +151,38 @@ Available inside a running PI session:
 | `/nats-configure trust <any\|signed>`    | Accept any sender or require a signature-valid sender                               |
 
 `/nats-configure` writes the config file; restart PI to apply. (Live reconnect on context switch is a deferral — see [Limitations](#limitations).)
+
+## Extensions
+
+The extension can load extension modules that add behaviour around it:
+interceptors for its client and service, extensions for its agent tools,
+and handlers for PI's events, among them the headers PI sends on its
+provider requests while a NATS prompt is its active turn. Name them in
+`SYNADIA_PI_EXTENSIONS` or `SYNADIA_AGENT_EXTENSIONS`, or as the
+`extensions` array in `nats-channel.json`. `/nats-status` lists the
+modules loaded. The contract is [`../EXTENSIONS.md`](../EXTENSIONS.md).
+
+## Agent tools
+
+Once the session is on the bus, PI's model is offered the SDK's agent tools ([`docs/agent-tools.md`](../../docs/agent-tools.md)), the same tools every agent built on `@synadia-ai/agents` can have. By default the blocking three:
+
+| Tool              | What PI's model can do with it                                                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `discover_agents` | List the agents it can prompt, with the address each answers at, what it says it does, and whether it is signed. PI's own session is left out.  |
+| `prompt_agent`    | Send one of them a task and get its reply. A question the other agent asks comes back to the model instead of a reply.                         |
+| `answer_agent`    | Answer that question; the call then continues until the reply.                                                                                 |
+
+A prompt to another agent **blocks within PI's turn**: `prompt_agent` returns when the other agent has replied, asked a question, or failed, so the model works one delegation at a time and PI's turn lasts as long as the delegation. The other agent's questions — a permission prompt, a clarification — reach PI's model as the tool's result, and the model answers them with `answer_agent`; the PI user is not asked.
+
+The `agentTools` setting (or `NATS_AGENT_TOOLS`) picks the subset:
+
+- `"blocking"` (default) — the three above.
+- `"all"` — the six: `wait_agent`, `cancel_agent` and `list_agent_calls` are added, and `prompt_agent` takes `wait: false`, so the model can start several prompts and collect them later.
+- `"off"` — no tool is registered. The session still keeps its client.
+
+The tools prompt through one client with the session's own identity: with `senderIdentity: "signed"`, the prompts PI sends are signed as PI. PI's own address is refused, so the model cannot prompt the PI it runs in. The tools appear when the session connects and go with it; `/nats-status` lists the ones registered.
+
+**Headless launchers:** PI's `--no-tools` disables every tool, the agent tools included. To drop PI's built-in file and shell tools but keep the agent tools, pass `--no-builtin-tools`, or an allowlist such as `--tools discover_agents,prompt_agent,answer_agent`.
 
 ## Verify
 

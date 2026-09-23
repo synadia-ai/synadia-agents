@@ -34,7 +34,7 @@ describe("PiPromptQueue", () => {
 		const staleResult = stale.completion.catch((error: Error) => error.message);
 		queue.takeNext();
 
-		expect(queue.expireQueued(3)).toBe(1);
+		expect(queue.expireQueued(3).map((r) => r.id)).toEqual([stale.id]);
 		expect(await staleResult).toMatch(/expired/);
 		expect(queue.active?.id).toBe(active.id);
 
@@ -52,8 +52,8 @@ describe("PiPromptQueue", () => {
 		]);
 		queue.takeNext();
 
-		expect(queue.failAll("shutdown")).toBe(2);
-		expect(queue.failAll("again")).toBe(0);
+		expect(queue.failAll("shutdown").map((r) => r.id)).toEqual([active.id, queued.id]);
+		expect(queue.failAll("again")).toEqual([]);
 		expect(await results).toEqual(["shutdown", "shutdown"]);
 		expect(queue.size).toBe(0);
 		expect(queue.active).toBeUndefined();
@@ -68,5 +68,31 @@ describe("PiPromptQueue", () => {
 		expect(queue.takeNext()?.id).toBe(request.id);
 		queue.completeActive();
 		await request.completion;
+	});
+
+	test("every request carries the served view the extensions' events name", async () => {
+		const queue = new PiPromptQueue();
+		const plain = queue.enqueue({ prompt: "plain" }, response);
+		expect(plain.served).toEqual({ id: plain.id, extras: {} });
+		expect(Object.isFrozen(plain.served)).toBe(true);
+		expect(Object.isFrozen(plain.served.extras)).toBe(true);
+
+		const withExtras = queue.enqueue(
+			{ prompt: "extras", extras: { trace: "abc", depth: 2 } },
+			{ sender: { trust: "claimed", claim: "someone" } } as unknown as PromptResponse,
+		);
+		// A merely claimed sender is never `caller`.
+		expect(withExtras.served).toEqual({
+			id: withExtras.id,
+			extras: { trace: "abc", depth: 2 },
+		});
+
+		const verified = queue.enqueue(
+			{ prompt: "signed" },
+			{ sender: { trust: "verified", id: "ACC.USR" } } as unknown as PromptResponse,
+		);
+		expect(verified.served.caller).toBe("ACC.USR");
+		queue.failAll("done");
+		await Promise.allSettled([plain.completion, withExtras.completion, verified.completion]);
 	});
 });

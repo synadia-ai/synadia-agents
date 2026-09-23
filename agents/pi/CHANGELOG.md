@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agent tools.** PI's model is offered the SDK's agent tools through
+  `pi.registerTool()` once the session is on the bus: `discover_agents`,
+  `prompt_agent` and `answer_agent` by default (the SDK's
+  `BLOCKING_AGENT_TOOLS`), the six with `agentTools: "all"`, none with
+  `"off"`; `NATS_AGENT_TOOLS` overrides the config field. The channel keeps
+  one persistent `Agents` client with the same signer as its service, and
+  PI's own address is refused. A prompt to another agent blocks within
+  PI's turn, and the other agent's questions come back to the model. Note
+  that PI's `--no-tools` disables these tools too; `--no-builtin-tools`
+  keeps them.
+- **Extensions.** Optional modules named in `SYNADIA_PI_EXTENSIONS`,
+  `SYNADIA_AGENT_EXTENSIONS` or the `extensions` array of
+  `nats-channel.json` — a package name or an absolute path, or
+  `{ "module": "…", "options": { … } }` in the config — add prompt and
+  request interceptors, heartbeat extras and agent-tools extensions to the
+  channel's client, service and tools, and handlers for PI's events
+  (`promptAccepted`, `promptEnded`, `aroundInject`, `providerHeaders`,
+  `aroundToolCall`). Modules load once before the connection; one that
+  fails is logged once and skipped. The contract is `agents/EXTENSIONS.md`;
+  the types are exported from `extensions/extensions.ts`.
+- `/nats-status` names the agent tools registered and the extensions
+  loaded; `/nats-configure` prints both settings.
+
 ### Fixed
 
 - A NATS prompt's turn now ends on PI's `agent_settled` rather than
@@ -32,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NATS_MIN_SENDER_TRUST` override the matching config fields.
 - Active sender metadata is available only through the trust-labelled
   `/nats-status` diagnostic and is never inserted into PI's model prompt.
-- Constrained the PI peer dependency to the tested `0.84.x` line.
+- Constrained the PI peer dependency to the tested `0.84.x` and `0.85.x`
+  lines (`>=0.84.0 <0.86.0`).
 - **Identity env vars adopt the `SYNADIA_*` convention** shared across
   `agents/*`. Owner: `SYNADIA_PI_OWNER` > `SYNADIA_OWNER` >
   `NATS_PI_OWNER` (legacy) > config `owner` > `$USER` > `unknown`.

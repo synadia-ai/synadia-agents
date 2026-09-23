@@ -14,6 +14,18 @@
  *     replies with the same payload shape as a heartbeat (§8.3).
  *   - `metadata.protocol_version` `"0.2"` → `"0.3"`.
  *
+ * Agent tools: the SDK's `AgentTools` are offered to PI's model through
+ * `pi.registerTool()` once the channel is on the bus — the blocking three by
+ * default, the six with `agentTools: "all"`, none with `"off"` (see
+ * `tools.ts`). One persistent `Agents` client, with the channel's signer,
+ * is what they prompt through.
+ *
+ * Extensions: optional modules named in `SYNADIA_PI_EXTENSIONS`,
+ * `SYNADIA_AGENT_EXTENSIONS` or the config's `extensions` add interceptors,
+ * heartbeat extras, agent-tools extensions and handlers for PI's events
+ * (see `extensions.ts` and `agents/EXTENSIONS.md`). Without one the channel
+ * behaves exactly as before.
+ *
  * Attachments: inline per spec §5.1/§5.2. Each `{filename, content}` is
  * base64-decoded (strict RFC 4648 §4 — standard alphabet, padded, no
  * whitespace, no URL-safe), the filename is sanitized, bytes are staged on
@@ -33,13 +45,16 @@ import { connect, type NatsConnection } from "@nats-io/transport-node";
 import { Svcm } from "@nats-io/services";
 
 import {
+  Agents,
   AgentSubject,
+  AgentTools,
   SDK_PROTOCOL_VERSION,
   SERVICE_NAME,
   formatSender,
   parseHumanBytes,
   resolveNatsConnectionBundle,
   withAgentReconnectDefaults,
+  type Logger,
   type MinSenderTrust,
   type NatsConnectionBundle,
   type NatsConnectionSource,
@@ -48,6 +63,7 @@ import {
   AgentService,
   DEFAULT_MAX_PAYLOAD,
   splitResponseText,
+  type RequestInterceptor,
 } from "@synadia-ai/agent-service";
 
 import type {
@@ -55,14 +71,42 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import {
+  composeExtensions,
+  loadExtensions,
+  resolveExtensionEntries,
+  type ComposedExtensions,
+  type ExtensionConfigEntry,
+} from "./extensions.ts";
 import { PiPromptQueue, type QueuedPiPrompt } from "./prompt-queue.ts";
 import { resolveOwner, sanitizeSubjectToken } from "./subject.ts";
+import {
+  registerAgentTools,
+  resolveAgentToolsMode,
+  toolNamesFor,
+  type AgentToolsMode,
+} from "./tools.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PI-specific protocol constants
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SERVICE_VERSION = "0.4.0";
+
+// What an extension's factory is told about the plugin that loaded it.
+const PLUGIN_NAME = "@synadia-ai/nats-pi-channel";
+const PLUGIN_VERSION = readPluginVersion();
+
+function readPluginVersion(): string {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version?: unknown };
+    return typeof manifest.version === "string" ? manifest.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 // Heartbeat cadence on `agents.hb.pi.<owner>.<name>`. Locally pinned at
 // 5s so the dashboard's stale-eviction loop (3× intervalS) drops a dead
@@ -110,6 +154,10 @@ export type PiNatsConfig = {
   owner?: string;
   senderIdentity?: SenderIdentityMode;
   minSenderTrust?: MinSenderTrust;
+  /** Which agent tools PI's model is offered; `NATS_AGENT_TOOLS` wins. */
+  agentTools?: AgentToolsMode;
+  /** Extension modules to load; `SYNADIA_PI_EXTENSIONS` and `SYNADIA_AGENT_EXTENSIONS` win. */
+  extensions?: ReadonlyArray<ExtensionConfigEntry>;
 };
 
 export type PiConnectionSettings = {
@@ -178,6 +226,24 @@ function saveConfig(cfg: PiNatsConfig): void {
 }
 
 /**
+ * The channel's logger, in the SDK's `Logger` shape, over PI's notifications:
+ * what the SDK client, the tools and the extensions report lands where the
+ * channel's own messages do. `debug` is silent.
+ */
+function makeLogger(ctx: ExtensionContext): Logger {
+  const line = (msg: string, extra?: Record<string, unknown>): string =>
+    extra && Object.keys(extra).length > 0
+      ? `NATS: ${msg} ${JSON.stringify(extra)}`
+      : `NATS: ${msg}`;
+  return {
+    debug: () => undefined,
+    info: (msg, extra) => ctx.ui.notify(line(msg, extra), "info"),
+    warn: (msg, extra) => ctx.ui.notify(line(msg, extra), "warning"),
+    error: (msg, extra) => ctx.ui.notify(line(msg, extra), "error"),
+  };
+}
+
+/**
  * Query existing `agents` service instances and pick the first candidate session
  * name whose `prompt` endpoint subject is free. Auto-suffixes `-2`, `-3`, …
  *
@@ -242,6 +308,23 @@ export default function (pi: ExtensionAPI) {
   let connectTask: Promise<void> | undefined;
   let pendingConnection: NatsConnection | undefined;
   let pendingConnectionBundle: NatsConnectionBundle | undefined;
+  // The caller-side client the agent tools prompt through, and the tools
+  // themselves; both live as long as the service. `agentTools` stays
+  // undefined with `agentTools: "off"`.
+  let agentsClient: Agents | undefined;
+  let agentTools: AgentTools | undefined;
+  let toolsMode: AgentToolsMode = "blocking";
+  let registeredTools: string[] = [];
+  // Loaded once in `session_start`, before the connection. Until then, and
+  // when none is named, the composition of no extensions: every event is a
+  // no-op and every wrapper just runs its step.
+  let logger: Logger | undefined;
+  let extensions: ComposedExtensions = composeExtensions([], {
+    debug: () => undefined,
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+  });
 
   // Flipped by `cleanup()` so the status loop knows a subsequent `close`
   // is the result of our own drain, not a real outage. Without this,
@@ -254,7 +337,10 @@ export default function (pi: ExtensionAPI) {
   // Expiration rejects the deferred handler. AgentService then emits the
   // error and mandatory terminator; a request is never silently forgotten.
   const pruneInterval = setInterval(() => {
-    promptQueue.expireQueued(Date.now() - QUEUED_PROMPT_TTL_MS);
+    const now = Date.now();
+    for (const expired of promptQueue.expireQueued(now - QUEUED_PROMPT_TTL_MS)) {
+      extensions.events.promptEnded(expired.served, "timeout", now);
+    }
   }, 60_000);
   pruneInterval.unref();
 
@@ -289,16 +375,24 @@ export default function (pi: ExtensionAPI) {
           pending.attachments,
         );
       } catch (e) {
-        promptQueue.failActive(
+        const failed = promptQueue.failActive(
           new Error(`attachment staging failed: ${(e as Error).message}`),
         );
+        if (failed) {
+          extensions.events.promptEnded(failed.served, "error", Date.now());
+        }
         continue;
       }
 
       try {
         // Sender metadata deliberately stays on PromptResponse and the safe
         // `/nats-status` diagnostic. It is never inserted into model input.
-        pi.sendUserMessage(finalPrompt);
+        // The hand-over runs inside the extensions' `aroundInject`, so a
+        // context an extension binds around it is what PI's turn — its
+        // provider requests and the tools it executes — runs in.
+        extensions.events.aroundInject(pending.served, () =>
+          pi.sendUserMessage(finalPrompt),
+        );
         return;
       } catch (e) {
         promptQueue.requeueActive();
@@ -442,10 +536,17 @@ export default function (pi: ExtensionAPI) {
     if (options.waitForConnectTask !== false) {
       await connectTask?.catch(() => undefined);
     }
-    promptQueue.failAll("PI session shut down before the prompt completed");
+    const shutdownAt = Date.now();
+    for (const failed of promptQueue.failAll(
+      "PI session shut down before the prompt completed",
+    )) {
+      extensions.events.promptEnded(failed.served, "error", shutdownAt);
+    }
     // Let AgentService observe every rejected deferred handler and publish
     // its error + terminator before the endpoint and connection disappear.
     await Promise.resolve();
+    // The extensions hear of the stop before the service leaves the bus.
+    if (service) await extensions.stopping();
     if (nc) {
       try {
         await nc.flush();
@@ -456,6 +557,19 @@ export default function (pi: ExtensionAPI) {
         await service.stop();
       } catch {}
       service = undefined;
+    }
+    if (agentTools) {
+      try {
+        await agentTools.close();
+      } catch {}
+      agentTools = undefined;
+    }
+    registeredTools = [];
+    if (agentsClient) {
+      try {
+        await agentsClient.close();
+      } catch {}
+      agentsClient = undefined;
     }
     if (nc && connectionBundle) {
       const activeConnection = nc;
@@ -607,6 +721,35 @@ export default function (pi: ExtensionAPI) {
           "signed sender identity resolved without a connection-bound signer",
         );
       }
+      const selfAddress = AgentSubject.new(AGENT_ID, owner!, sessionName).prompt;
+      // One caller-side client for the agent tools, with the same signer as
+      // the service and the extensions' prompt interceptors. It outlives
+      // every prompt and closes with the service.
+      agentsClient = new Agents({
+        nc: conn,
+        ...(logger ? { logger } : {}),
+        ...(signer ? { identity: { signer } } : {}),
+        interceptors: extensions.promptInterceptors,
+      });
+      const toolNames = toolNamesFor(toolsMode);
+      if (toolNames) {
+        // PI's own address is left out of discovery and refused, so the
+        // model cannot prompt the PI it runs in.
+        agentTools = new AgentTools({
+          agents: agentsClient,
+          tools: toolNames,
+          selfAddress,
+          extensions: extensions.toolExtensions,
+          ...(logger ? { logger } : {}),
+        });
+      }
+      // The extensions' request interceptors first, in load order, then the
+      // tools' scope: an extension's interceptor wraps the plugin's, and a
+      // request an extension refuses opens no tools scope.
+      const interceptors: RequestInterceptor[] = [
+        ...extensions.requestInterceptors,
+        ...(agentTools ? [agentTools.requestInterceptor] : []),
+      ];
       const agentService = new AgentService({
         nc: conn,
         agent: AGENT_ID,
@@ -620,6 +763,11 @@ export default function (pi: ExtensionAPI) {
         keepaliveIntervalS: KEEPALIVE_INTERVAL_S,
         minSenderTrust: settings.minSenderTrust,
         ...(signer ? { identity: { signer } } : {}),
+        ...(logger ? { logger } : {}),
+        interceptors,
+        ...(extensions.heartbeatExtras
+          ? { heartbeatExtras: extensions.heartbeatExtras }
+          : {}),
         extraMetadata: {
           cwd: ctx.cwd,
         },
@@ -627,6 +775,10 @@ export default function (pi: ExtensionAPI) {
       startingService = agentService;
       agentService.onPrompt((envelope, response) => {
         const request = promptQueue.enqueue(envelope, response);
+        // Synchronous, in the handler's async context — the one every
+        // interceptor bound — so an extension reads here what its own
+        // request interceptor set up.
+        extensions.events.promptAccepted(request.served);
         drainQueue();
         return request.completion;
       });
@@ -638,6 +790,16 @@ export default function (pi: ExtensionAPI) {
       service = agentService;
       promptSubject = agentService.subject.prompt;
       instanceId = agentService.instanceId;
+      // The tools appear to the model once the agent is on the bus. PI
+      // accepts a tool registered after startup (0.84+).
+      if (agentTools) {
+        const tools = agentTools;
+        registeredTools = registerAgentTools(pi, tools, {
+          activeRequest: () => promptQueue.active?.served,
+          aroundToolCall: extensions.events.aroundToolCall,
+        });
+      }
+      await extensions.started({ agents: agentsClient, service: agentService });
     } catch (e) {
       try {
         await startingService?.stop();
@@ -654,7 +816,8 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setStatus("nats", `NATS: ${promptSubject}`);
     ctx.ui.notify(
       `Connected to NATS (${contextLabel}) as ${promptSubject} ` +
-        `(sender_identity=${settings.senderIdentity}, min_sender_trust=${settings.minSenderTrust})`,
+        `(sender_identity=${settings.senderIdentity}, min_sender_trust=${settings.minSenderTrust}, ` +
+        `agent_tools=${toolsMode}, extensions=${extensions.names.join(",") || "none"})`,
       "info",
     );
 
@@ -679,6 +842,14 @@ export default function (pi: ExtensionAPI) {
     contextLabel = settings.contextLabel;
     senderIdentity = settings.senderIdentity;
     minSenderTrust = settings.minSenderTrust;
+    try {
+      toolsMode = resolveAgentToolsMode(config);
+    } catch (e) {
+      ctx.ui.notify(`NATS: ${(e as Error).message}`, "error");
+      ctx.ui.setStatus("nats", "NATS: disconnected");
+      return;
+    }
+    logger = makeLogger(ctx);
 
     // 2. Resolve owner + session base name via the SYNADIA_* identity
     //    convention shared across agents/*: per-agent env var >
@@ -710,7 +881,34 @@ export default function (pi: ExtensionAPI) {
           basename(ctx.cwd),
       ) || "pi";
 
-    // 3. Kick off connect + register in the background. The bounded retry
+    // 3. Load the extensions, once, before the connection. A module that
+    //    fails is logged and skipped; the channel starts plain with the rest.
+    const named = resolveExtensionEntries(config.extensions, process.env, (m) =>
+      logger!.warn(m),
+    );
+    if (named.entries.length > 0) {
+      const loaded = await loadExtensions(
+        named.entries,
+        {
+          harness: "pi",
+          plugin: { name: PLUGIN_NAME, version: PLUGIN_VERSION },
+          settings: {
+            owner,
+            name: rawSession,
+            senderIdentity: settings.senderIdentity,
+            minSenderTrust: settings.minSenderTrust,
+            stateDir: STATE_DIR,
+            config: Object.freeze({ ...(config as Record<string, unknown>) }),
+          },
+          logger,
+        },
+        logger,
+      );
+      extensions = composeExtensions(loaded, logger);
+      if (shuttingDown) return;
+    }
+
+    // 4. Kick off connect + register in the background. The bounded retry
     //    loop keeps PI startup responsive when NATS is down while retaining
     //    an explicit task that session shutdown can await and clean up.
     ctx.ui.setStatus("nats", "NATS: connecting…");
@@ -745,7 +943,8 @@ export default function (pi: ExtensionAPI) {
   // caller's request, and PI is idle here, so the next queued prompt can be
   // injected.
   pi.on("agent_settled", async () => {
-    promptQueue.completeActive();
+    const done = promptQueue.completeActive();
+    if (done) extensions.events.promptEnded(done.served, "ok", Date.now());
     // AgentService resumes from the deferred handler and emits the
     // terminator. Flush it before the next PI turn begins.
     await Promise.resolve();
@@ -755,6 +954,17 @@ export default function (pi: ExtensionAPI) {
       } catch {}
     }
     drainQueue();
+  });
+
+  // While a NATS prompt is PI's active turn, the extensions may add
+  // headers to each provider request PI sends for it.
+  pi.on("before_provider_headers", (event) => {
+    const active = promptQueue.active;
+    if (!active) return;
+    const headers = extensions.events.providerHeaders(active.served);
+    for (const [key, value] of Object.entries(headers)) {
+      event.headers[key] = value;
+    }
   });
 
   pi.on("session_shutdown", async () => {
@@ -783,6 +993,8 @@ export default function (pi: ExtensionAPI) {
         `Owner: ${owner}`,
         `Sender identity: ${senderIdentity}${service?.identity ? ` (${service.identity})` : ""}`,
         `Minimum sender trust: ${minSenderTrust}`,
+        `Agent tools: ${toolsMode}${registeredTools.length > 0 ? ` (${registeredTools.join(", ")})` : ""}`,
+        `Extensions: ${extensions.names.length > 0 ? extensions.names.join(", ") : "none"}`,
         `Pending: ${promptQueue.size}`,
         `Queued: ${promptQueue.queuedCount}`,
         `Active: ${active?.id ?? "none"}`,
@@ -808,6 +1020,14 @@ export default function (pi: ExtensionAPI) {
           `Session: ${current.sessionName ?? "(auto from cwd)"}`,
           `Sender identity: ${current.senderIdentity ?? "off"}`,
           `Minimum sender trust: ${current.minSenderTrust ?? "any"}`,
+          `Agent tools: ${current.agentTools ?? "blocking"}`,
+          `Extensions: ${
+            Array.isArray(current.extensions) && current.extensions.length > 0
+              ? current.extensions
+                  .map((e) => (typeof e === "string" ? e : e.module))
+                  .join(", ")
+              : "(none)"
+          }`,
         ];
         ctx.ui.notify(`NATS config — ${lines.join(" • ")}`, "info");
         return;
