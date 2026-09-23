@@ -253,7 +253,7 @@ sent to the target.
 
 | Tool | Parameter | |
 | --- | --- | --- |
-| `discover_agents` | `agent`, `owner`, `name` | optional filters, exact and combined; without them, every agent |
+| `discover_agents` | `agent`, `owner`, `name` | optional filters, one per token of the address, exact and combined; without them, every agent |
 | `prompt_agent` | `address` | as `discover_agents` returned it |
 | | `prompt` | the task, complete in itself |
 | | `attachments` | optional local paths under the configured roots, only to an agent that accepts them |

@@ -52,7 +52,7 @@ const DEFINITIONS: ReadonlyArray<AgentToolDefinition> = [
   {
     name: "discover_agents",
     description:
-      "List the agents you can prompt, one entry per address. Each entry gives the address to use with prompt_agent, the agent's kind, owner and name, what it says it does, its identity and whether that identity is verified, whether it requires signed prompts or accepts attachments, and how many instances answer at the address. The filters are optional, exact and combined; call it without them to see every agent. Call it before prompt_agent when you do not already know an address.",
+      "List the agents you can prompt, one entry per address. Each entry gives the address to use with prompt_agent, the agent's kind, owner and name, what it says it does, its identity and whether that identity is verified, whether it requires signed prompts or accepts attachments, and how many instances answer at the address. The filters are optional, exact and combined, one per token of the address `agents.prompt.<agent>.<owner>.<name>`; an agent known by what it does is found by `agent` or by calling without filters, which lists every agent. Call it before prompt_agent when you do not already know an address.",
     parameters: {
       type: "object",
       properties: {
@@ -60,17 +60,19 @@ const DEFINITIONS: ReadonlyArray<AgentToolDefinition> = [
           type: "string",
           minLength: 1,
           description:
-            "Only agents of this kind, exactly as they registered (for example `claude-code`).",
+            "Only agents whose address has this first token after `agents.prompt`, their kind or role exactly as registered (for example `researcher` or `claude-code`).",
         },
         owner: {
           type: "string",
           minLength: 1,
-          description: "Only agents run by this owner, exactly as they registered.",
+          description:
+            "Only agents whose address has this second token, their owner exactly as registered.",
         },
         name: {
           type: "string",
           minLength: 1,
-          description: "Only the agent with this instance name.",
+          description:
+            "Only agents whose address has this last token, their instance name (usually `main`); what an agent does or is called in a task is not its name.",
         },
       },
       additionalProperties: false,
