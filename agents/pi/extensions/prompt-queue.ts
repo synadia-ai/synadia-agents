@@ -1,6 +1,8 @@
 import type { RequestAttachment, RequestEnvelope } from "@synadia-ai/agents";
 import type { PromptResponse } from "@synadia-ai/agent-service";
 
+import type { ServedRequest } from "./extensions.ts";
+
 export interface QueuedPiPrompt {
 	readonly id: string;
 	readonly prompt: string;
@@ -8,6 +10,8 @@ export interface QueuedPiPrompt {
 	readonly response: PromptResponse;
 	readonly createdAt: number;
 	readonly completion: Promise<void>;
+	/** The request as the extensions' events name it; one object per request. */
+	readonly served: ServedRequest;
 }
 
 interface MutableQueuedPiPrompt extends QueuedPiPrompt {
@@ -52,6 +56,12 @@ export class PiPromptQueue {
 			resolve = ok;
 			reject = fail;
 		});
+		const sender = response.sender;
+		const served: ServedRequest = Object.freeze({
+			id,
+			extras: Object.freeze({ ...(envelope.extras ?? {}) }),
+			...(sender?.trust === "verified" ? { caller: String(sender.id) } : {}),
+		});
 		const request: MutableQueuedPiPrompt = {
 			id,
 			prompt: envelope.prompt,
@@ -59,6 +69,7 @@ export class PiPromptQueue {
 			response,
 			createdAt,
 			completion,
+			served,
 			settled: false,
 			resolve,
 			reject,
@@ -107,26 +118,26 @@ export class PiPromptQueue {
 		return request;
 	}
 
-	/** Reject queued (never active) requests older than the cutoff. */
-	expireQueued(cutoff: number): number {
-		let expired = 0;
+	/** Reject queued (never active) requests older than the cutoff; returns them. */
+	expireQueued(cutoff: number): QueuedPiPrompt[] {
+		const expired: QueuedPiPrompt[] = [];
 		for (const [id, request] of this.#pending) {
 			if (id === this.#activeId || request.createdAt >= cutoff) continue;
 			this.#pending.delete(id);
 			this.#reject(request, new Error("PI prompt expired while waiting in the local queue"));
-			expired++;
+			expired.push(request);
 		}
 		return expired;
 	}
 
-	/** Settle every active/queued handler before its AgentService is stopped. */
-	failAll(reason: string): number {
+	/** Settle every active/queued handler before its AgentService is stopped; returns them. */
+	failAll(reason: string): QueuedPiPrompt[] {
 		const requests = [...this.#pending.values()];
 		this.#pending.clear();
 		this.#queued.length = 0;
 		this.#activeId = null;
 		for (const request of requests) this.#reject(request, new Error(reason));
-		return requests.length;
+		return requests;
 	}
 
 	#resolve(request: MutableQueuedPiPrompt): void {

@@ -15,6 +15,11 @@
 //   7. Identity-free registration carries no identity metadata.
 //   8. Signed registration publishes a verifiable connection-bound `id_sig`.
 //   9. Signed-only admission rejects before ack and accepts a signed caller.
+//  10. The agent tools are registered with PI once the agent is on the bus,
+//      and PI's own address is refused.
+//  11. An extension named in SYNADIA_PI_EXTENSIONS (test/fixtures/) is
+//      loaded, gets the live handles, adds a heartbeat field, and hears
+//      every PI event with the served request.
 //
 // Run with:
 //   bun test/smoke.mjs
@@ -150,6 +155,15 @@ if (SIGNED) process.env.NATS_SENDER_IDENTITY = "signed";
 else delete process.env.NATS_SENDER_IDENTITY;
 if (STRICT) process.env.NATS_MIN_SENDER_TRUST = "signed";
 else delete process.env.NATS_MIN_SENDER_TRUST;
+// The agent tools at their default (the blocking three), and one test
+// extension, named by absolute path; the shared variable must not leak in.
+delete process.env.NATS_AGENT_TOOLS;
+delete process.env.SYNADIA_AGENT_EXTENSIONS;
+process.env.SYNADIA_PI_EXTENSIONS = join(
+  __dirname,
+  "fixtures",
+  "counting-extension.mjs",
+);
 
 const { default: channelFactory, HEARTBEAT_INTERVAL_S } =
   await import("../extensions/nats-channel.ts");
@@ -184,6 +198,7 @@ const mockCtx = {
     setStatus: (_key, _val) => {},
   },
 };
+const registeredTools = new Map();
 const mockPi = {
   on(event, cb) {
     if (!listeners.has(event)) listeners.set(event, []);
@@ -193,6 +208,9 @@ const mockPi = {
     pendingSendUserMessage = text;
   },
   registerCommand(_name, _spec) {},
+  registerTool(spec) {
+    registeredTools.set(spec.name, spec);
+  },
 };
 
 function emit(event, ...args) {
@@ -327,6 +345,82 @@ await step(
     assert.equal(body.interval_s, HEARTBEAT_INTERVAL_S);
   },
 )();
+
+await step(
+  "agent tools: the blocking three are registered with PI once on the bus",
+  async () => {
+    assert.deepEqual(
+      [...registeredTools.keys()],
+      ["discover_agents", "prompt_agent", "answer_agent"],
+    );
+    for (const spec of registeredTools.values()) {
+      assert.equal(spec.parameters?.type, "object", `${spec.name}: JSON Schema`);
+      assert.ok(spec.description.length > 0);
+      assert.equal(typeof spec.execute, "function");
+    }
+  },
+)();
+
+const extensionState = () => globalThis.__piSmokeExtension;
+
+await step(
+  "extension: loaded from SYNADIA_PI_EXTENSIONS, told the settings, started with the live handles",
+  async () => {
+    const state = extensionState();
+    assert.ok(state, "the fixture extension did not load");
+    assert.equal(state.ctx.harness, "pi");
+    assert.equal(state.ctx.plugin.name, "@synadia-ai/nats-pi-channel");
+    assert.match(state.ctx.plugin.version, /^\d+\.\d+\.\d+/);
+    assert.equal(state.ctx.settings.owner, owner);
+    assert.equal(state.ctx.settings.name, session);
+    assert.equal(state.ctx.settings.senderIdentity, SIGNED ? "signed" : "off");
+    assert.equal(state.ctx.settings.minSenderTrust, STRICT ? "signed" : "any");
+    assert.deepEqual(state.ctx.options, {});
+    assert.equal(typeof state.ctx.logger.warn, "function");
+    assert.equal(state.started, 1);
+    assert.equal(state.handles.service.subject.prompt, expectedSubject);
+    assert.equal(typeof state.handles.agents.discover, "function");
+  },
+)();
+
+await step("extension: its heartbeat extras ride on every beat", async () => {
+  const mine = heartbeats.find(
+    (hb) => hb.agent === "pi" && hb.session === session && hb.owner === owner,
+  );
+  assert.equal(mine?.smoke_extension, "loaded");
+  const reply = await obs.request(expectedStatusSubject, "", { timeout: 2000 });
+  const body = JSON.parse(new TextDecoder().decode(reply.data));
+  assert.equal(body.smoke_extension, "loaded");
+})();
+
+await step(
+  "agent tools: PI's own address is refused, inside the extension's aroundToolCall",
+  async () => {
+    const before = extensionState().aroundToolCall.length;
+    const result = await registeredTools
+      .get("prompt_agent")
+      .execute("call-1", { address: expectedSubject, prompt: "hi" }, undefined, undefined, mockCtx);
+    const parsed = JSON.parse(result.content[0].text);
+    assert.match(parsed.error, /your own address/);
+    assert.deepEqual(extensionState().aroundToolCall.slice(before), [
+      { id: null, toolName: "prompt_agent" },
+    ]);
+    // Discovery through the client: nothing else is on this private server,
+    // and PI itself is left out.
+    const discovered = JSON.parse(
+      (await registeredTools.get("discover_agents").execute("call-2", {}, undefined, undefined, mockCtx))
+        .content[0].text,
+    );
+    assert.ok(Array.isArray(discovered.agents), "discover_agents result has no agents list");
+    assert.ok(!discovered.agents.some((a) => a.address === expectedSubject), "own address discovered");
+  },
+)();
+
+await step("extension: no provider headers while no NATS prompt is active", async () => {
+  const event = { type: "before_provider_headers", headers: {} };
+  await emit("before_provider_headers", event);
+  assert.deepEqual(event.headers, {});
+})();
 
 // Helper — consume a stream until terminator, capturing chunks + error.
 async function collectStream(requestSubject, payload) {
@@ -477,10 +571,31 @@ await step(
     })();
     obs.publish(expectedSubject, env, { reply: inbox });
 
+    const state = extensionState();
+    const acceptedBefore = state.promptAccepted;
     // Wait for the extension to inject into our mock PI.
     for (let i = 0; i < 50 && pendingSendUserMessage === null; i++)
       await delay(20);
     assert.equal(pendingSendUserMessage, env);
+
+    // The extension heard the prompt accepted, inside the context its own
+    // request interceptor bound, and wrapped the injection.
+    assert.equal(state.promptAccepted, acceptedBefore + 1);
+    assert.match(state.acceptedIn, /^request:\d+$/);
+    assert.deepEqual(state.lastAccepted.extras, {});
+    assert.equal(state.lastAccepted.caller, undefined);
+    const requestId = state.lastAccepted.id;
+    assert.equal(state.injectedRequests.at(-1), requestId);
+
+    // While the prompt is PI's active turn, the extension's headers are
+    // merged into PI's provider request.
+    const headersEvent = { type: "before_provider_headers", headers: { existing: "1" } };
+    await emit("before_provider_headers", headersEvent);
+    assert.deepEqual(headersEvent.headers, {
+      existing: "1",
+      "x-smoke-request": requestId,
+      "x-smoke-store": "null",
+    });
 
     // Simulate PI producing text_delta events, then agent_settled.
     await emit("message_update", {
@@ -498,6 +613,10 @@ await step(
       terminatorNoHeaders,
       "stream did not end with empty-no-headers terminator",
     );
+    const ended = state.promptEnded.at(-1);
+    assert.equal(ended?.id, requestId);
+    assert.equal(ended?.outcome, "ok");
+    assert.equal(typeof ended?.atMs, "number");
 
     // First observed chunk MUST be status:ack per §6.4.
     assert.deepEqual(
@@ -542,6 +661,10 @@ if (STRICT) {
         for (let i = 0; i < 50 && pendingSendUserMessage === null; i++)
           await delay(20);
         assert.equal(pendingSendUserMessage, "signed hello");
+        // A verified sender is the request's `caller`.
+        const accepted = extensionState().lastAccepted;
+        assert.ok(accepted, "the extension did not hear the signed prompt");
+        assert.match(accepted.caller ?? "", /^A[A-Z2-7]{55}\.U[A-Z2-7]{55}$/);
         await emit("message_update", {
           assistantMessageEvent: {
             type: "text_delta",
@@ -584,6 +707,9 @@ if (!STRICT)
       const env = JSON.stringify({
         prompt: "describe the file",
         attachments: [{ filename: "hello.txt", content }],
+        // A field the protocol does not define (§5.6): the extension
+        // reads it in its interceptor and in the served request.
+        marker: "smoke",
       });
       pendingSendUserMessage = null;
 
@@ -608,6 +734,8 @@ if (!STRICT)
       for (let i = 0; i < 100 && pendingSendUserMessage === null; i++)
         await delay(20);
       assert.ok(pendingSendUserMessage, "pi.sendUserMessage was not called");
+      assert.deepEqual(extensionState().lastAccepted.extras, { marker: "smoke" });
+      assert.deepEqual(extensionState().interceptedExtras.at(-1), { marker: "smoke" });
 
       // The prompt handed to PI should start with the [Attachments] block and
       // contain the original prompt text.
@@ -707,6 +835,9 @@ if (STRICT) {
         null,
         "queued shutdown prompt reached PI",
       );
+      const state = extensionState();
+      assert.equal(state.promptEnded.at(-1)?.outcome, "error");
+      assert.equal(state.stopping, 1, "stopping() not awaited on shutdown");
     },
   )();
 }
@@ -753,6 +884,7 @@ if (!SIGNED && !STRICT)
         },
         sendUserMessage() {},
         registerCommand() {},
+        registerTool() {},
       };
       const offlineCtx = {
         cwd: process.cwd(),

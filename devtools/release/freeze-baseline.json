@@ -117,8 +117,8 @@
       "size": 2085
     },
     "agents/pi/package.json": {
-      "sha256": "bfd7df36e85942d708b18fb9b4fba8d9821048c31dcf2f605f097ad400a7053f",
-      "size": 1412
+      "sha256": "f8c52e90fefeb53cafeb5ee86c7d1a5483ecf9fb39073aed61861002465b4cd6",
+      "size": 1436
     },
     "client-sdk/python/pyproject.toml": {
       "sha256": "e293366da6c2b687127462b65c5f24e4420fe311d715924726c50ea704da291f",
