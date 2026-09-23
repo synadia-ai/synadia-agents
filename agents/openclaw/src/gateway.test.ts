@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
   order: [] as string[],
   setActiveConnection: vi.fn(),
   setActiveAgentTools: vi.fn(),
-  setActiveExtensionNames: vi.fn(),
+  setActiveExtensions: vi.fn(),
   cleanupAgentStaging: vi.fn(),
 }));
 
@@ -91,7 +91,7 @@ vi.mock("./runtime.js", () => ({
   getNatsRuntime: () => ({ channel: {} }),
   setActiveConnection: mocks.setActiveConnection,
   setActiveAgentTools: mocks.setActiveAgentTools,
-  setActiveExtensionNames: mocks.setActiveExtensionNames,
+  setActiveExtensions: mocks.setActiveExtensions,
 }));
 vi.mock("./attachments.js", () => ({
   cleanupAgentStaging: mocks.cleanupAgentStaging,
@@ -267,7 +267,7 @@ function resetMocks(): void {
   mocks.dispatch.mockReset();
   mocks.setActiveConnection.mockReset();
   mocks.setActiveAgentTools.mockReset();
-  mocks.setActiveExtensionNames.mockReset();
+  mocks.setActiveExtensions.mockReset();
   mocks.cleanupAgentStaging.mockReset();
   mocks.serviceOptions.length = 0;
   mocks.serviceStops.length = 0;
@@ -417,14 +417,17 @@ describe("the extensions", () => {
     expect(typeof (state.ctx.logger as { warn: unknown }).warn).toBe("function");
     // Loaded before connecting: the factory ran first.
     expect(mocks.connectToNats.mock.invocationCallOrder[0]).toBeGreaterThan(0);
-    expect(mocks.setActiveExtensionNames).toHaveBeenCalledWith(["counter"]);
+    expect(mocks.setActiveExtensions).toHaveBeenCalledWith({
+      accountId: "default",
+      names: ["counter"],
+    });
     const startLine = (ctx.log.info.mock.calls as string[][])
       .map((c) => c[0]!)
       .find((line) => line.includes("gateway starting"));
     expect(startLine).toContain("agentTools: blocking, extensions: counter)");
     controller.abort();
     await running;
-    expect(mocks.setActiveExtensionNames).toHaveBeenLastCalledWith(null);
+    expect(mocks.setActiveExtensions).toHaveBeenLastCalledWith(null);
   });
 
   it("a module that fails is logged once and skipped; the gateway starts plain with the rest", async () => {
@@ -443,7 +446,10 @@ describe("the extensions", () => {
     );
     const errors = (ctx.log.error.mock.calls as string[][]).map((c) => c[0]!);
     expect(errors).toEqual([`nats: extension "${broken}" not loaded: no`]);
-    expect(mocks.setActiveExtensionNames).toHaveBeenCalledWith(["counter"]);
+    expect(mocks.setActiveExtensions).toHaveBeenCalledWith({
+      accountId: "default",
+      names: ["counter"],
+    });
     controller.abort();
     await running;
   });
@@ -489,7 +495,7 @@ describe("the extensions", () => {
     expect(state.started).toBe(0);
     expect(state.stopping).toBe(0);
     expect(mocks.serviceStops.at(-1)).toHaveBeenCalled();
-    expect(mocks.setActiveExtensionNames).toHaveBeenLastCalledWith(null);
+    expect(mocks.setActiveExtensions).toHaveBeenLastCalledWith(null);
   });
 
   it("promptAccepted is synchronous in the handler with the request; aroundDispatch wraps OpenClaw's dispatch; promptEnded reports ok", async () => {

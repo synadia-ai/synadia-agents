@@ -53,14 +53,20 @@ export function getActiveAgentTools(): AnyAgentTool[] | null {
   return activeAgentTools;
 }
 
-// The extensions the active gateway loaded, by name, for the channel's
-// account description; `null` while no gateway runs.
-let activeExtensionNames: string[] | null = null;
-
-export function setActiveExtensionNames(names: string[] | null): void {
-  activeExtensionNames = names;
+/** The extensions the running gateway loaded, for the account they belong to. */
+export interface ActiveExtensions {
+  readonly accountId: string;
+  /** The extensions' names, in load order. */
+  readonly names: ReadonlyArray<string>;
 }
 
-export function getActiveExtensionNames(): string[] | null {
-  return activeExtensionNames;
+// For the channel's account description; `null` while no gateway runs.
+let activeExtensions: ActiveExtensions | null = null;
+
+export function setActiveExtensions(state: ActiveExtensions | null): void {
+  activeExtensions = state;
+}
+
+export function getActiveExtensions(): ActiveExtensions | null {
+  return activeExtensions;
 }

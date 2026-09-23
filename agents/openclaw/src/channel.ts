@@ -11,7 +11,7 @@ import { startNatsGateway, stopNatsGateway } from "./gateway.js";
 import {
   getActiveConnection,
   getActiveAgentName,
-  getActiveExtensionNames,
+  getActiveExtensions,
   getActiveOwner,
 } from "./runtime.js";
 import type { ResolvedNatsAccount } from "./types.js";
@@ -363,9 +363,10 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
  * settings name.
  */
 function describeExtensions(account: ResolvedNatsAccount): string {
+  const active = getActiveExtensions();
   const names =
-    getActiveAgentName() === account.agentName
-      ? (getActiveExtensionNames() ?? account.extensions.entries.map((e) => e.module))
+    active && active.accountId === account.accountId
+      ? active.names
       : account.extensions.entries.map((e) => e.module);
   return names.join(", ") || "none";
 }

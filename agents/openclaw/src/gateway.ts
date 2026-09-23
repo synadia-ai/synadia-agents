@@ -34,7 +34,7 @@ import {
   getNatsRuntime,
   setActiveAgentTools,
   setActiveConnection,
-  setActiveExtensionNames,
+  setActiveExtensions,
 } from "./runtime.js";
 import {
   cleanupAgentStaging,
@@ -137,7 +137,7 @@ async function cleanupPrevious(): Promise<void> {
     await activeExtensions.stopping();
   }
   activeExtensions = null;
-  setActiveExtensionNames(null);
+  setActiveExtensions(null);
   if (activeService) {
     try {
       await activeService.stop();
@@ -222,7 +222,7 @@ export async function startNatsGateway(
   const logger = gatewayLogger(ctx);
   const extensions = await loadAccountExtensions(account, logger);
   activeExtensions = extensions;
-  setActiveExtensionNames([...extensions.names]);
+  setActiveExtensions({ accountId: account.accountId, names: extensions.names });
 
   ctx.log?.info?.(
     `nats: gateway starting — oc/${account.owner}/${agentName} using ${sourceLabel} ` +
