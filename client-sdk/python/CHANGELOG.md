@@ -10,6 +10,10 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
+- **`HeartbeatEndpoint.subject` must be non-empty.** An empty declared
+  subject now fails validation, and a heartbeat carrying one decodes with
+  `endpoints` dropped, as the TypeScript decoder does.
+
 - **The heartbeat's declared prompt endpoint.** `HeartbeatPayload` gains
   optional `protocol_version` and `endpoints` (`HeartbeatEndpoint`: `subject`
   and the §2.1 endpoint metadata), so a listener on the heartbeat knows where
