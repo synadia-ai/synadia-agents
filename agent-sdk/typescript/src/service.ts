@@ -1202,7 +1202,9 @@ export class AgentService {
 }
 
 // The §8.3 field names: a `heartbeatExtras` entry under one of them would
-// overwrite the real field on the wire.
+// overwrite the real field on the wire, or, for the two declarations the
+// encoder writes after the extras, be overwritten by it. Either way the
+// provider is wrong, so its extras are refused, as in the Python host.
 const HEARTBEAT_FIELDS: ReadonlySet<string> = new Set([
   "agent",
   "owner",
@@ -1210,6 +1212,8 @@ const HEARTBEAT_FIELDS: ReadonlySet<string> = new Set([
   "instance_id",
   "ts",
   "interval_s",
+  "protocol_version",
+  "endpoints",
 ]);
 
 /**

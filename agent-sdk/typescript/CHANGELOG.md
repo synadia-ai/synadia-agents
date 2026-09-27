@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **`heartbeatExtras` may not reuse `protocol_version` or `endpoints`.** A
+  batch that does is refused and logged, as for the other §8.3 fields and
+  as the Python host already did.
+
 - **The heartbeat declares the prompt endpoint.** Every beat and every
   status reply carries `protocol_version` and `endpoints.prompt` — the
   registered subject and endpoint metadata (`max_payload`, `attachments_ok`,

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     SerializerFunctionWrapHandler,
     ValidationError,
     model_serializer,
@@ -51,7 +52,9 @@ class HeartbeatEndpoint(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    subject: str
+    # Non-empty, as the TypeScript decoder requires: an empty subject makes
+    # the whole declaration malformed, and it is dropped.
+    subject: str = Field(min_length=1)
     metadata: dict[str, str] = {}
 
 

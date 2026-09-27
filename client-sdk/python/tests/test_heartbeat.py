@@ -329,3 +329,9 @@ def test_plain_beat_encodes_without_declarations() -> None:
     encoded = json.loads(HeartbeatPayload.model_validate(_BASE).model_dump_json())
     assert "protocol_version" not in encoded
     assert "endpoints" not in encoded
+
+
+def test_an_empty_declared_subject_drops_the_declaration() -> None:
+    raw = {**_BASE, "endpoints": {"prompt": {"subject": "", "metadata": {}}}}
+    payload = HeartbeatPayload.model_validate_json(json.dumps(raw))
+    assert payload.endpoints is None

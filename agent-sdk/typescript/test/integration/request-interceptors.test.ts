@@ -267,6 +267,10 @@ describe.skipIf(!natsUrl)("AgentService request interceptors and heartbeat extra
         throw new Error("provider down");
       },
       () => ({ instance_id: "forged" }),
+      // The two declarations are §8.3 fields too: the batch is refused
+      // whole, so the harmless neighbour goes with it.
+      () => ({ endpoints: "forged", region: "eu" }),
+      () => ({ protocol_version: "9.9", region: "eu" }),
       () => ({ big: BigInt(1) }),
     ];
     for (const provider of providers) {
@@ -274,6 +278,8 @@ describe.skipIf(!natsUrl)("AgentService request interceptors and heartbeat extra
       for (const payload of [beat, status]) {
         expect(payload.extras).toEqual({});
         expect(payload.instanceId).not.toBe("forged");
+        expect(payload.protocolVersion).toBe("0.3");
+        expect(payload.endpoints?.["prompt"]?.subject).toMatch(/^agents\.prompt\./);
       }
     }
   });
