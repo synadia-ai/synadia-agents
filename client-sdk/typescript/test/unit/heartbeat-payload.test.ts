@@ -77,4 +77,47 @@ describe("decodeHeartbeatPayload", () => {
   ])("returns null for malformed input: %s", (input) => {
     expect(decodeHeartbeatPayload(input)).toBeNull();
   });
+
+  const base = {
+    agent: "pi",
+    owner: "o",
+    instance_id: "I",
+    ts: "2026-09-27T10:00:00Z",
+    interval_s: 30,
+  };
+
+  it("decodes the declared protocol version and endpoints", () => {
+    const p = decodeHeartbeatPayload({
+      ...base,
+      protocol_version: "0.3",
+      endpoints: {
+        prompt: { subject: "agents.prompt.pi.o.n", metadata: { min_sender_trust: "any" } },
+      },
+    });
+    expect(p?.protocolVersion).toBe("0.3");
+    expect(p?.endpoints?.["prompt"]).toEqual({
+      subject: "agents.prompt.pi.o.n",
+      metadata: { min_sender_trust: "any" },
+    });
+    expect(p?.extras).toEqual({});
+  });
+
+  it("keeps a malformed declaration in extras and still decodes the beat", () => {
+    const p = decodeHeartbeatPayload({
+      ...base,
+      protocol_version: 3,
+      endpoints: { prompt: { subject: "agents.prompt.pi.o.n", metadata: { max_payload: 1 } } },
+    });
+    expect(p).not.toBeNull();
+    expect(p?.protocolVersion).toBeUndefined();
+    expect(p?.endpoints).toBeUndefined();
+    expect(p?.extras).toHaveProperty("endpoints");
+    expect(p?.extras).toHaveProperty("protocol_version", 3);
+  });
+
+  it("leaves both undefined on a plain 0.3 beat", () => {
+    const p = decodeHeartbeatPayload(base);
+    expect(p?.protocolVersion).toBeUndefined();
+    expect(p?.endpoints).toBeUndefined();
+  });
 });

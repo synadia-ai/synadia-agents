@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **The heartbeat declares the prompt endpoint.** Every beat and every
+  status reply carries `protocol_version` and `endpoints.prompt` — the
+  registered subject and endpoint metadata (`max_payload`, `attachments_ok`,
+  `min_sender_trust`) — written after the extras so none can shadow them,
+  and covered by the heartbeat's signature. Optional under §8.3: a 0.3
+  caller ignores them. `buildHeartbeatPayload` takes `protocolVersion` and
+  `endpoints`.
+
 - **Request interceptors.** `AgentServiceOptions.interceptors`: each
   `RequestInterceptor`'s `aroundRequest(ctx, next)` runs around the prompt
   handler for every admitted request — after the envelope is decoded and

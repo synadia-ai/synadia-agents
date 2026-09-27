@@ -19,7 +19,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, SerializerFunctionWrapHandler, model_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    SerializerFunctionWrapHandler,
+    ValidationError,
+    model_serializer,
+    model_validator,
+)
 
 from ._logging import get_logger
 
@@ -37,6 +44,15 @@ HEARTBEAT_SUBJECT = "agents.hb.*.*.*"
 # within ``slack * interval_s`` seconds of "now". Mirrors TS
 # DEFAULT_LIVENESS_SLACK.
 DEFAULT_LIVENESS_SLACK = 3
+
+
+class HeartbeatEndpoint(BaseModel):
+    """One endpoint a heartbeat declares: its subject and its §2.1 metadata."""
+
+    model_config = ConfigDict(frozen=True)
+
+    subject: str
+    metadata: dict[str, str] = {}
 
 
 class HeartbeatPayload(BaseModel):
@@ -71,6 +87,32 @@ class HeartbeatPayload(BaseModel):
     instance_id: str
     ts: str  # UTC ISO 8601
     interval_s: int
+    # Optional declarations the host fills from its own registration: the
+    # protocol version (§3.2) and the ``prompt`` endpoint's subject and
+    # metadata (§2.1), so a listener knows where and how to prompt without
+    # ``$SRV.INFO``. A malformed declaration is dropped, never fatal.
+    protocol_version: str | None = None
+    endpoints: dict[str, HeartbeatEndpoint] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lenient_declarations(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        pv = out.get("protocol_version")
+        if pv is not None and not (isinstance(pv, str) and pv):
+            out.pop("protocol_version")
+        eps = out.get("endpoints")
+        if eps is not None:
+            try:
+                if not isinstance(eps, dict):
+                    raise TypeError
+                for ep in eps.values():
+                    HeartbeatEndpoint.model_validate(ep, strict=True)
+            except (TypeError, ValidationError):
+                out.pop("endpoints")
+        return out
 
     @property
     def extras(self) -> dict[str, object]:
@@ -80,8 +122,9 @@ class HeartbeatPayload(BaseModel):
     @model_serializer(mode="wrap")
     def _drop_none_session(self, handler: SerializerFunctionWrapHandler) -> dict[str, object]:
         data: dict[str, object] = handler(self)
-        if data.get("session") is None:
-            data.pop("session", None)
+        for key in ("session", "protocol_version", "endpoints"):
+            if data.get(key) is None:
+                data.pop(key, None)
         return data
 
 
@@ -241,6 +284,7 @@ class HeartbeatTracker:
 __all__ = [
     "DEFAULT_LIVENESS_SLACK",
     "HEARTBEAT_SUBJECT",
+    "HeartbeatEndpoint",
     "HeartbeatListener",
     "HeartbeatPayload",
     "HeartbeatTracker",

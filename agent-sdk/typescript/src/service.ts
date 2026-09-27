@@ -469,6 +469,8 @@ export class AgentService {
   readonly #interceptors: ReadonlyArray<RequestInterceptor>;
   #identity: AgentId | undefined;
   #heartbeatSigner: HeartbeatSigner | undefined;
+  /** The registered `prompt` endpoint, declared on every beat and status reply. */
+  #promptDeclaration: { subject: string; metadata: Record<string, string> } | undefined;
   #handler: PromptHandler | null = null;
   #service: Service | null = null;
   #heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -727,6 +729,12 @@ export class AgentService {
     // they reach the handler). When the server didn't report a value
     // (e.g. an INFO block without `max_payload`), the override stands.
     const maxPayloadStr = this.#effectiveMaxPayload();
+    const promptMetadata: Record<string, string> = {
+      max_payload: maxPayloadStr,
+      attachments_ok: (this.#options.attachmentsOk ?? DEFAULT_ATTACHMENTS_OK) ? "true" : "false",
+      // Always emitted: its presence is what advertises the extension.
+      [MIN_SENDER_TRUST_KEY]: this.#minSenderTrust,
+    };
 
     this.#service.addEndpoint(PROMPT_ENDPOINT_NAME, {
       subject: this.#subject.prompt,
@@ -735,13 +743,11 @@ export class AgentService {
         if (err) return;
         void this.#dispatchPrompt(msg);
       },
-      metadata: {
-        max_payload: maxPayloadStr,
-        attachments_ok: (this.#options.attachmentsOk ?? DEFAULT_ATTACHMENTS_OK) ? "true" : "false",
-        // Always emitted: its presence is what advertises the extension.
-        [MIN_SENDER_TRUST_KEY]: this.#minSenderTrust,
-      },
+      metadata: promptMetadata,
     });
+    // §8.3: the heartbeat declares what `$SRV.INFO` would say about the
+    // prompt endpoint, so a listener knows where and how to prompt.
+    this.#promptDeclaration = { subject: this.#subject.prompt, metadata: { ...promptMetadata } };
 
     // `status` declares nothing about identity (§ "Declaring the requirement").
     this.#service.addEndpoint(STATUS_ENDPOINT_NAME, {
@@ -787,14 +793,23 @@ export class AgentService {
 
   /**
    * What goes on the heartbeat beyond the §8.3 required fields: the
-   * session label when the harness multiplexes, and the `heartbeatExtras`
-   * provider's fields, read when each heartbeat is built so every beat
-   * carries current values. Without a provider the heartbeat is exactly
-   * plain protocol 0.3.
+   * session label when the harness multiplexes, the protocol version and
+   * the registered `prompt` endpoint (its subject and metadata), and the
+   * `heartbeatExtras` provider's fields, read when each heartbeat is built
+   * so every beat carries current values. All of it is optional under
+   * §8.3, so a 0.3 caller ignores what it does not know.
    */
   #heartbeatOptions(): BuildHeartbeatPayloadOptions {
-    const options: { session?: string; extras?: Record<string, unknown> } = {};
+    const options: {
+      session?: string;
+      extras?: Record<string, unknown>;
+      protocolVersion?: string;
+      endpoints?: Record<string, { subject: string; metadata: Record<string, string> }>;
+    } = { protocolVersion: PROTOCOL_VERSION_STRING };
     if (this.#options.session !== undefined) options.session = this.#options.session;
+    if (this.#promptDeclaration !== undefined) {
+      options.endpoints = { [PROMPT_ENDPOINT_NAME]: this.#promptDeclaration };
+    }
     const provided = this.#providedExtras();
     if (provided !== undefined) options.extras = { ...provided };
     return options;

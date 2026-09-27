@@ -75,7 +75,11 @@ export {
 // Liveness — caller-side type + decoder. The encoder side
 // (`buildHeartbeatPayload`, `encodeHeartbeatPayload`) lives in the host
 // SDK at `@synadia-ai/agent-service`.
-export { type HeartbeatPayload, decodeHeartbeatPayload } from "./heartbeat/payload.js";
+export {
+  type HeartbeatEndpoint,
+  type HeartbeatPayload,
+  decodeHeartbeatPayload,
+} from "./heartbeat/payload.js";
 export {
   type Liveness,
   DEFAULT_LIVENESS_SLACK,
