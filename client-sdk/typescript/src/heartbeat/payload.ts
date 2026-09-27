@@ -7,7 +7,13 @@
 //     "session": "alice",                          // optional, §5.6
 //     "instance_id": "VMKS6MHK71PCPWGY38A7N5",
 //     "ts": "2026-04-21T14:23:01Z",
-//     "interval_s": 30
+//     "interval_s": 30,
+//     "protocol_version": "0.3",                   // optional
+//     "endpoints": {                               // optional
+//       "prompt": { "subject": "agents.prompt.cc.aconnolly.alice",
+//                   "metadata": { "max_payload": "1MB", "attachments_ok": "true",
+//                                 "min_sender_trust": "signed" } }
+//     }
 //   }
 //
 // Published on `agents.hb.{agent}.{owner}.{name}` (§8.1 v0.3) — the
@@ -16,6 +22,12 @@
 // level conversation label for harnesses that multiplex over a single
 // subject (e.g. Hermes). Callers MUST tolerate additional unknown fields
 // (§8.3, §12).
+//
+// `protocol_version` and `endpoints` are optional declarations the host
+// fills from its own registration (§3.2, §2.1): the prompt endpoint's
+// subject and metadata, copied verbatim, so a listener on the heartbeat
+// knows where and how to prompt the instance without `$SRV.INFO`. A value
+// of the wrong shape is kept in `extras`, never fatal.
 //
 // The encoder side (`buildHeartbeatPayload`, `encodeHeartbeatPayload`)
 // lives in the host SDK (`@synadia-ai/agent-service`) — both packages
@@ -28,11 +40,44 @@ export interface HeartbeatPayload {
   readonly instanceId: string;
   readonly ts: string;
   readonly intervalS: number;
+  /** §3.2 `metadata.protocol_version`, when the host declares it. */
+  readonly protocolVersion?: string;
+  /**
+   * Declared endpoints by name — the host declares `prompt` — each with
+   * its registered subject and endpoint metadata, when the host declares
+   * them.
+   */
+  readonly endpoints?: Readonly<Record<string, HeartbeatEndpoint>>;
   /** Any additional fields on the heartbeat payload, preserved verbatim. */
   readonly extras: Readonly<Record<string, unknown>>;
 }
 
+/** One declared endpoint on a heartbeat: its subject and its §2.1 metadata. */
+export interface HeartbeatEndpoint {
+  readonly subject: string;
+  readonly metadata: Readonly<Record<string, string>>;
+}
+
 const KNOWN_FIELDS = new Set(["agent", "owner", "session", "instance_id", "ts", "interval_s"]);
+
+function decodeEndpoints(v: unknown): Readonly<Record<string, HeartbeatEndpoint>> | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const out: Record<string, HeartbeatEndpoint> = {};
+  for (const [name, ep] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof ep !== "object" || ep === null || Array.isArray(ep)) return undefined;
+    const e = ep as Record<string, unknown>;
+    if (typeof e["subject"] !== "string" || e["subject"] === "") return undefined;
+    const md = e["metadata"] ?? {};
+    if (typeof md !== "object" || md === null || Array.isArray(md)) return undefined;
+    const metadata: Record<string, string> = {};
+    for (const [k, mv] of Object.entries(md as Record<string, unknown>)) {
+      if (typeof mv !== "string") return undefined;
+      metadata[k] = mv;
+    }
+    out[name] = Object.freeze({ subject: e["subject"], metadata: Object.freeze(metadata) });
+  }
+  return Object.freeze(out);
+}
 
 /**
  * Decode a heartbeat payload from an already-parsed JSON value.
@@ -56,9 +101,17 @@ export function decodeHeartbeatPayload(input: unknown): HeartbeatPayload | null 
     return null;
   }
 
+  const protocolVersion =
+    typeof o["protocol_version"] === "string" && o["protocol_version"] !== ""
+      ? o["protocol_version"]
+      : undefined;
+  const endpoints = decodeEndpoints(o["endpoints"]);
   const extras: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) {
-    if (!KNOWN_FIELDS.has(k)) extras[k] = v;
+    if (KNOWN_FIELDS.has(k)) continue;
+    if (k === "protocol_version" && protocolVersion !== undefined) continue;
+    if (k === "endpoints" && endpoints !== undefined) continue;
+    extras[k] = v;
   }
 
   const session =
@@ -72,5 +125,7 @@ export function decodeHeartbeatPayload(input: unknown): HeartbeatPayload | null 
     intervalS: o["interval_s"],
     extras: Object.freeze(extras),
     ...(session !== undefined ? { session } : {}),
+    ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+    ...(endpoints !== undefined ? { endpoints } : {}),
   });
 }

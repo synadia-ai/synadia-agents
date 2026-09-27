@@ -172,12 +172,20 @@ describe.skipIf(!bin)("AgentService — signed heartbeats (nkey user, $G)", () =
       expect(verified.header.sub).toBe(service.subject.heartbeat);
       expect(verified.header.ts).toBe(frame.ts);
       expect(verified.header.name).toBeUndefined();
+      // The beat declares the registered prompt endpoint, covered by the signature.
+      expect(frame.protocolVersion).toBe("0.3");
+      expect(frame.endpoints?.["prompt"]?.subject).toBe(service.subject.prompt);
+      expect(frame.endpoints?.["prompt"]?.metadata["min_sender_trust"]).toMatch(/^(any|signed)$/);
+      expect(frame.endpoints?.["prompt"]?.metadata["attachments_ok"]).toBeDefined();
+      expect(frame.endpoints?.["prompt"]?.metadata["max_payload"]).toBeDefined();
       seen.add(`${verified.header.user}.${verified.header.nonce}`);
     }
     expect(seen.size).toBe(beats.length);
     // The status reply builds the same frame but is not a heartbeat: no header.
     expect(readSenderHeaderValue(status.headers)).toBeUndefined();
-    expect(decodeHeartbeatPayload(JSON.parse(dec.decode(status.data)))).toBeDefined();
+    const statusFrame = decodeHeartbeatPayload(JSON.parse(dec.decode(status.data)));
+    expect(statusFrame).toBeDefined();
+    expect(statusFrame?.endpoints?.["prompt"]?.subject).toBe(service.subject.prompt);
   });
 
   it("skips a tick while the previous beat is still being signed, and keeps beats in order", async () => {

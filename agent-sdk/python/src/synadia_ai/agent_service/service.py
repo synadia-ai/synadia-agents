@@ -72,6 +72,7 @@ from synadia_ai.agents import (
     Attachment,
     Chunk,
     Envelope,
+    HeartbeatEndpoint,
     IdentityError,
     ProtocolError,
     QueryChunk,
@@ -96,7 +97,13 @@ from synadia_ai.agents.messages import encode_chunk
 from ._bytes import format_human_bytes, parse_human_bytes
 from ._inbox import new_inbox
 from ._logging import get_logger
-from .heartbeat import ExtrasProvider, HeartbeatSigner, build_heartbeat_payload, run_publisher
+from .heartbeat import (
+    ExtrasProvider,
+    HeartbeatDeclared,
+    HeartbeatSigner,
+    build_heartbeat_payload,
+    run_publisher,
+)
 from .identity import (
     DEFAULT_MIN_SENDER_TRUST,
     DEFAULT_REPLAY_WINDOW_S,
@@ -480,6 +487,7 @@ class AgentService:
         self._prompt_handler: PromptHandler | None = None
         self._service: Service | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._heartbeat_declared: HeartbeatDeclared | None = None
         self._heartbeat_stop = asyncio.Event()
         # Concurrent serving (`max_concurrent_prompts` > 1 only): the slots,
         # created by start(); the prompts in flight, each in a task of its
@@ -640,6 +648,15 @@ class AgentService:
             metadata=metadata,
         )
         self._service = await add_service(self._nc, config)
+        # §2.1: endpoint metadata is a `Record<string, string>` on the wire —
+        # booleans are encoded as "true" / "false".
+        prompt_metadata = {
+            "max_payload": max_payload_str,
+            "attachments_ok": "true" if self._attachments_ok else "false",
+            # Always emitted: its presence is what advertises the
+            # sender-identity extension (feature detection, no protocol bump).
+            MIN_SENDER_TRUST_KEY: self._gate.min_sender_trust,
+        }
         await self._service.add_endpoint(
             EndpointConfig(
                 name=PROMPT_ENDPOINT_NAME,
@@ -650,17 +667,18 @@ class AgentService:
                 # requests. Framework defaults differ between SDKs, which
                 # would break interop — pin to the spec value explicitly.
                 queue_group=PROMPT_QUEUE_GROUP,
-                # §2.1: endpoint metadata is a `Record<string, string>` on the
-                # wire — booleans are encoded as "true" / "false".
-                metadata={
-                    "max_payload": max_payload_str,
-                    "attachments_ok": "true" if self._attachments_ok else "false",
-                    # Always emitted: its presence is what advertises the
-                    # sender-identity extension (feature detection, no
-                    # protocol bump).
-                    MIN_SENDER_TRUST_KEY: self._gate.min_sender_trust,
-                },
+                metadata=prompt_metadata,
             )
+        )
+        # §8.3: the heartbeat declares what `$SRV.INFO` would say about the
+        # prompt endpoint, so a listener knows where and how to prompt.
+        self._heartbeat_declared = HeartbeatDeclared(
+            protocol_version=_PROTOCOL_VERSION,
+            endpoints={
+                PROMPT_ENDPOINT_NAME: HeartbeatEndpoint(
+                    subject=self.subject.prompt, metadata=dict(prompt_metadata)
+                )
+            },
         )
         self._bind_prompt_stats(self._service)
         # v0.3 §-TBD: the status endpoint returns a freshly-built heartbeat-
@@ -705,6 +723,7 @@ class AgentService:
                 self._heartbeat_stop,
                 extras=self._heartbeat_extras,
                 sender=heartbeat_signer,
+                declared=self._heartbeat_declared,
             ),
             name=f"heartbeat-{self.subject.inbox}",
         )
@@ -804,14 +823,21 @@ class AgentService:
         try:
             extras = self._heartbeat_extras()
             payload = build_heartbeat_payload(
-                self.subject, self._heartbeat_interval_s, self._service.id, extras
+                self.subject,
+                self._heartbeat_interval_s,
+                self._service.id,
+                extras,
+                declared=self._heartbeat_declared,
             )
             return payload.model_dump_json().encode("utf-8")
         except Exception:
             # The provider is application code: its exception is not logged.
             log.error("heartbeat extras failed for the status reply; replying without them")
         payload = build_heartbeat_payload(
-            self.subject, self._heartbeat_interval_s, self._service.id
+            self.subject,
+            self._heartbeat_interval_s,
+            self._service.id,
+            declared=self._heartbeat_declared,
         )
         return payload.model_dump_json().encode("utf-8")
 

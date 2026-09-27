@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from synadia_ai.agents.heartbeat import (
     DEFAULT_LIVENESS_SLACK,
+    HeartbeatEndpoint,
     HeartbeatPayload,
     HeartbeatTracker,
 )
@@ -277,3 +278,54 @@ async def test_tracker_on_heartbeat_listener_fires_and_unsubscribes(
             unsubscribe_other()
     finally:
         await tracker.stop()
+
+
+_BASE = {
+    "agent": "pi",
+    "owner": "o",
+    "instance_id": "I",
+    "ts": "2026-09-27T10:00:00Z",
+    "interval_s": 30,
+}
+
+
+def test_declared_prompt_endpoint_round_trips() -> None:
+    raw = {
+        **_BASE,
+        "protocol_version": "0.3",
+        "endpoints": {
+            "prompt": {
+                "subject": "agents.prompt.pi.o.n",
+                "metadata": {"min_sender_trust": "signed", "max_payload": "1MB"},
+            }
+        },
+    }
+    payload = HeartbeatPayload.model_validate_json(json.dumps(raw))
+    assert payload.protocol_version == "0.3"
+    assert payload.endpoints == {
+        "prompt": HeartbeatEndpoint(
+            subject="agents.prompt.pi.o.n",
+            metadata={"min_sender_trust": "signed", "max_payload": "1MB"},
+        )
+    }
+    assert payload.extras == {}
+    assert json.loads(payload.model_dump_json()) == raw
+
+
+def test_malformed_declarations_are_dropped_not_fatal() -> None:
+    raw = {
+        **_BASE,
+        "protocol_version": 3,
+        "endpoints": {
+            "prompt": {"subject": "agents.prompt.pi.o.n", "metadata": {"max_payload": 1}}
+        },
+    }
+    payload = HeartbeatPayload.model_validate_json(json.dumps(raw))
+    assert payload.protocol_version is None
+    assert payload.endpoints is None
+
+
+def test_plain_beat_encodes_without_declarations() -> None:
+    encoded = json.loads(HeartbeatPayload.model_validate(_BASE).model_dump_json())
+    assert "protocol_version" not in encoded
+    assert "endpoints" not in encoded

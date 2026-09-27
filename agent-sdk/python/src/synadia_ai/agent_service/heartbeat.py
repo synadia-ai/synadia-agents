@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 from synadia_ai.agents import (
     AGENT_SENDER_HEADER,
+    HeartbeatEndpoint,
     HeartbeatPayload,
     serialize_sender_header,
     sign_sender_header,
@@ -90,11 +91,26 @@ async def sign_heartbeat(
     return {AGENT_SENDER_HEADER: serialize_sender_header(header)}
 
 
+@dataclass(frozen=True, slots=True)
+class HeartbeatDeclared:
+    """What a heartbeat declares about the service that publishes it.
+
+    The protocol version (§3.2) and the registered endpoints by name — the
+    host declares ``prompt`` — copied from the registration, so a listener
+    on the heartbeat knows where and how to prompt the instance.
+    """
+
+    protocol_version: str
+    endpoints: Mapping[str, HeartbeatEndpoint]
+
+
 def build_heartbeat_payload(
     subject: AgentSubject,
     interval_s: int,
     instance_id: str,
     extras: Mapping[str, object] | None = None,
+    *,
+    declared: HeartbeatDeclared | None = None,
 ) -> HeartbeatPayload:
     """Construct a §8.3 heartbeat payload for ``subject``.
 
@@ -121,6 +137,8 @@ def build_heartbeat_payload(
         instance_id=instance_id,
         ts=now_iso(),
         interval_s=interval_s,
+        protocol_version=declared.protocol_version if declared is not None else None,
+        endpoints=dict(declared.endpoints) if declared is not None else None,
         **(extras or {}),
     )
 
@@ -133,6 +151,7 @@ async def publish_one(
     extras: Mapping[str, object] | None = None,
     *,
     sender: HeartbeatSigner | None = None,
+    declared: HeartbeatDeclared | None = None,
 ) -> None:
     """Publish a single heartbeat frame to the agent's heartbeat subject.
 
@@ -144,7 +163,7 @@ async def publish_one(
     claim and shows the agent as down until signing works again. Logged on
     every beat.
     """
-    payload = build_heartbeat_payload(subject, interval_s, instance_id, extras)
+    payload = build_heartbeat_payload(subject, interval_s, instance_id, extras, declared=declared)
     data = payload.model_dump_json().encode("utf-8")
     headers: dict[str, str] | None = None
     if sender is not None:
@@ -164,6 +183,7 @@ async def run_publisher(
     extras: ExtrasProvider | None = None,
     *,
     sender: HeartbeatSigner | None = None,
+    declared: HeartbeatDeclared | None = None,
 ) -> None:
     """Periodically publish heartbeats until `stop` is set.
 
@@ -194,7 +214,9 @@ async def run_publisher(
             except Exception:
                 log.exception("heartbeat extras provider failed; publishing without extras")
         try:
-            await publish_one(nc, subject, interval_s, instance_id, fields, sender=sender)
+            await publish_one(
+                nc, subject, interval_s, instance_id, fields, sender=sender, declared=declared
+            )
         except (TypeError, ValueError) as exc:
             # A reserved key or an unserialisable value — a fault in the
             # extras, not in the transport (pydantic's serialisation error
@@ -202,7 +224,9 @@ async def run_publisher(
             if fields is None:
                 raise
             log.error("heartbeat extras rejected (%s); publishing without extras", exc)
-            await publish_one(nc, subject, interval_s, instance_id, sender=sender)
+            await publish_one(
+                nc, subject, interval_s, instance_id, sender=sender, declared=declared
+            )
 
     try:
         # Emit one heartbeat immediately so callers that subscribe-then-discover
@@ -222,6 +246,7 @@ async def run_publisher(
 
 __all__ = [
     "ExtrasProvider",
+    "HeartbeatDeclared",
     "HeartbeatSigner",
     "build_heartbeat_payload",
     "publish_one",

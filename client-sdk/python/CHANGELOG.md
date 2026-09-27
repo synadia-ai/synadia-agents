@@ -10,6 +10,13 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
+- **The heartbeat's declared prompt endpoint.** `HeartbeatPayload` gains
+  optional `protocol_version` and `endpoints` (`HeartbeatEndpoint`: `subject`
+  and the §2.1 endpoint metadata), so a listener on the heartbeat knows where
+  and how to prompt an instance — `min_sender_trust` included — without
+  `$SRV.INFO`. A malformed declaration is dropped, never fatal; neither is
+  serialised when unset.
+
 - **The agent tools: `AgentTools`.** The tools an agent gives its model to
   discover and prompt other agents — `discover_agents`, `prompt_agent`,
   `wait_agent`, `answer_agent`, `cancel_agent`, `list_agent_calls` — as one

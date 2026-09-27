@@ -102,6 +102,7 @@ from .errors import (
 from .heartbeat import (
     DEFAULT_LIVENESS_SLACK,
     HEARTBEAT_SUBJECT,
+    HeartbeatEndpoint,
     HeartbeatPayload,
     Liveness,
 )
@@ -238,6 +239,7 @@ __all__ = [
     "DiscoverFilter",
     "EndpointInfo",
     "Envelope",
+    "HeartbeatEndpoint",
     "HeartbeatPayload",
     "Identity",
     "IdentityError",

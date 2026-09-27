@@ -277,8 +277,18 @@ async def test_service_signs_its_heartbeats_with_the_id_sig_signer(
     assert verified.id == service.identity
     assert verified.header.sub == beat.subject == service.subject.heartbeat
     assert verified.header.ts == payload.ts
+    # The beat declares the registered prompt endpoint, covered by the signature.
+    assert payload.protocol_version == "0.3"
+    assert payload.endpoints is not None
+    prompt = payload.endpoints["prompt"]
+    assert prompt.subject == service.subject.prompt
+    assert prompt.metadata["min_sender_trust"] in ("any", "signed")
+    assert set(prompt.metadata) >= {"max_payload", "attachments_ok", "min_sender_trust"}
     # The status reply builds the same frame but is not a heartbeat: no header.
-    assert HeartbeatPayload.model_validate_json(status.data).instance_id == instance_id
+    status_payload = HeartbeatPayload.model_validate_json(status.data)
+    assert status_payload.instance_id == instance_id
+    assert status_payload.endpoints is not None
+    assert status_payload.endpoints["prompt"].subject == service.subject.prompt
     assert verify_sender(status, "live") is None
 
 

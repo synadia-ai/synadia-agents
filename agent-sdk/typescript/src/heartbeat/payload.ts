@@ -6,13 +6,17 @@
 // (`decodeHeartbeatPayload`) and the `HeartbeatPayload` shape live in
 // the caller package — both packages share the type.
 
-import type { AgentSubject, HeartbeatPayload } from "@synadia-ai/agents";
+import type { AgentSubject, HeartbeatEndpoint, HeartbeatPayload } from "@synadia-ai/agents";
 
 export interface BuildHeartbeatPayloadOptions {
   /** §5.6 envelope-level session label, when the harness multiplexes. */
   readonly session?: string;
   /** Extra forward-compat fields merged into the wire payload. */
   readonly extras?: Readonly<Record<string, unknown>>;
+  /** §3.2 `metadata.protocol_version`, declared on the beat. */
+  readonly protocolVersion?: string;
+  /** The registered endpoints to declare on the beat — the host declares `prompt`. */
+  readonly endpoints?: Readonly<Record<string, HeartbeatEndpoint>>;
 }
 
 /**
@@ -36,6 +40,8 @@ export function buildHeartbeatPayload(
     intervalS,
     extras: Object.freeze({ ...(options.extras ?? {}) }),
     ...(options.session !== undefined ? { session: options.session } : {}),
+    ...(options.protocolVersion !== undefined ? { protocolVersion: options.protocolVersion } : {}),
+    ...(options.endpoints !== undefined ? { endpoints: options.endpoints } : {}),
   });
 }
 
@@ -54,5 +60,14 @@ export function encodeHeartbeatPayload(payload: HeartbeatPayload): Uint8Array {
     ...payload.extras,
   };
   if (payload.session !== undefined) wire["session"] = payload.session;
+  // The declarations go after `extras`, so an extra can never shadow them.
+  if (payload.protocolVersion !== undefined) wire["protocol_version"] = payload.protocolVersion;
+  if (payload.endpoints !== undefined) {
+    const endpoints: Record<string, unknown> = {};
+    for (const [name, ep] of Object.entries(payload.endpoints)) {
+      endpoints[name] = { subject: ep.subject, metadata: { ...ep.metadata } };
+    }
+    wire["endpoints"] = endpoints;
+  }
   return new TextEncoder().encode(JSON.stringify(wire));
 }

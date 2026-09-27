@@ -10,6 +10,13 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ### Added
 
+- **The heartbeat declares the prompt endpoint.** Every beat and every
+  status reply carries `protocol_version` and `endpoints.prompt` — the
+  registered subject and endpoint metadata (`max_payload`, `attachments_ok`,
+  `min_sender_trust`) — covered by the heartbeat's signature. Optional under
+  §8.3: a 0.3 caller ignores them. `build_heartbeat_payload`, `publish_one`
+  and `run_publisher` take `declared: HeartbeatDeclared`.
+
 - **`extra_endpoints`: an addition that changes nothing by default.**
   `AgentService(extra_endpoints=[AgentServiceExtraEndpoint(...)])`
   registers harness endpoints, such as a controller's `spawn` / `stop` /

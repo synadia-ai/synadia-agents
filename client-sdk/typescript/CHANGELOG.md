@@ -15,6 +15,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **The heartbeat's declared prompt endpoint.** `HeartbeatPayload` gains
+  optional `protocolVersion` and `endpoints` (`HeartbeatEndpoint`: `subject`
+  and the §2.1 endpoint metadata), decoded from `protocol_version` and
+  `endpoints` on a §8.3 beat or status reply. A listener on the heartbeat
+  knows where and how to prompt an instance — `min_sender_trust` included —
+  without `$SRV.INFO`. A declaration of the wrong shape stays in `extras`.
+
 - **The agent tools: `AgentTools`.** The tools an agent gives its model to
   discover and prompt other agents — `discover_agents`, `prompt_agent`,
   `wait_agent`, `answer_agent`, `cancel_agent`, `list_agent_calls` — as one
