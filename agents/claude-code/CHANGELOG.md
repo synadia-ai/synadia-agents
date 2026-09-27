@@ -25,6 +25,9 @@ All notable changes to the Claude Code NATS channel are documented here.
   their tool extensions to the agent tools, and they hear the session's events:
   `promptAccepted`, `promptEnded`, `aroundToolCall`, `sessionStarted`, `turnStopped`.
   `request_info` and the `connecting` log event name the modules loaded.
+- An extension may return `metadata`, string keys and values merged into the service's
+  registration metadata before it starts; the protocol's registration keys win on a clash, and
+  an invalid key or value fails the start with an error naming the extension.
 - The plugin's hooks are back, neutral and always on: `SessionStart`, `Stop` and, for the agent
   tools, `PreToolUse` record the session id, the turn's end and the model's tool-call id under
   `<state dir>/sessions/`, keyed by the Claude Code process. The server follows `/clear` with

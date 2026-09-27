@@ -148,6 +148,7 @@ beforeAll(() => {
          requestInterceptors: [requestInterceptor],
          promptInterceptors: [promptInterceptor],
          heartbeatExtras: () => ({ counter: "loaded" }),
+         ...(ctx.options.metadata ? { metadata: ctx.options.metadata } : {}),
          toolExtensions: [{ discoveryFields: () => ({ counter: true }) }],
          async started(handles) { state.started++; state.handles = handles; state.order.push("started"); },
          async stopping() { state.stopping++; state.order.push("stopping"); },
@@ -467,6 +468,46 @@ describe("the extensions", () => {
     expect(extras()).toEqual({ counter: "loaded" });
     controller.abort();
     await running;
+  });
+
+  it("registers the extension's metadata under the gateway's own keys and the protocol's", async () => {
+    connected();
+    const entry = {
+      module: counterModule,
+      options: { metadata: { example_feature: "v1", platform: "other", owner: "someone" } },
+    };
+    const { controller, running, ctx } = await started(
+      account({ extensions: { source: "config", entries: [entry] } }),
+    );
+    expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({
+      example_feature: "v1",
+      platform: "openclaw",
+      description: "Echo",
+    });
+    const warnings = (ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!);
+    expect(warnings).toContain(
+      'nats: extension "counter": metadata "platform" is set by the plugin; the extension\'s value is ignored',
+    );
+    expect(warnings).toContain(
+      'nats: extension "counter": metadata "owner" is set by the protocol; the extension\'s value is ignored',
+    );
+    controller.abort();
+    await running;
+  });
+
+  it("an invalid metadata key fails the start before the connection", async () => {
+    connected();
+    const entry = { module: counterModule, options: { metadata: { "not a key": "v" } } };
+    const controller = new AbortController();
+    const ctx = gatewayContext(
+      account({ extensions: { source: "config", entries: [entry] } }),
+      controller.signal,
+    );
+    await expect(startNatsGateway(ctx as never)).rejects.toThrow(
+      'extension "counter": metadata key "not a key" is invalid',
+    );
+    expect(mocks.connectToNats).not.toHaveBeenCalled();
+    expect(mocks.serviceOptions).toHaveLength(0);
   });
 
   it("started gets the live handles after the service started; stopping runs before the service stops", async () => {

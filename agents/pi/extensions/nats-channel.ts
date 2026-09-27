@@ -122,6 +122,9 @@ export const HEARTBEAT_INTERVAL_S = 5;
 // subject's 3rd token are the same — no `subjectToken` override needed.
 const AGENT_ID = "pi";
 
+/** The registration metadata keys the plugin sets itself; they win over an extension's. */
+const PLUGIN_METADATA_KEYS = ["cwd"] as const;
+
 /** Fallback values used only when `nc.info.max_payload` isn't available.
  *  The live cap comes from the broker after connect — see `maxPayloadBytes`
  *  in the extension closure. */
@@ -768,7 +771,10 @@ export default function (pi: ExtensionAPI) {
         ...(extensions.heartbeatExtras
           ? { heartbeatExtras: extensions.heartbeatExtras }
           : {}),
+        // The extensions' keys under the plugin's own; the service's
+        // required keys win over both.
         extraMetadata: {
+          ...extensions.metadata,
           cwd: ctx.cwd,
         },
       });
@@ -904,7 +910,15 @@ export default function (pi: ExtensionAPI) {
         },
         logger,
       );
-      extensions = composeExtensions(loaded, logger);
+      try {
+        extensions = composeExtensions(loaded, logger, {
+          pluginMetadataKeys: PLUGIN_METADATA_KEYS,
+        });
+      } catch (e) {
+        ctx.ui.notify(`NATS: ${(e as Error).message}`, "error");
+        ctx.ui.setStatus("nats", "NATS: disconnected");
+        return;
+      }
       if (shuttingDown) return;
     }
 

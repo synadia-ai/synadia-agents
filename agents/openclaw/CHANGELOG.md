@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gateway start, before the connection; one that fails is logged once and
   skipped. The contract is `agents/EXTENSIONS.md`; the types are exported
   from `src/extensions.ts`.
+- An extension may return `metadata`, string keys and values merged into the
+  service's registration metadata before it starts; the gateway's own keys
+  (`platform`, `description`) and the protocol's registration keys win on a
+  clash, and an invalid key or value fails the gateway start with an error
+  naming the extension.
 - The `gateway starting` and `registered at` log lines name the agent tools
   offered and the extensions loaded; the account summary in
   `openclaw channels status` names both settings.

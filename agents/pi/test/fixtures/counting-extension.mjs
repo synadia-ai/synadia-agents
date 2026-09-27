@@ -1,7 +1,8 @@
 // A test extension for `test/smoke.mjs`: it takes every hook the channel
 // offers, counts the events it receives and records what they carried, on
 // `globalThis.__piSmokeExtension` for the smoke to read. It adds one field
-// to the heartbeat and one header to PI's provider requests, and binds an
+// to the heartbeat, one registration metadata key and one header to PI's
+// provider requests, and binds an
 // AsyncLocalStorage around the request handler and the injection so the
 // smoke can see where each event runs. Nothing here means anything to the
 // channel; it is a counter.
@@ -46,6 +47,9 @@ export default function createExtension(ctx) {
       },
     ],
     heartbeatExtras: () => ({ smoke_extension: "loaded" }),
+    // One key of its own, one the plugin sets and one the protocol sets:
+    // only the first reaches the registration.
+    metadata: { smoke_feature: "on", cwd: "/elsewhere", owner: "someone-else" },
     toolExtensions: [{ discoveryFields: () => ({ smoke: true }) }],
     async started(handles) {
       state.started++;

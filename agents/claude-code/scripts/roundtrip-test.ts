@@ -62,6 +62,8 @@ export default function (ctx) {
     promptInterceptors: [{
       beforePrompt: (c) => { log({ event: 'beforePrompt', toolCallId: c.context.toolCallId ?? null, bound: als.getStore() ?? null }) },
     }],
+    // One key of its own and one the protocol sets: only the first is registered.
+    metadata: { rt_feature: 'on', session: 'not-this-one' },
     started: () => log({ event: 'started' }),
     events: {
       promptAccepted: (r) => log({ event: 'promptAccepted', id: r.id, sessionId: r.sessionId ?? null, extras: r.extras, bound: als.getStore() ?? null }),
@@ -150,6 +152,31 @@ for (let attempt = 0; attempt < 20 && !discovered; attempt++) {
 if (!discovered) throw new Error('bundled plugin did not register from the cache copy')
 if (discovered.identity !== undefined) throw new Error('identity-off plugin registered an identity')
 if (discovered.minSenderTrust !== 'any') throw new Error('default min_sender_trust is not any')
+if (discovered.metadata.rt_feature !== 'on') throw new Error('the extension\'s metadata key was not registered')
+if (discovered.metadata.session !== NAME) throw new Error('the extension overrode a registration key')
+
+// An extension with an invalid metadata key: the server exits at start,
+// before it connects, and names the key.
+{
+  const badPath = join(stateDir, 'rt-bad-metadata.mjs')
+  writeFileSync(badPath, `export default () => ({ name: 'rt-bad', metadata: { 'not a key': 'v' } })\n`)
+  const child = Bun.spawn(['bun', join(cacheRoot, 'runtime', 'server.js')], {
+    env: { ...childEnv, SYNADIA_CLAUDE_CODE_EXTENSIONS: badPath, NATS_SESSION_NAME: 'rt-bad' },
+    stdin: 'pipe',
+    stderr: 'pipe',
+    stdout: 'pipe',
+  })
+  const exited = await Promise.race([child.exited, Bun.sleep(10_000).then(() => 'timeout' as const)])
+  if (exited === 'timeout') {
+    child.kill()
+    throw new Error('the server with an invalid metadata key did not exit')
+  }
+  const stderr = await new Response(child.stderr).text()
+  if (exited === 0) throw new Error('the server with an invalid metadata key exited 0')
+  if (!stderr.includes('extension "rt-bad": metadata key "not a key" is invalid')) {
+    throw new Error(`the server with an invalid metadata key did not name it: ${stderr}`)
+  }
+}
 
 type Collected = { body: string; bytes: number; hasHeaders: boolean }
 async function collectChunks(

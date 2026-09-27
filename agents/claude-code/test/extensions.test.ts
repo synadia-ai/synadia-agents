@@ -13,6 +13,7 @@ import {
   AGENT_EXTENSIONS_VAR,
   CLAUDE_CODE_EXTENSIONS_VAR,
   composeExtensions,
+  ExtensionMetadataError,
   loadExtensions,
   resolveExtensionEntries,
   resolveExtensionSpecifier,
@@ -334,6 +335,58 @@ describe("composeExtensions: the hooks, in load order", () => {
     expect(composed.heartbeatExtras!()).toEqual({ a: 1 });
     expect(composed.heartbeatExtras!()).toEqual({ a: 1 });
     expect(logger.lines).toEqual(['warn extension "boom" heartbeatExtras failed: no extras today']);
+  });
+});
+
+describe("composeExtensions: the registration metadata", () => {
+  it("merges every extension's keys in load order, a later one over an earlier one", () => {
+    const logger = recordingLogger();
+    const composed = composeExtensions(
+      [
+        loaded("a", { metadata: { example_feature: "v1", shared: "a" } }),
+        loaded("b", {}),
+        loaded("c", { metadata: { "example.other": "yes", shared: "c" } }),
+      ],
+      logger,
+    );
+    expect(composed.metadata).toEqual({ example_feature: "v1", "example.other": "yes", shared: "c" });
+    expect(Object.isFrozen(composed.metadata)).toBe(true);
+    expect(logger.lines).toEqual([
+      'warn extension "c": metadata "shared" replaces the value of extension "a"',
+    ]);
+  });
+
+  it("drops a key the protocol or the plugin sets, with a warning", () => {
+    const logger = recordingLogger();
+    const composed = composeExtensions(
+      [loaded("a", { metadata: { agent: "other", id_sig: "x", plugin_key: "theirs", kept: "1" } })],
+      logger,
+      { pluginMetadataKeys: ["plugin_key"] },
+    );
+    expect(composed.metadata).toEqual({ kept: "1" });
+    expect(logger.lines).toEqual([
+      'warn extension "a": metadata "agent" is set by the protocol; the extension\'s value is ignored',
+      'warn extension "a": metadata "id_sig" is set by the protocol; the extension\'s value is ignored',
+      'warn extension "a": metadata "plugin_key" is set by the plugin; the extension\'s value is ignored',
+    ]);
+  });
+
+  it("is empty without extensions or without metadata", () => {
+    expect(composeExtensions([], recordingLogger()).metadata).toEqual({});
+    expect(composeExtensions([loaded("a", {})], recordingLogger()).metadata).toEqual({});
+  });
+
+  it("an invalid key, value or map throws, naming the extension", () => {
+    const compose = (metadata: unknown) => () =>
+      composeExtensions([loaded("bad", { metadata: metadata as Record<string, string> })], recordingLogger());
+    expect(compose({ "has space": "x" })).toThrow(
+      'extension "bad": metadata key "has space" is invalid; a key is one or more of A-Z, a-z, 0-9, "_", "-" and "."',
+    );
+    expect(compose({ "has space": "x" })).toThrow(ExtensionMetadataError);
+    expect(compose({ "": "x" })).toThrow('metadata key "" is invalid');
+    expect(compose({ count: 3 })).toThrow('extension "bad": metadata "count" must be a string, got number');
+    expect(compose({ gone: null })).toThrow('metadata "gone" must be a string, got null');
+    expect(compose(["x"])).toThrow('extension "bad": metadata must be an object of string values');
   });
 });
 

@@ -18,8 +18,9 @@
 //  10. The agent tools are registered with PI once the agent is on the bus,
 //      and PI's own address is refused.
 //  11. An extension named in SYNADIA_PI_EXTENSIONS (test/fixtures/) is
-//      loaded, gets the live handles, adds a heartbeat field, and hears
-//      every PI event with the served request.
+//      loaded, gets the live handles, adds a heartbeat field and a
+//      registration metadata key, and hears every PI event with the served
+//      request; an extension with an invalid metadata key fails the start.
 //
 // Run with:
 //   bun test/smoke.mjs
@@ -380,6 +381,91 @@ await step(
     assert.equal(state.started, 1);
     assert.equal(state.handles.service.subject.prompt, expectedSubject);
     assert.equal(typeof state.handles.agents.discover, "function");
+  },
+)();
+
+await step(
+  "extension: its metadata key is registered, under the plugin's and the protocol's",
+  async () => {
+    const svcm = new Svcm(obs);
+    const client = svcm.client({ strategy: "stall", maxWait: 1000, maxMessages: 20 });
+    const infos = [];
+    for await (const m of await client.info("agents")) infos.push(m);
+    const mine = infos.find(
+      (si) => si.metadata?.agent === "pi" && si.metadata?.session === session,
+    );
+    assert.ok(mine, "no registration for this session");
+    assert.equal(mine.metadata.smoke_feature, "on");
+    assert.equal(mine.metadata.cwd, mockCtx.cwd);
+    assert.equal(mine.metadata.owner, owner);
+  },
+)();
+
+await step(
+  "extension: an invalid metadata key fails the start before the connection",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-smoke-bad-metadata-"));
+    const badModule = join(dir, "bad-metadata.mjs");
+    writeFileSync(
+      badModule,
+      `export default () => ({ name: "bad-metadata", metadata: { "not a key": "v" } });`,
+    );
+    const badName = `bad-metadata-${process.pid}`;
+    const badListeners = new Map();
+    const badPi = {
+      on(event, cb) {
+        if (!badListeners.has(event)) badListeners.set(event, []);
+        badListeners.get(event).push(cb);
+      },
+      sendUserMessage() {},
+      registerCommand() {},
+      registerTool() {},
+    };
+    const notified = [];
+    const statuses = [];
+    const badCtx = {
+      cwd: process.cwd(),
+      isIdle: () => true,
+      ui: {
+        notify: (line, level) => notified.push({ line, level }),
+        setStatus: (_key, value) => statuses.push(value),
+      },
+    };
+    const emitBad = (event, ...args) =>
+      Promise.all((badListeners.get(event) ?? []).map((cb) => cb(...args, badCtx)));
+    const previous = {
+      extensions: process.env.SYNADIA_PI_EXTENSIONS,
+      name: process.env.SYNADIA_PI_NAME,
+    };
+    try {
+      process.env.SYNADIA_PI_EXTENSIONS = badModule;
+      process.env.SYNADIA_PI_NAME = badName;
+      channelFactory(badPi);
+      await emitBad("session_start", {});
+      assert.deepEqual(notified, [
+        {
+          line: 'NATS: extension "bad-metadata": metadata key "not a key" is invalid; a key is one or more of A-Z, a-z, 0-9, "_", "-" and "."',
+          level: "error",
+        },
+      ]);
+      assert.equal(statuses.at(-1), "NATS: disconnected");
+      await delay(300);
+      const svcm = new Svcm(obs);
+      const client = svcm.client({ strategy: "stall", maxWait: 500, maxMessages: 20 });
+      const names = [];
+      for await (const m of await client.info("agents")) names.push(m.metadata?.session);
+      assert.ok(!names.includes(badName), "the channel registered despite the invalid key");
+      await emitBad("session_shutdown", {});
+    } finally {
+      for (const [key, variable] of [
+        ["extensions", "SYNADIA_PI_EXTENSIONS"],
+        ["name", "SYNADIA_PI_NAME"],
+      ]) {
+        if (previous[key] === undefined) delete process.env[variable];
+        else process.env[variable] = previous[key];
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
   },
 )();
 
