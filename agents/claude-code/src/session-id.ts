@@ -123,9 +123,13 @@ export function writeAtomically(target: string, content: string): void {
   renameSync(staging, target)
 }
 
-/** `true` iff `name` is one of the agent tools, bare or as Claude Code names an MCP tool. */
+// Claude Code names an MCP tool `mcp__<server>__<tool>`; the anchor is the
+// one the hook's matcher used when it ran for the agent tools only.
+const AGENT_TOOL_NAME_RE = new RegExp(`^mcp__.+__(${AGENT_TOOL_NAMES.join('|')})$`)
+
+/** `true` iff `name` is one of the agent tools as Claude Code names an MCP tool. */
 export function isAgentToolName(name: string): boolean {
-  return AGENT_TOOL_NAMES.some(tool => name === tool || name.endsWith(`__${tool}`))
+  return AGENT_TOOL_NAME_RE.test(name)
 }
 
 /**

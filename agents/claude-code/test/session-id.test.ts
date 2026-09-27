@@ -94,6 +94,17 @@ describe('recordHookEvent: what each hook writes', () => {
     expect(pre('mcp__plugin_nats-channel_nats__prompt_agent', 'p2', 60)).toBe('tool')
     expect(readdirSync(toolUsesDir(stateDir, PID))).toEqual(['toolu_60'])
     expect(readTurnActivity(source)).toEqual({ promptId: 'p2', firstMs: 50, atMs: 60 })
+    // Only a name Claude Code gives an MCP agent tool counts: not a bare
+    // name, not another prefix, not a longer tool name.
+    for (const name of ['prompt_agent', 'evil__prompt_agent', 'xmcp__nats__prompt_agent', 'mcp__nats__prompt_agent_x']) {
+      expect(recordHookEvent(stateDir, PID, {
+        hook_event_name: 'PreToolUse',
+        tool_use_id: 'toolu_not_agent',
+        tool_name: name,
+        prompt_id: 'p2',
+      }, 65)).toBe('turn')
+    }
+    expect(readdirSync(toolUsesDir(stateDir, PID))).toEqual(['toolu_60'])
     // No prompt id: the call is still recorded, as a turn of its own.
     pre('Bash', undefined, 70)
     expect(readTurnActivity(source)).toEqual({ firstMs: 70, atMs: 70 })
@@ -197,7 +208,7 @@ describe('sweepDeadSessions', () => {
     for (const pid of [dead, process.pid]) {
       recordHookEvent(stateDir, pid, { hook_event_name: 'SessionStart', session_id: SESSION })
       recordHookEvent(stateDir, pid, { hook_event_name: 'Stop' })
-      recordHookEvent(stateDir, pid, { hook_event_name: 'PreToolUse', tool_use_id: 't1', tool_name: 'prompt_agent' })
+      recordHookEvent(stateDir, pid, { hook_event_name: 'PreToolUse', tool_use_id: 't1', tool_name: 'mcp__nats__prompt_agent' })
     }
     sweepDeadSessions(stateDir)
     expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual(
