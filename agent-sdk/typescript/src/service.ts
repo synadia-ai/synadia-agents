@@ -391,12 +391,22 @@ export class PromptResponse {
    * iterating the prompt while the handler awaits here.
    *
    * Throws on timeout — handlers decide whether to abort the stream or
-   * proceed with a default per §7.3.
+   * proceed with a default per §7.3. Throws at once when `signal` aborts
+   * (its reason when that is an `Error`) — before the query is published when it
+   * has already aborted — so a handler that learns the answer is no longer
+   * wanted (the caller went away, see {@link callerListening}) stops
+   * waiting.
    */
   async ask(
     prompt: string | RequestEnvelope,
-    opts: { readonly timeoutMs: number; readonly attachments?: ReadonlyArray<RequestAttachment> },
+    opts: {
+      readonly timeoutMs: number;
+      readonly attachments?: ReadonlyArray<RequestAttachment>;
+      readonly signal?: AbortSignal;
+    },
   ): Promise<RequestEnvelope> {
+    const signal = opts.signal;
+    signal?.throwIfAborted();
     const promptText = typeof prompt === "string" ? prompt : prompt.prompt;
     const baseAttachments = typeof prompt === "string" ? undefined : prompt.attachments;
     const merged: RequestAttachment[] = [...(baseAttachments ?? []), ...(opts.attachments ?? [])];
@@ -422,6 +432,7 @@ export class PromptResponse {
     this.#msg.respond(encodeChunk(queryChunk));
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
     try {
       const next = (async (): Promise<RequestEnvelope> => {
         for await (const m of sub) {
@@ -448,7 +459,63 @@ export class PromptResponse {
           opts.timeoutMs,
         );
       });
-      return await Promise.race([next, timed]);
+      const aborted = new Promise<never>((_, reject) => {
+        if (!signal) return;
+        onAbort = () =>
+          reject(signal.reason instanceof Error ? signal.reason : new Error("query aborted"));
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+      });
+      return await Promise.race([next, timed, aborted]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+      sub.unsubscribe();
+    }
+  }
+
+  /**
+   * Whether the caller still listens on this request's reply subject.
+   *
+   * The protocol has no cancel message (§6.7): a caller that cancels, or
+   * disconnects, just stops listening. This publishes one keep-alive `ack`
+   * status chunk (§6.4, the wire shape of the periodic keep-alive) with a
+   * NATS reply subject of its own; when nobody subscribes to the caller's
+   * reply subject, the server answers that inbox with a no-responders
+   * status at once, and this resolves `false`. Otherwise it resolves
+   * `true` after `timeoutMs` (default 500) without an answer. `true` is a
+   * best guess, not a promise: a server that cannot tell (no-responders
+   * off, interest it only assumes across a gateway) looks like a present
+   * caller, so a handler still needs its own timeout. A caller that only
+   * stops reading — cancels its stream but keeps its connection, whose
+   * shared reply inbox stays subscribed — looks present too: what this
+   * detects is a caller whose connection is gone, or whose reply subject
+   * was its own and is unsubscribed.
+   */
+  async callerListening(opts: { readonly timeoutMs?: number } = {}): Promise<boolean> {
+    const probe = newInbox();
+    let resolveGone!: () => void;
+    const gone = new Promise<void>((resolve) => {
+      resolveGone = resolve;
+    });
+    const sub = this.#nc.subscribe(probe, {
+      max: 1,
+      callback: (err, m) => {
+        if (!err && m.data.length === 0 && m.headers?.code === 503) resolveGone();
+      },
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await this.#nc.flush();
+      const ack: StatusChunk = { type: "status", status: "ack" };
+      this.#msg.respond(encodeChunk(ack), { reply: probe });
+      const waited = new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), opts.timeoutMs ?? 500);
+      });
+      return await Promise.race([gone.then(() => false), waited]);
+    } catch {
+      // A connection that cannot publish reaches nobody.
+      return false;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       sub.unsubscribe();

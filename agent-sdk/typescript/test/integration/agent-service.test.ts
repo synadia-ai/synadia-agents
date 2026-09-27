@@ -503,6 +503,92 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     void original;
   });
 
+  describe("caller presence and aborted queries", () => {
+    async function discoverRemote(service: AgentService) {
+      const found = await client.discover({
+        timeoutMs: 1000,
+        filter: { agent: "svc-test", name: service.subject.name },
+      });
+      expect(found).toHaveLength(1);
+      return found[0]!;
+    }
+
+    it("callerListening is true while the caller listens and false once its connection closed", async () => {
+      let reportPresent!: (value: boolean) => void;
+      const present = new Promise<boolean>((resolve) => {
+        reportPresent = resolve;
+      });
+      let reportAbsent!: (value: boolean) => void;
+      const absent = new Promise<boolean>((resolve) => {
+        reportAbsent = resolve;
+      });
+      let releaseHandler!: () => void;
+      const callerGone = new Promise<void>((resolve) => {
+        releaseHandler = resolve;
+      });
+      const service = startService();
+      service.onPrompt(async (_envelope, response) => {
+        reportPresent(await response.callerListening());
+        await callerGone;
+        const started = Date.now();
+        const listening = await response.callerListening({ timeoutMs: 5000 });
+        // No-responders comes back at once, not at the timeout.
+        expect(Date.now() - started).toBeLessThan(2000);
+        reportAbsent(listening);
+      });
+      await service.start();
+      // The caller on a connection of its own, so it can go away.
+      const callerNc = await natsConnect({ servers: natsUrl! });
+      const caller = new Agents({ nc: callerNc });
+      const found = await caller.discover({
+        timeoutMs: 1000,
+        filter: { agent: "svc-test", name: service.subject.name },
+      });
+      const stream = await found[0]!.prompt("hi");
+      const messages: StreamMessage[] = [];
+      const reading = (async () => {
+        for await (const m of stream) messages.push(m);
+      })().catch(() => undefined);
+
+      expect(await present).toBe(true);
+      // The probe is a keep-alive ack; the caller sees nothing else.
+      expect(messages.every((m) => m.type === "status")).toBe(true);
+      await caller.close();
+      await callerNc.close();
+      await reading;
+      releaseHandler();
+      expect(await absent).toBe(false);
+    });
+
+    it("ask rejects at once when its signal aborts, and publishes nothing when already aborted", async () => {
+      const outcomes: { error: string; ms: number }[] = [];
+      const service = startService();
+      service.onPrompt(async (_envelope, response) => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new Error("caller gone")), 100);
+        const started = Date.now();
+        try {
+          await response.ask("allow?", { timeoutMs: 10_000, signal: controller.signal });
+        } catch (error) {
+          outcomes.push({ error: (error as Error).message, ms: Date.now() - started });
+        }
+        try {
+          await response.ask("again?", { timeoutMs: 10_000, signal: controller.signal });
+        } catch (error) {
+          outcomes.push({ error: (error as Error).message, ms: Date.now() - started });
+        }
+      });
+      await service.start();
+      const queries: string[] = [];
+      for await (const m of await (await discoverRemote(service)).prompt("hi")) {
+        if (m.type === "query") queries.push(m.prompt);
+      }
+      expect(outcomes.map((o) => o.error)).toEqual(["caller gone", "caller gone"]);
+      expect(outcomes[0]!.ms).toBeLessThan(2000);
+      expect(queries).toEqual(["allow?"]);
+    });
+  });
+
   describe("extraEndpoints + .service extension points", () => {
     it("registers extraEndpoints in array order alongside prompt + status", async () => {
       const calls: string[] = [];
