@@ -19,18 +19,21 @@
  *     precedence of the variables over the config field, package names and
  *     absolute paths, relative paths refused, a module that fails logged
  *     once and skipped so the channel starts plain;
- *   - composition (`composeExtensions`): the loaded extensions as one set
- *     of interceptors, one heartbeat-extras provider, one dispatcher for
- *     PI's events. Every event call fails open: a throw is logged once per
- *     extension and event and ignored; a wrapper that does not call `run`
- *     has it called by the channel; `started` and `stopping` are awaited
- *     for at most {@link DEFAULT_HOOK_TIMEOUT_MS}.
+ *   - composition (`composeExtensions`): the loaded extensions as one set of
+ *     interceptors, one heartbeat-extras provider, one registration-metadata
+ *     map, one dispatcher for PI's events. Every event call fails open: a
+ *     throw is logged once per extension and event and ignored; a wrapper that
+ *     does not call `run` has it called by the channel; `started` and
+ *     `stopping` are awaited for at most {@link DEFAULT_HOOK_TIMEOUT_MS}. The
+ *     one exception is invalid registration metadata: it throws, and the
+ *     plugin does not start.
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { IDENTITY_METADATA_KEYS } from "@synadia-ai/agents";
 import type {
   Agents,
   AgentToolsExtension,
@@ -147,6 +150,13 @@ export interface AgentExtension {
   readonly heartbeatExtras?: () => Readonly<Record<string, unknown>>;
   /** For the plugin's `AgentTools`: `extensions`. */
   readonly toolExtensions?: ReadonlyArray<AgentToolsExtension>;
+  /**
+   * Keys for the service's registration metadata, read once before the
+   * service starts. A key is one or more of `A-Z a-z 0-9 _ - .`, a value a
+   * string; anything else fails the plugin's start. The plugin's own keys
+   * and the protocol's registration keys win over an entry of the same name.
+   */
+  readonly metadata?: Readonly<Record<string, string>>;
   /** After the service started. Awaited, bounded by the plugin. */
   started?(handles: AgentExtensionHandles): void | Promise<void>;
   /** Before the plugin stops its service. Awaited, bounded by the plugin. */
@@ -392,6 +402,30 @@ export const DEFAULT_HOOK_TIMEOUT_MS = 5_000;
 
 export interface ComposeOptions {
   readonly hookTimeoutMs?: number;
+  /**
+   * The registration metadata keys the plugin sets itself; an extension's
+   * entry of the same name is dropped, with a warning, so the plugin's wins.
+   */
+  readonly pluginMetadataKeys?: ReadonlyArray<string>;
+}
+
+/**
+ * The registration keys the protocol defines; the service sets them, so an
+ * extension's entry of the same name is dropped, with a warning.
+ */
+export const REGISTRATION_METADATA_KEYS: ReadonlySet<string> = new Set([
+  "agent",
+  "owner",
+  "protocol_version",
+  "session",
+  ...Object.values(IDENTITY_METADATA_KEYS),
+]);
+
+const METADATA_KEY = /^[A-Za-z0-9_.-]+$/;
+
+/** An extension's `metadata` is invalid; the message names the extension and the key. */
+export class ExtensionMetadataError extends Error {
+  override readonly name = "ExtensionMetadataError";
 }
 
 /** PI's events as the plugin calls them, fail-open over every extension. */
@@ -420,6 +454,12 @@ export interface ComposedExtensions {
   readonly heartbeatExtras: (() => Readonly<Record<string, unknown>>) | undefined;
   /** For `AgentTools`, in load order. */
   readonly toolExtensions: ReadonlyArray<AgentToolsExtension>;
+  /**
+   * The extensions' registration metadata, merged in load order (a later
+   * extension's key over an earlier one's), without the protocol's keys and
+   * the plugin's own: for `extraMetadata`, under the plugin's own entries.
+   */
+  readonly metadata: Readonly<Record<string, string>>;
   /** Every extension's `started()`, awaited together, each bounded. */
   started(handles: AgentExtensionHandles): Promise<void>;
   /** Every extension's `stopping()`, awaited together, each bounded. */
@@ -437,6 +477,57 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
     value !== null &&
     typeof (value as { then?: unknown }).then === "function"
   );
+}
+
+/**
+ * Every extension's `metadata`, checked and merged once. An invalid key or
+ * value throws: the plugin's start fails, unlike a module that cannot be
+ * loaded, since the registration would otherwise not be what the extension
+ * declared. A key the protocol or the plugin sets is dropped with a warning.
+ */
+function mergeExtensionMetadata(
+  loaded: ReadonlyArray<LoadedExtension>,
+  pluginKeys: ReadonlySet<string>,
+  logger: Logger,
+): Readonly<Record<string, string>> {
+  const merged: Record<string, string> = {};
+  const from = new Map<string, string>();
+  for (const l of loaded) {
+    const declared: unknown = l.extension.metadata;
+    if (declared === undefined) continue;
+    if (!isRecord(declared)) {
+      throw new ExtensionMetadataError(
+        `extension "${l.name}": metadata must be an object of string values`,
+      );
+    }
+    for (const [key, value] of Object.entries(declared)) {
+      if (!METADATA_KEY.test(key)) {
+        throw new ExtensionMetadataError(
+          `extension "${l.name}": metadata key ${JSON.stringify(key)} is invalid; a key is one or more of A-Z, a-z, 0-9, "_", "-" and "."`,
+        );
+      }
+      if (typeof value !== "string") {
+        throw new ExtensionMetadataError(
+          `extension "${l.name}": metadata ${JSON.stringify(key)} must be a string, got ${value === null ? "null" : typeof value}`,
+        );
+      }
+      if (REGISTRATION_METADATA_KEYS.has(key) || pluginKeys.has(key)) {
+        logger.warn(
+          `extension "${l.name}": metadata ${JSON.stringify(key)} is set by the ${REGISTRATION_METADATA_KEYS.has(key) ? "protocol" : "plugin"}; the extension's value is ignored`,
+        );
+        continue;
+      }
+      const previous = from.get(key);
+      if (previous !== undefined) {
+        logger.warn(
+          `extension "${l.name}": metadata ${JSON.stringify(key)} replaces the value of extension "${previous}"`,
+        );
+      }
+      merged[key] = value;
+      from.set(key, l.name);
+    }
+  }
+  return Object.freeze(merged);
 }
 
 export function composeExtensions(
@@ -609,9 +700,16 @@ export function composeExtensions(
           return merged;
         };
 
+  const metadata = mergeExtensionMetadata(
+    loaded,
+    new Set(options.pluginMetadataKeys ?? []),
+    logger,
+  );
+
   return {
     loaded,
     names: loaded.map((l) => l.name),
+
     promptInterceptors: loaded.flatMap((l) => [
       ...(l.extension.promptInterceptors ?? []),
     ]),
@@ -620,6 +718,7 @@ export function composeExtensions(
     ]),
     heartbeatExtras,
     toolExtensions: loaded.flatMap((l) => [...(l.extension.toolExtensions ?? [])]),
+    metadata,
     async started(handles) {
       await Promise.all(
         loaded

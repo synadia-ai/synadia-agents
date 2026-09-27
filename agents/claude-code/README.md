@@ -387,8 +387,9 @@ shown below; environment settings override the corresponding config fields.
 ## Extensions
 
 The channel can load extension modules that add behaviour around it:
-interceptors for its client and service, extensions for its agent tools,
-and handlers for the session's events. The plugin's hooks
+interceptors for its client and service, keys for its registration
+metadata, extensions for its agent tools, and handlers for the session's
+events. The plugin's hooks
 (`hooks/hooks.json`) record the session id at `SessionStart`, the turn's
 end at `Stop` and the tool-call id at `PreToolUse` under
 `<state dir>/sessions/`, keyed by the Claude Code process; the server

@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aroundToolCall`). Modules load once before the connection; one that
   fails is logged once and skipped. The contract is `agents/EXTENSIONS.md`;
   the types are exported from `extensions/extensions.ts`.
+- An extension may return `metadata`, string keys and values merged into the
+  service's registration metadata before it starts; the channel's own `cwd`
+  and the protocol's registration keys win on a clash, and an invalid key or
+  value stops the start with an error notice naming the extension.
 - `/nats-status` names the agent tools registered and the extensions
   loaded; `/nats-configure` prints both settings.
 

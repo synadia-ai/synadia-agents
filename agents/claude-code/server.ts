@@ -42,6 +42,7 @@ import {
 import { loadPluginVersion } from "./src/plugin-version.js";
 import {
   composeExtensions,
+  ExtensionMetadataError,
   loadExtensions,
   resolveExtensionEntries,
   type ComposedExtensions,
@@ -272,7 +273,11 @@ function resolveRawSessionName(config: NatsChannelConfig): string {
 }
 
 function startupDescription(error: unknown): string {
-  if (error instanceof IdentityError || error instanceof NatsContextError)
+  if (
+    error instanceof IdentityError ||
+    error instanceof NatsContextError ||
+    error instanceof ExtensionMetadataError
+  )
     return error.message;
   if (error instanceof Error && error.message.startsWith("invalid "))
     return error.message;
@@ -509,6 +514,8 @@ async function run(): Promise<void> {
       ...(extensions.heartbeatExtras
         ? { heartbeatExtras: extensions.heartbeatExtras }
         : {}),
+      // The extensions' keys; the service's required keys win over them.
+      extraMetadata: extensions.metadata,
       ...identity,
     });
 

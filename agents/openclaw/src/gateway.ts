@@ -204,7 +204,14 @@ async function loadAccountExtensions(
     },
     logger,
   );
-  return composeExtensions(loaded, logger);
+  return composeExtensions(loaded, logger, {
+    pluginMetadataKeys: Object.keys(pluginMetadata(account)),
+  });
+}
+
+/** The gateway's own registration metadata keys; they win over an extension's. */
+function pluginMetadata(account: ResolvedNatsAccount): Record<string, string> {
+  return { platform: "openclaw", description: account.description };
 }
 
 export async function startNatsGateway(
@@ -287,8 +294,8 @@ export async function startNatsGateway(
     heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
     keepaliveIntervalS: ACK_KEEPALIVE_MS / 1_000,
     extraMetadata: {
-      platform: "openclaw",
-      description: account.description,
+      ...extensions.metadata,
+      ...pluginMetadata(account),
     },
     ...(signer ? { identity: { signer } } : {}),
     minSenderTrust: account.minSenderTrust,

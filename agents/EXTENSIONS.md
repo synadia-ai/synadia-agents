@@ -5,9 +5,9 @@ extension adds behaviour around the plugin without changing the plugin or
 the protocol: it can add fields and headers to the prompts the plugin's
 agent tools send, publish signed messages of its own alongside them,
 refuse an incoming prompt with a protocol error, add fields to the
-heartbeat, extend the agent tools through their extension hooks, and
-follow the harness's events. Without an extension the plugin behaves as
-this README describes.
+heartbeat, add keys to the service's registration metadata, extend the
+agent tools through their extension hooks, and follow the harness's
+events. Without an extension the plugin behaves as this README describes.
 
 **Naming an extension.** Set `SYNADIA_AGENT_EXTENSIONS` to one or more
 module specifiers separated by commas, or the per-harness variable that
@@ -35,6 +35,29 @@ the harness's events. These are the SDK's own types
 (`PromptInterceptor` and `AgentToolsExtension` in `@synadia-ai/agents`,
 `RequestInterceptor` and `heartbeatExtras` in `@synadia-ai/agent-service`).
 
+**Registration metadata.** An extension may return `metadata`, a map of
+string keys to string values that the plugin merges into the service's
+registration metadata before the service starts, so the registration
+declares what the harness gains through the extension. The map is read
+once. A key is one or more of `A-Z`, `a-z`, `0-9`, `_`, `-` and `.`; a
+value is a string. On a clash the plugin's own keys and the protocol's
+registration keys (`agent`, `owner`, `protocol_version`, `session`,
+`user_nkey`, `account`, `id_sig`) win: the extension's entry is dropped
+and a warning logged. Between extensions, a later-loaded one's key wins
+over an earlier one's, also with a warning.
+
+```js
+export default function createExtension(ctx) {
+  return {
+    name: "example",
+    metadata: { example_feature: "v1" },
+  };
+}
+```
+
+A caller reads the key where it reads the others, in the agent's
+`$SRV.INFO` metadata (`agent.metadata.example_feature` in the SDKs).
+
 **The harness's events.** Every plugin reports a prompt accepted, called
 synchronously inside the prompt handler after the interceptors ran, and a
 prompt ended with its outcome; every plugin runs each agent-tool call
@@ -49,14 +72,19 @@ function: the plugin still takes `run`'s own value, and the wrapper must
 call `run` once, before its first `await`, so the step keeps its timing.
 
 **Failure.** A module that cannot be loaded is logged once and the plugin
-starts without it. An event handler that throws is logged and ignored; a
-wrapper that does not call `run` has it called by the plugin. Interceptors
-keep the SDK's rules: a request interceptor that throws before `next()`
-refuses the request, with the code of a `RequestRejectedError` or `500`;
-a prompt interceptor's first phase that throws fails that prompt.
+starts without it. Invalid `metadata` — not a map, a key outside the
+characters above, a value that is not a string — is the exception: the
+plugin fails its start with an error that names the extension and the key,
+since it would otherwise register without what the extension declares. An
+event handler that throws is logged and ignored; a wrapper that does not
+call `run` has it called by the plugin. Interceptors keep the SDK's rules:
+a request interceptor that throws before `next()` refuses the request,
+with the code of a `RequestRejectedError` or `500`; a prompt interceptor's
+first phase that throws fails that prompt.
 
-**Limits.** An extension may not set the protocol's fields or the
-`Agent-Sender` header, may not change the tools offered, and sees nothing
-of the plugin beyond the context, the handles and the events above. It
-runs on its own installed copy of the SDK packages; the plugin's status
-output names the extensions it loaded.
+**Limits.** An extension may not set the protocol's fields, the
+`Agent-Sender` header or a registration key the protocol or the plugin
+sets, may not change the tools offered, and sees nothing of the plugin
+beyond the context, the handles and the events above. It runs on its own
+installed copy of the SDK packages; the plugin's status output names the
+extensions it loaded.

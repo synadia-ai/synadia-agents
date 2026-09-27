@@ -155,8 +155,9 @@ Available inside a running PI session:
 ## Extensions
 
 The extension can load extension modules that add behaviour around it:
-interceptors for its client and service, extensions for its agent tools,
-and handlers for PI's events, among them the headers PI sends on its
+interceptors for its client and service, keys for its registration
+metadata (`cwd` stays the plugin's), extensions for its agent tools, and
+handlers for PI's events, among them the headers PI sends on its
 provider requests while a NATS prompt is its active turn. Name them in
 `SYNADIA_PI_EXTENSIONS` or `SYNADIA_AGENT_EXTENSIONS`, or as the
 `extensions` array in `nats-channel.json`. `/nats-status` lists the

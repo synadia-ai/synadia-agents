@@ -209,8 +209,9 @@ For extensions: `$SYNADIA_OPENCLAW_EXTENSIONS` > `$SYNADIA_AGENT_EXTENSIONS` > `
 ## Extensions
 
 The plugin can load extension modules that add behaviour around it:
-interceptors for its client and service, extensions for its agent tools,
-and handlers for the gateway's events, among them the dispatch of a turn.
+interceptors for its client and service, keys for its registration
+metadata (`platform` and `description` stay the plugin's), extensions for
+its agent tools, and handlers for the gateway's events, among them the dispatch of a turn.
 Name them in `SYNADIA_OPENCLAW_EXTENSIONS` or `SYNADIA_AGENT_EXTENSIONS`,
 or as `extensions` in the account's block under `channels.nats.accounts`.
 The `gateway starting` line lists the modules loaded. The contract is
