@@ -36,6 +36,15 @@ All notable changes to the Claude Code NATS channel are documented here.
 
 ### Changed
 
+- `permissions: query` asks the caller of the turn that made the tool call, not the prompt
+  that arrived last. The `PreToolUse` hook now runs on every tool call and records the turn's
+  prompt id; the `Stop` hook records whether background work could start another turn. A
+  request owns a turn only when it was delivered while Claude Code was quiet, until that
+  turn's `Stop`. A question is denied at once when no request owns its turn (direct input, a
+  turn started by background work or going on after its request's `Stop`, a request delivered
+  while a turn was running), when the owning request is finished, or when its caller's
+  connection is gone — checked before asking and every 2 seconds while the question is open.
+  The 2-minute timeout stays for a caller that is there and does not answer.
 - Migrated service registration, prompt admission, status classification, replay protection,
   acknowledgements, heartbeats, errors, and stream termination to `AgentService`.
 - Permission queries now use `PromptResponse.ask()` and pending requests settle on completion,

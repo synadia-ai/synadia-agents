@@ -236,9 +236,9 @@ configuration needed.
 ### Query mode
 
 Permission requests are emitted as `{"type":"query","data":{...}}`
-chunks on the active stream's reply subject (spec §7). The caller
-replies on the query's dynamic `_INBOX` with `yes`/`no`, and the plugin
-forwards the decision back to the harness.
+chunks on the reply subject of the request whose turn made the tool call
+(spec §7). The caller replies on the query's dynamic `_INBOX` with
+`yes`/`no`, and the plugin forwards the decision back to the harness.
 
 ```
 /nats-channel:configure permissions query
@@ -255,10 +255,55 @@ old configs keep working. The older `permissions.subject` override field
 has been removed - query chunks always use a fresh NATS inbox per
 request.
 
-If Claude asks for permission while no NATS request is active (for
-example from direct terminal input), the plugin denies by default in
-`query` mode; use `permissions terminal` instead if you want interactive
-approval in that case.
+#### Which caller is asked
+
+A question goes to the caller of the turn that asked it, never to a
+newer prompt. Claude Code's permission request does not name its turn,
+so the plugin works it out from its [hooks](#hooks): the `Stop` hook
+marks the end of each turn, and the `PreToolUse` hook records the prompt
+id of every tool call, which Claude Code runs before it asks. A NATS
+request owns a turn when it was delivered while Claude Code was quiet —
+the last turn had stopped with no background tasks or session crons left,
+no tool call since, and no other request that might still be waiting to
+start a turn — so the next turn is the one it starts. It owns that turn
+until the turn's `Stop`.
+
+The plugin denies at once, without asking anyone, when:
+
+- no request owns the turn: the question comes from direct terminal
+  input, from a turn that background work started, from a turn that went
+  on after its request's `Stop`, or from a turn whose prompt id changed
+  without a `Stop`;
+- the owning request is already finished — replied with `done=true`,
+  expired, or shut down;
+- the owning request's caller is gone: before asking, and every 2 seconds
+  while a question is open, the plugin checks that someone still
+  subscribes to the request's reply subject; a caller whose connection
+  closed fails that check and its open question is denied.
+
+When Claude Code does not make the turn's owner certain, the plugin
+chooses deny:
+
+- A request delivered while a turn is running owns nothing in that turn
+  or the next — Claude Code may fold it into the running turn or queue it,
+  and does not say which — and it holds back ownership for later requests
+  until it finishes or a second turn has stopped. With two callers at
+  once, only the first one's turn relays questions.
+- A Claude Code that does not report the hook fields the plugin reads
+  (`prompt_id` on `PreToolUse`, `background_tasks` and `session_crons` on
+  `Stop`), or runs without the plugin's hooks, gets every question denied.
+- A turn interrupted from the terminal may end without a `Stop`; until
+  the next one, new requests own nothing.
+- One race stays open the other way: a turn the local user starts in the
+  terminal, before its first tool call, looks quiet to the plugin, so a
+  request arriving in that moment is taken to start the next turn. The
+  terminal shows that user the same permission dialog.
+
+A caller that cancels its prompt but keeps its NATS connection open
+still looks present: the protocol has no cancel message (§6.7), and the
+connection's shared reply inbox stays subscribed. Its question is
+denied after the timeout below. Use `permissions terminal` if you want
+interactive approval for questions the plugin denies.
 
 ### Handling permission queries with the SDK
 
@@ -280,8 +325,8 @@ query chunk:
 nats pub _INBOX.Xj7k9Q2pA "yes"
 ```
 
-If no reply is received within 2 minutes, the permission defaults to
-**deny**.
+If a caller that is still there does not reply within 2 minutes, the
+permission defaults to **deny**.
 
 ## Access control
 
@@ -409,11 +454,12 @@ see itself, under `<state dir>/sessions/`, keyed by the Claude Code process
 | Hook | File | Records | Why |
 | --- | --- | --- | --- |
 | `SessionStart` | `<pid>` | `{ "session_id", "source", "at_ms" }` | the session Claude Code uses now; `/clear` starts a new one under the same MCP server |
-| `Stop` | `<pid>.stop` | `{ "session_id", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call |
-| `PreToolUse` (agent tools only) | `<pid>.tools/<tool_use_id>` | `{ "tool_use_id", "tool_name", "tool_input", "at_ms" }` | the model's id for the tool call, which the server hands to the agent tools; the server removes the file when the call arrives |
+| `Stop` | `<pid>.stop` | `{ "session_id", "background", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call; `background` says whether background tasks or session crons could start another turn by themselves |
+| `PreToolUse` (every tool) | `<pid>.turn` | `{ "prompt_id", "first_ms", "at_ms" }` | the turn the latest tool call belongs to and when its first call was made, so a permission question goes to the request that owns the turn (see [Which caller is asked](#which-caller-is-asked)) |
+| `PreToolUse` (agent tools) | `<pid>.tools/<tool_use_id>` | `{ "tool_use_id", "tool_name", "tool_input", "at_ms" }` | the model's id for the tool call, which the server hands to the agent tools; the server removes the file when the call arrives |
 
 The hooks write whether or not an extension is loaded, print nothing, and
 always exit 0, so a failing hook never interrupts the session. Without
 them the channel still works: the session id falls back to
-`CLAUDE_CODE_SESSION_ID`, and agent-tool calls run without the model's
-tool-call id.
+`CLAUDE_CODE_SESSION_ID`, agent-tool calls run without the model's
+tool-call id, and `query` mode denies every permission question.

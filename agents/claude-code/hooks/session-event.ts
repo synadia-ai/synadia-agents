@@ -7,11 +7,15 @@
  *   session a prompt is delivered to.
  * - Stop: record that a turn ended, so the server knows when Claude Code
  *   is done, not only when the reply tool was called — the turn's closing
- *   model call comes after that.
- * - PreToolUse, for the agent tools only (the matcher in `hooks.json`):
- *   record the model's id for the tool call, which an MCP call does not
- *   carry, so the server can hand it to the agent tools. Claude Code runs
- *   the hook to completion before it sends the call.
+ *   model call comes after that — and whether background work could start
+ *   another turn by itself.
+ * - PreToolUse, every tool call: record the turn the call belongs to (its
+ *   prompt id, and when the turn's first call was made), so the server can
+ *   tell which served prompt a permission question comes from. For the
+ *   agent tools also record the model's id for the call, which an MCP call
+ *   does not carry, so the server can hand it to the agent tools. Claude
+ *   Code runs the hook to completion before it sends the call or asks for
+ *   permission.
  *
  * Reads the hook input from stdin, writes under `<state dir>/sessions/`
  * keyed by `CLAUDE_PID` (atomically, through a rename; see

@@ -51,11 +51,15 @@ import {
 } from "./src/extensions.js";
 import {
   claudePid,
+  hooksActive,
+  readTurnActivity,
+  readTurnStop,
   resolveClaudeSessionId,
   sweepDeadSessions,
   takeToolUse,
   type SessionIdSource,
 } from "./src/session-id.js";
+import { TurnLedger, type TurnView } from "./src/permission-routing.js";
 import {
   watchSessionEvents,
   type SessionEventWatcher,
@@ -74,6 +78,8 @@ const AGENT_SUBJECT_TOKEN = "cc";
 const HEARTBEAT_INTERVAL_S = 5;
 const KEEPALIVE_INTERVAL_S = 30;
 const PERMISSION_TIMEOUT_MS = 120_000;
+/** How often an open permission question checks that its caller is still there. */
+const PRESENCE_POLL_MS = 2_000;
 const REQUEST_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_PAYLOAD_BYTES = parseHumanBytes(DEFAULT_MAX_PAYLOAD);
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
@@ -98,6 +104,8 @@ type PendingRequest = {
   readonly served: ServedRequest;
   /** Runs a function in the prompt handler's async context (a snapshot). */
   readonly enter: <T>(fn: () => T) => T;
+  /** Set once a presence check found the caller's connection gone. */
+  callerGone?: boolean;
   /** How and when the request settled, set by whoever settles it. */
   ended?: { readonly outcome: Outcome; readonly atMs: number };
 };
@@ -448,12 +456,23 @@ async function run(): Promise<void> {
     let requestCounter = 0;
     let lastActiveRequestId: string | undefined;
     let shuttingDown = false;
+    // Which served prompt owns the running turn, for permission questions.
+    const turns = new TurnLedger((requestId) => {
+      const pending = pendingRequests.get(requestId);
+      return !pending || pending.completion.settled();
+    });
+    const turnView = (): TurnView => ({
+      stop: readTurnStop(sessionSource),
+      activity: readTurnActivity(sessionSource),
+      hooksActive: hooksActive(sessionSource),
+    });
 
     const removePending = (requestId: string): void => {
       const pending = pendingRequests.get(requestId);
       if (!pending) return;
       if (pending.attachmentDir) cleanupAttachments(attachmentRoot, requestId);
       pendingRequests.delete(requestId);
+      turns.forget(requestId);
       if (lastActiveRequestId === requestId) {
         lastActiveRequestId = Array.from(pendingRequests.keys()).at(-1);
       }
@@ -555,6 +574,7 @@ async function run(): Promise<void> {
       };
       pendingRequests.set(requestId, pending);
       lastActiveRequestId = requestId;
+      turns.delivered(requestId, turnView(), Date.now());
       // Synchronous, in the handler's context, so an extension reads here
       // what its own request interceptor bound.
       extensions.events.promptAccepted(served);
@@ -597,6 +617,71 @@ async function run(): Promise<void> {
       }
     });
 
+    // A permission question goes to the served prompt whose turn made the
+    // tool call (src/permission-routing.ts), and only while that prompt's
+    // caller can still answer; anything else is denied at once.
+    const decidePermission = async (params: {
+      readonly tool_name: string;
+      readonly description: string;
+      readonly input_preview: string;
+    }): Promise<"allow" | "deny"> => {
+      const tool = params.tool_name;
+      const owner = turns.ownerOf(turnView());
+      if (owner.kind === "none") {
+        logEvent("permission denied without an owning request", {
+          tool,
+          reason: owner.reason,
+        });
+        return "deny";
+      }
+      const requestId = owner.requestId;
+      const pending = pendingRequests.get(requestId);
+      if (!pending || pending.completion.settled()) {
+        logEvent("permission denied: request finished", { tool, requestId });
+        return "deny";
+      }
+      if (pending.callerGone || !(await pending.response.callerListening())) {
+        pending.callerGone = true;
+        logEvent("permission denied: caller gone", { tool, requestId });
+        return "deny";
+      }
+      const controller = new AbortController();
+      const abort = (reason: string): void => {
+        if (!controller.signal.aborted) controller.abort(new Error(reason));
+      };
+      const onEnd = (): void => abort("request finished");
+      pending.completion.promise.then(onEnd, onEnd);
+      const presence = setInterval(() => {
+        if (controller.signal.aborted) return;
+        void pending.response.callerListening().then((listening) => {
+          if (listening) return;
+          pending.callerGone = true;
+          abort("caller gone");
+        });
+      }, PRESENCE_POLL_MS);
+      presence.unref();
+      const prompt =
+        `${tool}: ${params.description}` +
+        (params.input_preview ? `\n\n${params.input_preview}` : "") +
+        `\n\nReply 'yes' to allow or 'no' to deny.`;
+      try {
+        const answer = await pending.response.ask(prompt, {
+          timeoutMs: PERMISSION_TIMEOUT_MS,
+          signal: controller.signal,
+        });
+        return interpretPermissionReply(answer.prompt);
+      } catch {
+        const reason = controller.signal.aborted
+          ? (controller.signal.reason as Error).message
+          : "timed out";
+        logEvent(`permission denied: ${reason}`, { tool, requestId });
+        return "deny";
+      } finally {
+        clearInterval(presence);
+        abort("question closed");
+      }
+    };
+
     if (settings.permissionMode === "query") {
       mcp.setNotificationHandler(
         z.object({
@@ -609,30 +694,9 @@ async function run(): Promise<void> {
           }),
         }),
         async ({ params }) => {
-          const active = lastActiveRequestId
-            ? pendingRequests.get(lastActiveRequestId)
-            : undefined;
-          let behavior: "allow" | "deny" = "deny";
-          if (!active) {
-            logEvent("permission denied without active request", {
-              tool: params.tool_name,
-            });
-          } else {
-            const prompt =
-              `${params.tool_name}: ${params.description}` +
-              (params.input_preview ? `\n\n${params.input_preview}` : "") +
-              `\n\nReply 'yes' to allow or 'no' to deny.`;
-            try {
-              const answer = await active.response.ask(prompt, {
-                timeoutMs: PERMISSION_TIMEOUT_MS,
-              });
-              behavior = interpretPermissionReply(answer.prompt);
-            } catch {
-              logEvent("permission query timed out", {
-                tool: params.tool_name,
-              });
-            }
-          }
+          const behavior = await decidePermission(params).catch(
+            () => "deny" as const,
+          );
           await mcp!.notification({
             method: "notifications/claude/channel/permission",
             params: { request_id: params.request_id, behavior },
@@ -800,7 +864,14 @@ async function run(): Promise<void> {
     });
     await extensions.started({ agents, service });
     // The hooks' SessionStart and Stop, as the extensions' events.
-    sessionEvents = watchSessionEvents(sessionSource, extensions.events);
+    sessionEvents = watchSessionEvents(sessionSource, {
+      sessionStarted: (sessionId, source) =>
+        extensions.events.sessionStarted(sessionId, source),
+      turnStopped: (sessionId, atMs) => {
+        turns.observeStop({ atMs });
+        extensions.events.turnStopped(sessionId, atMs);
+      },
+    });
 
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = (): Promise<void> => {

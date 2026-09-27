@@ -123,7 +123,7 @@ type PromptCase = {
 }
 
 let currentCase: PromptCase | undefined
-let permissionResult: ((behavior: string) => void) | undefined
+const permissionResults = new Map<string, (behavior: string) => void>()
 mcp.fallbackNotificationHandler = async notification => {
   if (notification.method === 'notifications/claude/channel') {
     if (!currentCase) return
@@ -134,8 +134,8 @@ mcp.fallbackNotificationHandler = async notification => {
     await currentCase.replyHandler(String(params.meta.request_id), params.meta, params.content)
   }
   if (notification.method === 'notifications/claude/channel/permission') {
-    const params = notification.params as { behavior?: string }
-    permissionResult?.(params.behavior ?? '')
+    const params = notification.params as { request_id?: string; behavior?: string }
+    permissionResults.get(String(params.request_id))?.(params.behavior ?? '')
   }
 }
 
@@ -303,36 +303,159 @@ console.log('\n[case 3] oversized response splitting')
   if (reconstructed !== large) fail('split response did not reconstruct exactly')
 }
 
-console.log('\n[case 4] permission notification uses a protocol query roundtrip')
+// Claude Code asking for permission: the notification it sends, and the
+// decision the channel sends back, with how long that took.
+let permissionCounter = 0
+async function askPermission(tool = 'Bash'): Promise<{ behavior: string; ms: number }> {
+  const id = `permission-${++permissionCounter}`
+  const result = new Promise<string>(resolve => permissionResults.set(id, resolve))
+  const started = Date.now()
+  await mcp.notification({
+    method: 'notifications/claude/channel/permission_request',
+    params: { request_id: id, tool_name: tool, description: 'run a command', input_preview: 'pwd' },
+  })
+  const behavior = await result
+  permissionResults.delete(id)
+  return { behavior, ms: Date.now() - started }
+}
+// A tool call in the turn `promptId`, as the PreToolUse hook records it.
+let toolUseCounter = 0
+async function toolCall(promptId: string, tool = 'Bash'): Promise<void> {
+  await runHook({
+    hook_event_name: 'PreToolUse',
+    session_id: SESSION_ID,
+    prompt_id: promptId,
+    tool_use_id: `toolu_rt_turn_${++toolUseCounter}`,
+    tool_name: tool,
+    tool_input: { command: 'pwd' },
+  })
+}
+// A turn's end with nothing left in the background: Claude Code is quiet.
+async function turnStop(): Promise<void> {
+  await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID, background_tasks: [], session_crons: [] })
+}
+const answerQueries = (answer: string) => (chunk: Collected): void => {
+  if (chunk.bytes === 0 || chunk.hasHeaders) return
+  const value = parsed(chunk)
+  if (value.type !== 'query') return
+  const data = value.data as { reply_subject?: string }
+  if (data.reply_subject) nc.publish(data.reply_subject, answer)
+}
+const hasQuery = (chunks: Collected[]): boolean => chunks.some(chunk => chunk.body.includes('"type":"query"'))
+
+console.log('\n[case 4] a question during a turn goes to that turn\'s caller as a protocol query')
 {
-  let permissionBehavior = ''
+  await turnStop()
+  let asked: { behavior: string; ms: number } | undefined
   currentCase = {
     replyHandler: async requestId => {
-      const result = new Promise<string>(resolve => { permissionResult = resolve })
-      await mcp.notification({
-        method: 'notifications/claude/channel/permission_request',
-        params: {
-          request_id: 'permission-1',
-          tool_name: 'Bash',
-          description: 'run a command',
-          input_preview: 'pwd',
-        },
-      })
-      permissionBehavior = await result
-      permissionResult = undefined
+      await toolCall('prompt-4')
+      asked = await askPermission()
       await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'allowed' } })
+      await turnStop()
     },
   }
-  const chunks = await collectChunks('please inspect the directory', chunk => {
-    if (chunk.bytes === 0 || chunk.hasHeaders) return
-    const value = parsed(chunk)
-    if (value.type !== 'query') return
-    const data = value.data as { reply_subject?: string }
-    if (data.reply_subject) nc.publish(data.reply_subject, 'yes')
-  })
+  const chunks = await collectChunks('please inspect the directory', answerQueries('yes'))
   assertAck(chunks[0])
-  if (permissionBehavior !== 'allow') fail(`permission result was ${permissionBehavior || 'missing'}`)
-  if (!chunks.some(chunk => chunk.body.includes('"type":"query"'))) fail('no query chunk received')
+  if (asked?.behavior !== 'allow') fail(`permission result was ${asked?.behavior || 'missing'}`)
+  if (!hasQuery(chunks)) fail('no query chunk received')
+}
+
+console.log('\n[case 4b] a question after the turn\'s request finished is denied at once')
+{
+  await turnStop()
+  let asked: Promise<{ behavior: string; ms: number }> | undefined
+  currentCase = {
+    replyHandler: async requestId => {
+      await toolCall('prompt-4b')
+      await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'done early' } })
+      // The turn goes on after the reply and asks.
+      asked = askPermission()
+    },
+  }
+  const chunks = await collectChunks('finish, then keep working', answerQueries('yes'))
+  // The terminator can overtake the reply call's own return.
+  for (let i = 0; i < 100 && !asked; i++) await Bun.sleep(20)
+  const result = await asked
+  if (result?.behavior !== 'deny') fail(`a question after the reply got ${result?.behavior || 'nothing'}`)
+  if ((result?.ms ?? Infinity) > 2000) fail(`the finished request's question waited ${result?.ms} ms`)
+  if (hasQuery(chunks)) fail('the finished request\'s caller was asked')
+  await turnStop()
+}
+
+console.log('\n[case 4c] a turn that goes on after its Stop asks nobody, not a newer prompt')
+{
+  await turnStop()
+  let first: string | undefined
+  let asked: { behavior: string; ms: number } | undefined
+  let releaseFirst!: () => void
+  const firstReleased = new Promise<void>(resolve => { releaseFirst = resolve })
+  let secondDelivered!: (requestId: string) => void
+  const second = new Promise<string>(resolve => { secondDelivered = resolve })
+  currentCase = {
+    replyHandler: async (requestId, _meta, content) => {
+      if (content === 'the newer prompt') {
+        secondDelivered(requestId)
+        return
+      }
+      first = requestId
+      await toolCall('prompt-4c')
+      // The turn ends with the request still open; background work starts
+      // another turn, and a newer prompt arrives while it runs.
+      await turnStop()
+      await toolCall('prompt-4c-background')
+      releaseFirst()
+    },
+  }
+  const firstChunks = collectChunks('the older prompt', answerQueries('yes'))
+  await firstReleased
+  const secondChunks = collectChunks('the newer prompt', answerQueries('yes'))
+  const secondId = await second
+  asked = await askPermission()
+  if (asked.behavior !== 'deny') fail(`the background turn's question got ${asked.behavior}`)
+  if (asked.ms > 2000) fail(`the background turn's question waited ${asked.ms} ms`)
+  await mcp.callTool({ name: 'reply', arguments: { request_id: secondId, text: 'second' } })
+  await mcp.callTool({ name: 'reply', arguments: { request_id: first!, text: 'first' } })
+  if (hasQuery(await secondChunks)) fail('the newer prompt received the older turn\'s question')
+  if (hasQuery(await firstChunks)) fail('the older prompt was asked after its turn\'s Stop')
+  await turnStop()
+}
+
+console.log('\n[case 4d] a caller that disconnects has its open question denied at once')
+{
+  await turnStop()
+  const callerNc = await connect({ servers: NATS_URL, name: 'claude-channel-roundtrip-caller' })
+  let asked: { behavior: string; ms: number } | undefined
+  let answeredAt = 0
+  let goneAt = 0
+  currentCase = {
+    replyHandler: async requestId => {
+      await toolCall('prompt-4d')
+      asked = await askPermission()
+      answeredAt = Date.now()
+      await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'nobody to tell' } })
+      await turnStop()
+    },
+  }
+  const inbox = `_INBOX.rt.${Math.random().toString(36).slice(2, 10)}`
+  const sub = callerNc.subscribe(inbox)
+  const reading = (async () => {
+    for await (const message of sub) {
+      if (message.data.byteLength > 0 && new TextDecoder().decode(message.data).includes('"type":"query"')) {
+        goneAt = Date.now()
+        await callerNc.close()
+        return
+      }
+    }
+  })()
+  callerNc.publish(SUBJECT, 'ask me, then leave', { reply: inbox })
+  await callerNc.flush()
+  await reading
+  for (let i = 0; i < 200 && !asked; i++) await Bun.sleep(50)
+  if (asked?.behavior !== 'deny') fail(`the gone caller's question got ${asked?.behavior || 'nothing'}`)
+  // The presence check runs every 2 s; the 120 s timeout plays no part.
+  const afterGone = goneAt > 0 && answeredAt > 0 ? answeredAt - goneAt : Infinity
+  if (afterGone > 5000) fail(`the gone caller's question closed ${afterGone} ms after the disconnect`)
 }
 
 console.log('\n[case 5] agent tools, the PreToolUse id, the snapshot re-entry and the extension events')
