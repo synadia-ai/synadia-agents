@@ -13,6 +13,7 @@ import {
   claudePid,
   hooksActive,
   readSessionRecord,
+  readTurnActivity,
   readTurnStop,
   recordHookEvent,
   resolveClaudeSessionId,
@@ -57,6 +58,58 @@ describe('recordHookEvent: what each hook writes', () => {
     expect(readTurnStop(source)).toEqual({ sessionId: SESSION, atMs: 2000 })
   })
 
+  test('Stop records whether background work could start another turn', () => {
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', background_tasks: [], session_crons: [] }, 1)
+    expect(readTurnStop(source)).toEqual({ background: false, atMs: 1 })
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', background_tasks: [{ id: 'b1' }], session_crons: [] }, 2)
+    expect(readTurnStop(source)).toEqual({ background: true, atMs: 2 })
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', background_tasks: [], session_crons: { c1: {} } }, 3)
+    expect(readTurnStop(source)).toEqual({ background: true, atMs: 3 })
+    // A Claude Code that does not report them: unknown, not "none".
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop' }, 4)
+    expect(readTurnStop(source)).toEqual({ atMs: 4 })
+  })
+
+  test('PreToolUse on any tool records the turn: its prompt id and when its first call was made', () => {
+    const pre = (name: string, promptId: string | undefined, now: number) =>
+      recordHookEvent(stateDir, PID, {
+        hook_event_name: 'PreToolUse',
+        tool_use_id: `toolu_${now}`,
+        tool_name: name,
+        ...(promptId !== undefined ? { prompt_id: promptId } : {}),
+      }, now)
+    expect(pre('Bash', 'p1', 10)).toBe('turn')
+    expect(existsSync(toolUsesDir(stateDir, PID))).toBe(false)
+    expect(readTurnActivity(source)).toEqual({ promptId: 'p1', firstMs: 10, atMs: 10 })
+    expect(pre('Read', 'p1', 20)).toBe('turn')
+    expect(readTurnActivity(source)).toEqual({ promptId: 'p1', firstMs: 10, atMs: 20 })
+    // A new prompt id starts a new turn.
+    pre('Bash', 'p2', 30)
+    expect(readTurnActivity(source)).toEqual({ promptId: 'p2', firstMs: 30, atMs: 30 })
+    // So does a Stop in between, even under the same prompt id.
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop' }, 40)
+    pre('Bash', 'p2', 50)
+    expect(readTurnActivity(source)).toEqual({ promptId: 'p2', firstMs: 50, atMs: 50 })
+    // An agent tool writes its id file as well.
+    expect(pre('mcp__plugin_nats-channel_nats__prompt_agent', 'p2', 60)).toBe('tool')
+    expect(readdirSync(toolUsesDir(stateDir, PID))).toEqual(['toolu_60'])
+    expect(readTurnActivity(source)).toEqual({ promptId: 'p2', firstMs: 50, atMs: 60 })
+    // Only a name Claude Code gives an MCP agent tool counts: not a bare
+    // name, not another prefix, not a longer tool name.
+    for (const name of ['prompt_agent', 'evil__prompt_agent', 'xmcp__nats__prompt_agent', 'mcp__nats__prompt_agent_x']) {
+      expect(recordHookEvent(stateDir, PID, {
+        hook_event_name: 'PreToolUse',
+        tool_use_id: 'toolu_not_agent',
+        tool_name: name,
+        prompt_id: 'p2',
+      }, 65)).toBe('turn')
+    }
+    expect(readdirSync(toolUsesDir(stateDir, PID))).toEqual(['toolu_60'])
+    // No prompt id: the call is still recorded, as a turn of its own.
+    pre('Bash', undefined, 70)
+    expect(readTurnActivity(source)).toEqual({ firstMs: 70, atMs: 70 })
+  })
+
   test('PreToolUse records one file per call, named by the tool-use id', () => {
     expect(recordHookEvent(stateDir, PID, {
       hook_event_name: 'PreToolUse',
@@ -70,13 +123,17 @@ describe('recordHookEvent: what each hook writes', () => {
   test('malformed input writes nothing: a bad session id, a tool-use id that is a path, another event', () => {
     expect(recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: 'a b' }))
       .toBeUndefined()
+    expect(recordHookEvent(stateDir, PID, { hook_event_name: 'PreToolUse', tool_name: '' }))
+      .toBeUndefined()
+    expect(recordHookEvent(stateDir, PID, { hook_event_name: 'PostToolUse' })).toBeUndefined()
+    expect(existsSync(sessionsDir(stateDir))).toBe(false)
+    // A tool-use id that is a path: the turn is recorded, no id file.
     expect(recordHookEvent(stateDir, PID, {
       hook_event_name: 'PreToolUse',
       tool_use_id: '../escape',
       tool_name: 'prompt_agent',
-    })).toBeUndefined()
-    expect(recordHookEvent(stateDir, PID, { hook_event_name: 'PostToolUse' })).toBeUndefined()
-    expect(existsSync(sessionsDir(stateDir))).toBe(false)
+    })).toBe('turn')
+    expect(readdirSync(sessionsDir(stateDir))).toEqual([`${PID}.turn`])
   })
 })
 
@@ -151,11 +208,11 @@ describe('sweepDeadSessions', () => {
     for (const pid of [dead, process.pid]) {
       recordHookEvent(stateDir, pid, { hook_event_name: 'SessionStart', session_id: SESSION })
       recordHookEvent(stateDir, pid, { hook_event_name: 'Stop' })
-      recordHookEvent(stateDir, pid, { hook_event_name: 'PreToolUse', tool_use_id: 't1', tool_name: 'x' })
+      recordHookEvent(stateDir, pid, { hook_event_name: 'PreToolUse', tool_use_id: 't1', tool_name: 'mcp__nats__prompt_agent' })
     }
     sweepDeadSessions(stateDir)
     expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual(
-      [`${process.pid}`, `${process.pid}.stop`, `${process.pid}.tools`].sort(),
+      [`${process.pid}`, `${process.pid}.stop`, `${process.pid}.turn`, `${process.pid}.tools`].sort(),
     )
   })
 })

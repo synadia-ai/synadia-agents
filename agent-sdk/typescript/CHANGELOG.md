@@ -15,6 +15,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   and covered by the heartbeat's signature. Optional under §8.3: a 0.3
   caller ignores them. `buildHeartbeatPayload` takes `protocolVersion` and
   `endpoints`.
+- **`PromptResponse.callerListening()`.** Whether the caller still listens on
+  the request's reply subject: publishes one keep-alive `ack` chunk with a
+  NATS reply subject of its own and resolves `false` when the server answers
+  no-responders, `true` after `timeoutMs` (default 500) otherwise. It detects
+  a caller whose connection is gone; a caller that cancelled but keeps its
+  connection (shared reply inbox) still reads as listening.
+- **`ask(..., { signal })`.** `PromptResponse.ask` takes an optional
+  `AbortSignal`; an abort rejects at once, and an already-aborted signal
+  rejects before the query is published.
 
 - **Request interceptors.** `AgentServiceOptions.interceptors`: each
   `RequestInterceptor`'s `aroundRequest(ctx, next)` runs around the prompt

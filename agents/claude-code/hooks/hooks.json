@@ -24,7 +24,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "^mcp__.+__(discover_agents|prompt_agent|wait_agent|answer_agent|cancel_agent|list_agent_calls)$",
         "hooks": [
           {
             "type": "command",

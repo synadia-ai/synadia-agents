@@ -14,14 +14,18 @@ import { join } from 'node:path'
  *
  * The MCP server is a child of the Claude Code process and outlives
  * `/clear`, which starts a new session under it; it sees neither the
- * session id Claude Code is using now, nor the end of a turn, nor the
- * model's id for a tool call. The plugin's hooks (`hooks/hooks.json`,
- * `hooks/session-event.ts`) see all three and write them under
+ * session id Claude Code is using now, nor the start or end of a turn,
+ * nor the model's id for a tool call. The plugin's hooks
+ * (`hooks/hooks.json`, `hooks/session-event.ts`) see them and write them under
  * `<state dir>/sessions/`, keyed by the Claude Code process id, which
  * Claude Code hands its hooks and its MCP servers alike as `CLAUDE_PID`:
  *
  *   - `<pid>`         SessionStart: `{ session_id, source, at_ms }`
- *   - `<pid>.stop`    Stop: `{ session_id, at_ms }`, the turn's end
+ *   - `<pid>.stop`    Stop: `{ session_id, background, at_ms }`, the turn's
+ *                     end, and whether background work could start another
+ *   - `<pid>.turn`    PreToolUse, every tool call: `{ prompt_id, first_ms,
+ *                     at_ms }`, the turn the latest call belongs to and when
+ *                     that turn's first call was made
  *   - `<pid>.tools/`  PreToolUse, one file per agent-tool call:
  *                     `{ tool_use_id, tool_name, tool_input, at_ms }`
  *
@@ -37,6 +41,19 @@ import { join } from 'node:path'
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 // Claude Code's tool-use ids (`toolu_…`); also a file name, so no separators.
 const TOOL_USE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
+
+/**
+ * The agent tools, whose PreToolUse ids the server hands on. Kept here, not
+ * imported, so the hook depends on nothing outside the plugin directory.
+ */
+const AGENT_TOOL_NAMES = [
+  'discover_agents',
+  'prompt_agent',
+  'wait_agent',
+  'answer_agent',
+  'cancel_agent',
+  'list_agent_calls',
+] as const
 
 /** How long a PreToolUse record waits for its tool call before it is dropped. */
 export const TOOL_USE_MAX_AGE_MS = 60_000
@@ -64,6 +81,11 @@ export function sessionFilePath(stateDir: string, pid: number | string): string 
 /** The file the Stop hook writes for Claude Code process `pid` when a turn ends. */
 export function stopFilePath(stateDir: string, pid: number | string): string {
   return join(sessionsDir(stateDir), `${pid}.stop`)
+}
+
+/** The file the PreToolUse hook writes on every tool call: the current turn. */
+export function turnFilePath(stateDir: string, pid: number | string): string {
+  return join(sessionsDir(stateDir), `${pid}.turn`)
 }
 
 /** The directory the PreToolUse hook writes one file per tool call into. */
@@ -101,10 +123,41 @@ export function writeAtomically(target: string, content: string): void {
   renameSync(staging, target)
 }
 
+// Claude Code names an MCP tool `mcp__<server>__<tool>`; the anchor is the
+// one the hook's matcher used when it ran for the agent tools only.
+const AGENT_TOOL_NAME_RE = new RegExp(`^mcp__.+__(${AGENT_TOOL_NAMES.join('|')})$`)
+
+/** `true` iff `name` is one of the agent tools as Claude Code names an MCP tool. */
+export function isAgentToolName(name: string): boolean {
+  return AGENT_TOOL_NAME_RE.test(name)
+}
+
+/**
+ * Whether the Stop hook's input says background work could start another
+ * turn by itself: background tasks still running, or crons scheduled in the
+ * session. `undefined` when the input carries neither field (a Claude Code
+ * that does not report them), which the server reads as "could".
+ */
+function backgroundWork(input: Readonly<Record<string, unknown>>): boolean | undefined {
+  if (!('background_tasks' in input) && !('session_crons' in input)) return undefined
+  return nonEmpty(input.background_tasks) || nonEmpty(input.session_crons)
+}
+
+function nonEmpty(value: unknown): boolean {
+  if (value === undefined || value === null || value === false || value === 0 || value === '') {
+    return false
+  }
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return true
+}
+
 /**
  * Record one hook event for Claude Code process `pid`, from the hook's
  * input as Claude Code gave it. Returns what was written, or `undefined`
- * for an event this plugin does not record or a malformed input.
+ * for an event this plugin does not record or a malformed input:
+ * `'tool'` for an agent-tool call (its id file and the turn file),
+ * `'turn'` for any other tool call (the turn file only).
  * `now` is the hook's clock, epoch milliseconds.
  */
 export function recordHookEvent(
@@ -112,7 +165,7 @@ export function recordHookEvent(
   pid: number | string,
   input: Readonly<Record<string, unknown>>,
   now: number = Date.now(),
-): 'session' | 'stop' | 'tool' | undefined {
+): 'session' | 'stop' | 'tool' | 'turn' | undefined {
   const event = input.hook_event_name
   const sessionId = isClaudeSessionId(input.session_id) ? input.session_id : undefined
   if (event === 'SessionStart') {
@@ -126,17 +179,25 @@ export function recordHookEvent(
     return 'session'
   }
   if (event === 'Stop') {
+    const background = backgroundWork(input)
     mkdirSync(sessionsDir(stateDir), { recursive: true })
     writeAtomically(
       stopFilePath(stateDir, pid),
-      `${JSON.stringify({ ...(sessionId ? { session_id: sessionId } : {}), at_ms: now })}\n`,
+      `${JSON.stringify({
+        ...(sessionId ? { session_id: sessionId } : {}),
+        ...(background !== undefined ? { background } : {}),
+        at_ms: now,
+      })}\n`,
     )
     return 'stop'
   }
   if (event === 'PreToolUse') {
     const id = input.tool_use_id
     const name = input.tool_name
-    if (!isToolUseId(id) || typeof name !== 'string' || name.length === 0) return undefined
+    if (typeof name !== 'string' || name.length === 0) return undefined
+    mkdirSync(sessionsDir(stateDir), { recursive: true })
+    recordTurnActivity(stateDir, pid, input.prompt_id, now)
+    if (!isAgentToolName(name) || !isToolUseId(id)) return 'turn'
     const dir = toolUsesDir(stateDir, pid)
     mkdirSync(dir, { recursive: true })
     writeAtomically(
@@ -153,6 +214,38 @@ export function recordHookEvent(
   return undefined
 }
 
+/**
+ * The turn file on a tool call: the call's prompt id, and the time of the
+ * turn's first call — kept from the previous record when that one is of the
+ * same prompt and newer than the last Stop, else now.
+ */
+function recordTurnActivity(
+  stateDir: string,
+  pid: number | string,
+  promptId: unknown,
+  now: number,
+): void {
+  const id = isClaudeSessionId(promptId) ? promptId : undefined
+  const previous = readJson(turnFilePath(stateDir, pid))
+  const previousAt = epochMs(previous?.at_ms)
+  const previousFirst = epochMs(previous?.first_ms)
+  const stopAt = epochMs(readJson(stopFilePath(stateDir, pid))?.at_ms)
+  const sameTurn =
+    previous !== undefined &&
+    previous.prompt_id === id &&
+    previousAt !== undefined &&
+    previousFirst !== undefined &&
+    (stopAt === undefined || previousAt > stopAt)
+  writeAtomically(
+    turnFilePath(stateDir, pid),
+    `${JSON.stringify({
+      ...(id !== undefined ? { prompt_id: id } : {}),
+      first_ms: sameTurn ? previousFirst : now,
+      at_ms: now,
+    })}\n`,
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Reading: what the server makes of the files
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,6 +260,18 @@ export type SessionRecord = {
 /** The turn end the Stop hook recorded last. */
 export type StopRecord = {
   readonly sessionId?: string
+  /** Background work could start another turn; absent when Claude Code did not say. */
+  readonly background?: boolean
+  readonly atMs: number
+}
+
+/** The latest tool call the PreToolUse hook recorded: the turn it belongs to. */
+export type TurnActivity = {
+  /** Claude Code's id for the prompt the call serves, when it gave one. */
+  readonly promptId?: string
+  /** When the turn's first tool call was recorded. */
+  readonly firstMs: number
+  /** When the latest tool call was recorded. */
   readonly atMs: number
 }
 
@@ -212,9 +317,25 @@ export function readTurnStop(source: SessionIdSource): StopRecord | undefined {
   if (!value) return undefined
   const atMs = epochMs(value.at_ms)
   if (atMs === undefined) return undefined
-  return isClaudeSessionId(value.session_id)
-    ? { sessionId: value.session_id, atMs }
-    : { atMs }
+  return {
+    ...(isClaudeSessionId(value.session_id) ? { sessionId: value.session_id } : {}),
+    ...(typeof value.background === 'boolean' ? { background: value.background } : {}),
+    atMs,
+  }
+}
+
+/** The latest tool call's turn record, or `undefined` without a well-formed file. */
+export function readTurnActivity(source: SessionIdSource): TurnActivity | undefined {
+  const value = readJson(turnFilePath(source.stateDir, source.parentPid))
+  if (!value) return undefined
+  const atMs = epochMs(value.at_ms)
+  const firstMs = epochMs(value.first_ms)
+  if (atMs === undefined || firstMs === undefined) return undefined
+  return {
+    ...(isClaudeSessionId(value.prompt_id) ? { promptId: value.prompt_id } : {}),
+    firstMs,
+    atMs,
+  }
 }
 
 /**
@@ -332,7 +453,7 @@ export function sweepDeadSessions(stateDir: string): void {
     return
   }
   for (const name of names) {
-    const match = /^(\d+)(\.stop|\.tools)?$/.exec(name)
+    const match = /^(\d+)(\.stop|\.turn|\.tools)?$/.exec(name)
     if (!match || processAlive(Number(match[1]))) continue
     removeQuietly(join(sessionsDir(stateDir), name))
   }
