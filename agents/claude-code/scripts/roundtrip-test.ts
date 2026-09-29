@@ -28,6 +28,8 @@ const NAME = 'rt-test'
 const SUBJECT = `agents.prompt.cc.${OWNER}.${NAME}`
 const NATS_URL = process.env.NATS_URL ?? 'nats://127.0.0.1:4222'
 const MAX_PAYLOAD = 1024 * 1024
+// Short, so a prompt that owned no turn is ended within the run.
+const TURN_START_GRACE_MS = 3000
 const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 const cacheRoot = mkdtempSync(join(tmpdir(), 'claude-plugin-cache-'))
 const stateDir = mkdtempSync(join(tmpdir(), 'claude-channel-state-'))
@@ -108,6 +110,7 @@ Object.assign(childEnv, {
   NATS_MIN_SENDER_TRUST: 'any',
   SYNADIA_CLAUDE_CODE_OWNER: OWNER,
   SYNADIA_CLAUDE_CODE_EXTENSIONS: extensionPath,
+  SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS: String(TURN_START_GRACE_MS),
   CLAUDE_PID: String(process.pid),
 })
 
@@ -178,7 +181,13 @@ if (discovered.metadata.session !== NAME) throw new Error('the extension overrod
   }
 }
 
-type Collected = { body: string; bytes: number; hasHeaders: boolean }
+type Collected = {
+  body: string
+  bytes: number
+  hasHeaders: boolean
+  atMs: number
+  error?: { code: string; description: string }
+}
 async function collectChunks(
   requestBody: string | Uint8Array,
   onChunk?: (chunk: Collected) => Promise<void> | void,
@@ -189,10 +198,13 @@ async function collectChunks(
   const collect = (async () => {
     for await (const message of sub) {
       const bytes = message.data.byteLength
-      const chunk = {
+      const code = message.headers?.get('Nats-Service-Error-Code')
+      const chunk: Collected = {
         body: bytes === 0 ? '' : new TextDecoder().decode(message.data),
         bytes,
         hasHeaders: !!message.headers,
+        atMs: Date.now(),
+        ...(code ? { error: { code, description: message.headers!.get('Nats-Service-Error') } } : {}),
       }
       chunks.push(chunk)
       await onChunk?.(chunk)
@@ -334,6 +346,10 @@ async function toolCall(promptId: string, tool = 'Bash'): Promise<void> {
 async function turnStop(): Promise<void> {
   await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID, background_tasks: [], session_crons: [] })
 }
+// A turn's end with a background task still running: another turn may follow.
+async function turnStopWithBackground(): Promise<void> {
+  await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID, background_tasks: [{ id: 'bg-1' }], session_crons: [] })
+}
 const answerQueries = (answer: string) => (chunk: Collected): void => {
   if (chunk.bytes === 0 || chunk.hasHeaders) return
   const value = parsed(chunk)
@@ -400,9 +416,9 @@ console.log('\n[case 4c] a turn that goes on after its Stop asks nobody, not a n
       }
       first = requestId
       await toolCall('prompt-4c')
-      // The turn ends with the request still open; background work starts
-      // another turn, and a newer prompt arrives while it runs.
-      await turnStop()
+      // The turn ends with the request still open and a background task
+      // running, which starts another turn; a newer prompt arrives while it runs.
+      await turnStopWithBackground()
       await toolCall('prompt-4c-background')
       releaseFirst()
     },
@@ -546,6 +562,93 @@ console.log('\n[case 5] agent tools, the PreToolUse id, the snapshot re-entry an
   const stopped = find('turnStopped')
   if (stopped?.id !== SESSION_ID) fail(`turnStopped was ${JSON.stringify(stopped)}`)
   await target.stop()
+}
+
+const TURN_END = 'the Claude Code turn ended without a reply to this prompt'
+function assertTurnEnd(chunks: Collected[], label: string): void {
+  assertAck(chunks[0])
+  const error = chunks.find(chunk => chunk.error)?.error
+  if (error?.code !== '500' || error.description !== TURN_END) {
+    fail(`${label}: the error frame was ${JSON.stringify(error)}`)
+  }
+  if (chunks.some(chunk => chunk.body.includes('"type":"response"'))) fail(`${label}: a response chunk was sent`)
+  const term = chunks.at(-1)!
+  if (term.bytes !== 0 || term.hasHeaders) fail(`${label}: the stream lacks a clean terminator`)
+}
+async function promptEndedOutcome(requestId: string): Promise<unknown> {
+  for (let i = 0; i < 40; i++) {
+    const ended = extensionEvents().find(e => e.event === 'promptEnded' && e.id === requestId)
+    if (ended) return ended.outcome
+    await Bun.sleep(50)
+  }
+  return undefined
+}
+
+console.log('\n[case 7] a turn that ends without the reply ends its own prompt with an error')
+{
+  await turnStop()
+  let requestId = ''
+  let stoppedAt = 0
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      await toolCall('prompt-7')
+      // The model stops without calling reply.
+      stoppedAt = Date.now()
+      await turnStop()
+    },
+  }
+  const chunks = await collectChunks('check this and forget to reply')
+  assertTurnEnd(chunks, 'the owned prompt')
+  const endedAfter = (chunks.find(chunk => chunk.error)?.atMs ?? Infinity) - stoppedAt
+  if (endedAfter > 3000) fail(`the owned prompt ended ${endedAfter} ms after its Stop`)
+  const outcome = await promptEndedOutcome(requestId)
+  if (outcome !== 'error') fail(`promptEnded for the owned prompt was ${String(outcome)}`)
+  const late = await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'too late' } })
+  if (!late.isError) fail('a reply after the turn ended was accepted')
+}
+
+console.log('\n[case 8] a prompt delivered during a turn survives its Stop and ends at the grace period')
+{
+  await turnStop()
+  let firstId = ''
+  let secondId = ''
+  let turnRunning!: () => void
+  const running = new Promise<void>(resolve => { turnRunning = resolve })
+  let secondDelivered!: () => void
+  const delivered = new Promise<void>(resolve => { secondDelivered = resolve })
+  currentCase = {
+    replyHandler: async (id, _meta, content) => {
+      if (content === 'the prompt that arrives mid-turn') {
+        secondId = id
+        secondDelivered()
+        return
+      }
+      firstId = id
+      await toolCall('prompt-8')
+      turnRunning()
+    },
+  }
+  const firstChunks = collectChunks('the prompt that owns the turn')
+  await running
+  const secondChunks = collectChunks('the prompt that arrives mid-turn')
+  await delivered
+  await mcp.callTool({ name: 'reply', arguments: { request_id: firstId, text: 'first answered' } })
+  const stoppedAt = Date.now()
+  await turnStop()
+  if ((await firstChunks).some(chunk => chunk.error)) fail('the answered prompt got an error frame')
+  // Past the Stop, inside the grace period: still open.
+  await Bun.sleep(1000)
+  const early = await mcp.callTool({ name: 'request_info', arguments: { request_id: secondId } })
+  if (early.isError) fail('the mid-turn prompt was ended at the Stop')
+  const chunks = await secondChunks
+  assertTurnEnd(chunks, 'the mid-turn prompt')
+  const endedAfter = (chunks.find(chunk => chunk.error)?.atMs ?? 0) - stoppedAt
+  if (endedAfter < TURN_START_GRACE_MS - 500 || endedAfter > TURN_START_GRACE_MS + 3000) {
+    fail(`the mid-turn prompt ended ${endedAfter} ms after the Stop (grace ${TURN_START_GRACE_MS} ms)`)
+  }
+  const outcome = await promptEndedOutcome(secondId)
+  if (outcome !== 'error') fail(`promptEnded for the mid-turn prompt was ${String(outcome)}`)
 }
 
 console.log('\n[case 6] shutdown settles an open deferred request')

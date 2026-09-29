@@ -224,7 +224,7 @@ describe('watchSessionEvents: the hooks as the extensions\' events', () => {
     const calls: string[] = []
     const watcher = watchSessionEvents(source, {
       sessionStarted: (id, from) => calls.push(`started ${id} ${from}`),
-      turnStopped: (id, at) => calls.push(`stopped ${id ?? '-'} ${at}`),
+      turnStopped: (id, stop) => calls.push(`stopped ${id ?? '-'} ${stop.atMs}`),
     }, 60_000)
     try {
       watcher.poll()
@@ -252,12 +252,13 @@ describe('watchSessionEvents: the hooks as the extensions\' events', () => {
     const calls: string[] = []
     const watcher = watchSessionEvents(source, {
       sessionStarted: () => undefined,
-      turnStopped: (_id, at) => calls.push(`stopped ${at}`),
+      turnStopped: (_id, stop) => calls.push(`stopped ${stop.atMs} ${stop.background}`),
     }, 10)
     try {
-      recordHookEvent(stateDir, PID, { hook_event_name: 'Stop' }, 99)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', background_tasks: [], session_crons: [] }, 99)
       for (let i = 0; i < 50 && calls.length === 0; i++) await Bun.sleep(10)
-      expect(calls).toEqual(['stopped 99'])
+      // The whole record: whether background work was left comes with it.
+      expect(calls).toEqual(['stopped 99 false'])
     } finally {
       watcher.stop()
     }

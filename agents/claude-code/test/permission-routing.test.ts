@@ -137,3 +137,98 @@ describe('TurnLedger: anything uncertain is quiet for nobody', () => {
     })
   })
 })
+
+describe('TurnLedger: a turn that ends without the done reply ends its prompt', () => {
+  const GRACE = 1000
+  const busyStop = (atMs: number): StopRecord => ({ atMs, background: true })
+
+  test('a prompt that owned its turn is ended at that turn\'s Stop', () => {
+    const turns = ledger()
+    expect(turns.delivered('1', view(idleStop(100)), 200)).toBe(true)
+    // The turn runs: nothing to end before its Stop.
+    expect(turns.unanswered(view(idleStop(100), call('p1', 300)), 400, GRACE)).toEqual([])
+    // It stops with nothing in the background and no reply.
+    expect(turns.unanswered(view(idleStop(500), call('p1', 300)), 501, GRACE)).toEqual([
+      { requestId: '1', reason: 'its turn ended' },
+    ])
+    // The watcher saw the Stop first: the same.
+    const watched = ledger()
+    watched.delivered('1', view(idleStop(100)), 200)
+    watched.observeStop(idleStop(500))
+    expect(watched.unanswered(view(idleStop(500)), 501, GRACE)).toEqual([
+      { requestId: '1', reason: 'its turn ended' },
+    ])
+  })
+
+  test('a prompt with its done reply is left alone', () => {
+    const finished = new Set<string>()
+    const turns = ledger(finished)
+    turns.delivered('1', view(idleStop(100)), 200)
+    finished.add('1')
+    expect(turns.unanswered(view(idleStop(500)), 501, GRACE)).toEqual([])
+    expect(turns.unanswered(view(idleStop(500)), 500 + 10 * GRACE, GRACE)).toEqual([])
+  })
+
+  test('a prompt delivered while a turn runs survives that Stop and is ended at its grace period', () => {
+    const turns = ledger()
+    turns.delivered('1', view(idleStop(100)), 200)
+    // '2' arrives mid-turn: folded in, or queued for the next turn.
+    expect(turns.delivered('2', view(idleStop(100), call('p1', 300)), 400)).toBe(false)
+    // '1' replied; the turn stops. '2' is not ended at that Stop...
+    const stopped = view(idleStop(500), call('p1', 300))
+    expect(turns.unanswered(stopped, 501, GRACE).map(e => e.requestId)).toEqual(['1'])
+    const finished = ledger(new Set(['1']))
+    finished.delivered('1', view(idleStop(100)), 200)
+    finished.delivered('2', view(idleStop(100), call('p1', 300)), 400)
+    expect(finished.unanswered(stopped, 501, GRACE)).toEqual([])
+    expect(finished.unanswered(stopped, 500 + GRACE - 1, GRACE)).toEqual([])
+    // ...but once the grace period passes with no turn started, it is.
+    expect(finished.unanswered(stopped, 500 + GRACE, GRACE)).toEqual([
+      { requestId: '2', reason: 'no turn started for it' },
+    ])
+  })
+
+  test('a turn that starts within the grace period keeps it open until the next Stop', () => {
+    const turns = ledger(new Set(['1']))
+    turns.delivered('1', view(idleStop(100)), 200)
+    turns.delivered('2', view(idleStop(100), call('p1', 300)), 400)
+    // The queued prompt's turn starts after the Stop at 500 and runs long.
+    const running = view(idleStop(500), call('p2', 800))
+    expect(turns.unanswered(running, 500 + 10 * GRACE, GRACE)).toEqual([])
+    // It stops without the reply: the grace period runs from that Stop.
+    const stopped = view(idleStop(20_000), call('p2', 800))
+    expect(turns.unanswered(stopped, 20_000 + GRACE - 1, GRACE)).toEqual([])
+    expect(turns.unanswered(stopped, 20_000 + GRACE, GRACE)).toEqual([
+      { requestId: '2', reason: 'no turn started for it' },
+    ])
+  })
+
+  test('background work left at the Stop turns an owned prompt into one with a grace period', () => {
+    const turns = ledger()
+    turns.delivered('1', view(idleStop(100)), 200)
+    expect(turns.unanswered(view(busyStop(500)), 501, GRACE)).toEqual([])
+    // Background work starts a turn that may still reply.
+    expect(turns.unanswered(view(busyStop(500), call('p1', 900)), 500 + GRACE, GRACE)).toEqual([])
+    expect(turns.unanswered(view(idleStop(1500), call('p1', 900)), 1500 + GRACE, GRACE)).toEqual([
+      { requestId: '1', reason: 'no turn started for it' },
+    ])
+  })
+
+  test('the TTL stays the last guard: no Stop, no hooks, or a turn after every Stop ends nothing', () => {
+    // Delivered, and no Stop comes.
+    const running = ledger()
+    running.delivered('1', view(idleStop(100)), 200)
+    expect(running.unanswered(view(idleStop(100), call('p1', 300)), 200 + 100 * GRACE, GRACE)).toEqual([])
+    // No hooks: no Stop is ever recorded.
+    const noHooks = ledger()
+    noHooks.delivered('1', view(undefined, undefined, false), 200)
+    expect(noHooks.unanswered(view(undefined, undefined, false), 200 + 100 * GRACE, GRACE)).toEqual([])
+    // A busy session: each Stop is followed by a turn within the grace period.
+    const busy = ledger(new Set(['1']))
+    busy.delivered('1', view(idleStop(100)), 200)
+    busy.delivered('2', view(idleStop(100), call('p1', 300)), 400)
+    for (let stop = 500; stop < 500 + 100 * GRACE; stop += 2 * GRACE) {
+      expect(busy.unanswered(view(idleStop(stop), call('px', stop + GRACE / 2)), stop + 2 * GRACE - 1, GRACE)).toEqual([])
+    }
+  })
+})

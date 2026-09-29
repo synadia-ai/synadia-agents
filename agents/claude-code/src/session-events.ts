@@ -23,7 +23,7 @@ export const SESSION_POLL_MS = 250
 
 export interface SessionEventHandlers {
   sessionStarted(sessionId: string, source: string): void
-  turnStopped(sessionId: string | undefined, atMs: number): void
+  turnStopped(sessionId: string | undefined, stop: StopRecord): void
 }
 
 export interface SessionEventWatcher {
@@ -50,7 +50,7 @@ export function watchSessionEvents(
     const nextStop = readTurnStop(source)
     if (nextStop && nextStop.atMs !== stop?.atMs) {
       stop = nextStop
-      handlers.turnStopped(nextStop.sessionId ?? session?.sessionId, nextStop.atMs)
+      handlers.turnStopped(nextStop.sessionId ?? session?.sessionId, nextStop)
     }
   }
 

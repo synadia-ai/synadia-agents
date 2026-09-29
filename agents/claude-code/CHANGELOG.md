@@ -33,6 +33,14 @@ All notable changes to the Claude Code NATS channel are documented here.
   `<state dir>/sessions/`, keyed by the Claude Code process. The server follows `/clear` with
   them, reports the turn's end, and hands the tool-call id to the agent tools. They run
   `hooks/session-event.ts` with `bun`.
+- A request the model leaves without its `done` reply is ended rather than left open until
+  the 30-minute TTL. The caller gets a §9 error frame, code `500`, description `the Claude Code
+  turn ended without a reply to this prompt`, and no response text. A request that owned its
+  turn is ended at that turn's `Stop` when no background work is left; any other request
+  survives the `Stop` and is ended once no turn has started within `turnStartGraceMs` of the
+  latest `Stop` (5 minutes by default; `SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS` wins over
+  the config field). Each is logged as `request ended without a reply` with its request id and
+  reason, and reaches the extensions' `promptEnded` with the outcome `error`.
 
 ### Changed
 

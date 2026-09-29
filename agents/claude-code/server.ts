@@ -25,6 +25,7 @@ import {
   AgentService,
   DEFAULT_MAX_PAYLOAD,
   PromptResponse,
+  RequestRejectedError,
   splitResponseText,
   type RequestInterceptor,
 } from "@synadia-ai/agent-service";
@@ -81,6 +82,16 @@ const PERMISSION_TIMEOUT_MS = 120_000;
 /** How often an open permission question checks that its caller is still there. */
 const PRESENCE_POLL_MS = 2_000;
 const REQUEST_TTL_MS = 30 * 60 * 1000;
+/** How often open requests are checked for a turn that left them unanswered. */
+const TURN_END_POLL_MS = 1_000;
+/**
+ * The §9 error a caller gets when Claude Code's turn ends without a `done`
+ * reply to its prompt: an error frame, never response text, so the caller
+ * can tell it from the model's words.
+ */
+const TURN_END_CODE = 500;
+const TURN_END_DESCRIPTION =
+  "the Claude Code turn ended without a reply to this prompt";
 const DEFAULT_MAX_PAYLOAD_BYTES = parseHumanBytes(DEFAULT_MAX_PAYLOAD);
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT =
@@ -478,6 +489,31 @@ async function run(): Promise<void> {
       }
     };
 
+    // A served prompt whose turn ended without its `done` reply is ended
+    // with an error rather than left open until the TTL
+    // (src/permission-routing.ts says which, and when).
+    const endUnanswered = (): void => {
+      if (pendingRequests.size === 0) return;
+      const now = Date.now();
+      for (const { requestId, reason } of turns.unanswered(
+        turnView(),
+        now,
+        settings.turnStartGraceMs,
+      )) {
+        const pending = pendingRequests.get(requestId);
+        if (!pending || pending.completion.settled()) continue;
+        logEvent("request ended without a reply", {
+          requestId,
+          sender: pending.sender,
+          reason,
+        });
+        pending.ended ??= { outcome: "error", atMs: now };
+        pending.completion.reject(
+          new RequestRejectedError(TURN_END_CODE, TURN_END_DESCRIPTION),
+        );
+      }
+    };
+
     const activeRequest = (requestId: string): ToolCallRequest | undefined => {
       const pending = pendingRequests.get(requestId);
       return pending && !pending.completion.settled() ? pending : undefined;
@@ -849,6 +885,8 @@ async function run(): Promise<void> {
       }
     }, 60_000);
     ttlTimer.unref();
+    const turnEndTimer = setInterval(endUnanswered, TURN_END_POLL_MS);
+    turnEndTimer.unref();
 
     // Claude must be ready to receive channel notifications before NATS advertises
     // the prompt endpoint; otherwise a just-discovered caller can lose a prompt.
@@ -867,9 +905,10 @@ async function run(): Promise<void> {
     sessionEvents = watchSessionEvents(sessionSource, {
       sessionStarted: (sessionId, source) =>
         extensions.events.sessionStarted(sessionId, source),
-      turnStopped: (sessionId, atMs) => {
-        turns.observeStop({ atMs });
-        extensions.events.turnStopped(sessionId, atMs);
+      turnStopped: (sessionId, stop) => {
+        turns.observeStop(stop);
+        extensions.events.turnStopped(sessionId, stop.atMs);
+        endUnanswered();
       },
     });
 
@@ -880,6 +919,7 @@ async function run(): Promise<void> {
         const firstAttempt = !shuttingDown;
         shuttingDown = true;
         clearInterval(ttlTimer);
+        clearInterval(turnEndTimer);
         sessionEvents?.stop();
         logEvent("shutting down");
         // The extensions hear of the stop before the service leaves the bus.
