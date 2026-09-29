@@ -13,6 +13,7 @@ describe('resolveRuntimeSettings', () => {
       minSenderTrust: 'any',
       permissionMode: 'terminal',
       agentTools: 'blocking',
+      turnStartGraceMs: 300_000,
     })
   })
 
@@ -47,6 +48,7 @@ describe('resolveRuntimeSettings', () => {
       minSenderTrust: 'signed',
       permissionMode: 'terminal',
       agentTools: 'blocking',
+      turnStartGraceMs: 300_000,
     })
   })
 
@@ -58,6 +60,17 @@ describe('resolveRuntimeSettings', () => {
     expect(() => resolveRuntimeSettings({}, { NATS_AGENT_TOOLS: 'some' })).toThrow(
       'invalid agentTools',
     )
+  })
+
+  test('turnStartGraceMs: five minutes by default, the config field, the variable winning, empty meaning the default', () => {
+    const env = 'SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS'
+    expect(resolveRuntimeSettings({}, {}).turnStartGraceMs).toBe(300_000)
+    expect(resolveRuntimeSettings({ turnStartGraceMs: 60_000 }, {}).turnStartGraceMs).toBe(60_000)
+    expect(resolveRuntimeSettings({ turnStartGraceMs: 60_000 }, { [env]: '2000' }).turnStartGraceMs).toBe(2000)
+    expect(resolveRuntimeSettings({ turnStartGraceMs: 60_000 }, { [env]: '' }).turnStartGraceMs).toBe(60_000)
+    for (const bad of ['0', '-5', '1.5', 'soon']) {
+      expect(() => resolveRuntimeSettings({}, { [env]: bad })).toThrow('invalid turnStartGraceMs')
+    }
   })
 
   test('retains the legacy nats permission alias', () => {
@@ -103,6 +116,9 @@ describe('resolveRuntimeSettings', () => {
 
       writeFileSync(path, JSON.stringify({ agentTools: 3 }))
       expect(() => loadConfig(path)).toThrow('invalid agentTools')
+
+      writeFileSync(path, JSON.stringify({ turnStartGraceMs: '5m' }))
+      expect(() => loadConfig(path)).toThrow('invalid turnStartGraceMs')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

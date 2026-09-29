@@ -6,6 +6,16 @@ export type SenderIdentityMode = 'off' | 'signed'
 export type MinSenderTrust = 'any' | 'signed'
 export type AgentToolsMode = 'blocking' | 'all' | 'off'
 
+/**
+ * How long after a turn's Stop a served prompt that owned no turn may wait
+ * for a turn to start before it is ended. Five minutes: a queued prompt's
+ * turn starts at once after a Stop, and its first tool call, which is how
+ * the plugin sees it, comes after the model's first reply, which takes
+ * seconds to a minute or two. Well under the 30-minute request TTL, and
+ * under the 10 to 15 minutes callers commonly wait.
+ */
+export const DEFAULT_TURN_START_GRACE_MS = 5 * 60 * 1000
+
 export type NatsChannelConfig = {
   context?: string
   owner?: string
@@ -21,6 +31,8 @@ export type NatsChannelConfig = {
   agentTools?: AgentToolsMode
   /** Extension modules; read by `src/extensions.ts`, whose variables win. */
   extensions?: unknown
+  /** See {@link DEFAULT_TURN_START_GRACE_MS}; `SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS` wins. */
+  turnStartGraceMs?: number
 }
 
 export type RuntimeSettings = {
@@ -30,6 +42,7 @@ export type RuntimeSettings = {
   minSenderTrust: MinSenderTrust
   permissionMode: PermissionMode
   agentTools: AgentToolsMode
+  turnStartGraceMs: number
 }
 
 export function loadConfig(path: string): NatsChannelConfig {
@@ -55,6 +68,9 @@ export function loadConfig(path: string): NatsChannelConfig {
   optionalString(parsed, 'senderIdentity')
   optionalString(parsed, 'minSenderTrust')
   optionalString(parsed, 'agentTools')
+  if (parsed.turnStartGraceMs !== undefined && !isPositiveWhole(parsed.turnStartGraceMs)) {
+    throw new Error('invalid turnStartGraceMs: expected a whole number of milliseconds above 0')
+  }
   if (parsed.permissions !== undefined) {
     if (!isRecord(parsed.permissions)) {
       throw new Error('invalid permissions: expected an object')
@@ -90,6 +106,13 @@ export function resolveRuntimeSettings(
   const agentTools = agentToolsValue === undefined || agentToolsValue === ''
     ? 'blocking'
     : enumSetting('agentTools', agentToolsValue, ['blocking', 'all', 'off'])
+  const graceValue = env.SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS
+  const turnStartGraceMs = graceValue === undefined || graceValue === ''
+    ? config.turnStartGraceMs ?? DEFAULT_TURN_START_GRACE_MS
+    : Number(graceValue)
+  if (!isPositiveWhole(turnStartGraceMs)) {
+    throw new Error('invalid turnStartGraceMs: expected a whole number of milliseconds above 0')
+  }
 
   return {
     connectionSource: context
@@ -104,6 +127,7 @@ export function resolveRuntimeSettings(
     minSenderTrust,
     permissionMode,
     agentTools,
+    turnStartGraceMs,
   }
 }
 
@@ -116,6 +140,10 @@ function enumSetting<const T extends string>(
   throw new Error(
     `invalid ${field}: expected ${allowed.map(v => JSON.stringify(v)).join(' or ')}`,
   )
+}
+
+function isPositiveWhole(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -35,6 +35,18 @@ import type { StopRecord, TurnActivity } from './session-id.js'
  * One race stays: a turn the local user starts in the terminal, still
  * before its first tool call when a prompt arrives, looks quiet. The
  * terminal shows that user the same permission dialog.
+ *
+ * The same ledger says which served prompts a turn left without their
+ * `done` reply ({@link TurnLedger.unanswered}), so the server can end them
+ * rather than leave their callers waiting:
+ *
+ *   - a prompt that owned its turn, at that turn's Stop when the Stop says
+ *     no background work is left: nothing else can come back to it;
+ *   - any other prompt, once a Stop has come after its delivery and no turn
+ *     has started within a grace period after the latest Stop. Claude Code
+ *     starts a queued prompt's turn right after a Stop, so a quiet grace
+ *     period says it is not queued; a turn is seen by its first tool call,
+ *     so the grace period must outlast the model's first reply.
  */
 
 /** What the hook files say right now. */
@@ -43,6 +55,12 @@ export interface TurnView {
   readonly activity: TurnActivity | undefined
   /** The SessionStart hook ran for this Claude Code process. */
   readonly hooksActive: boolean
+}
+
+/** A served prompt a turn left without its `done` reply, and why it is ended. */
+export type TurnEnd = {
+  readonly requestId: string
+  readonly reason: 'its turn ended' | 'no turn started for it'
 }
 
 /** The request a question goes to, or why it goes to none. */
@@ -58,12 +76,14 @@ type Delivery = {
   readonly startsTurn: boolean
   /** The prompt id of the turn it owns, bound at its first question. */
   promptId?: string
+  /** The first Stop seen after the delivery. */
+  firstStop?: StopRecord
 }
 
 export class TurnLedger {
   private readonly deliveries = new Map<string, Delivery>()
   private stops = 0
-  private lastStopMs: number | undefined
+  private lastStop: StopRecord | undefined
   private lastDeliveryMs: number | undefined
 
   /**
@@ -75,9 +95,36 @@ export class TurnLedger {
 
   /** Count a Stop the watcher or a read saw; the same record counts once. */
   observeStop(stop: StopRecord | undefined): void {
-    if (stop === undefined || stop.atMs === this.lastStopMs) return
-    this.lastStopMs = stop.atMs
+    if (stop === undefined || stop.atMs === this.lastStop?.atMs) return
+    for (const d of this.deliveries.values()) {
+      if (d.stopsBefore === this.stops) d.firstStop = stop
+    }
+    this.lastStop = stop
     this.stops++
+  }
+
+  /**
+   * The served prompts, not yet finished, that no turn will answer as of
+   * `nowMs`: one that owned a turn now stopped with nothing left in the
+   * background, and one whose ownership was never certain once `graceMs`
+   * has passed since the latest Stop with no turn started.
+   */
+  unanswered(view: TurnView, nowMs: number, graceMs: number): TurnEnd[] {
+    this.observeStop(view.stop)
+    const last = this.lastStop
+    if (last === undefined) return []
+    const turnStarted = view.activity !== undefined && view.activity.atMs > last.atMs
+    const graceOver = !turnStarted && nowMs - last.atMs >= graceMs
+    const ended: TurnEnd[] = []
+    for (const [requestId, d] of this.deliveries) {
+      if (d.firstStop === undefined || this.finished(requestId)) continue
+      if (d.startsTurn && d.firstStop.background === false && d.firstStop.atMs > d.atMs) {
+        ended.push({ requestId, reason: 'its turn ended' })
+      } else if (graceOver) {
+        ended.push({ requestId, reason: 'no turn started for it' })
+      }
+    }
+    return ended
   }
 
   /**
@@ -102,7 +149,8 @@ export class TurnLedger {
   ownerOf(view: TurnView): QuestionOwner {
     this.observeStop(view.stop)
     const activity = view.activity
-    if (activity === undefined || (this.lastStopMs !== undefined && activity.atMs <= this.lastStopMs)) {
+    const stopMs = this.lastStop?.atMs
+    if (activity === undefined || (stopMs !== undefined && activity.atMs <= stopMs)) {
       return { kind: 'none', reason: 'no tool call recorded for the current turn' }
     }
     if (activity.promptId === undefined) {
@@ -125,7 +173,7 @@ export class TurnLedger {
   /** Claude Code is idle, and nothing but the prompt now delivered can start its next turn. */
   private quiet(view: TurnView): boolean {
     if (!view.hooksActive) return false
-    const stopMs = this.lastStopMs
+    const stopMs = this.lastStop?.atMs
     // Before any Stop the session has run no turn to leave work behind.
     if (view.stop !== undefined && view.stop.background !== false) return false
     if (view.activity !== undefined && (stopMs === undefined || view.activity.atMs > stopMs)) {

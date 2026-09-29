@@ -221,6 +221,43 @@ setting.
 The model's id for each agent-tool call reaches the tools through the
 `PreToolUse` hook (see [Hooks](#hooks)); an MCP tool call does not carry it.
 
+### When the model stops without replying
+
+A request is answered only through `reply` with `done=true`. When Claude
+Code's turn ends without it, the plugin ends the request rather than leave
+its caller waiting until the 30-minute request TTL. The caller gets the
+protocol's error frame (§9), then the terminator, and no response text, so
+it cannot mistake the end for the model's words:
+
+```
+Nats-Service-Error-Code: 500
+Nats-Service-Error: the Claude Code turn ended without a reply to this prompt
+```
+
+A caller using the SDK's agent tools sees its `prompt_agent` call fail with
+that description. When the request ends depends on whether the plugin
+knows which turn was the request's (see [Which caller is
+asked](#which-caller-is-asked)); both rest on the [hooks](#hooks):
+
+- **The request owned its turn** (delivered while Claude Code was quiet):
+  it is ended at that turn's `Stop`, when the `Stop` says no background
+  tasks or session crons are left, since nothing else can come back to it.
+- **Any other request** (delivered while a turn ran, which Claude Code may
+  fold into that turn or queue for the next, or whose turn stopped with
+  background work left): it survives the `Stop`. It is ended once a `Stop`
+  has come after its delivery and no turn has started within
+  `turnStartGraceMs` (5 minutes by default) of the latest `Stop`. The
+  plugin sees a turn start at its first tool call, so the grace period has
+  to outlast the model's first reply; a turn that starts in time keeps the
+  request open, and the grace period runs again from that turn's `Stop`.
+
+A request ended this way is logged as `request ended without a reply` with
+its request id and the reason, and the [extensions](#extensions) hear
+`promptEnded` with the outcome `error`. A later `reply` to it is refused as
+not active. The request TTL stays the last guard: without the hooks, or in
+a session where a turn starts within the grace period after every `Stop`,
+nothing else ends a request.
+
 ## Permissions
 
 When Claude Code needs permission to run a tool, the plugin can either
@@ -406,6 +443,7 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 | `minSenderTrust` | `any` | `any` or `signed`; controls inbound prompt admission independently |
 | `permissions.mode` | `terminal` | `terminal` or `query` (`nats` accepted as legacy alias for `query`) |
 | `agentTools` | `blocking` | `blocking`, `all` or `off`; the [agent tools](#agent-tools) offered |
+| `turnStartGraceMs` | `300000` | How long after a `Stop` a request not tied to a turn waits for one to start before it is ended; see [When the model stops without replying](#when-the-model-stops-without-replying) |
 | `extensions` | *(none)* | Extension modules: package names or absolute paths, or `{ "module", "options" }` objects; see [Extensions](#extensions) |
 
 ### Environment variables
@@ -425,6 +463,7 @@ shown below; environment settings override the corresponding config fields.
 | `NATS_MIN_SENDER_TRUST` | Inbound sender policy: `any` or `signed` | config `minSenderTrust`, then `any` |
 | `NATS_AGENT_TOOLS` | The agent tools offered: `blocking`, `all` or `off`; empty means `blocking` | config `agentTools`, then `blocking` |
 | `SYNADIA_CLAUDE_CODE_EXTENSIONS`, `SYNADIA_AGENT_EXTENSIONS` | Extension modules, comma-separated; per-agent var wins, then fleet-wide, then config `extensions`. A set variable wins even when empty | *(none)* |
+| `SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS` | `turnStartGraceMs`, in milliseconds, a whole number above 0; empty means unset | config `turnStartGraceMs`, then `300000` |
 | `NATS_STATE_DIR` | State directory location | `~/.claude/channels/nats` |
 | `CLAUDE_CWD` | Working directory whose basename seeds the default session name | — |
 | `CLAUDE_PID` | Set by Claude Code for its MCP servers and hooks; keys the hooks' files | the server's parent pid |
@@ -454,7 +493,7 @@ see itself, under `<state dir>/sessions/`, keyed by the Claude Code process
 | Hook | File | Records | Why |
 | --- | --- | --- | --- |
 | `SessionStart` | `<pid>` | `{ "session_id", "source", "at_ms" }` | the session Claude Code uses now; `/clear` starts a new one under the same MCP server |
-| `Stop` | `<pid>.stop` | `{ "session_id", "background", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call; `background` says whether background tasks or session crons could start another turn by themselves |
+| `Stop` | `<pid>.stop` | `{ "session_id", "background", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call; `background` says whether background tasks or session crons could start another turn by themselves; a request the turn left without its reply is ended (see [When the model stops without replying](#when-the-model-stops-without-replying)) |
 | `PreToolUse` (every tool) | `<pid>.turn` | `{ "prompt_id", "first_ms", "at_ms" }` | the turn the latest tool call belongs to and when its first call was made, so a permission question goes to the request that owns the turn (see [Which caller is asked](#which-caller-is-asked)) |
 | `PreToolUse` (agent tools) | `<pid>.tools/<tool_use_id>` | `{ "tool_use_id", "tool_name", "tool_input", "at_ms" }` | the model's id for the tool call, which the server hands to the agent tools; the server removes the file when the call arrives |
 
@@ -462,4 +501,5 @@ The hooks write whether or not an extension is loaded, print nothing, and
 always exit 0, so a failing hook never interrupts the session. Without
 them the channel still works: the session id falls back to
 `CLAUDE_CODE_SESSION_ID`, agent-tool calls run without the model's
-tool-call id, and `query` mode denies every permission question.
+tool-call id, `query` mode denies every permission question, and a request
+the model never replies to stays open until the request TTL.
