@@ -300,6 +300,57 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect(messages.find((m) => !m.headers && m.data.length === 0)).toBeDefined();
   });
 
+  it("enforces advertised prompt and attachment limits before dispatch", async () => {
+    let handlerCalls = 0;
+    const service = startService({ maxPayload: "32B", attachmentsOk: false });
+    service.onPrompt(() => {
+      handlerCalls++;
+    });
+    await service.start();
+
+    const messagesFor = async (payload: unknown): Promise<Msg[]> => {
+      const stream = await nc.requestMany(
+        service.subject.prompt,
+        new TextEncoder().encode(JSON.stringify(payload)),
+        { maxWait: 2000, strategy: "sentinel" },
+      );
+      const messages: Msg[] = [];
+      for await (const message of stream) messages.push(message);
+      return messages;
+    };
+
+    for (const payload of [
+      { prompt: " " },
+      { prompt: "x".repeat(64) },
+      { prompt: "attachment", attachments: [{ filename: "a.txt", content: "YQ==" }] },
+    ]) {
+      const messages = await messagesFor(payload);
+      expect(
+        messages.some((message) => message.headers?.get("Nats-Service-Error-Code") === "400"),
+      ).toBe(true);
+    }
+    expect(handlerCalls).toBe(0);
+  });
+
+  it("preserves a bounded handler service error code", async () => {
+    const service = startService();
+    service.onPrompt(() => {
+      throw Object.assign(new Error("consultation capacity reached"), { serviceErrorCode: 429 });
+    });
+    await service.start();
+
+    const stream = await nc.requestMany(
+      service.subject.prompt,
+      new TextEncoder().encode(JSON.stringify({ prompt: "hello" })),
+      { maxWait: 2000, strategy: "sentinel" },
+    );
+    const messages: Msg[] = [];
+    for await (const message of stream) messages.push(message);
+    expect(
+      messages.some((message) => message.headers?.get("Nats-Service-Error-Code") === "429"),
+    ).toBe(true);
+  });
+
   it("answers the v0.3 status endpoint with a heartbeat-shaped payload", async () => {
     const service = startService();
     service.onPrompt(() => {
