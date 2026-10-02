@@ -105,9 +105,9 @@ The `agents/openclaw`, `agents/pi`, and `agents/claude-code` harnesses in this m
 
 ## Sender identity
 
-`AgentService` implements the receiver side of the optional sender-identity
-extension: every `prompt` request is classified **before** the §6.4 ack,
-and the handler sees the result as `response.sender`.
+`AgentService` implements the receiver side of the
+[sender-identity extension](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension):
+every `prompt` request is classified **before** the §6.4 ack, and the handler sees the result as `response.sender`.
 
 ```ts
 import { formatSender } from "@synadia-ai/agents";

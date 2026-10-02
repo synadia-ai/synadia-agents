@@ -79,8 +79,7 @@ v0.3 wire shapes the SDK implements (full detail in `docs/protocol-mapping.md`):
 - **Errors** (§9): `Nats-Service-Error-Code` header + optional JSON body;
   error-completed streams end with error frame THEN empty terminator.
 - **Sender identity** (extension, additive on 0.3 — spec
-  [`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension)
-  in `synadia-ai/synadia-agent-sdk-docs`): every `prompt`
+  [`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension)): every `prompt`
   / `status` request carries an `Agent-Sender` header (`v, account,
   user, name?, sub?, ts?, nonce?, sig?`, canonical single-line JSON,
   `AGENT-SENDER-V1` signed input); `AgentId` is `{account}.{user}`.

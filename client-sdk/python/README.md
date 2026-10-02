@@ -103,8 +103,8 @@ asyncio.run(main())
 
 ## Sender identity
 
-The optional sender-identity extension lets a receiving agent know *who*
-prompted it, verified per message:
+The [sender-identity extension](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension)
+lets a receiving agent know *who* prompted it, verified per message:
 the caller attaches an `Agent-Sender` header that names its agent ID —
 the `(account, user)` NKEY pair authenticated on that connection — and, with
 a signer, an ed25519 signature bound to the subject, the payload, a

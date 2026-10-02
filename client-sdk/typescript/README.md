@@ -110,7 +110,7 @@ When you adopt these defaults, also handle the terminal `close` status event in 
 
 ### Sender identity
 
-The optional sender-identity extension lets a receiving agent know _who_ prompted it, verified per message: the caller attaches an `Agent-Sender` header that names its agent ID — the `(account, user)` NKEY pair authenticated on that connection — and, with a signer, an ed25519 signature bound to the subject, payload, timestamp, and nonce. Nothing in it changes protocol `0.3`: support is advertised by `min_sender_trust` on the prompt endpoint (`agent.supportsSenderIdentity`). Identity is off when the `identity` option is omitted.
+The [sender-identity extension](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension) lets a receiving agent know _who_ prompted it, verified per message: the caller attaches an `Agent-Sender` header that names its agent ID — the `(account, user)` NKEY pair authenticated on that connection — and, with a signer, an ed25519 signature bound to the subject, payload, timestamp, and nonce. Nothing in it changes protocol `0.3`: support is advertised by `min_sender_trust` on the prompt endpoint (`agent.supportsSenderIdentity`). Identity is off when the `identity` option is omitted.
 
 Use `resolveNatsConnectionBundle` when this process owns the connection. It
 reads a NATS CLI context or direct credential file once and derives connection

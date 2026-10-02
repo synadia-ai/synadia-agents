@@ -17,6 +17,8 @@ transplanted header cannot poison the set. ``status`` is classify-only.
 
 The extension is additive to protocol ``0.3`` and is enabled explicitly
 by caller and host configuration.
+Spec: §13 of ``core-protocol.md`` in
+`synadia-ai/synadia-agent-sdk-docs <https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension>`_.
 """
 
 from __future__ import annotations

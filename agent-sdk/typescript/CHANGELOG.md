@@ -76,7 +76,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `PromptResponse.sender` (`VerifiedSender` with `id`, `ClaimedSender`
   without — never authorize on a claim — or `undefined`). `status` is
   classified and logged, never rejected. The extension is additive to
-  protocol `0.3`.
+  protocol `0.3`. Spec:
+  [`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension).
   - Registration is opt-in: omitted `identity` performs no self lookup and
     emits no identity metadata; explicit `{}` requests unsigned
     `user_nkey` / `account`; a live-bound signer also adds `id_sig`
