@@ -9,10 +9,13 @@
 > status handler describe behavior shipped from **this** package now;
 > the wire shapes themselves are unchanged.
 
-## Sender identity (optional extension)
+## Sender identity (extension — `core-protocol.md` §13)
 
 The sender-identity extension is additive on top of the unchanged 0.3
-protocol. This package ships the **receiver** side over the
+protocol; its
+[specification](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension)
+is §13 of `core-protocol.md`. Section names below refer
+to the matching parts of that chapter. This package ships the **receiver** side over the
 shared codec in `synadia-ai-agents` (`synadia_ai.agents.identity`); it
 adds only the stateful parts.
 

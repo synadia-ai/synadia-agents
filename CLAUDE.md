@@ -129,7 +129,8 @@ Two distinct version axes:
     on PyPI first) — both published to PyPI; versions diverge per
     package.
 - **Sender-identity extension** — additive on top of `0.3`, no
-  protocol bump. Public behavior is documented in both SDKs' README and
+  protocol bump. Spec: §13 of `core-protocol.md` in
+  `synadia-ai/synadia-agent-sdk-docs`. Public behavior is documented in both SDKs' README and
   protocol-mapping documents. Shared fixtures and the TS-generated
   known-answer vectors live under `test-fixtures/identity/`; keep those
   four-language fixtures authoritative when changing identity code.

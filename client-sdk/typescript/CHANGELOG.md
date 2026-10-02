@@ -161,7 +161,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   a timestamp and a nonce. The wire protocol stays `0.3`; support is
   advertised by feature detection (`min_sender_trust` on the prompt
   endpoint ⇔ the agent implements the extension; `Agent-Sender` sent ⇔
-  the caller does). The extension is additive to protocol `0.3`.
+  the caller does). The extension is additive to protocol `0.3` Spec:
+  [`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension).
   - `new Agents({ nc, identity: { signer?, name?, sendUnsignedClaim? } })`.
     `signerFromSeed` / `signerFromCreds` / `signerFromCredsFile` /
     `signerFromContext` build a `SenderSigner`; custom (HSM / KMS)

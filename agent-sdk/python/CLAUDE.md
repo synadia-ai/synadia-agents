@@ -217,7 +217,8 @@ deferred to a follow-up. All shapes are imported from
   terminator. The "error frame, then empty terminator" rule is
   agent-side; the exception classes themselves are imported from
   `synadia_ai.agents`.
-- **Sender identity** (optional extension, additive on 0.3): `AgentService`
+- **Sender identity** (extension, additive on 0.3 — spec
+  [`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension)): `AgentService`
   classifies every `prompt` request **before** the §6.4 ack through
   `agent_service/identity.py` (`SenderGate` over the shared
   `verify_sender`; `NonceCache` keyed `(user, nonce)`, expiry at
