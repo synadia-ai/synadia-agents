@@ -18,6 +18,7 @@ import { connect } from "@nats-io/transport-node";
 import { createUser } from "@nats-io/nkeys";
 import { findFreePort, findNatsServerBinary, waitForTcp } from "../harness/nats-server.js";
 import { loadContextOptions } from "../../src/context.js";
+import { resolveNatsConnectionBundle } from "../../src/connection-bundle.js";
 
 const bin = await findNatsServerBinary();
 
@@ -26,6 +27,9 @@ describe.skipIf(!bin)("loadContextOptions — nkey auth", () => {
   let port = 0;
   let tmpRoot = "";
   let originalConfigHome: string | undefined;
+  let seedPath = "";
+  let seedText = "";
+  let publicKey = "";
 
   beforeAll(async () => {
     if (!bin) return;
@@ -35,8 +39,9 @@ describe.skipIf(!bin)("loadContextOptions — nkey auth", () => {
     // "SU..." text — the same string `nats nkey gen user` would write.
     const kp = createUser();
     const seedBytes = kp.getSeed();
-    const publicKey = kp.getPublicKey();
-    const seedPath = join(tmpRoot, "user.nk");
+    seedText = new TextDecoder().decode(seedBytes);
+    publicKey = kp.getPublicKey();
+    seedPath = join(tmpRoot, "user.nk");
     await writeFile(seedPath, seedBytes);
 
     // Minimal nats-server config: only the user with this nkey is
@@ -131,5 +136,30 @@ describe.skipIf(!bin)("loadContextOptions — nkey auth", () => {
     delete stripped.authenticator;
 
     await expect(connect({ ...stripped, reconnect: false, timeout: 1_000 })).rejects.toBeDefined();
+  });
+
+  it("uses one canonical nkey snapshot for connection auth and signed identity", async () => {
+    const block =
+      `-----BEGIN USER NKEY SEED-----\n${seedText}\n` + "------END USER NKEY SEED------\n";
+    await writeFile(seedPath, block);
+    const bundle = await resolveNatsConnectionBundle(
+      { context: "nkey-test" },
+      { identity: "signed" },
+    );
+    // A rotation after resolution cannot split connection authentication
+    // from sender signing: both capabilities retained the original snapshot.
+    await writeFile(seedPath, createUser().getSeed());
+
+    let nc: Awaited<ReturnType<typeof connect>> | undefined;
+    try {
+      expect(bundle.signer.publicKey).toBe(publicKey);
+      nc = await connect(bundle.connectionOptions);
+      expect(nc.isClosed()).toBe(false);
+    } finally {
+      if (nc !== undefined) await nc.close();
+      bundle.wipe();
+      await writeFile(seedPath, seedText);
+    }
+    expect(() => bundle.signer.sign(new TextEncoder().encode("after wipe"))).toThrow(/wiped/);
   });
 });

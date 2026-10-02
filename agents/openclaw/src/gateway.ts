@@ -1,28 +1,25 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NatsConnection } from "@nats-io/nats-core";
-import { Svcm } from "@nats-io/services";
-import type { Service, ServiceHandler, ServiceMsg } from "@nats-io/services";
-import type { ChannelGatewayContext } from "openclaw/plugin-sdk";
-import { dispatchInboundDirectDmWithRuntime } from "openclaw/plugin-sdk/direct-dm";
+import type { ChannelGatewayContext } from "openclaw/plugin-sdk/channel-contract";
+import { dispatchInboundDirectDmWithRuntime } from "openclaw/plugin-sdk/channel-inbound";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 import {
+  Agents,
   AgentSubject,
-  PROMPT_QUEUE_GROUP,
-  ProtocolError,
-  SDK_PROTOCOL_VERSION,
-  SERVICE_NAME,
-  STATUS_QUEUE_GROUP,
-  decodeEnvelope,
-  formatHumanBytes,
-  parseHumanBytes,
+  AgentTools,
+  formatSender,
+  type Logger,
+  type NatsConnectionBundle,
+  type RequestEnvelope,
 } from "@synadia-ai/agents";
 import {
+  AgentService,
   DEFAULT_ATTACHMENTS_OK,
-  DEFAULT_MAX_PAYLOAD,
-  buildHeartbeatPayload,
-  encodeChunk,
-  encodeHeartbeatPayload,
   splitResponseText,
+  type PromptResponse,
+  type RequestInterceptor,
 } from "@synadia-ai/agent-service";
 import {
   ACK_KEEPALIVE_MS,
@@ -33,50 +30,145 @@ import {
 } from "./nats/index.js";
 import { connectToNats, drainConnection } from "./nats/connection.js";
 import type { ResolvedNatsAccount } from "./types.js";
-import { setActiveConnection } from "./runtime.js";
-import { cleanupAgentStaging, stageAttachmentsIntoPrompt } from "./attachments.js";
+import {
+  getNatsRuntime,
+  setActiveAgentTools,
+  setActiveConnection,
+  setActiveExtensions,
+} from "./runtime.js";
+import {
+  cleanupAgentStaging,
+  stageAttachmentsIntoPrompt,
+} from "./attachments.js";
+import {
+  composeExtensions,
+  loadExtensions,
+  type ComposedExtensions,
+  type Outcome,
+  type ServedRequest,
+} from "./extensions.js";
+import { registerAgentTools, toolNamesFor, type ActiveTurn } from "./tools.js";
 
-// Stage attachments under `<stateDir>/media/nats-channel/…` so OpenClaw's
-// media-access allowlist (openclaw/src/media/local-roots.ts → `<stateDir>/media`)
-// accepts the paths we hand to image/pdf tools. Resolved once per process.
+// Stage attachments under OpenClaw's media-access allowlist.
 const ATTACHMENT_BASE_DIR = join(resolveStateDir(), "media", "nats-channel");
-
-// Heartbeat cadence on `agents.hb.openclaw.<owner>.<name>`. Locally
-// pinned at 5s so the dashboard's stale-eviction loop (3× intervalS)
-// drops a dead `openclaw` agent in ~15s instead of ~90s. The SDK's
-// `DEFAULT_HEARTBEAT_INTERVAL_S` stays at 30s as a sensible third-party
-// default — first-party harnesses opt into the snappier cadence.
 const HEARTBEAT_INTERVAL_S = 5;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gateway state (module-level; one account runs at a time)
-// ─────────────────────────────────────────────────────────────────────────────
+// What an extension's factory is told about the plugin that loads it.
+const PLUGIN_NAME = "@synadia-ai/nats-channel";
+const PLUGIN_VERSION = readPluginVersion();
 
-let activeService: Service | null = null;
+function readPluginVersion(): string {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version?: unknown };
+    return typeof manifest.version === "string" ? manifest.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+// One OpenClaw channel account runs at a time.
+let activeService: AgentService | null = null;
 let activeNc: NatsConnection | null = null;
-let activeHeartbeat: ReturnType<typeof setInterval> | null = null;
+let activeBundle: NatsConnectionBundle | null = null;
 let activeAgentName: string | null = null;
-const activeAckTimers = new Map<string, ReturnType<typeof setInterval>>();
+// The caller-side client the agent tools prompt through, and the tools
+// themselves; both live as long as the service. `activeTools` stays null
+// with `agentTools: "off"`.
+let activeAgents: Agents | null = null;
+let activeTools: AgentTools | null = null;
+// The account's extensions, loaded before the connection; the composition
+// of none until then.
+let activeExtensions: ComposedExtensions | null = null;
+
+// ───────────────────────────────────────────────────────────────────────
+// The served turns: which request a tool call belongs to
+// ───────────────────────────────────────────────────────────────────────
+
+/** A served prompt from its arrival until OpenClaw's dispatch settled. */
+interface Turn {
+  readonly served: ServedRequest;
+  /** Runs a function in the prompt handler's async context (see `activeTurn`). */
+  readonly enter: <T>(fn: () => T) => T;
+}
+
+// The prompt handler runs inside `turnStore`, so a tool call made in the
+// handler's async context finds its request here. OpenClaw carries that
+// context into the turn it dispatches on 2026.8 and later (its command lane
+// snapshots the enqueuer's `AsyncLocalStorage` state); on earlier releases
+// the turn runs in the lane's own context and the store is empty there.
+const turnStore = new AsyncLocalStorage<ServedRequest>();
+// Every served prompt whose dispatch is pending, in arrival order. OpenClaw
+// runs one turn at a time per session — all of an account's prompts share
+// one — and dispatches in order, so the oldest pending turn is the one its
+// model is working in.
+let turnsInFlight: Turn[] = [];
+let turnCounter = 0;
+
+/**
+ * The turn OpenClaw's model is working in when a tool runs: the one bound
+ * in the current async context when the context reached the tool, else
+ * the oldest dispatch still pending. `enter` puts a tool call back into
+ * that request's async context — the interceptors' bindings and the tools'
+ * scope — when the tool runner lost it; it is a no-op when the context is
+ * already the request's.
+ */
+function activeTurn(): ActiveTurn | undefined {
+  const bound = turnStore.getStore();
+  if (bound) return { served: bound, enter: (fn) => fn() };
+  const head = turnsInFlight[0];
+  return head ? { served: head.served, enter: head.enter } : undefined;
+}
+
+/** The request as the extensions' events name it; one object per request. */
+function servedRequest(envelope: RequestEnvelope, response: PromptResponse): ServedRequest {
+  const sender = response.sender;
+  return Object.freeze({
+    id: String(++turnCounter),
+    extras: Object.freeze({ ...(envelope.extras ?? {}) }),
+    ...(sender?.trust === "verified" ? { caller: String(sender.id) } : {}),
+  });
+}
 
 async function cleanupPrevious(): Promise<void> {
-  for (const t of activeAckTimers.values()) clearInterval(t);
-  activeAckTimers.clear();
-  if (activeHeartbeat) {
-    clearInterval(activeHeartbeat);
-    activeHeartbeat = null;
+  // The extensions hear of the stop before the service leaves the bus.
+  if (activeService && activeExtensions) {
+    await activeExtensions.stopping();
   }
+  activeExtensions = null;
+  setActiveExtensions(null);
   if (activeService) {
     try {
       await activeService.stop();
     } catch {}
     activeService = null;
   }
-  if (activeNc) {
+  turnsInFlight = [];
+  setActiveAgentTools(null);
+  if (activeTools) {
     try {
-      await drainConnection(activeNc);
+      await activeTools.close();
     } catch {}
+    activeTools = null;
+  }
+  if (activeAgents) {
+    try {
+      await activeAgents.close();
+    } catch {}
+    activeAgents = null;
+  }
+  if (activeNc) {
+    // Do not wipe or replace this connection's credential snapshot unless the
+    // connection is definitely closed. drainConnection forces close on a
+    // graceful-drain failure and throws only when even that close failed.
+    await drainConnection(activeNc);
     activeNc = null;
   }
+  // Reconnect authentication and the sender signer share this retained
+  // snapshot. It is safe to wipe only after the NATS connection has closed.
+  activeBundle?.wipe();
+  activeBundle = null;
   if (activeAgentName) {
     cleanupAgentStaging(ATTACHMENT_BASE_DIR, activeAgentName);
     activeAgentName = null;
@@ -84,141 +176,212 @@ async function cleanupPrevious(): Promise<void> {
   setActiveConnection(null, null, null);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gateway start/stop
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Load the account's extensions, once, before the connection. A module
+ * that fails is logged and skipped; the gateway starts plain with the rest.
+ */
+async function loadAccountExtensions(
+  account: ResolvedNatsAccount,
+  logger: Logger,
+): Promise<ComposedExtensions> {
+  if (account.extensions.entries.length === 0) {
+    return composeExtensions([], logger);
+  }
+  const loaded = await loadExtensions(
+    account.extensions.entries,
+    {
+      harness: "openclaw",
+      plugin: { name: PLUGIN_NAME, version: PLUGIN_VERSION },
+      settings: {
+        owner: account.owner,
+        name: account.agentName,
+        senderIdentity: account.senderIdentity,
+        minSenderTrust: account.minSenderTrust,
+        stateDir: resolveStateDir(),
+        config: Object.freeze({ ...(account.config as unknown as Record<string, unknown>) }),
+      },
+      logger,
+    },
+    logger,
+  );
+  return composeExtensions(loaded, logger, {
+    pluginMetadataKeys: Object.keys(pluginMetadata(account)),
+  });
+}
+
+/** The gateway's own registration metadata keys; they win over an extension's. */
+function pluginMetadata(account: ResolvedNatsAccount): Record<string, string> {
+  return { platform: "openclaw", description: account.description };
+}
 
 export async function startNatsGateway(
   ctx: ChannelGatewayContext<ResolvedNatsAccount>,
 ): Promise<void> {
   const { account, cfg, abortSignal, channelRuntime } = ctx;
   const agentName = account.agentName;
-  const owner = account.owner;
-  // Long canonical name in `metadata.agent` (`openclaw`); short `oc` token
-  // in the wire subject — Appendix C convention. SDK's `AgentSubject`
-  // owns the subject layout via the `subjectToken` option (commit a87f334).
-  const subject = AgentSubject.new(AGENT_ID, owner, agentName, {
-    subjectToken: SUBJECT_AGENT_TOKEN,
-  });
-
-  ctx.log?.info?.(
-    `nats: gateway starting — ${subject.prompt} @ ${account.url} (accountId: ${account.accountId}, enabled: ${account.enabled})`,
-  );
+  const sourceLabel =
+    "context" in account.connectionSource
+      ? `context ${JSON.stringify(account.connectionSource.context)}`
+      : "configured URL";
 
   await cleanupPrevious();
 
-  // 1. Connect to NATS
-  const nc = await connectToNats({
-    url: account.url,
-    credentials: account.credentials,
-    name: `openclaw-${agentName}`,
-  });
-  activeNc = nc;
-  activeAgentName = agentName;
-  setActiveConnection(nc, agentName, owner);
-  ctx.setStatus({ state: "running" });
-
-  // Server-negotiated max_payload (§2.1). Reflects this user/account's real
-  // limit, so we use it for endpoint metadata advertisement and §5.4
-  // local enforcement. Falls back to the SDK's `DEFAULT_MAX_PAYLOAD` (1MB)
-  // if `INFO` is unavailable.
-  const maxPayloadBytes = nc.info?.max_payload ?? parseHumanBytes(DEFAULT_MAX_PAYLOAD);
-  const maxPayloadStr = nc.info?.max_payload
-    ? formatHumanBytes(maxPayloadBytes)
-    : DEFAULT_MAX_PAYLOAD;
-  ctx.log?.info?.(`nats: server max_payload=${maxPayloadStr}`);
-
-  // 2. Register the shared `agents` service (spec §3).
-  const svc = new Svcm(nc);
-  const service = await svc.add({
-    name: SERVICE_NAME,
-    version: SERVICE_VERSION,
-    description: account.description || `OpenClaw agent ${agentName}`,
-    metadata: {
-      agent: AGENT_ID,
-      owner,
-      session: DEFAULT_SESSION,
-      protocol_version: `${SDK_PROTOCOL_VERSION.major}.${SDK_PROTOCOL_VERSION.minor}`,
-      // Supplementary (tolerated per §3.2, useful for tools).
-      platform: "openclaw",
-      description: account.description,
-    },
-  });
-  activeService = service;
-  const instanceId = service.info().id;
-
-  // 3. The `prompt` endpoint. Subject is the canonical default
-  //    `agents.prompt.oc.<owner>.<name>`; metadata advertises capabilities per §2.1.
-  service.addEndpoint("prompt", {
-    subject: subject.prompt,
-    queue: PROMPT_QUEUE_GROUP,
-    handler: buildPromptHandler(
-      ctx,
-      nc,
-      account,
-      cfg,
-      channelRuntime,
-      maxPayloadBytes,
-      maxPayloadStr,
-    ),
-    metadata: {
-      max_payload: maxPayloadStr,
-      attachments_ok: DEFAULT_ATTACHMENTS_OK ? "true" : "false",
-    },
-  });
-
-  // 4. §8.7 (v0.3) status request/response endpoint. Replies with the same
-  //    JSON payload shape as a heartbeat (§8.3), freshly built per request.
-  service.addEndpoint("status", {
-    subject: subject.status,
-    queue: STATUS_QUEUE_GROUP,
-    handler: (err, msg: ServiceMsg) => {
-      if (err) return;
-      try {
-        const payload = buildHeartbeatPayload(subject, HEARTBEAT_INTERVAL_S, instanceId, {
-          session: DEFAULT_SESSION,
-        });
-        msg.respond(encodeHeartbeatPayload(payload));
-      } catch (e) {
-        try {
-          msg.respondError(500, `status handler error: ${(e as Error).message}`);
-        } catch {
-          // best effort
-        }
-      }
-    },
-  });
-
-  // 5. Heartbeat — starts AFTER registration so callers discovering via the
-  //    beacon can resolve metadata via $SRV.INFO (spec §8.2).
-  const publishHeartbeat = (): void => {
-    try {
-      const payload = buildHeartbeatPayload(subject, HEARTBEAT_INTERVAL_S, instanceId, {
-        session: DEFAULT_SESSION,
-      });
-      nc.publish(subject.heartbeat, encodeHeartbeatPayload(payload));
-    } catch {
-      // best effort — the connection status loop surfaces real failures
-    }
-  };
-  publishHeartbeat(); // emit one immediately so discovery is prompt
-  activeHeartbeat = setInterval(publishHeartbeat, HEARTBEAT_INTERVAL_S * 1000);
-  activeHeartbeat.unref?.();
+  const logger = gatewayLogger(ctx);
+  const extensions = await loadAccountExtensions(account, logger);
+  activeExtensions = extensions;
+  setActiveExtensions({ accountId: account.accountId, names: extensions.names });
 
   ctx.log?.info?.(
-    `nats: "${agentName}" registered at ${subject.prompt} (instance_id=${instanceId})`,
+    `nats: gateway starting — oc/${account.owner}/${agentName} using ${sourceLabel} ` +
+      `(accountId: ${account.accountId}, senderIdentity: ${account.senderIdentity}, ` +
+      `minSenderTrust: ${account.minSenderTrust}, agentTools: ${account.agentTools}, ` +
+      `extensions: ${extensions.names.join(", ") || "none"})`,
   );
 
-  // 5. Stay alive until abort
+  const connected = await connectToNats({
+    source: account.connectionSource,
+    senderIdentity: account.senderIdentity,
+    name: `openclaw-${agentName}`,
+  });
+  activeNc = connected.nc;
+  activeBundle = connected.bundle;
+  activeAgentName = agentName;
+
+  const signer = connected.bundle.signer;
+  // One caller-side client for the agent tools, with the same signer as the
+  // service and the extensions' prompt interceptors. It outlives every
+  // prompt and closes with the service.
+  const agents = new Agents({
+    nc: connected.nc,
+    logger,
+    ...(signer ? { identity: { signer } } : {}),
+    interceptors: extensions.promptInterceptors,
+  });
+  activeAgents = agents;
+  const toolNames = toolNamesFor(account.agentTools);
+  const tools = toolNames
+    ? new AgentTools({
+        agents,
+        tools: toolNames,
+        // The agent's own address is left out of discovery and refused, so
+        // the model cannot prompt the OpenClaw it runs in.
+        selfAddress: AgentSubject.new(AGENT_ID, account.owner, agentName, {
+          subjectToken: SUBJECT_AGENT_TOKEN,
+        }).prompt,
+        extensions: extensions.toolExtensions,
+        logger,
+      })
+    : null;
+  activeTools = tools;
+  // The extensions' request interceptors first, in load order, then the
+  // tools' scope: an extension's interceptor wraps the plugin's, and a
+  // request an extension refuses opens no tools scope.
+  const interceptors: RequestInterceptor[] = [
+    ...extensions.requestInterceptors,
+    ...(tools ? [tools.requestInterceptor] : []),
+  ];
+
+  const service = new AgentService({
+    nc: connected.nc,
+    agent: AGENT_ID,
+    subjectToken: SUBJECT_AGENT_TOKEN,
+    owner: account.owner,
+    name: agentName,
+    session: DEFAULT_SESSION,
+    description: account.description || `OpenClaw agent ${agentName}`,
+    version: SERVICE_VERSION,
+    attachmentsOk: DEFAULT_ATTACHMENTS_OK,
+    heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
+    keepaliveIntervalS: ACK_KEEPALIVE_MS / 1_000,
+    extraMetadata: {
+      ...extensions.metadata,
+      ...pluginMetadata(account),
+    },
+    ...(signer ? { identity: { signer } } : {}),
+    minSenderTrust: account.minSenderTrust,
+    interceptors,
+    ...(extensions.heartbeatExtras
+      ? { heartbeatExtras: extensions.heartbeatExtras }
+      : {}),
+    logger,
+  });
+
+  const maxPayloadBytes = connected.nc.info?.max_payload ?? 1_048_576;
+  service.onPrompt((envelope, response) => {
+    const served = servedRequest(envelope, response);
+    return turnStore.run(served, () => {
+      // The handler's async context is the one every interceptor bound;
+      // a tool call that lost it is put back into it through `enter`.
+      const turn: Turn = { served, enter: AsyncLocalStorage.snapshot() };
+      turnsInFlight.push(turn);
+      // Synchronous, in that context, so an extension reads here what its
+      // own request interceptor set up.
+      extensions.events.promptAccepted(served);
+      return serveTurn(turn, extensions, (onDispatchError) =>
+        dispatchPromptToOpenClaw(
+          ctx,
+          account,
+          cfg,
+          channelRuntime,
+          envelope,
+          response,
+          maxPayloadBytes,
+          {
+            aroundDispatch: (run) => extensions.events.aroundDispatch(served, run),
+            onDispatchError,
+          },
+        ),
+      );
+    });
+  });
+
+  try {
+    await service.start();
+  } catch (error) {
+    // Not `activeService` yet: the extensions' `stopping()` is owed only
+    // to a service that started.
+    try {
+      await service.stop();
+    } catch {}
+    await cleanupPrevious();
+    throw error;
+  }
+  activeService = service;
+
+  setActiveConnection(connected.nc, agentName, account.owner);
+  // The tools appear to the model once the agent is on the bus.
+  const registered = tools
+    ? registerAgentTools(tools, {
+        activeTurn,
+        aroundToolCall: extensions.events.aroundToolCall,
+      })
+    : [];
+  setActiveAgentTools(tools ? registered : null);
+  await extensions.started({ agents, service });
+  ctx.setStatus({
+    ...ctx.getStatus(),
+    running: true,
+    connected: true,
+    statusState: "running",
+  });
+  ctx.log?.info?.(
+    `nats: "${agentName}" registered at ${service.subject.prompt} ` +
+      `(instance_id=${service.instanceId}, identity=${service.identity ? "registered" : "off"}, ` +
+      `agent_tools=${registered.map((t) => t.name).join(", ") || "none"}, ` +
+      `extensions=${extensions.names.join(", ") || "none"})`,
+  );
+
   return new Promise<void>((resolve) => {
-    abortSignal.addEventListener("abort", () => {
+    const stop = (): void => {
       cleanupPrevious()
         .then(
           () => ctx.log?.info?.(`nats: "${agentName}" stopped`),
           (err) => ctx.log?.error?.(`nats: shutdown error: ${String(err)}`),
         )
         .finally(resolve);
-    });
+    };
+    if (abortSignal.aborted) stop();
+    else abortSignal.addEventListener("abort", stop, { once: true });
   });
 }
 
@@ -228,88 +391,106 @@ export async function stopNatsGateway(
   await cleanupPrevious();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Prompt handler — translates one NATS request into one OpenClaw dispatch
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Serve one prompt: run its dispatch, then settle it for the extensions.
+ * The outcome is `ok` when the dispatch resolved and reported no error,
+ * `error` when it threw — the handler rejects with that error, and the
+ * service answers the caller — or when OpenClaw reported a dispatch error
+ * and still resolved.
+ */
+async function serveTurn(
+  turn: Turn,
+  extensions: ComposedExtensions,
+  dispatch: (onDispatchError: () => void) => Promise<void>,
+): Promise<void> {
+  let outcome: Outcome = "ok";
+  try {
+    await dispatch(() => {
+      outcome = "error";
+    });
+  } catch (error) {
+    outcome = "error";
+    throw error;
+  } finally {
+    turnsInFlight = turnsInFlight.filter((t) => t !== turn);
+    extensions.events.promptEnded(turn.served, outcome, Date.now());
+  }
+}
 
-function buildPromptHandler(
+/** What the dispatch of one prompt takes from the extensions and reports back. */
+interface DispatchHooks {
+  /** The extensions' wrapper around OpenClaw's dispatch of the turn. */
+  readonly aroundDispatch: <T>(run: () => Promise<T>) => Promise<T>;
+  /** OpenClaw reported a dispatch error and will still resolve. */
+  readonly onDispatchError: () => void;
+}
+
+async function dispatchPromptToOpenClaw(
   ctx: ChannelGatewayContext<ResolvedNatsAccount>,
-  nc: NatsConnection,
   account: ResolvedNatsAccount,
   cfg: Parameters<typeof dispatchInboundDirectDmWithRuntime>[0]["cfg"],
   channelRuntime: ChannelGatewayContext<ResolvedNatsAccount>["channelRuntime"],
+  envelope: RequestEnvelope,
+  response: PromptResponse,
   maxPayloadBytes: number,
-  maxPayloadStr: string,
-): ServiceHandler {
-  return (err, msg) => {
-    if (err || !msg.reply) return;
+  hooks: DispatchHooks,
+): Promise<void> {
+  // Sender identity stays structured metadata: it is visible in logs and on
+  // PromptResponse, but is never interpolated into the model's prompt text.
+  ctx.log?.info?.(
+    `nats: incoming prompt sender=${formatSender(response.sender)}`,
+  );
 
-    // §5.4: enforce max_payload locally.
-    if (msg.data.byteLength > maxPayloadBytes) {
-      respondWithError(nc, msg, 400, `payload exceeds max_payload (${maxPayloadStr})`);
-      return;
-    }
+  const finalPrompt = stageAttachmentsIntoPrompt({
+    baseDir: ATTACHMENT_BASE_DIR,
+    agentName: account.agentName,
+    prompt: envelope.prompt,
+    attachments: (envelope.attachments ?? []).map((attachment) => ({
+      filename: attachment.filename,
+      bytes: attachment.content,
+    })),
+  });
 
-    // SDK's `decodeEnvelope` throws ProtocolError on §5.1 / §5.2 / §5.3
-    // violations; everything else (e.g. JSON.parse failures) is normalised
-    // by SDK into the same error type. Treat both as 400 per §9.1.
-    let envelope: ReturnType<typeof decodeEnvelope>;
-    try {
-      envelope = decodeEnvelope(msg.data);
-    } catch (e) {
-      const code = e instanceof ProtocolError ? 400 : 500;
-      respondWithError(nc, msg, code, (e as Error).message);
-      return;
-    }
-
-    // Stage attachments (if any) and build the augmented prompt text handed
-    // to OpenClaw's pipeline. Staging failures → 500 (envelope was valid, we
-    // just couldn't process it) per spec §9.2. SDK delivers attachments as
-    // `{filename, content: Uint8Array}`; openclaw's stager expects the same
-    // shape under the legacy `bytes` key, so adapt at the boundary.
-    let finalPrompt: string;
-    try {
-      finalPrompt = stageAttachmentsIntoPrompt({
-        baseDir: ATTACHMENT_BASE_DIR,
-        agentName: account.agentName,
-        prompt: envelope.prompt,
-        attachments: (envelope.attachments ?? []).map((a) => ({
-          filename: a.filename,
-          bytes: a.content,
-        })),
-      });
-    } catch (e) {
-      respondWithError(nc, msg, 500, `attachment staging failed: ${(e as Error).message}`);
-      return;
-    }
-
-    const reply = msg.reply;
-
-    // §6.4: ack as soon as the request is accepted so the caller's inactivity
-    // timer resets before the first response chunk arrives.
-    nc.publish(reply, encodeChunk({ type: "status", status: "ack" }));
-    startAckKeepalive(nc, reply);
-
-    // Always enable block streaming in OpenClaw so partial text flows.
-    const effectiveRuntime = {
-      ...channelRuntime,
-      reply: {
-        ...channelRuntime.reply,
-        dispatchReplyWithBufferedBlockDispatcher: (params: Record<string, unknown>) => {
-          return channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
-            ...params,
-            replyOptions: {
-              ...(params.replyOptions as Record<string, unknown> | undefined),
-              disableBlockStreaming: false,
-            },
-          });
-        },
+  // Always enable block streaming in OpenClaw so partial text flows.
+  if (!channelRuntime) {
+    throw new Error("OpenClaw channel runtime is unavailable");
+  }
+  const directRuntime = channelRuntime as unknown as Parameters<
+    typeof dispatchInboundDirectDmWithRuntime
+  >[0]["runtime"]["channel"];
+  const effectiveRuntime = {
+    ...directRuntime,
+    reply: {
+      ...directRuntime.reply,
+      dispatchReplyWithBufferedBlockDispatcher: (
+        params: Parameters<
+          typeof directRuntime.reply.dispatchReplyWithBufferedBlockDispatcher
+        >[0],
+      ) => {
+        return directRuntime.reply.dispatchReplyWithBufferedBlockDispatcher({
+          ...params,
+          replyOptions: {
+            ...params.replyOptions,
+            disableBlockStreaming: false,
+          },
+        });
       },
-    };
+    },
+  };
+  // Older OpenClaw releases accepted the narrow `{ channel }` runtime;
+  // current releases require the full plugin runtime. The full object is
+  // structurally valid for both, with only the reply helper overridden.
+  const runtimeWithStreaming = {
+    ...getNatsRuntime(),
+    channel: effectiveRuntime,
+  };
 
+  // The dispatch runs inside the extensions' `aroundDispatch`, so a context
+  // an extension binds around it is what OpenClaw's turn runs in.
+  await hooks.aroundDispatch(() =>
     dispatchInboundDirectDmWithRuntime({
       cfg,
-      runtime: { channel: effectiveRuntime },
+      runtime: runtimeWithStreaming,
       channel: "nats",
       channelLabel: "NATS",
       accountId: account.accountId,
@@ -325,19 +506,8 @@ function buildPromptHandler(
       deliver: async (payload) => {
         const text = payload.text ?? "";
         if (!text) return;
-        // §6.3: each response chunk is a typed JSON object. OpenClaw's
-        // streaming usually delivers small rendered blocks, but guard
-        // against an oversize block reaching the broker by encoding
-        // first, fast-pathing if it fits, and falling back to the SDK's
-        // UTF-8-safe splitter if not. Mirrors pi/claude-code so all
-        // three harnesses behave the same on long deliveries.
-        const bytes = encodeChunk({ type: "response", text });
-        if (bytes.byteLength <= maxPayloadBytes) {
-          nc.publish(reply, bytes);
-        } else {
-          for (const slice of splitResponseText(text, maxPayloadBytes)) {
-            nc.publish(reply, encodeChunk({ type: "response", text: slice }));
-          }
+        for (const slice of splitResponseText(text, maxPayloadBytes)) {
+          await response.send(slice);
         }
       },
       onRecordError: (err) => {
@@ -345,67 +515,30 @@ function buildPromptHandler(
       },
       onDispatchError: (err, info) => {
         ctx.log?.error?.(`nats: ${info.kind} dispatch error: ${String(err)}`);
+        // OpenClaw reports some dispatch failures here and still resolves;
+        // the turn ended in error either way.
+        hooks.onDispatchError();
       },
-    })
-      .then(() => {
-        stopAckKeepalive(reply);
-        // §6.5 terminator: empty body + no headers.
-        try {
-          nc.publish(reply, "");
-        } catch {}
-      })
-      .catch((dispatchErr) => {
-        stopAckKeepalive(reply);
-        ctx.log?.error?.(`nats: dispatch failed: ${String(dispatchErr)}`);
-        // §9.3: emit the error-headered signal then the terminator.
-        respondWithError(nc, msg, 500, `dispatch failed: ${String(dispatchErr)}`);
-      });
+    }),
+  );
+}
+
+function gatewayLogger(
+  ctx: ChannelGatewayContext<ResolvedNatsAccount>,
+): Logger {
+  const appendContext = (
+    message: string,
+    data?: Record<string, unknown>,
+  ): string =>
+    data === undefined ? message : `${message} ${JSON.stringify(data)}`;
+  return {
+    debug: (message, data) =>
+      ctx.log?.debug?.(`nats: ${appendContext(message, data)}`),
+    info: (message, data) =>
+      ctx.log?.info?.(`nats: ${appendContext(message, data)}`),
+    warn: (message, data) =>
+      ctx.log?.warn?.(`nats: ${appendContext(message, data)}`),
+    error: (message, data) =>
+      ctx.log?.error?.(`nats: ${appendContext(message, data)}`),
   };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Spec helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Spec §9.3: an error during a stream is emitted as a header-only message on
- * the reply subject, followed by the empty-body-no-headers terminator. Two
- * messages, not one.
- */
-function respondWithError(
-  nc: NatsConnection,
-  msg: ServiceMsg,
-  code: number,
-  description: string,
-): void {
-  try {
-    msg.respondError(code, description);
-  } catch {
-    // best effort — usually tearing down
-  }
-  if (msg.reply) {
-    stopAckKeepalive(msg.reply);
-    try {
-      nc.publish(msg.reply, "");
-    } catch {}
-  }
-}
-
-function startAckKeepalive(nc: NatsConnection, reply: string): void {
-  stopAckKeepalive(reply);
-  const timer = setInterval(() => {
-    try {
-      nc.publish(reply, encodeChunk({ type: "status", status: "ack" }));
-    } catch {}
-  }, ACK_KEEPALIVE_MS);
-  timer.unref?.();
-  activeAckTimers.set(reply, timer);
-}
-
-function stopAckKeepalive(reply: string): void {
-  const t = activeAckTimers.get(reply);
-  if (t) {
-    clearInterval(t);
-    activeAckTimers.delete(reply);
-  }
 }

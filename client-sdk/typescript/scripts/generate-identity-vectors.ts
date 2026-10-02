@@ -4,8 +4,8 @@
 //   sender-vectors.json — `Agent-Sender` headers: for each case the exact
 //                         signed input, the exact header bytes and the
 //                         framed wire length; includes an empty payload, a
-//                         non-ASCII `name`, a renamed-import `sub`, and an
-//                         unsigned claim.
+//                         non-ASCII `name`, a renamed-import `sub`, a
+//                         host's signed heartbeat, and an unsigned claim.
 //   id-sig-vectors.json — `AGENT-ID-V1` registration signatures, including
 //                         a custom (non-default) prompt subject.
 //
@@ -234,6 +234,18 @@ export async function generate(): Promise<{ sender: SenderVectorsFile; idSig: Id
   const bob = keys.users["bob"]!;
   const envelope = enc.encode(JSON.stringify({ prompt: "hello" }));
   const promptSubject = "agents.prompt.demo-agent.alice.example";
+  // A host's §8.3 heartbeat frame as the TypeScript host encodes it. The
+  // header's `ts` is the frame's own `ts`, so both carry FIXED_TS.
+  const heartbeat = enc.encode(
+    JSON.stringify({
+      agent: "demo-agent",
+      owner: "alice",
+      instance_id: "demo-agent-example-1",
+      ts: FIXED_TS,
+      interval_s: 30,
+    }),
+  );
+  const heartbeatSubject = "agents.hb.demo-agent.alice.example";
 
   // Sanity: the spec's account key must still be a valid NKEY.
   createAccount(); // keeps the import meaningful for future operator-mode vectors
@@ -306,6 +318,14 @@ export async function generate(): Promise<{ sender: SenderVectorsFile; idSig: Id
       "$G",
       promptSubject,
       enc.encode(JSON.stringify({ prompt: "grüße 🌍" })),
+    ),
+    await senderVector(
+      "signed-heartbeat",
+      "a host's heartbeat: sub the heartbeat subject as published, ts the frame's own ts, the hash over the frame bytes",
+      alice.seed,
+      "$G",
+      heartbeatSubject,
+      heartbeat,
     ),
     await senderVector(
       "unsigned-claim",

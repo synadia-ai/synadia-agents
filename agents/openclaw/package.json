@@ -32,7 +32,8 @@
     "setup-entry.ts",
     "openclaw.plugin.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "openclaw": {
     "extensions": [
@@ -58,6 +59,7 @@
     "prepublishOnly": "tsup"
   },
   "dependencies": {
+    "@nats-io/nats-core": "^3.4.0",
     "@nats-io/services": "^3.4.0",
     "@nats-io/transport-node": "^3.4.0",
     "@sinclair/typebox": "^0.34.0",
@@ -65,7 +67,7 @@
     "@synadia-ai/agents": "file:../../client-sdk/typescript"
   },
   "peerDependencies": {
-    "openclaw": ""
+    "openclaw": ">=2026.5.4 <2027"
   },
   "peerDependenciesMeta": {
     "openclaw": {

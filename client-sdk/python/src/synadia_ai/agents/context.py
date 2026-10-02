@@ -143,6 +143,21 @@ def load_context_options(selector: str) -> dict[str, Any]:
     """
     ctx = read_context_file(selector)
     name, parsed = ctx.name, ctx.fields
+    out = _build_context_base_options(ctx)
+    out.update(_build_auth_kwargs(name, parsed))
+
+    return out
+
+
+def _build_context_base_options(ctx: NatsContextFile) -> dict[str, Any]:
+    """Build the non-auth connection options from an already-read context.
+
+    ``resolve_nats_connection_bundle`` uses this internal half so it can
+    select and snapshot authentication material itself without reading the
+    context twice.  Keeping validation here also prevents the legacy
+    :func:`load_context_options` and the bundle resolver from drifting.
+    """
+    name, parsed = ctx.name, ctx.fields
 
     url = parsed.get("url")
     if not isinstance(url, str) or not url:
@@ -166,7 +181,6 @@ def load_context_options(selector: str) -> dict[str, Any]:
             )
 
     out: dict[str, Any] = {"servers": servers}
-    out.update(_build_auth_kwargs(name, parsed))
 
     inbox_prefix = parsed.get("inbox_prefix")
     if isinstance(inbox_prefix, str) and inbox_prefix:
@@ -237,11 +251,16 @@ def _read_seed_file(name: str, path: str) -> str:
         raise NatsContextError(
             f"NATS context {name!r}: cannot read nkey seed file {path}: {exc.strerror}"
         ) from exc
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    seed = next((ln for ln in lines if ln.startswith("S") and "-" not in ln), None)
+    seed = _extract_seed_line(text)
     if seed is None:
         raise NatsContextError(f"NATS context {name!r}: no nkey seed line found in {path}")
     return seed
+
+
+def _extract_seed_line(text: str) -> str | None:
+    """Return a normalized seed from a bare file or a NATS seed block."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return next((line for line in lines if line.startswith("S") and "-" not in line), None)
 
 
 # --- internals ----------------------------------------------------------
@@ -413,7 +432,9 @@ def parse_nats_url(url: str) -> dict[str, Any]:
             or p.get("user") != first.get("user")
             or p.get("password") != first.get("password")
         ):
-            raise NatsContextError(f"NATS URL has mixed credentials across server entries: {url}")
+            raise NatsContextError(
+                f"NATS URL has mixed credentials across server entries: {_redact_nats_url(url)}"
+            )
 
     out: dict[str, Any] = {"servers": [p["server"] for p in parsed_all]}
     for k in ("token", "user", "password"):
@@ -430,12 +451,18 @@ def _parse_single_nats_url(part: str, *, original: str) -> dict[str, Any]:
     try:
         parsed = urlparse(with_scheme)
     except ValueError as exc:
-        raise NatsContextError(f"invalid NATS URL {original!r}: {exc}") from exc
+        raise NatsContextError(f"invalid NATS URL {_redact_nats_url(original)!r}: {exc}") from exc
 
     if parsed.scheme not in _SUPPORTED_URL_SCHEMES:
-        raise NatsContextError(f"unsupported scheme {parsed.scheme!r} in NATS URL {original!r}")
+        raise NatsContextError(
+            f"unsupported scheme {parsed.scheme!r} in NATS URL {_redact_nats_url(original)!r}"
+        )
     if not parsed.hostname:
-        raise NatsContextError(f"NATS URL {original!r} is missing a host")
+        raise NatsContextError(f"NATS URL {_redact_nats_url(original)!r} is missing a host")
+    if any(ch.isspace() for ch in parsed.hostname):
+        raise NatsContextError(
+            f"invalid NATS URL {_redact_nats_url(original)!r}: whitespace in host"
+        )
 
     # Reconstruct the server URL without userinfo. Re-bracket IPv6 hosts —
     # urlparse strips the brackets but `nats-py` (and most other tools)
@@ -448,7 +475,18 @@ def _parse_single_nats_url(part: str, *, original: str) -> dict[str, Any]:
         netloc = f"{host_token}:{_DEFAULT_NATS_PORT}"
     else:
         netloc = host_token
-    server = f"{parsed.scheme}://{netloc}"
+    # WebSocket transports use the URL path/query as their NATS endpoint.
+    # TCP NATS/tls URLs do not, so retain the existing host-only shape there.
+    websocket_suffix = ""
+    if parsed.scheme in ("ws", "wss"):
+        # Match WHATWG URL canonicalisation used by the TypeScript SDK: a
+        # query on a bare authority receives the implicit root path.
+        websocket_suffix = parsed.path or ("/" if parsed.query else "")
+        if parsed.params:
+            websocket_suffix += f";{parsed.params}"
+        if parsed.query:
+            websocket_suffix += f"?{parsed.query}"
+    server = f"{parsed.scheme}://{netloc}{websocket_suffix}"
 
     out: dict[str, Any] = {"server": server}
     if parsed.password is not None:
@@ -460,6 +498,20 @@ def _parse_single_nats_url(part: str, *, original: str) -> dict[str, Any]:
         # Single userinfo component → token (matches `nats` CLI behaviour).
         out["token"] = unquote(parsed.username)
     return out
+
+
+def _redact_nats_url(url: str) -> str:
+    """Redact userinfo in one or more NATS URLs for safe error messages."""
+    redacted: list[str] = []
+    for raw_part in url.split(","):
+        part = raw_part.strip()
+        scheme_end = part.find("://")
+        authority_start = scheme_end + 3 if scheme_end >= 0 else 0
+        at = part.rfind("@", authority_start)
+        if at >= authority_start:
+            part = f"{part[:authority_start]}<redacted>@{part[at + 1 :]}"
+        redacted.append(part)
+    return ",".join(redacted)
 
 
 __all__ = [

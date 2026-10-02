@@ -5,11 +5,15 @@ Wraps a parsed :class:`~synadia_ai.agents.discovery.AgentInfo` with the
 SDK's ``Agent`` class (PR #7): every field flat / read-only, ``prompt()``
 and ``status()`` are the methods that actually do I/O.
 
-Sender identity (extension): when constructed by an :class:`Agents`
-client the handle carries its :class:`~synadia_ai.agents.identity.Identity`,
-and ``prompt()`` / ``status()`` attach an ``Agent-Sender`` header —
-signed when a signer is configured, an unsigned claim otherwise, nothing
-when the connection has no identity.
+Sender identity (extension): a handle carries an
+:class:`~synadia_ai.agents.identity.Identity` only when its
+:class:`Agents` client explicitly enables one. ``prompt()`` / ``status()``
+then attach a live-bound signed header or an explicitly requested unsigned
+claim; omission attaches nothing and performs no identity lookup.
+
+Prompt interceptors: a handle also carries its client's interceptors,
+which ``prompt()`` runs at publish time, in two phases (see
+:mod:`synadia_ai.agents.interceptor`).
 
 The server-side counterpart (``AgentService``) ships in the sibling
 distribution :mod:`synadia_ai.agent_service`.
@@ -19,9 +23,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Mapping
+import contextvars
+from collections.abc import AsyncIterator, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 import pydantic
 
@@ -40,7 +45,22 @@ from .errors import (
 )
 from .heartbeat import HeartbeatPayload
 from .identity.agent_id import AgentId
-from .identity.options import Identity, plan_sender_header, sender_header_bound
+from .identity.options import (
+    Identity,
+    SenderHeaderPlan,
+    plan_sender_header,
+    sender_header_bound,
+)
+from .interceptor import (
+    EMPTY_CONTEXT,
+    CollectedExtras,
+    PromptInterceptor,
+    PromptInterceptorContext,
+    PromptSigning,
+    collect_extras,
+    read_only_extras,
+    run_before_publish,
+)
 from .messages import QueryChunk, ResponseChunk, StatusChunk, decode_chunk
 from .validation import (
     assert_attachments_allowed,
@@ -108,8 +128,39 @@ class Query:
         await self._nc.publish(self.reply_subject, payload)
 
 
+_T = TypeVar("_T")
+
 StreamMessage: TypeAlias = ResponseChunk | StatusChunk | Query
 """One item yielded by :meth:`Agent.prompt`'s async iterator."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Interception:
+    """What :meth:`Agent.prompt` hands its stream for the prompt interceptors."""
+
+    #: The caller's context, captured by ``prompt()``.
+    context: contextvars.Context
+    ctx: PromptInterceptorContext
+    #: The envelope before the interceptors' fields are added.
+    envelope: Envelope
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedRequest:
+    """The request as it will be published, before its header is signed."""
+
+    encoded: bytes
+    plan: SenderHeaderPlan | None
+    #: The interceptors' first phase, merged; ``None`` without interceptors.
+    collected: CollectedExtras | None
+
+    @property
+    def extra_headers(self) -> dict[str, str]:
+        return dict(self.collected.headers) if self.collected is not None else {}
+
+
+#: The wire fields the envelope codec owns — never an interceptor's extra.
+_ENVELOPE_FIELDS = frozenset(Envelope.model_fields)
 
 
 class Agent:
@@ -143,6 +194,7 @@ class Agent:
         prompt_max_wait_s: float = DEFAULT_PROMPT_MAX_WAIT_S,
         close_event: asyncio.Event | None = None,
         identity: Identity | None = None,
+        interceptors: Sequence[PromptInterceptor] = (),
     ) -> None:
         if prompt_max_wait_s <= 0:
             raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
@@ -152,6 +204,13 @@ class Agent:
         self._default_max_wait_s = prompt_max_wait_s
         self._close_event = close_event
         self._sender_identity = identity
+        # Copied: a caller mutating its list afterwards changes nothing here.
+        self._interceptors = tuple(interceptors)
+
+    @property
+    def interceptors(self) -> tuple[PromptInterceptor, ...]:
+        """The prompt interceptors :meth:`prompt` runs, in order (inherited from ``Agents``)."""
+        return self._interceptors
 
     # --- flat read-only identity / capability fields -------------------
 
@@ -253,6 +312,7 @@ class Agent:
         max_wait_s: float | None = None,
         subject: str | None = None,
         sub: str | None = None,
+        context: Mapping[str, object] | None = None,
     ) -> AsyncIterator[StreamMessage]:
         """Send a prompt and return an async iterator of streamed messages.
 
@@ -281,6 +341,23 @@ class Agent:
         :class:`ValueError` synchronously — there is no "no limit"
         sentinel, since an unbounded prompt stream is the exact failure
         mode this ceiling exists to prevent.
+
+        An :class:`Envelope` goes out with its extra fields
+        (:attr:`Envelope.extras`), so a relay that forwards the envelope it
+        received preserves them (§5.6); the prompt interceptors see them as
+        ``ctx.envelope_extras``, and a field an interceptor adds replaces one
+        of the same name.
+
+        ``context`` holds opaque values for the client's prompt
+        interceptors, handed to each as ``ctx.context`` — the SDK never
+        reads them. A caller that knows which interceptors it runs passes
+        what they need here (the ID of the model tool call a prompt
+        serves, say). The interceptors run at publish time, in a copy of
+        the context this call was made in, in two phases (see
+        :mod:`synadia_ai.agents.interceptor`): a ``before_prompt`` that
+        raises fails the prompt on the first ``__anext__``, before it is
+        sent; ``before_publish`` runs once the prompt is signed and checked,
+        immediately before it is published.
 
         §5.4 pre-publish validation runs synchronously before any wire I/O.
         Failures raise:
@@ -350,10 +427,10 @@ class Agent:
                 merged_attachments.extend(attachments)
             else:
                 merged_attachments = list(text.attachments) if text.attachments else None
-            envelope = Envelope(
-                prompt=text.prompt,
-                attachments=merged_attachments,
-            )
+            # The envelope's extra fields go out with it: a relay forwarding
+            # what it received preserves them (§5.6). A prompt interceptor's
+            # field of the same name replaces one at publish time.
+            envelope = Envelope(prompt=text.prompt, attachments=merged_attachments, **text.extras)
         else:
             envelope = Envelope(
                 prompt=text,
@@ -387,6 +464,24 @@ class Agent:
 
         effective_timeout = timeout if timeout is not None else self._default_inactivity_timeout
         effective_max_wait = max_wait_s if max_wait_s is not None else self._default_max_wait_s
+        # Captured here, while the context is still the caller's: the
+        # interceptors run at publish time, when it may be another one.
+        intercept = (
+            _Interception(
+                context=contextvars.copy_context(),
+                ctx=PromptInterceptorContext(
+                    agent=self,
+                    prompt=envelope.prompt,
+                    envelope_extras=read_only_extras(envelope.extras),
+                    context=context if context is not None else EMPTY_CONTEXT,
+                    connection=self._nc,
+                    identity=PromptSigning(self._nc, self._sender_identity),
+                ),
+                envelope=envelope,
+            )
+            if self._interceptors
+            else None
+        )
         return self._stream_prompt(
             encoded,
             effective_timeout,
@@ -394,6 +489,7 @@ class Agent:
             subject=publish_subject,
             sub=signed_subject,
             require_signed=require_signed,
+            intercept=intercept,
         )
 
     # --- status --------------------------------------------------------
@@ -418,8 +514,9 @@ class Agent:
         :class:`ProtocolError` on an error-headered reply or a reply that
         is not a §8.3 heartbeat payload, :class:`TimeoutError` /
         :class:`~nats.errors.NoRespondersError` from the transport, and
-        :class:`IdentityMismatchError` when a configured signer is not
-        the connection's user (other identity failures mean "no header").
+        configured-signer identity errors when its live connection binding
+        cannot be established. Without a signer, an unavailable optional
+        unsigned identity means "no header".
         """
         endpoint = next((e for e in self.endpoints if e.name == STATUS_ENDPOINT_NAME), None)
         publish_subject = (
@@ -554,6 +651,61 @@ class Agent:
         if self._close_event is not None and self._close_event.is_set():
             raise ProtocolError(f"prompt stream cancelled: owning Agents is closed (reply={reply})")
 
+    async def _prepare_request(
+        self,
+        encoded: bytes,
+        *,
+        sub: str,
+        require_signed: bool,
+        intercept: _Interception | None,
+    ) -> _PreparedRequest:
+        """The request bytes as published, their header plan and the interceptors' part.
+
+        Resolves the live identity as late as nats-py allows and re-checks
+        ``max_payload`` with the exact header size. nats-py exposes no
+        reconnect generation, so a reconnect after this lookup and before
+        publish cannot yet be detected; adopting one when available is the
+        remaining target. The header is signed at publish time.
+
+        The interceptors' first phase runs once the identity is known, and
+        before the header is signed, over the envelope as their fields leave
+        it. Their second phase is not run here: it waits until the header is
+        signed (see :meth:`_stream_prompt`).
+        """
+        plan = await plan_sender_header(
+            self._sender_identity, self._nc, sub, require_signed=require_signed
+        )
+        collected: CollectedExtras | None = None
+        if intercept is not None:
+            collected = await self._in_caller_context(
+                intercept, collect_extras(self._interceptors, intercept.ctx, _ENVELOPE_FIELDS)
+            )
+            if collected.fields:
+                encoded = encode(intercept.envelope.model_copy(update=dict(collected.fields)))
+        if plan is not None or intercept is not None:
+            ep = self._info.prompt_endpoint
+            conn_limit = getattr(self._nc, "max_payload", 0) or None
+            header_bytes = plan.wire_bytes if plan is not None else 0
+            assert_within_max_payload(len(encoded), ep.max_payload_bytes, conn_limit, header_bytes)
+        return _PreparedRequest(encoded=encoded, plan=plan, collected=collected)
+
+    async def _in_caller_context(
+        self, intercept: _Interception, work: Coroutine[Any, Any, _T]
+    ) -> _T:
+        """Run ``work`` in the context ``prompt()`` was called in.
+
+        A task carries a context of its own; awaiting it here keeps
+        cancellation and exceptions flowing as a plain ``await`` would.
+        Both interceptor phases of one prompt run in the same captured
+        context.
+        """
+        task = asyncio.get_running_loop().create_task(
+            work,
+            name=f"agents-prompt-interceptors:{self.instance_id}",
+            context=intercept.context,
+        )
+        return await task
+
     async def _stream_prompt(
         self,
         encoded: bytes,
@@ -563,29 +715,26 @@ class Agent:
         subject: str,
         sub: str,
         require_signed: bool,
+        intercept: _Interception | None = None,
     ) -> AsyncIterator[StreamMessage]:
         # Pre-flight: refuse outright if the owning Agents is already
         # closed. This catches the "called prompt() after close()" case
         # cleanly, before any wire I/O or mux state mutation.
         self._raise_if_closed()
 
-        # Sender identity: resolve the identity (at most one awaited lookup
-        # per connection) and re-check `max_payload` with the exact header
-        # size. The header itself is built — signed — at publish time.
-        plan = await plan_sender_header(
-            self._sender_identity, self._nc, sub, require_signed=require_signed
-        )
-        if plan is not None:
-            ep = self._info.prompt_endpoint
-            conn_limit = getattr(self._nc, "max_payload", 0) or None
-            assert_within_max_payload(
-                len(encoded), ep.max_payload_bytes, conn_limit, plan.wire_bytes
-            )
-
-        # Per-nc mux singleton — shared across every Agent on the same
-        # connection. See `_mux.py`'s INTERIM-NATSPY-REQUEST-MANY note.
+        # Establish the reply mux before resolving identity. Its first start
+        # pays a SUB+flush await; putting that one-time transport setup first
+        # prevents a reconnect during the flush from leaving a pre-flush
+        # identity plan ready to publish.
         mux = mux_for(self._nc)
-        await mux.start()  # idempotent; pays SUB+flush on the first prompt
+        await mux.start()
+        self._raise_if_closed()
+
+        prepared = await self._prepare_request(
+            encoded, sub=sub, require_signed=require_signed, intercept=intercept
+        )
+        encoded, plan = prepared.encoded, prepared.plan
+
         # `max_wait_s > 0` is enforced at the public boundary (Agent.prompt
         # and the constructors), so we treat it as an invariant here.
         loop = asyncio.get_running_loop()
@@ -600,14 +749,28 @@ class Agent:
         try:
             reply = mux.reply_subject_for(token)
 
-            # Re-check after the mux.start() await: close may have
-            # fired during the SUB+flush window. Bail before publishing
+            # Re-check after identity lookup: close may have fired while the
+            # live binding request was in flight. Bail before publishing
             # rather than firing a request whose reply we won't consume.
             self._raise_if_closed()
 
             # Signed at publish time so `ts` / nonce are fresh even when the
             # caller iterates late; the signature covers exactly `encoded`.
-            headers = await plan.build_headers(encoded) if plan is not None else None
+            signed = await plan.build_headers(encoded) if plan is not None else {}
+            headers = {**prepared.extra_headers, **signed} or None
+
+            # The prompt is signed and checked: nothing left can refuse it.
+            # The interceptors' second phase runs now, immediately before
+            # the publish, so what they publish describes a prompt that goes
+            # out.
+            if intercept is not None and prepared.collected is not None:
+                await self._in_caller_context(
+                    intercept,
+                    run_before_publish(
+                        self._interceptors, intercept.ctx, prepared.collected.results, subject
+                    ),
+                )
+
             await self._nc.publish(subject, encoded, reply=reply, headers=headers)
 
             while True:

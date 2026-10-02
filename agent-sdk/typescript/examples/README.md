@@ -22,15 +22,25 @@ these are required (the defaults connect to a local server as your `$USER`).
 
 | Variable                                 | Default                    | Purpose                                                                                                                                                                                                                                                                                                     |
 | ---------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NATS_CONTEXT`                           | _(unset)_                  | Connect via a named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins when set.                                                                                                                                                                                   |
-| `NATS_URL`                               | _(unset)_                  | Connect via a raw URL; credentials in the userinfo are honored. When neither this nor `NATS_CONTEXT` is set, the examples fall back to `nats://127.0.0.1:4222`.                                                                                                                                             |
+| `NATS_CONTEXT`                           | _(unset)_                  | Complete named [NATS CLI context](https://docs.nats.io/using-nats/nats-tools/nats_cli/nats_contexts). Wins over all direct URL/credential variables.                                                                                                                                                        |
+| `NATS_URL`                               | _(unset)_                  | Direct connection URL; userinfo credentials are honored. Falls back to `nats://127.0.0.1:4222`.                                                                                                                                                                                                             |
+| `NATS_NKEY_SEED_FILE`                    | _(unset)_                  | User-seed file used to authenticate the direct `NATS_URL` connection. Wins over the creds variables when both are set.                                                                                                                                                                                      |
+| `NATS_CREDS`, `NATS_CREDENTIALS`         | _(unset)_                  | Credentials file used to authenticate the direct `NATS_URL` connection. `NATS_CREDS` wins when both aliases are set.                                                                                                                                                                                        |
+| `NATS_SENDER_IDENTITY`                   | `off`                      | `off` performs no identity lookup. `signed` derives registration identity from the selected connection source; that context or direct credential file must contain a user seed.                                                                                                                             |
 | `SYNADIA_<AGENT>_OWNER`, `SYNADIA_OWNER` | your `$USER` (else `anon`) | The `owner` token in `agents.prompt.<agent>.<owner>.<name>`. The per-example var (`SYNADIA_ECHO_OWNER`, `SYNADIA_OLLAMA_OWNER`, …) wins over the fleet-wide `SYNADIA_OWNER`; the legacy `NATS_AGENT_OWNER` is still honored below both. Set one so several people running against one server don't collide. |
 | `SYNADIA_<AGENT>_NAME`, `SYNADIA_NAME`   | `main`                     | The instance `name` token in the subject — same lookup chain (legacy: `NATS_AGENT_NAME`). Use different names to run several instances at once.                                                                                                                                                             |
 | `NATS_AGENT_HEARTBEAT_INTERVAL`          | `30`                       | Heartbeat cadence in **seconds**. Lower it (e.g. `2`) for a livelier [`05-liveness`](../../../client-sdk/typescript/examples/05-liveness.ts) demo. (`0` is treated as unset → the 30s default.)                                                                                                             |
 
-The identity lookup chain — per-agent var over fleet-wide var over legacy
-alias — is the env naming convention being adopted across the agent plugins
-(`agents/*`); copy it when writing your own agent.
+Connection sources are atomic. A context supplies its own URL, authentication,
+and TLS settings; it is never combined with a direct credentials file. In
+signed mode the shared SDK connection bundle reads that selected source once
+and supplies both NATS authentication and the signer. There is no separate
+identity credential. The default `off` mode remains fully identity-free.
+
+The owner/name lookup chain — per-agent var over fleet-wide var over legacy
+alias — is the naming convention being adopted across the agent plugins
+(`agents/*`); copy it when writing your own agent. Cryptographic identity is
+the separate, connection-bound `NATS_SENDER_IDENTITY` setting above.
 
 Per-backend variables (`OLLAMA_URL`, `OLLAMA_MODEL`, `OPENROUTER_API_KEY`,
 `OPENROUTER_MODEL`) are documented in the relevant sections below.
@@ -43,16 +53,22 @@ Per-backend variables (`OLLAMA_URL`, `OLLAMA_MODEL`, `OPENROUTER_API_KEY`,
 (cd ../../../agent-sdk/typescript  && bun install && bun run build)
 
 # 2. Run an example. Connection resolution:
-#      $NATS_CONTEXT  >  $NATS_URL  >  nats://127.0.0.1:4222
+#      $NATS_CONTEXT > direct $NATS_URL + credential > localhost
 cd ..   # agent-sdk/typescript
 NATS_CONTEXT=my-context bun examples/01-echo.ts
 # or:
 NATS_URL=tls://connect.ngs.global bun examples/01-echo.ts
+# direct authenticated + signed registration from the same creds snapshot:
+NATS_URL=tls://connect.ngs.global NATS_CREDS=./user.creds \
+  NATS_SENDER_IDENTITY=signed bun examples/01-echo.ts
 # or:
 bun examples/01-echo.ts   # localhost fallback
 
 # run as a uniquely-named instance with fast heartbeats:
 SYNADIA_OWNER=alice SYNADIA_NAME=demo NATS_AGENT_HEARTBEAT_INTERVAL=2 bun examples/01-echo.ts
+
+# Focused connection-source/lifecycle tests:
+npx vitest run --config examples/_vitest.config.ts
 ```
 
 You should see:

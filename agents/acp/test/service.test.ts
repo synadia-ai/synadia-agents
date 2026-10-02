@@ -28,10 +28,31 @@ describe("service construction", () => {
     expect(opts.name).toBe("project-main");
     expect(opts.session).toBe("project-main");
     expect(opts.attachmentsOk).toBe(false);
+    expect(opts.identity).toBeUndefined();
+    expect(opts.minSenderTrust).toBe("any");
     expect(opts.extraMetadata).toEqual({
       acp_preset: "grok",
       acp_mode: "managed",
       permission_policy: "reject",
     });
+  });
+
+  test("uses only the connection-bundle signer when signed mode is enabled", () => {
+    const signer = {} as never;
+    const base = cfg();
+    const config = {
+      ...base,
+      nats: { ...base.nats, senderIdentity: "signed" as const },
+      agent: { ...base.agent, minSenderTrust: "signed" as const },
+    };
+    const opts = buildAgentServiceOptions({
+      nc: {} as never,
+      config,
+      version: "0.1.0",
+      connectionBundle: { signer } as never,
+    });
+    expect(opts.identity).toEqual({ signer });
+    expect(opts.minSenderTrust).toBe("signed");
+    expect(() => buildAgentServiceOptions({ nc: {} as never, config, version: "0.1.0" })).toThrow("resolved NATS connection bundle");
   });
 });

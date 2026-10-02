@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "discover_agents result",
+  "description": "What discover_agents hands back to the model (docs/agent-tools.md, section 2): one entry per address. The running instances of one agent share an address and appear once, with `instances` counting them. An extension may add fields to an entry (docs/agent-tools.md, section 6.3).",
+  "type": "object",
+  "required": [
+    "agents"
+  ],
+  "additionalProperties": false,
+  "dependentRequired": {
+    "open_calls": [
+      "open_calls_note"
+    ],
+    "open_calls_note": [
+      "open_calls"
+    ]
+  },
+  "properties": {
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "address",
+          "agent",
+          "owner",
+          "name",
+          "description",
+          "identity",
+          "identity_verified",
+          "requires_signed_prompts",
+          "accepts_attachments",
+          "instances"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "the agent's prompt subject, `agents.prompt.<agent>.<owner>.<name>`; the argument prompt_agent takes. Protocol §3.4: every instance of the agent shares it"
+          },
+          "agent": {
+            "type": "string",
+            "description": "the kind of agent, as it registered itself (for example `researcher`, `claude-code`)"
+          },
+          "owner": {
+            "type": "string",
+            "description": "who runs it, as it registered itself"
+          },
+          "name": {
+            "type": "string",
+            "description": "the instance name that tells several agents of one kind and owner apart"
+          },
+          "description": {
+            "type": "string",
+            "description": "what the agent says it does; may be empty"
+          },
+          "identity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(A[A-Z2-7]{55}|[A-Za-z0-9_-]+|\\$G)\\.U[A-Z2-7]{55}$",
+            "description": "the agent ID the agent registered, `<account>.<user>` (protocol §13.3); null when it registered none"
+          },
+          "identity_verified": {
+            "type": "boolean",
+            "description": "true when the registration carries a signature that verifies over the address (protocol §13.10)"
+          },
+          "requires_signed_prompts": {
+            "type": "boolean",
+            "description": "true when the agent refuses prompts its caller has not signed (protocol §13.9)"
+          },
+          "accepts_attachments": {
+            "type": "boolean",
+            "description": "true when prompt_agent may send files along (protocol §2.1, `attachments_ok`)"
+          },
+          "instances": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "how many running instances answer at this address"
+          }
+        }
+      }
+    },
+    "open_calls": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "how many calls in the current scope are still open (running or input_required); absent when none is"
+    },
+    "open_calls_note": {
+      "type": "string",
+      "description": "the same, in words, with what happens to them"
+    }
+  }
+}

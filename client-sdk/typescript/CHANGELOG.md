@@ -15,6 +15,145 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **The heartbeat's declared prompt endpoint.** `HeartbeatPayload` gains
+  optional `protocolVersion` and `endpoints` (`HeartbeatEndpoint`: `subject`
+  and the §2.1 endpoint metadata), decoded from `protocol_version` and
+  `endpoints` on a §8.3 beat or status reply. A listener on the heartbeat
+  knows where and how to prompt an instance — `min_sender_trust` included —
+  without `$SRV.INFO`. A declaration of the wrong shape stays in `extras`.
+
+- **The agent tools: `AgentTools`.** The tools an agent gives its model to
+  discover and prompt other agents — `discover_agents`, `prompt_agent`,
+  `wait_agent`, `answer_agent`, `cancel_agent`, `list_agent_calls` — as one
+  helper, to the contract in
+  [`docs/agent-tools.md`](../../docs/agent-tools.md). `agentToolDefinitions()`
+  are the six definitions, a copy of `test-fixtures/agent-tools/`, and
+  `tools.definitions` those the helper offers; `await tools.execute(name, args,
+{ toolCallId, signal })` runs one call and returns the JSON result.
+  - `prompt_agent` blocks by default and returns the reply, a question with
+    its `call_id`, or an error, now with `state`; `wait: false` returns at
+    once and the call keeps reading its stream in the background.
+    `wait_agent` returns the earliest call that finished or asked, with
+    `remaining`; `answer_agent` answers a question and goes on in the
+    call's mode; `cancel_agent` refuses open questions and drops the
+    stream. States: `running`, `input_required`, `completed`, `failed`,
+    `cancelled`, `expired`. A call that fails or expires refuses its open
+    questions too, so the asking agent does not wait out its own timeout.
+  - A call belongs to the prompt being served: pass
+    `tools.requestInterceptor` in `new AgentService({ interceptors })` —
+    structurally a `RequestInterceptor`, so this package still does not
+    depend on `@synadia-ai/agent-service` — or wrap a handler in
+    `tools.runInPromptScope(fn, { caller })`. When the prompt ends, its open
+    calls are cancelled and their questions refused
+    (`AGENT_TOOLS_QUESTION_REFUSAL`); while calls are open, every result
+    carries `open_calls` and `open_calls_note`. Outside a served prompt,
+    `onSettled(result, { awaited })` reports each call that finishes.
+  - Configuration, never parameters: `maxWaitMs` (10 minutes), the cap on
+    `wait_agent`'s `timeout_ms`, `maxCalls` per scope (256; finished calls
+    are dropped, the one that finished longest ago first), the roots files
+    may be sent from, the staging directory where returned files are saved
+    with `saveAttachments`, one directory per call. The staging directory
+    is always a root, the default one or `stagingDir`, so a returned file
+    can be sent on; `attachmentRoots` adds to it and names none by default,
+    so the working directory, which may hold a `.env`, is out unless a host
+    names it. A relative root or `stagingDir` is taken from the working
+    directory at construction, so a later change of directory moves none
+    of them.
+  - `tools` offers a subset of the six: `definitions` holds only those,
+    in the contract's order, and `execute` refuses any other in words.
+    Without `wait_agent` nothing can be detached: `prompt_agent` and
+    `answer_agent` lose their `wait` parameter, a description that
+    mentions `wait_agent` reads its blocking-only words
+    (`test-fixtures/agent-tools/blocking.json`), and `wait: false` is
+    refused. A subset that makes no sense — none, a tool that works on
+    calls without `prompt_agent`, or `prompt_agent` without `answer_agent`,
+    which a question from the prompted agent needs — throws at
+    construction. What a result tells the model to do next points only to
+    tools offered. `BLOCKING_AGENT_TOOLS` names the three an agent that
+    runs no calls at once offers — `discover_agents`, `prompt_agent`,
+    `answer_agent` — and `AGENT_TOOL_NAMES` all six, both readonly tuples
+    in the contract's order.
+  - Loop guards: the agent's own address, and the agent whose signed
+    prompt is being served. Errors come back as results, in words.
+  - The model's tool-call ID reaches every prompt interceptor as
+    `ctx.context.toolCallId`. Extensions add discovery fields, rewrite a
+    prompt before it is sent, and look at a reply. One that sets a field the
+    contract defines is a bug: the discovery and prompt hooks throw; a reply
+    look fails the call and logs an error through `logger`.
+
+  Nothing changes on the wire, and the protocol version stays `0.3`.
+
+- **Prompt interceptors.** `new Agents({ nc, interceptors: [...] })` — every
+  `Agent` it hands out inherits them; `new Agent(...)` takes them (and the
+  client's `logger`) as its last arguments. A `PromptInterceptor` runs at
+  publish time — on the stream's first iteration, in the async context
+  `prompt()` was called in — in two phases that see the same per-prompt
+  `ctx`: the target `agent`, the `prompt` text, the opaque `context` from
+  the new `PromptOptions.context`, the `connection`, and `identity`
+  (`PromptSigning`: `canSign`, `selfId()`, `publishSigned()`).
+  - `beforePrompt(ctx)`, after the sender identity is resolved, returns
+    `PromptExtras` — extra envelope `fields` and `headers`, and a `state`
+    the SDK hands back — or nothing, and has no side effects. Several are
+    merged in order, the later winning a key. A protocol field (`prompt`,
+    `attachments`) or the `Agent-Sender` header is refused with
+    `NatsAgentError`; a throw fails the prompt before anything is sent.
+  - `beforePublish(ctx, extras)`, optional, runs only after the
+    `Agent-Sender` header is signed and the size checked, immediately
+    before the prompt is published, with what that interceptor's
+    `beforePrompt` returned. That is where an interceptor publishes its own
+    messages, so they describe a prompt that goes out; a throw is logged
+    and does not stop the prompt.
+
+  A prompt never iterated, or one `prompt()` itself rejects, runs neither
+  phase.
+  Without interceptors nothing changes on the wire.
+
+- **Envelope extras (§5.6).** `RequestEnvelope.extras`: `encodeEnvelope`
+  writes them as top-level fields after the protocol's own (which win a
+  clash), and `decodeEnvelope` keeps every top-level field it does not
+  know there, verbatim — absent when there are none. `isEnvelopeField`
+  names the fields the codec owns.
+- **Signing with a chosen nonce.** `SignedPublishOptions.nonce` (and
+  `signSender`'s `nonce`): sign with the id a message body carries, so it
+  is the `Agent-Sender` nonce and — with `publishSigned` /
+  `requestSigned` — the `Nats-Msg-Id` too. `isValidSenderNonce` checks the
+  header grammar (`[A-Za-z0-9_-]{1,64}`); a nonce outside it is an
+  `IdentityError`.
+- **`saveAttachments(attachments, dir, { maxTotalBytes })`.** The receiving
+  counterpart of `normalizeAttachments`: writes the attachments of a reply
+  (§6.3) or a mid-stream query (§7.1) into `dir`, created if missing, so a
+  caller can hand its model paths instead of base64. One `SavedAttachment`
+  per input, in order: `filename` as sent, `sizeBytes`, and the absolute
+  `path`, or `path: null` with `skipped: "over_limit" | "invalid_content"`.
+  The sender's name is untrusted and reduced to a safe base name, the same
+  on every OS: no path, no control characters, no characters that change
+  text direction, no leading or trailing dots or whitespace, `< > : " | ? *`
+  replaced by `_`, a Windows device name (`CON`, `nul.txt`, `CONIN$`)
+  prefixed with `_`, at most 200 UTF-8 bytes. Files are created exclusively
+  with mode 0600: nothing is overwritten, no link is followed, a taken name
+  becomes `name (2).ext`. A directory the call creates gets mode 0700; one
+  that exists keeps its mode. Content that is not strict RFC 4648 §4 base64
+  is never written; the decoded bytes per call stop at
+  `DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES` (64 MiB; `Infinity` disables
+  it). Real I/O errors reject. The Python SDK's `save_attachments` behaves
+  the same, on the shared cases in `test-fixtures/attachments/`. Nothing on
+  the wire changes.
+- **`signed-heartbeat` vector.** `test-fixtures/identity/sender-vectors.json`
+  gains a host's signed heartbeat: `sub` the heartbeat subject as
+  published, `ts` the frame's own `ts`, the hash over the frame bytes —
+  the header of the extension unchanged, generated by
+  `scripts/generate-identity-vectors.ts` and verified by every SDK.
+- `SenderSignatureRequiredError` exposes stable `code` (`401`),
+  `description` (`"signature required"`), and `subject` fields for handling
+  local signed-target preflight failures without parsing an error message.
+- `resolveNatsConnectionBundle(source, { identity: "off" | "signed" })`
+  resolves a NATS CLI context, direct `creds` file, direct `nkey` seed file,
+  or bare URL into connection options and, only in signed mode, a
+  `SenderSigner` derived from the exact same immutable credential snapshot.
+  The returned idempotent `wipe()` clears retained auth/signing bytes and
+  removes auth-bearing option fields after the NATS connection closes. Bundle
+  JSON / Node inspection is redacted; direct `connectionOptions` access is
+  intentionally live and must not be logged.
 - **Sender identity (the sender-identity extension).** Every `prompt` /
   `status` request can now carry an `Agent-Sender` header that names the
   caller's agent ID (`{account}.{user}`, the connection's NKEY pair) and,
@@ -22,18 +161,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   a timestamp and a nonce. The wire protocol stays `0.3`; support is
   advertised by feature detection (`min_sender_trust` on the prompt
   endpoint ⇔ the agent implements the extension; `Agent-Sender` sent ⇔
-  the caller does). Spec:
+  the caller does). The extension is additive to protocol `0.3`. Spec:
   [`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension).
   - `new Agents({ nc, identity: { signer?, name?, sendUnsignedClaim? } })`.
     `signerFromSeed` / `signerFromCreds` / `signerFromCredsFile` /
     `signerFromContext` build a `SenderSigner`; custom (HSM / KMS)
-    signers implement the interface (`sign` may be async). Without a
-    signer the SDK sends an unsigned **claim** when the connection has an
-    NKEY identity (`sendUnsignedClaim: false` turns that off); without an
-    identity it sends nothing — 0.3 behaviour.
+    signers implement the interface (`sign` may be async). Omitting
+    `identity` performs no lookup and sends no header; explicit `{}` sends
+    an unsigned **claim** when the connection has an NKEY identity;
+    `sendUnsignedClaim: false` turns that off.
   - `agents.selfId()` / `agents.refreshSelfId()` — the connection's own
-    agent ID, from the credentials JWT when the signer carries one, else
-    `$SYS.REQ.USER.INFO`; memoised once per connection, failures retried
+    agent ID from live `$SYS.REQ.USER.INFO`. A signer's user and JWT account
+    must match the live connection. Results are memoised per connection and
+    public identity-source fingerprint, cleared on reconnect; failures retry
     after 30 s. Errors: `NoIdentityError` (no NKEY user — the message
     names the fix), `IdentityUnavailableError` (no answer / permission
     violation), `IdentityMismatchError` (signer ≠ connection user).
@@ -101,6 +241,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- `discover_agents`' filter descriptions now say which token of the address
+  `agents.prompt.<agent>.<owner>.<name>` each one matches, so a model looks
+  an agent up by its kind or role rather than by its instance name. Nothing
+  on the wire changes.
+
+- `loadContextOptions` now parses context URLs through `parseNatsUrl`: it
+  validates the supported scheme and host, extracts URL userinfo into auth
+  options, rejects mixed credentials across server entries, and preserves
+  WebSocket paths and query strings. This may reject unusual context URL
+  strings that the previous implementation passed through unchanged. NATS
+  URL errors now redact token and user/password userinfo.
 - **`prompt()` counts the `Agent-Sender` header against `max_payload`**
   (spec: the header counts). The synchronous throw contract holds: a
   _sound upper bound_ of the header is applied synchronously (thrown
@@ -114,14 +265,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `SenderSignatureRequiredError` synchronously when the endpoint requires
   `signed` and no signer is configured.
 - **`PromptStream` constructor takes an options object**
-  (`{ nc, subject, payload, buildHeaders?, inactivityTimeoutMs, maxWaitMs, signal? }`)
+  (`{ nc, subject, payload, prepare?, inactivityTimeoutMs, maxWaitMs, signal? }`)
   and the request headers are built at publish time (first iteration),
   so a signed header's `ts` / nonce stay fresh even when the caller
-  iterates late. `buildServiceErrorFromMsg` is exported.
+  iterates late. `buildServiceErrorFromMsg` and `PreparedRequest` (what
+  `prepare` returns) are exported.
 - `PayloadTooLargeError` gained a `headerBytes` field (0 when no header
   is sent) and mentions the header in its message when it counted one.
-- `discover()` now also _starts_ the connection's identity lookup
-  (fire-and-forget) so the first `prompt()` usually finds it memoised.
+- `discover()` starts identity lookup only when identity was explicitly
+  enabled; omission and `sendUnsignedClaim: false` without a signer perform
+  no identity work.
+- A configured signer now fails every identity-bearing operation when live
+  user/account binding is unavailable or mismatched; it never downgrades to
+  an unsigned or headerless request.
 - The `Agent` constructor takes an optional fifth argument (the
   identity context); handles constructed by third parties without it
   send no header.

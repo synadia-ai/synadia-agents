@@ -1,0 +1,7 @@
+# Default owners for this repository. Later path rules override earlier ones.
+
+* @synadia-io/nats-ai-sdk-maintainers
+
+# CI and release automation affects every package.
+/.github/workflows/ @synadia-io/nats-ai-sdk-maintainers @synadia-io/nats-ai-release
+/devtools/release/ @synadia-io/nats-ai-sdk-maintainers @synadia-io/nats-ai-release

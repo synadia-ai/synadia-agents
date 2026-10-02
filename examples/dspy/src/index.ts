@@ -7,11 +7,13 @@ import path from "node:path";
 import process from "node:process";
 import { ai, ax } from "@ax-llm/ax";
 import { connect as natsConnect } from "@nats-io/transport-node";
-import { parseNatsUrl } from "@synadia-ai/agents";
+import {
+  resolveNatsConnectionBundle,
+  type NatsConnectionSource,
+} from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
 import { makeFsTools } from "./tools.js";
 
-const NATS_URL = process.env["NATS_URL"] ?? "nats://127.0.0.1:4222";
 const SANDBOX = path.resolve(process.env["DSPY_SANDBOX"] ?? "./sandbox");
 const MODEL = process.env["DSPY_MODEL"] ?? "openai/gpt-oss-20b";
 const API_URL = process.env["NVIDIA_API_URL"] ?? "https://integrate.api.nvidia.com/v1";
@@ -90,9 +92,29 @@ const llm = ai({
   options: { fetch: scrubbedFetch as typeof fetch },
 });
 
-// `parseNatsUrl` extracts userinfo (token / user:password) so
-// `NATS_URL=nats://TOKEN@host:port` works the same way the `nats` CLI does.
-const nc = await natsConnect(parseNatsUrl(NATS_URL));
+const natsContext = process.env["NATS_CONTEXT"];
+const natsUrl = process.env["NATS_URL"] ?? "nats://127.0.0.1:4222";
+const natsCreds = process.env["NATS_CREDS"];
+const natsSource: NatsConnectionSource = natsContext
+  ? { context: natsContext }
+  : natsCreds
+    ? { url: natsUrl, creds: natsCreds }
+    : { url: natsUrl };
+const senderIdentity = process.env["NATS_SENDER_IDENTITY"] ?? "off";
+if (senderIdentity !== "off" && senderIdentity !== "signed") {
+  throw new Error("NATS_SENDER_IDENTITY must be 'off' or 'signed'");
+}
+const minSenderTrust = process.env["NATS_MIN_SENDER_TRUST"] ?? "any";
+if (minSenderTrust !== "any" && minSenderTrust !== "signed") {
+  throw new Error("NATS_MIN_SENDER_TRUST must be 'any' or 'signed'");
+}
+const connectionBundle = senderIdentity === "signed"
+  ? await resolveNatsConnectionBundle(natsSource, { identity: "signed" })
+  : await resolveNatsConnectionBundle(natsSource);
+const nc = await natsConnect(connectionBundle.connectionOptions).catch((error: unknown) => {
+  connectionBundle.wipe();
+  throw error;
+});
 
 // AgentService takes care of:
 //   - registering as the `agents` micro service with v0.3 metadata
@@ -100,7 +122,9 @@ const nc = await natsConnect(parseNatsUrl(NATS_URL));
 //   - per-request keep-alive ack chunks (§6.4)
 //   - the §6.5 stream terminator on every completion path
 //   - 400 envelope-decode errors / 500 handler errors (§9.1)
-const service = new AgentService({
+let service: AgentService;
+try {
+service = new AgentService({
   nc,
   agent: "dspy",
   owner: process.env["USER"] ?? "anon",
@@ -113,6 +137,8 @@ const service = new AgentService({
   // Send our own per-tool status lines mid-handler — disable AgentService's
   // keep-alive ack so the two streams don't interleave.
   keepaliveIntervalS: null,
+  ...(connectionBundle.signer ? { identity: { signer: connectionBundle.signer } } : {}),
+  minSenderTrust,
 });
 
 service.onPrompt(async (envelope, response) => {
@@ -141,16 +167,37 @@ service.onPrompt(async (envelope, response) => {
 });
 
 await service.start();
+} catch (error) {
+  await nc.close();
+  connectionBundle.wipe();
+  throw error;
+}
 console.log(`dspy agent listening on ${service.subject.prompt}`);
 console.log(`model:   ${MODEL}`);
 console.log(`sandbox: ${SANDBOX}`);
 console.log("press Ctrl+C to stop");
 
+let shuttingDown = false;
 const shutdown = async (): Promise<void> => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("\nshutting down…");
-  await service.stop();
+  let exitCode = 0;
+  try {
+    await service.stop();
+  } catch (error) {
+    exitCode = 1;
+    console.error(`dspy service stop failed: ${(error as Error).message}`);
+  }
   await nc.close();
-  process.exit(0);
+  connectionBundle.wipe();
+  process.exit(exitCode);
 };
-process.on("SIGINT", () => void shutdown());
-process.on("SIGTERM", () => void shutdown());
+const requestShutdown = (): void => {
+  void shutdown().catch((error: unknown) => {
+    shuttingDown = false;
+    console.error(`dspy shutdown failed: ${(error as Error).message}`);
+  });
+};
+process.on("SIGINT", requestShutdown);
+process.on("SIGTERM", requestShutdown);

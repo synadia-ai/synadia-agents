@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "cancel_agent result",
+  "description": "What cancel_agent hands back to the model (docs/agent-tools.md, section 2): one entry per call_id given, in order. A call that was open is now cancelled, with the reply text received so far; a call that had finished keeps its result; a call_id not tracked gets an error.",
+  "type": "object",
+  "required": [
+    "calls"
+  ],
+  "additionalProperties": false,
+  "dependentRequired": {
+    "open_calls": [
+      "open_calls_note"
+    ],
+    "open_calls_note": [
+      "open_calls"
+    ]
+  },
+  "properties": {
+    "calls": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "title": "a call's result",
+            "$ref": "prompt_agent.result.json",
+            "required": [
+              "call_id",
+              "state"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "open_calls"
+                  ]
+                },
+                {
+                  "required": [
+                    "remaining"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "title": "a call_id not tracked",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "call_id",
+              "error"
+            ],
+            "properties": {
+              "call_id": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "open_calls": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "how many calls in the current scope are still open (running or input_required) after the cancel; absent when none is"
+    },
+    "open_calls_note": {
+      "type": "string",
+      "description": "the same, in words, with what happens to them"
+    }
+  }
+}

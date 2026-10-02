@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "status": "unresolved",
+  "minimum_age_seconds": null,
+  "external_freeze_cutoff": "2026-08-25T00:00:00Z",
+  "enforcement_points": [],
+  "npm_internal_exclusions": [],
+  "python_internal_exclusions": [],
+  "note": "Fill from the real organization policy before candidate publication. Rehearsal is allowed while unresolved; publication validation fails closed."
+}

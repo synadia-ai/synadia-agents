@@ -21,8 +21,7 @@
 // `agents.<verb>.>` and parse identity positionally.
 
 import type { NatsConnection } from "@nats-io/nats-core";
-import { Svcm } from "@nats-io/services";
-import { SERVICE_NAME } from "@synadia-ai/agents";
+import { Agents } from "@synadia-ai/agents";
 
 export const AGENT_TOKEN = "cc-headless";
 
@@ -107,13 +106,9 @@ export function generateSessionId(): string {
   return `sess-${rand}`;
 }
 
-// `maxWait: 200` caps cold-boot latency at 200 ms; on a local NATS all
-// responses arrive in <5 ms, and 200 ms is well above any sane WAN RTT
-// to NGS. (The @nats-io/nats-core stall timer is hardcoded at 300 ms for
-// `strategy: "stall"`, so anything under 300 ms means maxWait wins —
-// which is what we want here.)
+// A short discovery bounds cold-boot latency while still covering a normal
+// WAN round trip.
 const SRV_INFO_MAX_WAIT_MS = 200;
-const SRV_INFO_MAX_MESSAGES = 50;
 
 // Hard cap on auto-suffix attempts. Bounded implicitly by `maxMessages`
 // above, but an explicit guard makes failure visible rather than letting
@@ -126,7 +121,7 @@ const MAX_SUFFIX_ATTEMPTS = 100;
  * subject is unclaimed. Auto-suffixes `-2`, `-3`, … until a free slot is
  * found, so two claude-code-headless processes booted with the default
  * `control` land on `control` and `control-2` respectively. The probe is
- * best-effort (a small race window remains between discovery and svcm.add)
+ * best-effort (a small race window remains between discovery and AgentService.start())
  * — the trade-off is acceptable for a developer convenience.
  */
 export async function resolveControllerName(
@@ -134,30 +129,20 @@ export async function resolveControllerName(
   base: string,
   owner: string,
 ): Promise<string> {
-  const svcm = new Svcm(nc);
-  const client = svcm.client({
-    strategy: "stall",
-    maxWait: SRV_INFO_MAX_WAIT_MS,
-    maxMessages: SRV_INFO_MAX_MESSAGES,
-  });
-
-  // Collect only `agents.prompt.<AGENT_TOKEN>.*` subjects — those are the
-  // only ones the suffix loop ever checks. Filtering at collection time
-  // makes the intent self-documenting and skips bookkeeping for the
-  // status/hb/spawn/stop/list/etc subjects we don't care about here.
-  const promptPrefix = `agents.prompt.${AGENT_TOKEN}.`;
+  const agents = new Agents({ nc });
   const takenPromptSubjects = new Set<string>();
   try {
-    const iter = await client.info(SERVICE_NAME);
-    for await (const si of iter) {
-      for (const ep of si.endpoints ?? []) {
-        if (ep.subject.startsWith(promptPrefix)) {
-          takenPromptSubjects.add(ep.subject);
-        }
-      }
+    const found = await agents.discover({
+      timeoutMs: SRV_INFO_MAX_WAIT_MS,
+      filter: { agent: AGENT_TOKEN },
+    });
+    for (const agent of found) {
+      takenPromptSubjects.add(agent.promptEndpoint.subject);
     }
   } catch {
     // No existing services or timeout — fine.
+  } finally {
+    await agents.close();
   }
 
   let candidate = base;

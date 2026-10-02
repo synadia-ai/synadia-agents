@@ -116,6 +116,7 @@ Template:
 url = "nats://127.0.0.1:4222"
 context = "local"
 creds = "/path/to/user.creds"
+sender_identity = "off"
 
 [agent]
 owner = "acme"
@@ -123,6 +124,7 @@ name = "support"
 subject_token = "eve"
 heartbeat_interval_s = 30
 keepalive_interval_s = 30
+min_sender_trust = "any"
 
 [eve]
 base_url = "http://127.0.0.1:2000"
@@ -137,6 +139,7 @@ ask_timeout_s = 120
 | URL | `--nats-url` | `NATS_URL` | `[nats].url` | `nats://127.0.0.1:4222` | Direct NATS server URL. |
 | Context | `--nats-context` | `NATS_CONTEXT` | `[nats].context` | — | NATS CLI context name. If set, context mode is used. |
 | Creds | `--nats-creds` | `NATS_CREDS` / `NATS_CREDENTIALS` | `[nats].creds` | — | Creds file for URL mode. |
+| Sender identity | `--sender-identity` | `NATS_SENDER_IDENTITY` | `[nats].sender_identity` | `off` | `signed` derives a host signer from the connection credentials. |
 
 If `context` is set, connection details and auth come from the NATS CLI context. If URL mode is used and `creds` is set, the sidecar uses the creds file when opening the NATS connection.
 
@@ -151,6 +154,12 @@ Do not commit real credentials. Prefer contexts or environment-managed secret pa
 | Subject token | `--subject-token` | — | `[agent].subject_token` | `eve` | Third token in `agents.prompt.<agent>.<owner>.<session>`. |
 | Heartbeat interval | `--heartbeat-interval-s` | — | `[agent].heartbeat_interval_s` | `30` | Seconds between heartbeat publications. |
 | Keepalive interval | `--keepalive-interval-s` | — | `[agent].keepalive_interval_s` | `30` | Seconds between in-flight keepalive chunks. |
+| Minimum sender trust | `--min-sender-trust` | `NATS_MIN_SENDER_TRUST` | `[agent].min_sender_trust` | `any` | `signed` rejects headerless or invalidly signed prompts. |
+
+Sender identity and incoming trust are independent. The SDK connection-bundle
+helper reads the selected NATS credentials once for both connection auth and,
+when enabled, signing. There is no separate identity credential; `off` / `any`
+preserves identity-free operation.
 
 Subject tokens are sanitized to the protocol-safe character set.
 

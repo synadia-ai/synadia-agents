@@ -1,3 +1,10 @@
+import type { NatsConnectionSource } from "@synadia-ai/agents";
+import type { ExtensionConfigEntry, ResolvedExtensionEntries } from "./extensions.js";
+import type { AgentToolsMode } from "./tools.js";
+
+export type SenderIdentityMode = "off" | "signed";
+export type SenderTrustMode = "any" | "signed";
+
 export interface NatsAccountConfig {
   url?: string;
   agentName: string;
@@ -15,11 +22,27 @@ export interface NatsAccountConfig {
   /**
    * Name of a `nats` CLI context (file under `~/.config/nats/context/<name>.json`)
    * to source `url` and `credentials` from. Set by the setup wizard's "context"
-   * input. Mirrors `$NATS_CONTEXT` env-var support but persists in the config.
-   * Per-field `url` / `credentials` and the env-var equivalents still take
-   * precedence; this is the "wizard chose a context" default.
+   * input. Contexts are atomic connection/auth sources: they are never mixed
+   * with a URL or credentials path from another source.
    */
   context?: string;
+  /** Derive a sender signer from the selected connection credentials. */
+  senderIdentity?: SenderIdentityMode;
+  /** Minimum trust required for incoming prompts. Independent of senderIdentity. */
+  minSenderTrust?: SenderTrustMode;
+  /**
+   * Which agent tools the model is offered: `"blocking"` (the default:
+   * `discover_agents`, `prompt_agent`, `answer_agent`), `"all"` (the six)
+   * or `"off"`. `NATS_AGENT_TOOLS` overrides this field.
+   */
+  agentTools?: AgentToolsMode;
+  /**
+   * Extension modules to load at gateway start: package names or absolute
+   * paths, or `{ "module": "…", "options": { … } }` objects.
+   * `SYNADIA_OPENCLAW_EXTENSIONS` and `SYNADIA_AGENT_EXTENSIONS` override
+   * this field.
+   */
+  extensions?: ReadonlyArray<ExtensionConfigEntry>;
 }
 
 export interface ResolvedNatsAccount {
@@ -29,7 +52,16 @@ export interface ResolvedNatsAccount {
   agentName: string;
   description: string;
   credentials?: string;
+  context?: string;
+  /** The one atomic connection/auth source consumed by the shared SDK helper. */
+  connectionSource: NatsConnectionSource;
+  senderIdentity: SenderIdentityMode;
+  minSenderTrust: SenderTrustMode;
   /** Resolved owner token (never empty; defaults to "default"). */
   owner: string;
+  /** The agent tools offered, after `NATS_AGENT_TOOLS`. */
+  agentTools: AgentToolsMode;
+  /** The extension modules to load, after the variables, and the source that named them. */
+  extensions: ResolvedExtensionEntries;
   config: NatsAccountConfig;
 }

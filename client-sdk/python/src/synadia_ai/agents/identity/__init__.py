@@ -1,5 +1,7 @@
 """Sender-identity extension — the shared codec, the caller-side options, and ``self_id``.
 
+The extension is additive to protocol ``0.3`` and is enabled explicitly
+by caller and host configuration.
 Spec: §13 of ``core-protocol.md`` in
 `synadia-ai/synadia-agent-sdk-docs <https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension>`_.
 The host package (``synadia_ai.agent_service``) imports the codec from
@@ -74,6 +76,7 @@ from .sender_header import (
     encoded_header_length,
     expected_sender_header_bytes,
     format_sender_timestamp,
+    is_valid_sender_nonce,
     max_sender_header_bytes,
     normalize_account_token_position,
     parse_sender_header,
@@ -152,6 +155,7 @@ __all__ = [
     "is_account_key_shaped",
     "is_self_id_inflight",
     "is_user_key_shaped",
+    "is_valid_sender_nonce",
     "lookup_self_id",
     "max_sender_header_bytes",
     "normalize_account_token_position",

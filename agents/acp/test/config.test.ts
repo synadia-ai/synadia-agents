@@ -5,13 +5,15 @@ const base = { argv: ["start"], env: { USER: "alice" }, readFile: () => "", cwd:
 
 describe("config", () => {
   test("parses CLI flags", () => {
-    const flags = parseArgs(["start", "--owner", "alice", "--session", "project-main", "--agent", "custom", "--mode", "fake", "--permission-policy", "reject"]);
+    const flags = parseArgs(["start", "--owner", "alice", "--session", "project-main", "--agent", "custom", "--mode", "fake", "--permission-policy", "reject", "--sender-identity", "signed", "--min-sender-trust", "signed"]);
     expect(flags.command).toBe("start");
     expect(flags.owner).toBe("alice");
     expect(flags.session).toBe("project-main");
     expect(flags.agent).toBe("custom");
     expect(flags.mode).toBe("fake");
     expect(flags.permissionPolicy).toBe("reject");
+    expect(flags.senderIdentity).toBe("signed");
+    expect(flags.minSenderTrust).toBe("signed");
   });
 
   test("defaults to the grok preset", () => {
@@ -26,6 +28,8 @@ describe("config", () => {
     expect(cfg.acp.permissionPolicy).toBe("reject");
     expect(cfg.agent.owner).toBe("alice");
     expect(cfg.agent.session).toBe("project-main");
+    expect(cfg.nats.senderIdentity).toBe("off");
+    expect(cfg.agent.minSenderTrust).toBe("any");
   });
 
   test("unknown preset is rejected with the available list", () => {
@@ -97,6 +101,8 @@ describe("config", () => {
     expect(() => loadConfigFromSources({ ...base, readFile: () => `[agent]\nheartbeat_interval_s = nope\n` })).toThrow("agent.heartbeat_interval_s must be a positive number");
     expect(() => loadConfigFromSources({ ...base, readFile: () => `[acp]\nmode = "magic"\n` })).toThrow("acp.mode must be fake or managed");
     expect(() => loadConfigFromSources({ ...base, readFile: () => `[acp]\npermission_policy = "maybe"\n` })).toThrow("acp.permission_policy must be reject, query, or allow");
+    expect(() => loadConfigFromSources({ ...base, env: { NATS_SENDER_IDENTITY: "auto" } })).toThrow("nats.sender_identity must be off or signed");
+    expect(() => loadConfigFromSources({ ...base, env: { NATS_MIN_SENDER_TRUST: "trusted" } })).toThrow("agent.min_sender_trust must be any or signed");
   });
 
   test("strips inline TOML comments before parsing numeric fields", () => {
@@ -112,6 +118,8 @@ describe("config", () => {
     expect(template).toContain("[acp]");
     expect(template).toContain('agent = "grok"');
     expect(template).toContain('permission_policy = "reject"');
+    expect(template).toContain('sender_identity = "off"');
+    expect(template).toContain('min_sender_trust = "any"');
     expect(DEFAULT_CONFIG_PATH).toContain("acp-nats-channel.toml");
   });
 });

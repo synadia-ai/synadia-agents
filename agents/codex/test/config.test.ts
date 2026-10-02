@@ -3,12 +3,14 @@ import { DEFAULT_CONFIG_PATH, loadConfigFromSources, parseArgs, renderConfigTemp
 
 describe("config", () => {
   test("parses CLI flags", () => {
-    const flags = parseArgs(["start", "--owner", "alice", "--session", "project-main", "--mode", "fake", "--permission-policy", "reject"]);
+    const flags = parseArgs(["start", "--owner", "alice", "--session", "project-main", "--mode", "fake", "--permission-policy", "reject", "--sender-identity", "signed", "--min-sender-trust", "signed"]);
     expect(flags.command).toBe("start");
     expect(flags.owner).toBe("alice");
     expect(flags.session).toBe("project-main");
     expect(flags.mode).toBe("fake");
     expect(flags.permissionPolicy).toBe("reject");
+    expect(flags.senderIdentity).toBe("signed");
+    expect(flags.minSenderTrust).toBe("signed");
   });
 
   test("CLI overrides env, file, and defaults", () => {
@@ -29,6 +31,8 @@ describe("config", () => {
     expect(cfg.agent.session).toBe("cli-session");
     expect(cfg.codex.mode).toBe("fake");
     expect(cfg.codex.permissionPolicy).toBe("reject");
+    expect(cfg.nats.senderIdentity).toBe("off");
+    expect(cfg.agent.minSenderTrust).toBe("any");
   });
 
   test("env overrides file for NATS creds and carries them without printing content", () => {
@@ -59,6 +63,8 @@ describe("config", () => {
   test("rejects invalid numeric and enum config values", () => {
     expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "alice" }, readFile: () => `[agent]\nheartbeat_interval_s = nope\n`, cwd: "/tmp/project-main" })).toThrow("agent.heartbeat_interval_s must be a positive number");
     expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "alice" }, readFile: () => `[codex]\nmode = "magic"\n`, cwd: "/tmp/project-main" })).toThrow("codex.mode must be fake, managed, attached, or manager");
+    expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "alice", NATS_SENDER_IDENTITY: "auto" }, readFile: () => "", cwd: "/tmp/project-main" })).toThrow("nats.sender_identity must be off or signed");
+    expect(() => loadConfigFromSources({ argv: ["start"], env: { USER: "alice", NATS_MIN_SENDER_TRUST: "trusted" }, readFile: () => "", cwd: "/tmp/project-main" })).toThrow("agent.min_sender_trust must be any or signed");
   });
 
   test("renders a config template", () => {
@@ -67,6 +73,8 @@ describe("config", () => {
     expect(template).toContain("[agent]");
     expect(template).toContain("[codex]");
     expect(template).toContain('subject_token = "codex"');
+    expect(template).toContain('sender_identity = "off"');
+    expect(template).toContain('min_sender_trust = "any"');
     expect(template).toContain("auto_expose_future_sessions = false");
     expect(template).toContain("[plugin]");
     expect(template).toContain("registrar_port = 8717");

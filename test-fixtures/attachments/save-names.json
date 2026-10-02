@@ -1,0 +1,317 @@
+{
+  "max_name_bytes": 200,
+  "max_extension_chars": 16,
+  "names": [
+    {
+      "input": "report.pdf",
+      "expected": "report.pdf",
+      "note": "an ordinary name is kept"
+    },
+    {
+      "input": "r\u00e9sum\u00e9 final.pdf",
+      "expected": "r\u00e9sum\u00e9 final.pdf",
+      "note": "non-ASCII letters and inner spaces are kept"
+    },
+    {
+      "input": "archive.tar.gz",
+      "expected": "archive.tar.gz",
+      "note": "a double extension is kept"
+    },
+    {
+      "input": "../../etc/passwd",
+      "expected": "passwd",
+      "note": "a POSIX path keeps only its last part"
+    },
+    {
+      "input": "/etc/",
+      "expected": "attachment-1",
+      "note": "a trailing separator leaves nothing: fallback"
+    },
+    {
+      "input": "C:\\Users\\x\\evil.txt",
+      "expected": "evil.txt",
+      "note": "a Windows path keeps only its last part"
+    },
+    {
+      "input": "..\\..\\boot.ini",
+      "expected": "boot.ini",
+      "note": "backslash traversal keeps only its last part"
+    },
+    {
+      "input": "a/b\\c.txt",
+      "expected": "c.txt",
+      "note": "mixed separators: the part after the last one"
+    },
+    {
+      "input": ".bashrc",
+      "expected": "bashrc",
+      "note": "a leading dot is stripped (no hidden files)"
+    },
+    {
+      "input": "...",
+      "expected": "attachment-1",
+      "note": "only dots: fallback"
+    },
+    {
+      "input": "..",
+      "expected": "attachment-1",
+      "note": "a parent reference: fallback"
+    },
+    {
+      "input": "",
+      "expected": "attachment-1",
+      "note": "empty: fallback"
+    },
+    {
+      "input": "a\u0000b.txt",
+      "expected": "ab.txt",
+      "note": "a NUL inside the name is removed"
+    },
+    {
+      "input": "tab\tname\n.txt",
+      "expected": "tabname.txt",
+      "note": "tab and newline are removed"
+    },
+    {
+      "input": "bell\u007f.txt",
+      "expected": "bell.txt",
+      "note": "DEL is removed"
+    },
+    {
+      "input": "a\u009b[31mred\u0080.txt",
+      "expected": "a[31mred.txt",
+      "note": "C1 controls are removed (U+009B starts a terminal escape)"
+    },
+    {
+      "input": "evil\u202etxt.exe",
+      "expected": "eviltxt.exe",
+      "note": "a right-to-left override is removed, so the shown name cannot be spoofed"
+    },
+    {
+      "input": "\u200ea\u200fb\u202ac\u202bd\u202ce\u202df\u2066g\u2067h\u2068i\u2069.txt",
+      "expected": "abcdefghi.txt",
+      "note": "every direction mark, embedding, override and isolate is removed"
+    },
+    {
+      "input": "a\u200db\u2010c\u2029d\u202fe\u206af.txt",
+      "expected": "a\u200db\u2010c\u2029d\u202fe\u206af.txt",
+      "note": "the neighbours of those ranges are kept (U+200D, U+2010, U+2029, U+202F, U+206A)"
+    },
+    {
+      "input": "\u202e",
+      "expected": "attachment-1",
+      "note": "only a direction character: fallback"
+    },
+    {
+      "input": ".\u202e.hidden",
+      "expected": "hidden",
+      "note": "a direction character cannot shield a leading dot"
+    },
+    {
+      "input": "\u2066CON\u2069.txt",
+      "expected": "_CON.txt",
+      "note": "a direction character cannot hide a device name"
+    },
+    {
+      "input": "\u0000\u001f",
+      "expected": "attachment-1",
+      "note": "only control characters: fallback"
+    },
+    {
+      "input": "name. ",
+      "expected": "name",
+      "note": "trailing dot and space are stripped"
+    },
+    {
+      "input": "file.",
+      "expected": "file",
+      "note": "a trailing dot is stripped"
+    },
+    {
+      "input": "  spaced name.txt  ",
+      "expected": "spaced name.txt",
+      "note": "leading and trailing spaces are stripped, inner kept"
+    },
+    {
+      "input": "\u00a0nbsp.txt\u00a0",
+      "expected": "nbsp.txt",
+      "note": "no-break spaces are whitespace"
+    },
+    {
+      "input": "\ufeffbom.txt",
+      "expected": "bom.txt",
+      "note": "U+FEFF counts as whitespace in both SDKs"
+    },
+    {
+      "input": "\u0085nel.txt\u3000",
+      "expected": "nel.txt",
+      "note": "U+0085 is a C1 control and removed; U+3000 counts as whitespace in both SDKs"
+    },
+    {
+      "input": "a\ud800b.txt",
+      "expected": "a\ufffdb.txt",
+      "note": "a lone surrogate becomes U+FFFD"
+    },
+    {
+      "input": "a<b>c:d\"e|f?g*h.txt",
+      "expected": "a_b_c_d_e_f_g_h.txt",
+      "note": "each character Windows forbids becomes _"
+    },
+    {
+      "input": "C:evil.txt",
+      "expected": "C_evil.txt",
+      "note": "a drive-relative Windows path: the colon becomes _"
+    },
+    {
+      "input": "report.pdf:Zone.Identifier",
+      "expected": "report.pdf_Zone.Identifier",
+      "note": "an NTFS stream name: the colon becomes _"
+    },
+    {
+      "input": "???",
+      "expected": "___",
+      "note": "only forbidden characters: underscores, not the fallback"
+    },
+    {
+      "input": "CON",
+      "expected": "_CON",
+      "note": "a Windows device name gets a leading _"
+    },
+    {
+      "input": "con.txt",
+      "expected": "_con.txt",
+      "note": "a device name in any case, before an extension"
+    },
+    {
+      "input": "NUL.tar.gz",
+      "expected": "_NUL.tar.gz",
+      "note": "a device name before a double extension"
+    },
+    {
+      "input": "dir/Aux",
+      "expected": "_Aux",
+      "note": "a device name after a path"
+    },
+    {
+      "input": "prn.",
+      "expected": "_prn",
+      "note": "the trailing dot is stripped, then the device name prefixed"
+    },
+    {
+      "input": "COM1.log",
+      "expected": "_COM1.log",
+      "note": "COM1 to COM9 are device names"
+    },
+    {
+      "input": "lpt9",
+      "expected": "_lpt9",
+      "note": "LPT1 to LPT9 are device names"
+    },
+    {
+      "input": "COM\u00b9.txt",
+      "expected": "_COM\u00b9.txt",
+      "note": "COM with a superscript digit is a device name"
+    },
+    {
+      "input": "LPT\u00b3",
+      "expected": "_LPT\u00b3",
+      "note": "LPT with a superscript digit is a device name"
+    },
+    {
+      "input": "CONIN$",
+      "expected": "_CONIN$",
+      "note": "the console's CONIN$ is a device name"
+    },
+    {
+      "input": "conout$.log",
+      "expected": "_conout$.log",
+      "note": "CONOUT$ in any case, before an extension"
+    },
+    {
+      "input": "CONIN",
+      "expected": "CONIN",
+      "note": "CONIN without the $ is not a device name"
+    },
+    {
+      "input": "CONOUT$x.txt",
+      "expected": "CONOUT$x.txt",
+      "note": "a name that only starts with CONOUT$ is kept"
+    },
+    {
+      "input": "nul .txt",
+      "expected": "_nul .txt",
+      "note": "spaces between a device name and its dot are ignored"
+    },
+    {
+      "input": "COM0.txt",
+      "expected": "COM0.txt",
+      "note": "COM0 is not a device name"
+    },
+    {
+      "input": "LPT10",
+      "expected": "LPT10",
+      "note": "LPT10 is not a device name"
+    },
+    {
+      "input": "CONSOLE.txt",
+      "expected": "CONSOLE.txt",
+      "note": "a name that only starts like a device name is kept"
+    },
+    {
+      "input": "notes.con",
+      "expected": "notes.con",
+      "note": "a device name as the extension is kept"
+    },
+    {
+      "input": "CON:",
+      "expected": "CON_",
+      "note": "the colon becomes _, and CON_ is no device name"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt",
+      "note": "300-char stem: shortened to 200 bytes, extension kept"
+    },
+    {
+      "input": "\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5.md",
+      "expected": "\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5\u65e5.md",
+      "note": "3-byte characters: the stem stops before the character that would cross 200 bytes"
+    },
+    {
+      "input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00.js",
+      "expected": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00.js",
+      "note": "4-byte characters (surrogate pairs in JS): never split"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbb",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbb",
+      "note": "extension over 16 characters: the whole name is shortened"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "note": "a cut that ends on whitespace drops it"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "note": "exactly 200 bytes is kept"
+    },
+    {
+      "input": "CON                                                                                                                                                                                                                                                          x",
+      "expected": "_CON",
+      "note": "a cut that leaves a device name: prefixed too"
+    },
+    {
+      "input": "CON.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expected": "_CON.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "note": "a 200-byte device name: the prefix still keeps it within 200 bytes"
+    },
+    {
+      "input": "..",
+      "position": 3,
+      "expected": "attachment-3",
+      "note": "the fallback names the 1-based position"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveCliCommand } from "../src/cli.js";
+import { drainAndWipeConnection, resolveCliCommand } from "../src/cli.js";
 
 describe("CLI command dispatch", () => {
   test("routes nested attach subcommands through src/cli.ts", () => {
@@ -32,5 +32,16 @@ describe("CLI command dispatch", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain("[nats]");
     expect(stdout).toContain("[codex]");
+  });
+
+  test("wipes the shared connection bundle when draining rejects", async () => {
+    const error = new Error("drain failed");
+    let wiped = false;
+
+    await expect(drainAndWipeConnection(
+      { drain: () => Promise.reject(error) },
+      { wipe: () => { wiped = true; } },
+    )).rejects.toBe(error);
+    expect(wiped).toBe(true);
   });
 });

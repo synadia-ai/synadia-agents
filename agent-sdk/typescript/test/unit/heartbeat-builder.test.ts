@@ -91,4 +91,43 @@ describe("encodeHeartbeatPayload → decodeHeartbeatPayload round-trip", () => {
     const decoded = decodeHeartbeatPayload(wireObj);
     expect(decoded?.extras).toEqual({ region: "eu-west-1", x_trace: "abc" });
   });
+
+  it("declares the protocol version and the prompt endpoint, after the extras so none can shadow them", () => {
+    const subject = AgentSubject.new("pi", "owner", "name");
+    const hb = buildHeartbeatPayload(subject, 30, "X", {
+      extras: { endpoints: "forged", protocol_version: "9.9", region: "eu" },
+      protocolVersion: "0.3",
+      endpoints: {
+        prompt: {
+          subject: subject.prompt,
+          metadata: { min_sender_trust: "signed", max_payload: "1MB" },
+        },
+      },
+    });
+    const wire = JSON.parse(new TextDecoder().decode(encodeHeartbeatPayload(hb))) as Record<
+      string,
+      unknown
+    >;
+    expect(wire["protocol_version"]).toBe("0.3");
+    expect(wire["endpoints"]).toEqual({
+      prompt: {
+        subject: subject.prompt,
+        metadata: { min_sender_trust: "signed", max_payload: "1MB" },
+      },
+    });
+    expect(wire["region"]).toBe("eu");
+    const decoded = decodeHeartbeatPayload(wire);
+    expect(decoded?.protocolVersion).toBe("0.3");
+    expect(decoded?.endpoints?.["prompt"]?.metadata["min_sender_trust"]).toBe("signed");
+    expect(decoded?.extras).toEqual({ region: "eu" });
+  });
+
+  it("omits the declarations when none are given: a plain 0.3 beat", () => {
+    const subject = AgentSubject.new("pi", "owner", "name");
+    const wire = JSON.parse(
+      new TextDecoder().decode(encodeHeartbeatPayload(buildHeartbeatPayload(subject, 30, "X"))),
+    ) as Record<string, unknown>;
+    expect(wire).not.toHaveProperty("protocol_version");
+    expect(wire).not.toHaveProperty("endpoints");
+  });
 });

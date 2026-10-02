@@ -6,6 +6,7 @@ import {
   decodeBase64,
   decodeHeartbeatPayload,
   ProtocolError,
+  ServiceError,
   type StreamMessage,
 } from "@synadia-ai/agents";
 import { AgentService } from "../../src/service.js";
@@ -62,6 +63,39 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect(service.subject.prompt).toMatch(/^agents\.prompt\.svc-test\.testers\./);
     expect(service.subject.heartbeat).toMatch(/^agents\.hb\.svc-test\.testers\./);
     expect(service.subject.status).toMatch(/^agents\.status\.svc-test\.testers\./);
+  });
+
+  it("registers extraMetadata but the required keys win over it", async () => {
+    const service = startService({
+      session: "real-session",
+      extraMetadata: {
+        agent: "forged-agent",
+        owner: "forged-owner",
+        session: "forged-session",
+        protocol_version: "9.9",
+        role: "controller",
+      },
+    });
+    service.onPrompt(async (_envelope, response) => {
+      await response.send("ok");
+    });
+    await service.start();
+
+    const found = await client.discover({
+      timeoutMs: 1000,
+      filter: { agent: "svc-test", name: service.subject.name },
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0]!.metadata).toEqual({
+      agent: "svc-test",
+      owner: "testers",
+      session: "real-session",
+      protocol_version: "0.3",
+      role: "controller",
+    });
+    expect(await client.discover({ timeoutMs: 1000, filter: { agent: "forged-agent" } })).toEqual(
+      [],
+    );
   });
 
   it("streams response chunks and emits the §6.5 terminator", async () => {
@@ -300,6 +334,45 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     expect(messages.find((m) => !m.headers && m.data.length === 0)).toBeDefined();
   });
 
+  it("redacts unexpected handler exceptions from the wire and structured logs", async () => {
+    const secret = "SUASECRET-SEED eyJSECRET.JWT signature-secret nonce-secret";
+    const logs: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
+    const record = (msg: string, ctx?: Record<string, unknown>): void => {
+      logs.push(ctx === undefined ? { msg } : { msg, ctx });
+    };
+    const logger = {
+      debug: record,
+      info: record,
+      warn: record,
+      error: record,
+    };
+    const service = startService({ logger });
+    service.onPrompt(() => {
+      const error = new Error(secret);
+      error.name = secret;
+      throw error;
+    });
+    await service.start();
+
+    const [remote] = await client.discover({
+      timeoutMs: 1000,
+      filter: { agent: "svc-test", name: service.subject.name },
+    });
+    expect(remote).toBeDefined();
+    let caught: unknown;
+    try {
+      for await (const _ of await remote!.prompt("trigger")) {
+        // drain until the error frame
+      }
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ServiceError);
+    expect(caught).toMatchObject({ code: 500, description: "handler error" });
+    expect(String(caught)).not.toContain(secret);
+    expect(JSON.stringify(logs)).not.toContain(secret);
+  });
+
   it("answers the v0.3 status endpoint with a heartbeat-shaped payload", async () => {
     const service = startService();
     service.onPrompt(() => {
@@ -428,6 +501,92 @@ describe.skipIf(!natsUrl)("AgentService — round-trip via real broker", () => {
     // separately in test/unit/decode-envelope.test.ts; this test pins the
     // base64 alphabet itself.
     void original;
+  });
+
+  describe("caller presence and aborted queries", () => {
+    async function discoverRemote(service: AgentService) {
+      const found = await client.discover({
+        timeoutMs: 1000,
+        filter: { agent: "svc-test", name: service.subject.name },
+      });
+      expect(found).toHaveLength(1);
+      return found[0]!;
+    }
+
+    it("callerListening is true while the caller listens and false once its connection closed", async () => {
+      let reportPresent!: (value: boolean) => void;
+      const present = new Promise<boolean>((resolve) => {
+        reportPresent = resolve;
+      });
+      let reportAbsent!: (value: boolean) => void;
+      const absent = new Promise<boolean>((resolve) => {
+        reportAbsent = resolve;
+      });
+      let releaseHandler!: () => void;
+      const callerGone = new Promise<void>((resolve) => {
+        releaseHandler = resolve;
+      });
+      const service = startService();
+      service.onPrompt(async (_envelope, response) => {
+        reportPresent(await response.callerListening());
+        await callerGone;
+        const started = Date.now();
+        const listening = await response.callerListening({ timeoutMs: 5000 });
+        // No-responders comes back at once, not at the timeout.
+        expect(Date.now() - started).toBeLessThan(2000);
+        reportAbsent(listening);
+      });
+      await service.start();
+      // The caller on a connection of its own, so it can go away.
+      const callerNc = await natsConnect({ servers: natsUrl! });
+      const caller = new Agents({ nc: callerNc });
+      const found = await caller.discover({
+        timeoutMs: 1000,
+        filter: { agent: "svc-test", name: service.subject.name },
+      });
+      const stream = await found[0]!.prompt("hi");
+      const messages: StreamMessage[] = [];
+      const reading = (async () => {
+        for await (const m of stream) messages.push(m);
+      })().catch(() => undefined);
+
+      expect(await present).toBe(true);
+      // The probe is a keep-alive ack; the caller sees nothing else.
+      expect(messages.every((m) => m.type === "status")).toBe(true);
+      await caller.close();
+      await callerNc.close();
+      await reading;
+      releaseHandler();
+      expect(await absent).toBe(false);
+    });
+
+    it("ask rejects at once when its signal aborts, and publishes nothing when already aborted", async () => {
+      const outcomes: { error: string; ms: number }[] = [];
+      const service = startService();
+      service.onPrompt(async (_envelope, response) => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(new Error("caller gone")), 100);
+        const started = Date.now();
+        try {
+          await response.ask("allow?", { timeoutMs: 10_000, signal: controller.signal });
+        } catch (error) {
+          outcomes.push({ error: (error as Error).message, ms: Date.now() - started });
+        }
+        try {
+          await response.ask("again?", { timeoutMs: 10_000, signal: controller.signal });
+        } catch (error) {
+          outcomes.push({ error: (error as Error).message, ms: Date.now() - started });
+        }
+      });
+      await service.start();
+      const queries: string[] = [];
+      for await (const m of await (await discoverRemote(service)).prompt("hi")) {
+        if (m.type === "query") queries.push(m.prompt);
+      }
+      expect(outcomes.map((o) => o.error)).toEqual(["caller gone", "caller gone"]);
+      expect(outcomes[0]!.ms).toBeLessThan(2000);
+      expect(queries).toEqual(["allow?"]);
+    });
   });
 
   describe("extraEndpoints + .service extension points", () => {

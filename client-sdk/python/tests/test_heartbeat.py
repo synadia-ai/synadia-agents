@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from synadia_ai.agents.heartbeat import (
     DEFAULT_LIVENESS_SLACK,
+    HeartbeatEndpoint,
     HeartbeatPayload,
     HeartbeatTracker,
 )
@@ -84,10 +85,12 @@ def test_unknown_fields_tolerated() -> None:
     )
     hb = HeartbeatPayload.model_validate_json(wire)
     assert hb.agent == "claude-code"
-    # ``extra="ignore"`` drops the unknowns on re-encode.
+    # ``extra="allow"`` keeps the unknowns: readable on ``extras`` and
+    # preserved verbatim on re-encode, as the TypeScript SDK does.
+    assert hb.extras == {"future_field": 42, "another": "ok"}
     parsed = json.loads(hb.model_dump_json())
-    assert "future_field" not in parsed
-    assert "another" not in parsed
+    assert parsed["future_field"] == 42
+    assert parsed["another"] == "ok"
 
 
 def test_encoded_form_carries_session_key() -> None:
@@ -275,3 +278,60 @@ async def test_tracker_on_heartbeat_listener_fires_and_unsubscribes(
             unsubscribe_other()
     finally:
         await tracker.stop()
+
+
+_BASE = {
+    "agent": "pi",
+    "owner": "o",
+    "instance_id": "I",
+    "ts": "2026-09-27T10:00:00Z",
+    "interval_s": 30,
+}
+
+
+def test_declared_prompt_endpoint_round_trips() -> None:
+    raw = {
+        **_BASE,
+        "protocol_version": "0.3",
+        "endpoints": {
+            "prompt": {
+                "subject": "agents.prompt.pi.o.n",
+                "metadata": {"min_sender_trust": "signed", "max_payload": "1MB"},
+            }
+        },
+    }
+    payload = HeartbeatPayload.model_validate_json(json.dumps(raw))
+    assert payload.protocol_version == "0.3"
+    assert payload.endpoints == {
+        "prompt": HeartbeatEndpoint(
+            subject="agents.prompt.pi.o.n",
+            metadata={"min_sender_trust": "signed", "max_payload": "1MB"},
+        )
+    }
+    assert payload.extras == {}
+    assert json.loads(payload.model_dump_json()) == raw
+
+
+def test_malformed_declarations_are_dropped_not_fatal() -> None:
+    raw = {
+        **_BASE,
+        "protocol_version": 3,
+        "endpoints": {
+            "prompt": {"subject": "agents.prompt.pi.o.n", "metadata": {"max_payload": 1}}
+        },
+    }
+    payload = HeartbeatPayload.model_validate_json(json.dumps(raw))
+    assert payload.protocol_version is None
+    assert payload.endpoints is None
+
+
+def test_plain_beat_encodes_without_declarations() -> None:
+    encoded = json.loads(HeartbeatPayload.model_validate(_BASE).model_dump_json())
+    assert "protocol_version" not in encoded
+    assert "endpoints" not in encoded
+
+
+def test_an_empty_declared_subject_drops_the_declaration() -> None:
+    raw = {**_BASE, "endpoints": {"prompt": {"subject": "", "metadata": {}}}}
+    payload = HeartbeatPayload.model_validate_json(json.dumps(raw))
+    assert payload.endpoints is None

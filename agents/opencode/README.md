@@ -135,9 +135,16 @@ Most plugin deployments only need environment variables:
 | Area | Variables |
 | --- | --- |
 | NATS | `NATS_CONTEXT`, `NATS_URL`, `NATS_CREDS`, `NATS_CREDENTIALS` (plugin mode also accepts `SYNADIA_NATS_CONTEXT`, `SYNADIA_NATS_URL`, `SYNADIA_NATS_CREDS`) |
+| Sender identity | `NATS_SENDER_IDENTITY=off\|signed` (default `off`) |
+| Incoming trust | `NATS_MIN_SENDER_TRUST=any\|signed` (default `any`) |
 | Identity | `SYNADIA_OPENCODE_OWNER`, `SYNADIA_OPENCODE_NAME` (canonical; `SYNADIA_OPENCODE_SESSION` is a shipped alias) — fleet-wide fallbacks: `SYNADIA_OWNER`, `SYNADIA_NAME` (plugin mode also accepts `SYNADIA_SESSION`) |
 | Heartbeats | `SYNADIA_OPENCODE_HEARTBEAT_INTERVAL_S`, `SYNADIA_OPENCODE_KEEPALIVE_INTERVAL_S` |
 | Permissions | `OPENCODE_PERMISSION_POLICY`, `OPENCODE_PERMISSION_TIMEOUT_MS` |
+
+Identity and incoming trust are independent. Both the CLI and installed-plugin
+paths use the SDK connection-bundle helper: signed mode derives the signer from
+the same connection credentials, never from a second identity setting. The
+default `off` / `any` combination stays compatible with headerless callers.
 
 Permission policy values:
 

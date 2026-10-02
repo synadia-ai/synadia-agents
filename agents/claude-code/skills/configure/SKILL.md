@@ -1,6 +1,6 @@
 ---
 name: configure
-description: Configure NATS channel - select context, set owner and session name, configure permissions. Use when user asks to set up NATS, connect to NATS, change context, or configure permissions.
+description: Configure NATS channel - select context, set owner/session, sender identity, inbound trust, and permissions. Use when user asks to set up NATS, connect to NATS, change context, identity, trust, or permissions.
 user-invocable: true
 allowed-tools:
   - Read
@@ -15,8 +15,9 @@ effort: low
 
 # /nats-channel:configure - NATS Channel Configuration
 
-Configures the NATS channel plugin: connection context, session name, and
-permission handling. State lives in `~/.claude/channels/nats/config.json`.
+Configures the NATS channel plugin: connection context, session name, sender
+identity, inbound sender trust, and permission handling. State lives in
+`~/.claude/channels/nats/config.json`.
 
 Arguments passed: `$ARGUMENTS`
 
@@ -32,6 +33,8 @@ Read state and give the user a complete picture, then ask:
    - Selected context name (or "none - using demo.nats.io")
    - Owner override (if set)
    - Session name override (if set)
+   - Sender identity mode (`off` or `signed`; default `off`)
+   - Minimum sender trust (`any` or `signed`; default `any`)
    - Connection URL and description from the context file
    - Permission mode (`terminal` or `query`) and whether permission prompts
      will be relayed as NATS query chunks or handled in the local terminal
@@ -99,6 +102,36 @@ Remove the `sessionName` field from `config.json` so the default
 Remove the `owner` field from `config.json` so the default (sanitized
 `$USER`) is used.
 
+### `identity off` - disable host identity
+
+Set `senderIdentity` to `"off"`. The channel performs no host identity lookup
+and registers no identity metadata. This is the default and works with
+token/password authentication and servers where user-info lookup is not
+permitted. It does not change inbound sender policy.
+
+### `identity signed` - use the connection identity
+
+Set `senderIdentity` to `"signed"`. The selected NATS context must contain a
+user seed (`creds`, `nkey`, or `user_jwt` plus `user_seed`). The same immutable
+credential snapshot supplies both connection authentication and signing; never
+ask for or add a second identity credential. Signed startup fails rather than
+downgrading when the connection cannot be bound to that signer.
+
+`NATS_SENDER_IDENTITY` overrides this config field. A plugin reload or Claude
+Code restart is required after changing it.
+
+### `trust any` - accept all sender trust classes
+
+Set `minSenderTrust` to `"any"`. Headerless, claimed, and verified prompts are
+admitted. This is the backward-compatible default and is independent of the
+channel's own identity.
+
+### `trust signed` - require verified senders
+
+Set `minSenderTrust` to `"signed"`. Headerless, claimed, malformed, stale, and
+replayed requests are rejected before an acknowledgement and before Claude sees
+the prompt. `NATS_MIN_SENDER_TRUST` overrides this config field.
+
 ### `permissions terminal` - use terminal for permission prompts
 
 Set `permissions.mode` to `terminal`. Permission prompts will appear in the
@@ -149,6 +182,8 @@ Delete `~/.claude/channels/nats/config.json`.
   file contains `url`, `description`, `creds`, `nkey`, `user`, `password`,
   `token`, `cert`, `key`, `ca`, and other fields.
 - Do not modify NATS CLI context files - only read them.
+- `senderIdentity` and `minSenderTrust` are independent. Do not enable strict
+  inbound policy merely because signed host identity was enabled.
 - Legacy configs with `"mode": "nats"` are still accepted and treated as
   the new `"query"` mode; they do not need to be rewritten.
 - Legacy configs with `permissions.subject` are silently ignored - query

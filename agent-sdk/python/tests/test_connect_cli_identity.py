@@ -39,6 +39,7 @@ _IDENTITY_ENV_VARS = (
     "NATS_AGENT_NAME",
     "NATS_NKEY_SEED_FILE",
     "NATS_CREDS",
+    "NATS_SENDER_IDENTITY",
 )
 
 
@@ -161,30 +162,41 @@ def test_agent_env_token_maps_hyphens(connect_cli: Any, monkeypatch: Any) -> Non
     assert args.session_name == "per-agent-name"
 
 
-# --- sender identity: --nkey / --creds → the host's signer -----------------------
+# --- one connection-auth snapshot → optional host signer ------------------------
 
 
-def test_signer_from_cli_nkey_file_and_none(
+def test_connection_bundle_uses_nkey_once_and_identity_defaults_off(
     connect_cli: Any, monkeypatch: Any, tmp_path: Path, identity_keys: dict[str, NkeyUser]
 ) -> None:
-    """``--nkey`` (or ``$NATS_NKEY_SEED_FILE``) yields alice's signer; nothing → ``None``."""
+    """The shared bundle owns both connection auth and the optional signer."""
     seed_file = tmp_path / "alice.nk"
     seed_file.write_text(identity_keys["alice"].seed + "\n", encoding="utf-8")
 
     parser = argparse.ArgumentParser()
+    connect_cli.add_connection_flags(parser)
     connect_cli.add_identity_flags(parser)
-    assert connect_cli.signer_from_cli(parser.parse_args([])) is None
-    assert connect_cli._auth_kwargs(parser.parse_args([])) == {}
-
-    signer = connect_cli.signer_from_cli(parser.parse_args(["--nkey", str(seed_file)]))
-    assert signer is not None and signer.public_key == identity_keys["alice"].public
-    # The trailing newline is trimmed for nats-py (`nkeys_seed_str`, not `nkeys_seed=<path>`).
-    assert connect_cli._auth_kwargs(parser.parse_args(["--nkey", str(seed_file)])) == {
-        "nkeys_seed_str": identity_keys["alice"].seed
-    }
+    off = connect_cli._resolve_bundle(
+        parser.parse_args(["--url", "nats://localhost:4222", "--nkey", str(seed_file)])
+    )
+    assert off.signer is None
+    assert off.connection_options["nkeys_seed_str"] == identity_keys["alice"].seed
+    off.wipe()
 
     monkeypatch.setenv("NATS_NKEY_SEED_FILE", str(seed_file))
+    monkeypatch.setenv("NATS_SENDER_IDENTITY", "signed")
+    parser = argparse.ArgumentParser()
+    connect_cli.add_connection_flags(parser)
+    connect_cli.add_identity_flags(parser)
+    signed = connect_cli._resolve_bundle(parser.parse_args(["--url", "nats://localhost:4222"]))
+    assert signed.signer is not None
+    assert signed.signer.public_key == identity_keys["alice"].public
+    assert signed.connection_options["nkeys_seed_str"] == identity_keys["alice"].seed
+    signed.wipe()
+
+
+def test_invalid_sender_identity_env_is_rejected(connect_cli: Any, monkeypatch: Any) -> None:
+    monkeypatch.setenv("NATS_SENDER_IDENTITY", "maybe")
     parser = argparse.ArgumentParser()
     connect_cli.add_identity_flags(parser)
-    env_signer = connect_cli.signer_from_cli(parser.parse_args([]))
-    assert env_signer is not None and env_signer.public_key == identity_keys["alice"].public
+    with pytest.raises(SystemExit):
+        parser.parse_args([])

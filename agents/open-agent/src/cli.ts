@@ -38,6 +38,8 @@ interface ParsedArgs {
   workdir: string;
   natsContext?: string;
   natsUrl?: string;
+  senderIdentity: "off" | "signed";
+  minSenderTrust: "any" | "signed";
   provider: ProviderName;
   model: string;
 }
@@ -85,11 +87,15 @@ function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
     process.env["OPEN_AGENT_WORKDIR"] ??
     join(tmpdir(), "open-agent", session);
   // Connection precedence: --nats-context flag > $NATS_CONTEXT > $NATS_URL >
-  // localhost default. Context-over-URL matches the rest of agents/*;
-  // resolveConnectionOptions itself prefers natsUrl, so only forward the
-  // URL when no context is selected anywhere.
+  // localhost default. Context-over-URL matches the rest of agents/*.
   const natsContext = out["nats-context"] ?? process.env["NATS_CONTEXT"];
   const natsUrl = natsContext === undefined ? process.env["NATS_URL"] : undefined;
+  const senderIdentity = parseSenderIdentity(
+    out["sender-identity"] ?? process.env["NATS_SENDER_IDENTITY"] ?? "off",
+  );
+  const minSenderTrust = parseMinSenderTrust(
+    out["min-sender-trust"] ?? process.env["NATS_MIN_SENDER_TRUST"] ?? "any",
+  );
 
   const providerEnv = (out["provider"] ?? process.env["OPEN_AGENT_PROVIDER"])?.toLowerCase();
   const provider: ProviderName =
@@ -113,9 +119,21 @@ function parseArgs(argv: ReadonlyArray<string>): ParsedArgs {
     workdir,
     ...(natsContext !== undefined ? { natsContext } : {}),
     ...(natsUrl !== undefined && natsUrl.length > 0 ? { natsUrl } : {}),
+    senderIdentity,
+    minSenderTrust,
     provider,
     model,
   };
+}
+
+function parseSenderIdentity(value: string): "off" | "signed" {
+  if (value === "off" || value === "signed") return value;
+  throw new Error("sender identity must be off or signed");
+}
+
+function parseMinSenderTrust(value: string): "any" | "signed" {
+  if (value === "any" || value === "signed") return value;
+  throw new Error("minimum sender trust must be any or signed");
 }
 
 function buildModelFactory(args: ParsedArgs): ModelFactory {
@@ -172,30 +190,40 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const modelFactory = buildModelFactory(args);
 
-  const nc = await connectFrom({
+  const { nc, bundle: connectionBundle } = await connectFrom({
     ...(args.natsContext !== undefined ? { natsContext: args.natsContext } : {}),
     ...(args.natsUrl !== undefined ? { natsUrl: args.natsUrl } : {}),
+    senderIdentity: args.senderIdentity,
   });
 
-  const { stop } = await runBridge({
-    nc,
-    owner: args.owner,
-    session: args.session,
-    sandboxFactory: async () => {
-      const sandbox = await connectLocalSandbox({
-        type: "local",
-        workingDirectory: args.workdir,
-      });
-      return {
-        sandbox,
-        state: { type: "local", workingDirectory: args.workdir },
-      };
-    },
-    modelId: args.model,
-    modelFactory,
-    workingDirectoryHint: args.workdir,
-    logger: stderrLogger,
-  });
+  let stop: () => Promise<void>;
+  try {
+    ({ stop } = await runBridge({
+      nc,
+      owner: args.owner,
+      session: args.session,
+      sandboxFactory: async () => {
+        const sandbox = await connectLocalSandbox({
+          type: "local",
+          workingDirectory: args.workdir,
+        });
+        return {
+          sandbox,
+          state: { type: "local", workingDirectory: args.workdir },
+        };
+      },
+      modelId: args.model,
+      modelFactory,
+      workingDirectoryHint: args.workdir,
+      logger: stderrLogger,
+      connectionBundle,
+      minSenderTrust: args.minSenderTrust,
+    }));
+  } catch (error) {
+    await nc.close();
+    connectionBundle.wipe();
+    throw error;
+  }
 
   stderrLogger.info("open-agent: ready", {
     subject: `agents.prompt.open-agent.${args.owner}.${args.session}`,
@@ -211,17 +239,26 @@ async function main(): Promise<void> {
     stderrLogger.info(`open-agent: ${signal} received, shutting down`);
     try {
       await stop();
-      await nc.close();
     } catch (err) {
       stderrLogger.error("open-agent: shutdown error", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    await nc.close();
+    connectionBundle.wipe();
     process.exit(0);
   };
 
-  process.on("SIGINT", () => void shutdown("SIGINT"));
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  const requestShutdown = (signal: string): void => {
+    void shutdown(signal).catch((error: unknown) => {
+      stopping = false;
+      stderrLogger.error("open-agent: connection shutdown failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  };
+  process.on("SIGINT", () => requestShutdown("SIGINT"));
+  process.on("SIGTERM", () => requestShutdown("SIGTERM"));
 }
 
 main().catch((err) => {

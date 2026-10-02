@@ -39,8 +39,10 @@ class RunningHello:
 
     async def stop(self) -> None:
         """Stop serving, then release the caller-side SDK state."""
-        await self.service.stop()
-        await self.agents.close()
+        try:
+            await self.service.stop()
+        finally:
+            await self.agents.close()
 
 
 async def start_hello(
@@ -126,9 +128,11 @@ async def main() -> None:
             loop.add_signal_handler(sig, stop.set)
         await stop.wait()
     finally:
-        if hello is not None:
-            await hello.stop()
-        await user.close()
+        try:
+            if hello is not None:
+                await hello.stop()
+        finally:
+            await user.close()
 
 
 if __name__ == "__main__":

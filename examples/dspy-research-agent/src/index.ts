@@ -15,9 +15,8 @@ import {
   f,
   fn,
 } from "@ax-llm/ax";
-import { connect as natsConnect } from "@nats-io/transport-node";
-import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
 import { AgentService } from "@synadia-ai/agent-service";
+import { connectResearchNats, minSenderTrust } from "./nats.js";
 import { createSearchProvider } from "./search.js";
 
 // The RLM actor must write JS, call the web tools, and submit() on its own —
@@ -109,15 +108,7 @@ const llm = ai({
   options: { fetch: scrubbedFetch as typeof fetch },
 });
 
-// Connection resolution mirrors the client-sdk 01–05 examples: a named NATS
-// CLI context (carries creds / nkey / JWT / TLS) takes precedence, then a
-// plain NATS_URL, then localhost.
-const natsOpts = process.env["NATS_CONTEXT"]
-  ? await loadContextOptions(process.env["NATS_CONTEXT"])
-  : process.env["NATS_URL"]
-    ? parseNatsUrl(process.env["NATS_URL"])
-    : { servers: "nats://127.0.0.1:4222" };
-const nc = await natsConnect(natsOpts);
+const { nc, bundle: connectionBundle } = await connectResearchNats("dspy-research-agent");
 const searchProvider = createSearchProvider();
 
 function buildWebTools(emit: (line: string) => void): AxAgentFunctionGroup[] {
@@ -219,7 +210,9 @@ const owner = (process.env["USER"] ?? "anon").replace(/[.*>\s]/g, "_") || "anon"
 // AgentService (the host SDK's production-shape helper, same as examples/dspy/)
 // owns registration, the verb-first prompt/status subjects, heartbeats, and the
 // §6.5 stream terminator on every completion path.
-const service = new AgentService({
+let service: AgentService;
+try {
+service = new AgentService({
   nc,
   agent: "research",
   owner,
@@ -233,6 +226,8 @@ const service = new AgentService({
   // We stream our own per-turn status lines below, so disable AgentService's
   // keep-alive ack to avoid interleaving two status streams (matches dspy/).
   keepaliveIntervalS: null,
+  ...(connectionBundle.signer ? { identity: { signer: connectionBundle.signer } } : {}),
+  minSenderTrust: minSenderTrust(),
 });
 
 service.onPrompt(async (envelope, response) => {
@@ -326,17 +321,38 @@ service.onPrompt(async (envelope, response) => {
 });
 
 await service.start();
+} catch (error) {
+  await nc.close();
+  connectionBundle.wipe();
+  throw error;
+}
 console.log(`research agent listening on ${service.subject.prompt}`);
 console.log(`model:    ${MODEL}`);
 console.log(`provider: ${searchProvider.name}`);
 console.log(`turns:    ${MAX_TURNS} (subcalls ${MAX_SUB_CALLS})`);
 console.log("press Ctrl+C to stop");
 
+let shuttingDown = false;
 const shutdown = async (): Promise<void> => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("\nshutting down…");
-  await service.stop();
+  let exitCode = 0;
+  try {
+    await service.stop();
+  } catch (error) {
+    exitCode = 1;
+    console.error(`research service stop failed: ${(error as Error).message}`);
+  }
   await nc.close();
-  process.exit(0);
+  connectionBundle.wipe();
+  process.exit(exitCode);
 };
-process.on("SIGINT", () => void shutdown());
-process.on("SIGTERM", () => void shutdown());
+const requestShutdown = (): void => {
+  void shutdown().catch((error: unknown) => {
+    shuttingDown = false;
+    console.error(`dspy research agent shutdown failed: ${(error as Error).message}`);
+  });
+};
+process.on("SIGINT", requestShutdown);
+process.on("SIGTERM", requestShutdown);

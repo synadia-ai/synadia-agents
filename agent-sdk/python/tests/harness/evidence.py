@@ -1,14 +1,16 @@
 """Per-test evidence recording.
 
 The :class:`EvidenceRecorder` subscribes to `agents.>` and `$SRV.>` and writes
-every observed message to `messages.jsonl` in the evidence directory. Tests
-also write explicit artifacts (`srv-info.json`, `chunks.jsonl`, etc.) into the
-same directory. On failure the evidence is preserved for eyeball review.
+every observed message to `messages.jsonl` in the evidence directory. Security-
+bearing header values are redacted while their names remain visible. Tests also
+write explicit artifacts (`srv-info.json`, `chunks.jsonl`, etc.) into the same
+directory. On failure the evidence is preserved for eyeball review.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -70,7 +72,7 @@ class EvidenceRecorder:
             "ts": datetime.now(UTC).isoformat(),
             "subject": subject,
             "reply": reply or None,
-            "headers": dict(headers) if headers else None,
+            "headers": _redact_headers(headers),
             "data": _render_payload(data),
         }
         with self.messages_path.open("a", encoding="utf-8") as handle:
@@ -79,14 +81,17 @@ class EvidenceRecorder:
     def write_json(self, name: str, payload: object) -> Path:
         """Dump a structured artifact into the evidence directory."""
         path = self.directory / name
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(_redact_evidence(payload), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         return path
 
     def write_jsonl(self, name: str, records: list[object]) -> Path:
         path = self.directory / name
         with path.open("w", encoding="utf-8") as handle:
             for rec in records:
-                handle.write(json.dumps(rec) + "\n")
+                handle.write(json.dumps(_redact_evidence(rec)) + "\n")
         return path
 
 
@@ -107,3 +112,66 @@ def _render_payload(data: bytes) -> object:
         return {"text": data.decode("utf-8")}
     except UnicodeDecodeError:
         return {"hex": data[:64].hex(), "length": len(data)}
+
+
+_SENSITIVE_HEADERS = frozenset(
+    {
+        "agent-sender",
+        "authorization",
+        "cookie",
+        # publish_signed copies the sender nonce into Nats-Msg-Id; preserve
+        # presence for de-duplication evidence, never the raw proof value.
+        "nats-msg-id",
+        "nats-request-info",  # share:true stamps may contain a complete user JWT
+        "proxy-authorization",
+        "set-cookie",
+        "x-api-key",
+    }
+)
+
+_SENSITIVE_FIELDS = frozenset(
+    {
+        "authenticator",
+        "credential",
+        "credentials",
+        "creds",
+        "id_sig",
+        "jwt",
+        "nonce",
+        "password",
+        "seed",
+        "sig",
+        "signature",
+        "token",
+        "user_jwt",
+        "user_seed",
+    }
+)
+
+
+def _redact_headers(headers: object) -> dict[str, object] | None:
+    if not isinstance(headers, Mapping) or not headers:
+        return None
+    return {
+        str(name): "[redacted]" if str(name).lower() in _SENSITIVE_HEADERS else value
+        for name, value in headers.items()
+    }
+
+
+def _redact_evidence(value: object) -> object:
+    """Recursively remove security material from hand-written artifacts too."""
+    if isinstance(value, Mapping):
+        redacted: dict[str, object] = {}
+        for raw_name, child in value.items():
+            name = str(raw_name)
+            normalized = name.lower()
+            if normalized == "headers" and isinstance(child, Mapping):
+                redacted[name] = _redact_headers(child)
+            elif normalized in _SENSITIVE_HEADERS or normalized in _SENSITIVE_FIELDS:
+                redacted[name] = "[redacted]"
+            else:
+                redacted[name] = _redact_evidence(child)
+        return redacted
+    if isinstance(value, (list, tuple)):
+        return [_redact_evidence(child) for child in value]
+    return value

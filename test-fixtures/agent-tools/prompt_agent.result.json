@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "prompt_agent, answer_agent and wait_agent result",
+  "description": "What prompt_agent, answer_agent and wait_agent hand back to the model (docs/agent-tools.md, section 2). Either one call's result (`call_id` and `state`, with what that state carries), or a refusal (`error` alone: nothing was sent and no call changed), or wait_agent's timeout (`state` running and `call_ids`). Returned files are saved on the caller's machine; the result carries their paths, never their bytes. An extension may add fields to a call's result (docs/agent-tools.md, section 6.3).",
+  "type": "object",
+  "oneOf": [
+    {
+      "title": "a call's result",
+      "required": [
+        "call_id",
+        "state"
+      ]
+    },
+    {
+      "title": "a refusal",
+      "required": [
+        "error"
+      ],
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "call_id"
+            ]
+          },
+          {
+            "required": [
+              "state"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "title": "wait_agent: no call ready in time",
+      "required": [
+        "state",
+        "call_ids"
+      ],
+      "properties": {
+        "state": {
+          "const": "running"
+        }
+      },
+      "not": {
+        "required": [
+          "call_id"
+        ]
+      }
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "call_id",
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "const": "completed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "reply"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "call_id",
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "const": "input_required"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "question"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "call_id",
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "enum": [
+              "failed",
+              "expired"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "error"
+        ]
+      }
+    }
+  ],
+  "dependentRequired": {
+    "attachments": [
+      "call_id"
+    ],
+    "label": [
+      "call_id"
+    ],
+    "remaining": [
+      "call_id"
+    ],
+    "open_calls": [
+      "open_calls_note"
+    ],
+    "open_calls_note": [
+      "open_calls"
+    ]
+  },
+  "dependentSchemas": {
+    "reply": {
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "const": "completed"
+        }
+      }
+    },
+    "question": {
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "const": "input_required"
+        }
+      }
+    },
+    "partial_reply": {
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "failed",
+            "cancelled",
+            "expired"
+          ]
+        }
+      }
+    },
+    "error": {
+      "anyOf": [
+        {
+          "not": {
+            "required": [
+              "state"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "state": {
+              "enum": [
+                "failed",
+                "expired"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the call: the argument wait_agent, answer_agent and cancel_agent take; opaque, valid until the call is dropped from the list"
+    },
+    "state": {
+      "enum": [
+        "running",
+        "input_required",
+        "completed",
+        "failed",
+        "cancelled",
+        "expired"
+      ],
+      "description": "running: the agent works on it. input_required: it asked a question (answer_agent). completed: its reply is here. failed: no reply came (error). cancelled: cancel_agent stopped it, or the served prompt it belonged to ended. expired: it ran past its runtime limit"
+    },
+    "label": {
+      "type": "string",
+      "description": "the label prompt_agent was given, when it was given one; never sent to the target"
+    },
+    "reply": {
+      "type": "string",
+      "description": "completed: the prompted agent's reply, every streamed chunk joined in order"
+    },
+    "question": {
+      "type": "string",
+      "description": "input_required: the question the prompted agent asks mid-stream (protocol §7); the stream stays open until answer_agent answers it"
+    },
+    "error": {
+      "type": "string",
+      "description": "failed or expired: why no reply came, in words (an unknown address, a refused prompt, a stalled stream, the runtime limit). Without call_id: why the tool did nothing (a bad argument, an unknown call_id, a loop, the limit on tracked calls)"
+    },
+    "partial_reply": {
+      "type": "string",
+      "description": "failed, cancelled or expired: the reply text received before the call ended; absent when there was none"
+    },
+    "attachments": {
+      "type": "array",
+      "description": "the files the prompted agent sent: with a question, those that came with it; otherwise those that came with the reply (all of them once the call finished). Saved on this machine by the SDK's saveAttachments / save_attachments; their bytes never reach the model",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "filename",
+          "size_bytes",
+          "path"
+        ],
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "the name as the sender gave it"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "the decoded size; 0 when the content was not valid base64"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "the absolute path of the saved file on this machine; null when it was not saved"
+          },
+          "skipped": {
+            "enum": [
+              "over_limit",
+              "invalid_content"
+            ],
+            "description": "why the file was not saved: past the limit per call, or content that is not valid base64"
+          }
+        },
+        "if": {
+          "properties": {
+            "path": {
+              "type": "null"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "skipped"
+          ]
+        },
+        "else": {
+          "not": {
+            "required": [
+              "skipped"
+            ]
+          }
+        }
+      }
+    },
+    "remaining": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "wait_agent, with a call's result: the other given calls that are still open (running or input_required)"
+    },
+    "call_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "wait_agent's timeout: the given calls, all still running"
+    },
+    "open_calls": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "how many calls in the current scope are still open (running or input_required), this one included; absent when none is"
+    },
+    "open_calls_note": {
+      "type": "string",
+      "description": "the same, in words, with what happens to them"
+    }
+  }
+}

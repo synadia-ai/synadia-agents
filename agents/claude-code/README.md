@@ -14,9 +14,12 @@ Replies stream back as typed JSON chunks
 (`{"type":"response","data":"..."}`) terminated by an empty headerless
 message - the protocol's uniform end-of-stream signal.
 
+The marketplace copy contains a self-contained server bundle. Starting the
+channel does not install or update npm dependencies at runtime.
+
 ## Prerequisites
 
-- [Bun](https://bun.sh) - the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`, and make sure `bun` is on your `PATH`.
+- [Bun](https://bun.sh) - the MCP server and the plugin's [hooks](#hooks) run on Bun. Install with `curl -fsSL https://bun.sh/install | bash`, and make sure `bun` is on your `PATH`.
 - [NATS CLI](https://github.com/nats-io/natscli) - for managing contexts and testing.
 - A NATS server to connect to (local or remote) - the plugin defaults to `demo.nats.io`.
 
@@ -49,7 +52,8 @@ and registers a micro service on `agents.prompt.cc.<owner>.<name>`, where
 **4. (Optional) Configure the channel.**
 
 The `/nats-channel:configure` skill manages connection, session naming,
-and permissions. All state lives in `~/.claude/channels/nats/config.json`.
+sender identity, inbound trust, and permissions. All state lives in
+`~/.claude/channels/nats/config.json`.
 
 | Command | Description |
 | --- | --- |
@@ -60,6 +64,10 @@ and permissions. All state lives in `~/.claude/channels/nats/config.json`.
 | `/nats-channel:configure session clear` | Remove session name override, revert to CWD basename |
 | `/nats-channel:configure owner <name>` | Override the owner (4th token in `agents.prompt.cc.<owner>.<name>`) |
 | `/nats-channel:configure owner clear` | Remove owner override, revert to sanitized `$USER` |
+| `/nats-channel:configure identity off` | Do not look up or register a host identity (default) |
+| `/nats-channel:configure identity signed` | Register a signed identity derived from the selected connection credentials |
+| `/nats-channel:configure trust any` | Accept headerless, claimed, and verified senders (default) |
+| `/nats-channel:configure trust signed` | Require a verified signed sender before Claude sees a prompt |
 | `/nats-channel:configure permissions terminal` | Prompt for permissions in the terminal (default) |
 | `/nats-channel:configure permissions query` | Relay permission prompts as protocol query chunks |
 | `/nats-channel:configure permissions clear` | Reset permissions to default |
@@ -128,13 +136,16 @@ This plugin implements the **Synadia Agent Protocol for NATS v0.3** end-to-end:
   (§6.3) terminated by an empty headerless message (§6.5). Large
   responses are split into multiple UTF-8-safe chunks that each fit
   under `max_payload`.
-- Publishes periodic `{"type":"status","data":"ack"}` keep-alives (§6.4)
-  every 30 s while a request is open, resetting the caller's 60-second
-  inactivity timeout.
+- Emits the required leading `{"type":"status","data":"ack"}` only after
+  envelope validation and sender admission, then publishes periodic ack
+  keep-alives every 30 s while a request is open.
 - Publishes heartbeats at `agents.hb.cc.<owner>.<name>` (§8.1 v0.3) every 5 s with the full
   §8.3 payload including `instance_id` (§8).
 - Relays Claude Code permission prompts as mid-stream `query` chunks
   (§7) when `permissions.mode = query`.
+- Uses the host SDK for sender classification, pre-ack admission, replay
+  protection, status classification, identity registration, and stream
+  termination. `min_sender_trust` is always advertised and defaults to `any`.
 
 The caller-side SDK at
 [`client-sdk/typescript/`](../../client-sdk/typescript) is the
@@ -174,6 +185,78 @@ nats micro info agents
 | Tool | Purpose |
 | --- | --- |
 | `reply` | Send a response over NATS. Takes `request_id` + `text`. The server wraps the text in a `{"type":"response","data":...}` chunk. Set `done=false` for intermediate replies; `done=true` (default) emits the empty-body terminator. |
+| `request_info` | Return the safely classified sender of an active request, and the [extensions](#extensions) loaded. Identity is available only on explicit inspection and is never inserted into the incoming model prompt or channel metadata. |
+| `discover_agents`, `prompt_agent`, `answer_agent` | The [agent tools](#agent-tools): find other agents on NATS, prompt one and wait for its reply, answer a question it asks back. Offered by default. |
+| `wait_agent`, `cancel_agent`, `list_agent_calls` | The rest of the agent tools, for calls that run while the model does other work. Offered with `agentTools: "all"`. |
+
+### Agent tools
+
+The channel offers the SDK's agent tools, so the session can reach other
+agents on the same NATS as tools of its own. They are built on the caller
+API: the agent being prompted sees an ordinary prompt, signed with the
+channel's identity when `senderIdentity` is `signed`.
+
+The `agentTools` setting (`NATS_AGENT_TOOLS` wins over it) picks the set:
+
+| Value | Tools |
+| --- | --- |
+| `blocking` (default) | `discover_agents`, `prompt_agent`, `answer_agent` |
+| `all` | the six, adding `wait_agent`, `cancel_agent`, `list_agent_calls` |
+| `off` | none |
+
+Each agent tool takes one more optional argument, `request_id`: the inbound
+channel request the call is made for, the last active request when it is
+omitted. A call made for a request belongs to it: it runs in that request's
+context, and the calls it started that are still open end when the request
+completes (`reply` with `done=true`). A call made while no request is active
+is the local user's and lives as long as the session. A `request_id` that
+names no active request is refused.
+
+When a prompted agent asks a question, it comes back as the tool's result
+for the model to answer with `answer_agent`. The channel's own address is
+left out of discovery and refused, so the session cannot prompt itself.
+Permission prompts are unaffected: they follow the [permissions](#permissions)
+setting.
+
+The model's id for each agent-tool call reaches the tools through the
+`PreToolUse` hook (see [Hooks](#hooks)); an MCP tool call does not carry it.
+
+### When the model stops without replying
+
+A request is answered only through `reply` with `done=true`. When Claude
+Code's turn ends without it, the plugin ends the request rather than leave
+its caller waiting until the 30-minute request TTL. The caller gets the
+protocol's error frame (§9), then the terminator, and no response text, so
+it cannot mistake the end for the model's words:
+
+```
+Nats-Service-Error-Code: 500
+Nats-Service-Error: the Claude Code turn ended without a reply to this prompt
+```
+
+A caller using the SDK's agent tools sees its `prompt_agent` call fail with
+that description. When the request ends depends on whether the plugin
+knows which turn was the request's (see [Which caller is
+asked](#which-caller-is-asked)); both rest on the [hooks](#hooks):
+
+- **The request owned its turn** (delivered while Claude Code was quiet):
+  it is ended at that turn's `Stop`, when the `Stop` says no background
+  tasks or session crons are left, since nothing else can come back to it.
+- **Any other request** (delivered while a turn ran, which Claude Code may
+  fold into that turn or queue for the next, or whose turn stopped with
+  background work left): it survives the `Stop`. It is ended once a `Stop`
+  has come after its delivery and no turn has started within
+  `turnStartGraceMs` (5 minutes by default) of the latest `Stop`. The
+  plugin sees a turn start at its first tool call, so the grace period has
+  to outlast the model's first reply; a turn that starts in time keeps the
+  request open, and the grace period runs again from that turn's `Stop`.
+
+A request ended this way is logged as `request ended without a reply` with
+its request id and the reason, and the [extensions](#extensions) hear
+`promptEnded` with the outcome `error`. A later `reply` to it is refused as
+not active. The request TTL stays the last guard: without the hooks, or in
+a session where a turn starts within the grace period after every `Stop`,
+nothing else ends a request.
 
 ## Permissions
 
@@ -190,9 +273,9 @@ configuration needed.
 ### Query mode
 
 Permission requests are emitted as `{"type":"query","data":{...}}`
-chunks on the active stream's reply subject (spec §7). The caller
-replies on the query's dynamic `_INBOX` with `yes`/`no`, and the plugin
-forwards the decision back to the harness.
+chunks on the reply subject of the request whose turn made the tool call
+(spec §7). The caller replies on the query's dynamic `_INBOX` with
+`yes`/`no`, and the plugin forwards the decision back to the harness.
 
 ```
 /nats-channel:configure permissions query
@@ -209,10 +292,55 @@ old configs keep working. The older `permissions.subject` override field
 has been removed - query chunks always use a fresh NATS inbox per
 request.
 
-If Claude asks for permission while no NATS request is active (for
-example from direct terminal input), the plugin denies by default in
-`query` mode; use `permissions terminal` instead if you want interactive
-approval in that case.
+#### Which caller is asked
+
+A question goes to the caller of the turn that asked it, never to a
+newer prompt. Claude Code's permission request does not name its turn,
+so the plugin works it out from its [hooks](#hooks): the `Stop` hook
+marks the end of each turn, and the `PreToolUse` hook records the prompt
+id of every tool call, which Claude Code runs before it asks. A NATS
+request owns a turn when it was delivered while Claude Code was quiet —
+the last turn had stopped with no background tasks or session crons left,
+no tool call since, and no other request that might still be waiting to
+start a turn — so the next turn is the one it starts. It owns that turn
+until the turn's `Stop`.
+
+The plugin denies at once, without asking anyone, when:
+
+- no request owns the turn: the question comes from direct terminal
+  input, from a turn that background work started, from a turn that went
+  on after its request's `Stop`, or from a turn whose prompt id changed
+  without a `Stop`;
+- the owning request is already finished — replied with `done=true`,
+  expired, or shut down;
+- the owning request's caller is gone: before asking, and every 2 seconds
+  while a question is open, the plugin checks that someone still
+  subscribes to the request's reply subject; a caller whose connection
+  closed fails that check and its open question is denied.
+
+When Claude Code does not make the turn's owner certain, the plugin
+chooses deny:
+
+- A request delivered while a turn is running owns nothing in that turn
+  or the next — Claude Code may fold it into the running turn or queue it,
+  and does not say which — and it holds back ownership for later requests
+  until it finishes or a second turn has stopped. With two callers at
+  once, only the first one's turn relays questions.
+- A Claude Code that does not report the hook fields the plugin reads
+  (`prompt_id` on `PreToolUse`, `background_tasks` and `session_crons` on
+  `Stop`), or runs without the plugin's hooks, gets every question denied.
+- A turn interrupted from the terminal may end without a `Stop`; until
+  the next one, new requests own nothing.
+- One race stays open the other way: a turn the local user starts in the
+  terminal, before its first tool call, looks quiet to the plugin, so a
+  request arriving in that moment is taken to start the next turn. The
+  terminal shows that user the same permission dialog.
+
+A caller that cancels its prompt but keeps its NATS connection open
+still looks present: the protocol has no cancel message (§6.7), and the
+connection's shared reply inbox stays subscribed. Its question is
+denied after the timeout below. Use `permissions terminal` if you want
+interactive approval for questions the plugin denies.
 
 ### Handling permission queries with the SDK
 
@@ -234,14 +362,38 @@ query chunk:
 nats pub _INBOX.Xj7k9Q2pA "yes"
 ```
 
-If no reply is received within 2 minutes, the permission defaults to
-**deny**.
+If a caller that is still there does not reply within 2 minutes, the
+permission defaults to **deny**.
 
 ## Access control
 
 NATS server authentication and authorization handle access control. If a
 user can connect and publish to `agents.prompt.cc.<owner>.<name>`, they can
 interact with Claude. No additional pairing or allowlist is needed.
+
+`minSenderTrust: "signed"` adds a sender-signature requirement, but it is
+separate from NATS authorization and separate from the channel's own identity.
+The default is `"any"`, so existing headerless callers continue to work.
+
+## Sender identity
+
+Host identity is optional and off by default. Set `senderIdentity` to
+`"signed"` when the selected NATS CLI context contains a user seed (`creds`,
+`nkey`, or `user_jwt` plus `user_seed`). The channel reads that connection
+source once and derives both NATS authentication and the signer from the same
+immutable snapshot. There is deliberately no second identity credential.
+
+Signed startup validates that the signer is the NATS user authenticated on the
+live connection. Missing user-info permission, seedless authentication, or a
+binding mismatch fails signed startup rather than silently falling back. Set
+identity to `"off"` for token/password servers or deployments without identity
+lookup permission. Credential rotation takes effect after restarting Claude
+Code or reloading the plugin.
+
+Inbound trust is independent: an identity-free channel may still require
+signed callers, and an identified channel remains permissive unless
+`minSenderTrust` is explicitly set to `"signed"`. Responses and permission
+query replies are not independently signed.
 
 ## Anthropic auth
 
@@ -259,8 +411,9 @@ State lives in `~/.claude/channels/nats/`:
 
 | File | Purpose |
 | --- | --- |
-| `config.json` | Selected NATS context, session name override, and permission settings |
+| `config.json` | Selected NATS context, owner and session name overrides, identity, trust, permission, agent-tools and extension settings |
 | `attachments/<request_id>/` | Per-request staged attachments; auto-cleaned on reply completion |
+| `sessions/` | What the plugin's [hooks](#hooks) record, per Claude Code process; a dead process's files are removed when a server starts |
 
 NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 
@@ -271,9 +424,13 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
   "context": "my-context",
   "owner": "my-team",
   "sessionName": "my-session",
+  "senderIdentity": "signed",
+  "minSenderTrust": "any",
   "permissions": {
     "mode": "query"
-  }
+  },
+  "agentTools": "blocking",
+  "extensions": ["some-extension", { "module": "/abs/path/to/extension", "options": {} }]
 }
 ```
 
@@ -282,13 +439,18 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 | `context` | *(none - uses demo.nats.io)* | NATS CLI context name |
 | `owner` | sanitized `$USER` | Override the owner (4th subject token) |
 | `sessionName` | CWD basename | Override the session name |
+| `senderIdentity` | `off` | `off` or `signed`; signed mode uses the selected connection credentials |
+| `minSenderTrust` | `any` | `any` or `signed`; controls inbound prompt admission independently |
 | `permissions.mode` | `terminal` | `terminal` or `query` (`nats` accepted as legacy alias for `query`) |
+| `agentTools` | `blocking` | `blocking`, `all` or `off`; the [agent tools](#agent-tools) offered |
+| `turnStartGraceMs` | `300000` | How long after a `Stop` a request not tied to a turn waits for one to start before it is ended; see [When the model stops without replying](#when-the-model-stops-without-replying) |
+| `extensions` | *(none)* | Extension modules: package names or absolute paths, or `{ "module", "options" }` objects; see [Extensions](#extensions) |
 
 ### Environment variables
 
-Identity vars follow the `SYNADIA_*` convention shared across the agent
-plugins: per-agent var > fleet-wide var > legacy alias / config file >
-derived fallback.
+Owner and session vars follow the `SYNADIA_*` convention shared across the
+agent plugins. Connection, identity, and trust use the `NATS_*` variables
+shown below; environment settings override the corresponding config fields.
 
 | Variable | Overrides | Default |
 | --- | --- | --- |
@@ -297,5 +459,47 @@ derived fallback.
 | `NATS_SESSION_NAME` | Session name — legacy alias, still honored below the `SYNADIA_*` vars | *(unset — falls through to config `sessionName`, then the `$CLAUDE_CWD` basename)* |
 | `NATS_CONTEXT` | NATS CLI context to connect with (wins over config `context`) | — |
 | `NATS_URL` | Raw NATS URL; used when no context is set via env or config | `demo.nats.io` |
+| `NATS_SENDER_IDENTITY` | Host identity mode: `off` or `signed` | config `senderIdentity`, then `off` |
+| `NATS_MIN_SENDER_TRUST` | Inbound sender policy: `any` or `signed` | config `minSenderTrust`, then `any` |
+| `NATS_AGENT_TOOLS` | The agent tools offered: `blocking`, `all` or `off`; empty means `blocking` | config `agentTools`, then `blocking` |
+| `SYNADIA_CLAUDE_CODE_EXTENSIONS`, `SYNADIA_AGENT_EXTENSIONS` | Extension modules, comma-separated; per-agent var wins, then fleet-wide, then config `extensions`. A set variable wins even when empty | *(none)* |
+| `SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS` | `turnStartGraceMs`, in milliseconds, a whole number above 0; empty means unset | config `turnStartGraceMs`, then `300000` |
 | `NATS_STATE_DIR` | State directory location | `~/.claude/channels/nats` |
 | `CLAUDE_CWD` | Working directory whose basename seeds the default session name | — |
+| `CLAUDE_PID` | Set by Claude Code for its MCP servers and hooks; keys the hooks' files | the server's parent pid |
+
+## Extensions
+
+The channel can load extension modules that add behaviour around it:
+interceptors for its client and service, keys for its registration
+metadata, extensions for its agent tools, and handlers for the session's
+events. The plugin's hooks
+(`hooks/hooks.json`) record the session id at `SessionStart`, the turn's
+end at `Stop` and the tool-call id at `PreToolUse` under
+`<state dir>/sessions/`, keyed by the Claude Code process; the server
+reads them to follow `/clear`, to close a turn when Claude Code is done,
+and to pass the model's tool-call id to its agent tools. Name extensions
+in `SYNADIA_CLAUDE_CODE_EXTENSIONS` or `SYNADIA_AGENT_EXTENSIONS`, or as
+the `extensions` array in `config.json`; `request_info` lists the modules
+loaded. The contract is [`../EXTENSIONS.md`](../EXTENSIONS.md).
+
+## Hooks
+
+The plugin ships Claude Code hooks (`hooks/hooks.json`), all running
+`hooks/session-event.ts` with `bun`. They record what the MCP server cannot
+see itself, under `<state dir>/sessions/`, keyed by the Claude Code process
+(`CLAUDE_PID`), each file written atomically:
+
+| Hook | File | Records | Why |
+| --- | --- | --- | --- |
+| `SessionStart` | `<pid>` | `{ "session_id", "source", "at_ms" }` | the session Claude Code uses now; `/clear` starts a new one under the same MCP server |
+| `Stop` | `<pid>.stop` | `{ "session_id", "background", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call; `background` says whether background tasks or session crons could start another turn by themselves; a request the turn left without its reply is ended (see [When the model stops without replying](#when-the-model-stops-without-replying)) |
+| `PreToolUse` (every tool) | `<pid>.turn` | `{ "prompt_id", "first_ms", "at_ms" }` | the turn the latest tool call belongs to and when its first call was made, so a permission question goes to the request that owns the turn (see [Which caller is asked](#which-caller-is-asked)) |
+| `PreToolUse` (agent tools) | `<pid>.tools/<tool_use_id>` | `{ "tool_use_id", "tool_name", "tool_input", "at_ms" }` | the model's id for the tool call, which the server hands to the agent tools; the server removes the file when the call arrives |
+
+The hooks write whether or not an extension is loaded, print nothing, and
+always exit 0, so a failing hook never interrupts the session. Without
+them the channel still works: the session id falls back to
+`CLAUDE_CODE_SESSION_ID`, agent-tool calls run without the model's
+tool-call id, `query` mode denies every permission question, and a request
+the model never replies to stays open until the request TTL.

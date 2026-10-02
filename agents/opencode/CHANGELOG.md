@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional signed host identity and independent signed-only prompt admission
+  in both CLI and installed-plugin paths. The SDK connection bundle is the
+  only credential/signing seam; identity-free operation remains the default.
+
 - Fleet-wide identity fallbacks per the `SYNADIA_*` convention shared
   across `agents/*`: `SYNADIA_OWNER` and `SYNADIA_NAME` are honored in
   both CLI and plugin modes, below the per-agent vars and above the

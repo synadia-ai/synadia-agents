@@ -5,6 +5,7 @@ export interface NatsConfig {
   readonly url?: string;
   readonly context?: string;
   readonly creds?: string;
+  readonly senderIdentity?: "off" | "signed";
 }
 
 export interface AgentIdentityConfig {
@@ -13,6 +14,7 @@ export interface AgentIdentityConfig {
   readonly subjectToken: string;
   readonly heartbeatIntervalS: number;
   readonly keepaliveIntervalS: number;
+  readonly minSenderTrust?: "any" | "signed";
 }
 
 export interface AcpRuntimeConfig {

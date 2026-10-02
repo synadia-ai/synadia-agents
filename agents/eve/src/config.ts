@@ -7,6 +7,7 @@ export interface NatsConfig {
   readonly url?: string;
   readonly context?: string;
   readonly creds?: string;
+  readonly senderIdentity?: "off" | "signed";
 }
 
 export interface AgentConfig {
@@ -15,6 +16,7 @@ export interface AgentConfig {
   readonly subjectToken: string;
   readonly heartbeatIntervalS: number;
   readonly keepaliveIntervalS: number;
+  readonly minSenderTrust?: "any" | "signed";
 }
 
 export interface EveTargetConfig {
@@ -44,6 +46,8 @@ export interface ParsedArgs {
   readonly natsUrl?: string;
   readonly natsContext?: string;
   readonly natsCreds?: string;
+  readonly senderIdentity?: "off" | "signed";
+  readonly minSenderTrust?: "any" | "signed";
   readonly owner?: string;
   readonly name?: string;
   readonly subjectToken?: string;
@@ -71,6 +75,8 @@ const flagMap: Record<string, keyof Omit<ParsedArgs, "command">> = {
   "--nats-url": "natsUrl",
   "--nats-context": "natsContext",
   "--nats-creds": "natsCreds",
+  "--sender-identity": "senderIdentity",
+  "--min-sender-trust": "minSenderTrust",
   "--owner": "owner",
   "--name": "name",
   "--subject-token": "subjectToken",
@@ -97,6 +103,10 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
       const n = Number(value);
       if (!Number.isFinite(n) || n <= 0) throw new Error(`${arg} must be a positive number`);
       out[key] = n;
+    } else if (key === "senderIdentity") {
+      out[key] = parseSenderIdentity(value, arg);
+    } else if (key === "minSenderTrust") {
+      out[key] = parseMinSenderTrust(value, arg);
     } else {
       out[key] = value;
     }
@@ -161,6 +171,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): EveChann
   if (natsUrl) nats.url = natsUrl;
   if (natsContext) nats.context = natsContext;
   if (natsCreds) nats.creds = natsCreds;
+  nats.senderIdentity = parseSenderIdentity(get(args.senderIdentity, env.NATS_SENDER_IDENTITY, natsSection.sender_identity, "off")!, "nats.sender_identity");
 
   const authToken = get(args.eveAuthToken, env.EVE_AUTH_TOKEN, eveSection.auth_token);
 
@@ -172,6 +183,7 @@ export function loadConfigFromSources(sources: LoadConfigSources = {}): EveChann
       subjectToken,
       heartbeatIntervalS: parsePositiveNumber(get(args.heartbeatIntervalS?.toString(), agentSection.heartbeat_interval_s, "30")!, "agent.heartbeat_interval_s"),
       keepaliveIntervalS: parsePositiveNumber(get(args.keepaliveIntervalS?.toString(), agentSection.keepalive_interval_s, "30")!, "agent.keepalive_interval_s"),
+      minSenderTrust: parseMinSenderTrust(get(args.minSenderTrust, env.NATS_MIN_SENDER_TRUST, agentSection.min_sender_trust, "any")!, "agent.min_sender_trust"),
     },
     eve: {
       baseUrl: get(args.eveBaseUrl, env.EVE_BASE_URL, eveSection.base_url, DEFAULT_EVE_BASE_URL)!,
@@ -185,6 +197,16 @@ function parsePositiveNumber(value: string, field: string): number {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) throw new Error(`${field} must be a positive number`);
   return number;
+}
+
+function parseSenderIdentity(value: string, field: string): "off" | "signed" {
+  if (value === "off" || value === "signed") return value;
+  throw new Error(`${field} must be off or signed`);
+}
+
+function parseMinSenderTrust(value: string, field: string): "any" | "signed" {
+  if (value === "any" || value === "signed") return value;
+  throw new Error(`${field} must be any or signed`);
 }
 
 export function mappingFromConfig(config: EveChannelConfig): EveMapping {
@@ -201,6 +223,7 @@ export function renderConfigTemplate(): string {
 url = "nats://127.0.0.1:4222"
 context = "local"
 creds = "/path/to/user.creds"
+sender_identity = "off"
 
 [agent]
 owner = "rene"
@@ -208,6 +231,7 @@ name = "support"
 subject_token = "eve"
 heartbeat_interval_s = 30
 keepalive_interval_s = 30
+min_sender_trust = "any"
 
 [eve]
 base_url = "http://127.0.0.1:2000"
@@ -229,6 +253,8 @@ Options:
   --nats-url URL
   --nats-context NAME
   --nats-creds PATH
+  --sender-identity off|signed
+  --min-sender-trust any|signed
   --owner TOKEN
   --name TOKEN
   --subject-token TOKEN

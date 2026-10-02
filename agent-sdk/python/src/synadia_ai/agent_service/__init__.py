@@ -18,7 +18,16 @@ Public API:
 * :class:`PromptHandler` — type alias for ``Callable[[Envelope,
   PromptStream], Awaitable[None]]``.
 * :class:`ServiceIdentity` — ``AgentService(identity=ServiceIdentity(signer=…))``,
-  the host's own signer (registers ``id_sig``).
+  the host's own signer (registers ``id_sig`` and signs every heartbeat's
+  ``Agent-Sender``; :mod:`synadia_ai.agent_service.heartbeat` has the
+  publisher and ``sign_heartbeat`` for hand-rolled ones).
+* :class:`RequestInterceptor`, :class:`RequestInterceptorContext`,
+  :class:`RequestRejectedError` — the hook around the prompt handler
+  (``AgentService(interceptors=[...])``); ``heartbeat_extras=`` adds
+  fields to every heartbeat and status reply.
+* :class:`AgentServiceExtraEndpoint` — a harness endpoint registered on the
+  same micro service after ``prompt`` and ``status``
+  (``AgentService(extra_endpoints=[...])``).
 * :data:`AcceptSenderHook`, :class:`SenderGate`, :class:`NonceCache`,
   :class:`SenderAdmission`, :class:`SenderRejection` — the stateful
   classification parts, exposed for hand-rolled services.
@@ -55,11 +64,18 @@ from .identity import (
     SenderRejection,
     ServiceIdentity,
 )
+from .interceptor import (
+    CallNext,
+    RequestInterceptor,
+    RequestInterceptorContext,
+    RequestRejectedError,
+)
 from .service import (
     DEFAULT_ATTACHMENTS_OK,
     DEFAULT_KEEPALIVE_INTERVAL_S,
     DEFAULT_MAX_PAYLOAD,
     AgentService,
+    AgentServiceExtraEndpoint,
     PromptHandler,
     PromptStream,
 )
@@ -73,9 +89,14 @@ __all__ = [
     "DEFAULT_REPLAY_WINDOW_S",
     "AcceptSenderHook",
     "AgentService",
+    "AgentServiceExtraEndpoint",
+    "CallNext",
     "NonceCache",
     "PromptHandler",
     "PromptStream",
+    "RequestInterceptor",
+    "RequestInterceptorContext",
+    "RequestRejectedError",
     "SenderAdmission",
     "SenderGate",
     "SenderRejection",

@@ -47,8 +47,8 @@ CONSUMER DISCOVERY
   Consumers are auto-discovered by scanning $REPO/examples/*/package.json
   AND $REPO/agents/*/package.json for any that depend on @synadia-ai/agents
   and/or @synadia-ai/agent-service. Names listed in .devmodeignore (next to
-  this script) are excluded — by default this is just 'dspy' (a private
-  example that lives on file: permanently).
+  this script) are excluded. The current exclusions are 'dspy' (a private
+  example) and 'claude-code' (a marketplace subtree staged separately).
 
 SDK PAIR
   @synadia-ai/agents          ← caller (client-sdk/typescript)

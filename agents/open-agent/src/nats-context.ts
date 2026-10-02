@@ -2,34 +2,49 @@
 // a `NATS_URL` env var. The SDK already owns the heavy lifting; this is
 // just the bridge's CLI flag plumbing.
 
-import { connect, type NodeConnectionOptions } from "@nats-io/transport-node";
-import { loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
+import { connect } from "@nats-io/transport-node";
+import {
+  resolveNatsConnectionBundle,
+  withAgentReconnectDefaults,
+  type NatsConnectionBundle,
+  type NatsConnectionSource,
+} from "@synadia-ai/agents";
 import type { NatsConnection } from "@nats-io/nats-core";
 
 export interface ResolveNatsOptions {
   /** Saved `nats` CLI context name; `"current"` resolves the selected one. */
   readonly natsContext?: string;
-  /**
-   * Direct URL. Within this resolver it wins over `natsContext`, but the
-   * CLI forwards it only when no context is selected — so user-facing
-   * precedence is context over URL (matching the other agent plugins).
-   */
+  /** Direct URL. A selected context wins when both values are present. */
   readonly natsUrl?: string;
+  /** Derive a sender signer from the selected connection source. Default: off. */
+  readonly senderIdentity?: "off" | "signed";
 }
 
-export async function resolveConnectionOptions(
+export async function resolveConnectionBundle(
   opts: ResolveNatsOptions,
-): Promise<NodeConnectionOptions> {
-  if (opts.natsUrl !== undefined && opts.natsUrl.length > 0) {
-    return parseNatsUrl(opts.natsUrl);
-  }
-  if (opts.natsContext !== undefined && opts.natsContext.length > 0) {
-    return loadContextOptions(opts.natsContext);
-  }
-  return parseNatsUrl("nats://127.0.0.1:4222");
+): Promise<NatsConnectionBundle> {
+  const source: NatsConnectionSource = opts.natsContext !== undefined && opts.natsContext.length > 0
+    ? { context: opts.natsContext }
+    : opts.natsUrl !== undefined && opts.natsUrl.length > 0
+      ? { url: opts.natsUrl }
+      : { url: "nats://127.0.0.1:4222" };
+  const bundle = opts.senderIdentity === "signed"
+    ? await resolveNatsConnectionBundle(source, { identity: "signed" })
+    : await resolveNatsConnectionBundle(source);
+  return bundle;
 }
 
-export async function connectFrom(opts: ResolveNatsOptions): Promise<NatsConnection> {
-  const co = await resolveConnectionOptions(opts);
-  return connect(co);
+export interface ConnectedNats {
+  readonly nc: NatsConnection;
+  readonly bundle: NatsConnectionBundle;
+}
+
+export async function connectFrom(opts: ResolveNatsOptions): Promise<ConnectedNats> {
+  const bundle = await resolveConnectionBundle(opts);
+  try {
+    return { nc: await connect(withAgentReconnectDefaults(bundle.connectionOptions)), bundle };
+  } catch (error) {
+    bundle.wipe();
+    throw error;
+  }
 }

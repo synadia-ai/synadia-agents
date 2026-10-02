@@ -34,16 +34,25 @@
 //     (claimed / absent) — and hands the classified sender to the handler
 //     as `PromptResponse.sender` (a `VerifiedSender.resolve()` is bound to
 //     a TTL-cached `$SRV.INFO` reverse lookup, `resolveTtlMs`). `status`
-//     is classified and logged, never rejected. Registers `user_nkey` /
-//     `account` / `id_sig` when the connection has an identity (and a
-//     signer), and **always** advertises `min_sender_trust` on the prompt
+//     is classified and logged, never rejected. When host identity is
+//     explicitly configured it registers `user_nkey` / `account` and, with
+//     a live-bound signer, `id_sig`; omission performs no self lookup and
+//     registers none of those keys. It **always** advertises `min_sender_trust` on the prompt
 //     endpoint. `operatorAttested` (off by default) adds the
-//     `Nats-Request-Info` cross-check of a closed endpoint.
+//     `Nats-Request-Info` cross-check of a closed endpoint. With a signer
+//     every heartbeat carries a signed `Agent-Sender` (`sub` the heartbeat
+//     subject, `ts` the frame's own); the status reply carries none.
+//   - Extension hooks: `interceptors` run around the prompt handler — each
+//     sees the decoded envelope (its unknown fields in `extras`), the
+//     classified sender, the subject and the headers, may refuse the
+//     request with a §9 error before the handler runs, and runs the rest
+//     of the request inside a context of its own; `heartbeatExtras` adds
+//     fields to every heartbeat and status reply.
 //
 // Mirrors the Python SDK's `AgentService` (`client-sdk/python/src/synadia_ai/agents/service.py`)
 // — wire-equivalent behaviour, idiomatic TS API.
 
-import type { NatsConnection } from "@nats-io/nats-core";
+import type { MsgHdrs, NatsConnection } from "@nats-io/nats-core";
 import { Svcm, type Service, type ServiceHandler, type ServiceMsg } from "@nats-io/services";
 
 import {
@@ -55,10 +64,8 @@ import {
   formatHumanBytes,
   formatSender,
   IDENTITY_METADATA_KEYS,
-  IdentityMismatchError,
   MIN_SENDER_TRUST_KEY,
   newInbox,
-  normalizeAccountTokenPosition,
   normalizeResolveTtlMs,
   parseHumanBytes,
   PROMPT_ENDPOINT_NAME,
@@ -81,13 +88,23 @@ import {
   type SenderSigner,
 } from "@synadia-ai/agents";
 
-import { buildHeartbeatPayload, encodeHeartbeatPayload } from "./heartbeat/payload.js";
+import {
+  buildHeartbeatPayload,
+  encodeHeartbeatPayload,
+  type BuildHeartbeatPayloadOptions,
+} from "./heartbeat/payload.js";
+import { signHeartbeat, type HeartbeatSigner } from "./heartbeat/sender.js";
 import {
   DEFAULT_MIN_SENDER_TRUST,
   DEFAULT_REPLAY_WINDOW_MS,
   SenderGate,
   type AcceptSenderHook,
 } from "./identity/classify.js";
+import {
+  RequestRejectedError,
+  type RequestInterceptor,
+  type RequestInterceptorContext,
+} from "./interceptor.js";
 import {
   encodeChunk,
   type Chunk,
@@ -118,9 +135,21 @@ export const DEFAULT_KEEPALIVE_INTERVAL_S = 30;
 /** Default `service.version` advertised in `$SRV.INFO`. */
 const DEFAULT_VERSION = "0.0.1";
 
-/** Sender-identity options of the host: the signer for `id_sig`. The host never sends `Agent-Sender`. */
+/**
+ * Sender-identity options of the host: the signer for `id_sig` and for the
+ * `Agent-Sender` header on every heartbeat the service publishes. The host
+ * sends `Agent-Sender` nowhere else — never on a reply — and carries no
+ * display name.
+ */
 export interface AgentServiceIdentityOptions {
-  /** Signs `id_sig` (`AGENT-ID-V1`) over the prompt subject. Must hold the connection's user NKEY. */
+  /**
+   * Signs `id_sig` (`AGENT-ID-V1`) over the prompt subject, and every
+   * heartbeat's `Agent-Sender` (`sub` the heartbeat subject, `ts` the
+   * heartbeat's own, a fresh nonce per beat, the payload hash over the
+   * frame published). Must hold the live connection's user NKEY; a
+   * credentials JWT must also carry that connection's user and account.
+   * Without a signer the service beats unsigned, as plain protocol 0.3.
+   */
   readonly signer?: SenderSigner;
 }
 
@@ -175,7 +204,12 @@ export interface AgentServiceOptions {
    * cadence). Defaults to 30.
    */
   readonly keepaliveIntervalS?: number | null;
-  /** Extra metadata keys merged into the service metadata (forward-compat). */
+  /**
+   * Extra metadata keys merged into the service metadata (forward-compat).
+   * The required keys (`agent`, `owner`, `protocol_version`, and `session`
+   * when set) and the identity keys (`user_nkey`, `account`, `id_sig`)
+   * always win over an entry with the same name.
+   */
   readonly extraMetadata?: Readonly<Record<string, string>>;
   /**
    * Custom endpoints registered on the same `agents` micro service
@@ -205,13 +239,12 @@ export interface AgentServiceOptions {
    */
   readonly logger?: Logger;
   /**
-   * Sender-identity: the host's own signer. With it, `start()` registers
-   * `id_sig` next to `user_nkey` / `account`; without it the identity
-   * keys are a display-grade claim (still registered when the connection
-   * has an identity). `start()` throws `IdentityMismatchError` when the
-   * signer's key is not the connection's user; on `NoIdentityError` /
-   * `IdentityUnavailableError` it logs and starts without identity
-   * metadata (verification of *senders* needs no host identity).
+   * Sender-identity registration. Omit this option for no self lookup and
+   * no `user_nkey` / `account` / `id_sig` metadata. An explicit empty
+   * object requests unsigned registration metadata. With a signer,
+   * `start()` registers `id_sig` only after the signer's user and account
+   * match the live connection; any binding failure is fatal. Verification
+   * of incoming senders does not require host identity.
    */
   readonly identity?: AgentServiceIdentityOptions;
   /**
@@ -225,18 +258,6 @@ export interface AgentServiceOptions {
    * `ts + replayWindowMs`. Default 30 000.
    */
   readonly replayWindowMs?: number;
-  /**
-   * 1-based position of the caller's account token the server inserts
-   * into the arrival subject when this agent sits behind a service export
-   * with `account_token_position`. Precondition: the inserted token is a
-   * server stamp only on a **closed** endpoint. Note `AgentService` hosts
-   * five-token `agents.{verb}.a.o.n` subjects, which such an export turns
-   * into six-token arrivals its subscription never sees — the option is
-   * validated and passed to classification for a future subject override;
-   * today a service behind such an export uses `verifySenderHeader` on its
-   * own subscription.
-   */
-  readonly accountTokenPosition?: number;
   /**
    * Acceptance hook — runs for every classified `prompt` request (never
    * for `status`), after classification and before the ack. `false` for a
@@ -259,12 +280,34 @@ export interface AgentServiceOptions {
    * server's stamp). The SDK cannot verify that promise. With it on, a
    * verified header whose signed `account` / `user` disagree with the
    * stamp is refused (`401`), a present but unparseable stamp is refused,
-   * and agreement on `acc` — or the `accountTokenPosition` cross-check —
-   * surfaces as `sender.accountAttested === true` (`formatSender` then
+   * and agreement on `acc` surfaces as
+   * `sender.accountAttested === true` (`formatSender` then
    * renders `(verified)`). An absent stamp is compared to nothing.
    * Unsigned claims are never cross-checked.
    */
   readonly operatorAttested?: boolean;
+  /**
+   * Request interceptors, run around the prompt handler for every admitted
+   * `prompt` request — after the envelope is decoded and the sender
+   * classified, before the §6.4 ack. The first listed is the outermost.
+   * Each may refuse the request by throwing before it calls `next()` (a
+   * {@link RequestRejectedError} carries its §9 code, a `ProtocolError` is
+   * a `400`, anything else a `500`): the caller then gets the error frame
+   * and the terminator, no ack. `next()` acks, runs the rest of the chain
+   * and the handler, and resolves when they are done; an interceptor runs
+   * it inside a context of its own (an `AsyncLocalStorage.run`), which the
+   * handler then sees. Default: none.
+   */
+  readonly interceptors?: ReadonlyArray<RequestInterceptor>;
+  /**
+   * Extra fields for every heartbeat and every `status` reply, read when
+   * each is built so a value that moves between beats is current on every
+   * one. A §8.3 field name (`agent`, `owner`, `session`, `instance_id`,
+   * `ts`, `interval_s`), a value that does not serialize, or a provider
+   * that throws costs that beat its extras — never the beat — and is
+   * logged at `error`.
+   */
+  readonly heartbeatExtras?: () => Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -277,7 +320,11 @@ export interface AgentServiceExtraEndpoint {
   readonly name: string;
   /** Full subject the endpoint listens on. AgentService does NOT prefix. */
   readonly subject: string;
-  /** NATS queue group. Defaults to no queue group (undefined). */
+  /**
+   * NATS queue group. Without one, `@nats-io/services` sets its default
+   * `"q"`, so an extra endpoint is always shared between the instances of
+   * an agent: each request reaches one of them. The Python host does the same.
+   */
   readonly queue?: string;
   /** Endpoint handler. Same shape as `service.addEndpoint(...)`'s handler. */
   readonly handler: ServiceHandler;
@@ -344,12 +391,22 @@ export class PromptResponse {
    * iterating the prompt while the handler awaits here.
    *
    * Throws on timeout — handlers decide whether to abort the stream or
-   * proceed with a default per §7.3.
+   * proceed with a default per §7.3. Throws at once when `signal` aborts
+   * (its reason when that is an `Error`) — before the query is published when it
+   * has already aborted — so a handler that learns the answer is no longer
+   * wanted (the caller went away, see {@link callerListening}) stops
+   * waiting.
    */
   async ask(
     prompt: string | RequestEnvelope,
-    opts: { readonly timeoutMs: number; readonly attachments?: ReadonlyArray<RequestAttachment> },
+    opts: {
+      readonly timeoutMs: number;
+      readonly attachments?: ReadonlyArray<RequestAttachment>;
+      readonly signal?: AbortSignal;
+    },
   ): Promise<RequestEnvelope> {
+    const signal = opts.signal;
+    signal?.throwIfAborted();
     const promptText = typeof prompt === "string" ? prompt : prompt.prompt;
     const baseAttachments = typeof prompt === "string" ? undefined : prompt.attachments;
     const merged: RequestAttachment[] = [...(baseAttachments ?? []), ...(opts.attachments ?? [])];
@@ -375,6 +432,7 @@ export class PromptResponse {
     this.#msg.respond(encodeChunk(queryChunk));
 
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
     try {
       const next = (async (): Promise<RequestEnvelope> => {
         for await (const m of sub) {
@@ -401,7 +459,63 @@ export class PromptResponse {
           opts.timeoutMs,
         );
       });
-      return await Promise.race([next, timed]);
+      const aborted = new Promise<never>((_, reject) => {
+        if (!signal) return;
+        onAbort = () =>
+          reject(signal.reason instanceof Error ? signal.reason : new Error("query aborted"));
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+      });
+      return await Promise.race([next, timed, aborted]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
+      sub.unsubscribe();
+    }
+  }
+
+  /**
+   * Whether the caller still listens on this request's reply subject.
+   *
+   * The protocol has no cancel message (§6.7): a caller that cancels, or
+   * disconnects, just stops listening. This publishes one keep-alive `ack`
+   * status chunk (§6.4, the wire shape of the periodic keep-alive) with a
+   * NATS reply subject of its own; when nobody subscribes to the caller's
+   * reply subject, the server answers that inbox with a no-responders
+   * status at once, and this resolves `false`. Otherwise it resolves
+   * `true` after `timeoutMs` (default 500) without an answer. `true` is a
+   * best guess, not a promise: a server that cannot tell (no-responders
+   * off, interest it only assumes across a gateway) looks like a present
+   * caller, so a handler still needs its own timeout. A caller that only
+   * stops reading — cancels its stream but keeps its connection, whose
+   * shared reply inbox stays subscribed — looks present too: what this
+   * detects is a caller whose connection is gone, or whose reply subject
+   * was its own and is unsubscribed.
+   */
+  async callerListening(opts: { readonly timeoutMs?: number } = {}): Promise<boolean> {
+    const probe = newInbox();
+    let resolveGone!: () => void;
+    const gone = new Promise<void>((resolve) => {
+      resolveGone = resolve;
+    });
+    const sub = this.#nc.subscribe(probe, {
+      max: 1,
+      callback: (err, m) => {
+        if (!err && m.data.length === 0 && m.headers?.code === 503) resolveGone();
+      },
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await this.#nc.flush();
+      const ack: StatusChunk = { type: "status", status: "ack" };
+      this.#msg.respond(encodeChunk(ack), { reply: probe });
+      const waited = new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), opts.timeoutMs ?? 500);
+      });
+      return await Promise.race([gone.then(() => false), waited]);
+    } catch {
+      // A connection that cannot publish reaches nobody.
+      return false;
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       sub.unsubscribe();
@@ -419,10 +533,18 @@ export class AgentService {
   readonly #minSenderTrust: MinSenderTrust;
   readonly #gate: SenderGate;
   readonly #resolver: SenderResolver;
+  readonly #interceptors: ReadonlyArray<RequestInterceptor>;
   #identity: AgentId | undefined;
+  #heartbeatSigner: HeartbeatSigner | undefined;
+  /** The registered `prompt` endpoint, declared on every beat and status reply. */
+  #promptDeclaration: { subject: string; metadata: Record<string, string> } | undefined;
   #handler: PromptHandler | null = null;
   #service: Service | null = null;
   #heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** The beat being signed and published right now; a tick that finds one pending is skipped. */
+  #heartbeatInFlight: Promise<void> | null = null;
+  /** Set first thing in `stop()`, so a beat mid-signature never publishes into the teardown. */
+  #heartbeatsStopped = false;
 
   constructor(options: AgentServiceOptions) {
     const heartbeatIntervalS = options.heartbeatIntervalS ?? DEFAULT_HEARTBEAT_INTERVAL_S;
@@ -449,7 +571,6 @@ export class AgentService {
     if (!(replayWindowMs > 0)) {
       throw new Error("AgentService: replayWindowMs must be > 0");
     }
-    const accountTokenPosition = normalizeAccountTokenPosition(options.accountTokenPosition);
     const resolveTtlMs = normalizeResolveTtlMs(options.resolveTtlMs);
     if (options.operatorAttested !== undefined && typeof options.operatorAttested !== "boolean") {
       throw new Error("AgentService: operatorAttested must be a boolean");
@@ -467,10 +588,11 @@ export class AgentService {
     this.#logger = options.logger ?? SILENT_LOGGER;
     this.#minSenderTrust = minSenderTrust;
     this.#resolver = new SenderResolver(options.nc, { ttlMs: resolveTtlMs });
+    // Copied: a caller mutating its array afterwards changes nothing here.
+    this.#interceptors = Object.freeze([...(options.interceptors ?? [])]);
     this.#gate = new SenderGate({
       minSenderTrust,
       replayWindowMs,
-      ...(accountTokenPosition !== undefined ? { accountTokenPosition } : {}),
       ...(options.acceptSender !== undefined ? { acceptSender: options.acceptSender } : {}),
       logger: this.#logger,
       operatorAttested: options.operatorAttested ?? false,
@@ -479,8 +601,9 @@ export class AgentService {
   }
 
   /**
-   * The agent ID this instance registered (`user_nkey` + `account`), or
-   * `undefined` when the connection has no identity. Set by `start()`.
+   * The agent ID this instance registered (`user_nkey` + `account`). Set by
+   * `start()`; `undefined` before start, when host identity was omitted, or
+   * when an optional unsigned lookup could not establish an identity.
    */
   get identity(): AgentId | undefined {
     return this.#identity;
@@ -594,28 +717,42 @@ export class AgentService {
       }
     }
 
-    // Sender identity: learn the connection's own agent ID once. A signer
-    // that does not match the connection's user is a configuration error
-    // (throw); a connection without an identity starts without the
-    // metadata keys — verifying *senders* needs no host identity.
+    // Sender identity is opt-in. Omission performs no lookup and registers
+    // no self-identity metadata. Explicit unsigned identity is best-effort;
+    // a configured signer must bind to the live user/account or startup
+    // fails, never silently downgrades.
     const signer = this.#options.identity?.signer;
+    this.#identity = undefined;
     let identity: AgentId | undefined;
-    try {
-      identity = await selfId(this.#options.nc, signer ? { signer } : {});
-    } catch (err) {
-      if (err instanceof IdentityMismatchError) throw err;
-      this.#logger.warn("AgentService: starting without identity metadata", {
-        reason: err instanceof Error ? err.message : String(err),
-      });
+    if (this.#options.identity !== undefined) {
+      try {
+        // TypeScript can safely share this memoised/in-flight lookup because
+        // its connection status iterator clears every source on reconnect.
+        // Python deliberately uses an uncached lookup because nats-py exposes
+        // no equivalent reconnect generation.
+        identity = await selfId(this.#options.nc, signer ? { signer } : {});
+      } catch (err) {
+        if (signer) throw err;
+        this.#logger.warn("AgentService: starting without identity metadata", {
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     this.#identity = identity;
+    // Every heartbeat is signed with the signer that signs `id_sig`, once
+    // the identity is bound to the live connection (a signer that fails
+    // to bind threw above). Without a signer the service beats unsigned.
+    this.#heartbeatSigner = identity !== undefined && signer ? { id: identity, signer } : undefined;
 
     const svcm = new Svcm(this.#options.nc);
+    // `extraMetadata` goes first so the required keys overwrite it: a harness
+    // cannot advertise an agent / owner / protocol version other than the
+    // subject it serves.
     const metadata: Record<string, string> = {
+      ...this.#options.extraMetadata,
       agent: this.#subject.agent,
       owner: this.#subject.owner,
       protocol_version: PROTOCOL_VERSION_STRING,
-      ...this.#options.extraMetadata,
     };
     if (this.#options.session !== undefined) {
       metadata["session"] = this.#options.session;
@@ -659,6 +796,12 @@ export class AgentService {
     // they reach the handler). When the server didn't report a value
     // (e.g. an INFO block without `max_payload`), the override stands.
     const maxPayloadStr = this.#effectiveMaxPayload();
+    const promptMetadata: Record<string, string> = {
+      max_payload: maxPayloadStr,
+      attachments_ok: (this.#options.attachmentsOk ?? DEFAULT_ATTACHMENTS_OK) ? "true" : "false",
+      // Always emitted: its presence is what advertises the extension.
+      [MIN_SENDER_TRUST_KEY]: this.#minSenderTrust,
+    };
 
     this.#service.addEndpoint(PROMPT_ENDPOINT_NAME, {
       subject: this.#subject.prompt,
@@ -667,13 +810,11 @@ export class AgentService {
         if (err) return;
         void this.#dispatchPrompt(msg);
       },
-      metadata: {
-        max_payload: maxPayloadStr,
-        attachments_ok: (this.#options.attachmentsOk ?? DEFAULT_ATTACHMENTS_OK) ? "true" : "false",
-        // Always emitted: its presence is what advertises the extension.
-        [MIN_SENDER_TRUST_KEY]: this.#minSenderTrust,
-      },
+      metadata: promptMetadata,
     });
+    // §8.3: the heartbeat declares what `$SRV.INFO` would say about the
+    // prompt endpoint, so a listener knows where and how to prompt.
+    this.#promptDeclaration = { subject: this.#subject.prompt, metadata: { ...promptMetadata } };
 
     // `status` declares nothing about identity (§ "Declaring the requirement").
     this.#service.addEndpoint(STATUS_ENDPOINT_NAME, {
@@ -699,10 +840,14 @@ export class AgentService {
     // must not race the endpoint subscriptions (→ no responders).
     await this.#options.nc.flush();
 
-    this.#startHeartbeats();
+    await this.#startHeartbeats();
   }
 
   async stop(): Promise<void> {
+    // Before anything is torn down: a beat whose signer is still busy reads
+    // this after signing and publishes nothing. `stop()` does not wait for
+    // that signer — a stalled remote HSM must not hold teardown hostage.
+    this.#heartbeatsStopped = true;
     if (this.#heartbeatTimer !== null) {
       clearInterval(this.#heartbeatTimer);
       this.#heartbeatTimer = null;
@@ -713,20 +858,152 @@ export class AgentService {
     }
   }
 
-  #startHeartbeats(): void {
-    const publish = (): void => {
-      const service = this.#service;
-      if (!service) return;
-      const payload = buildHeartbeatPayload(
-        this.#subject,
-        this.#heartbeatIntervalS,
-        service.info().id,
-        this.#options.session !== undefined ? { session: this.#options.session } : {},
-      );
-      this.#options.nc.publish(this.#subject.heartbeat, encodeHeartbeatPayload(payload));
+  /**
+   * What goes on the heartbeat beyond the §8.3 required fields: the
+   * session label when the harness multiplexes, the protocol version and
+   * the registered `prompt` endpoint (its subject and metadata), and the
+   * `heartbeatExtras` provider's fields, read when each heartbeat is built
+   * so every beat carries current values. All of it is optional under
+   * §8.3, so a 0.3 caller ignores what it does not know.
+   */
+  #heartbeatOptions(): BuildHeartbeatPayloadOptions {
+    const options: {
+      session?: string;
+      extras?: Record<string, unknown>;
+      protocolVersion?: string;
+      endpoints?: Record<string, { subject: string; metadata: Record<string, string> }>;
+    } = { protocolVersion: PROTOCOL_VERSION_STRING };
+    if (this.#options.session !== undefined) options.session = this.#options.session;
+    if (this.#promptDeclaration !== undefined) {
+      options.endpoints = { [PROMPT_ENDPOINT_NAME]: this.#promptDeclaration };
+    }
+    const provided = this.#providedExtras();
+    if (provided !== undefined) options.extras = { ...provided };
+    return options;
+  }
+
+  /**
+   * The `heartbeatExtras` provider's fields for one beat, or `undefined`
+   * when there is no provider or its answer cannot go on the wire. A bad
+   * extra must never take the agent's liveness down with it: the beat
+   * goes out without it, and the fault is logged.
+   */
+  #providedExtras(): Readonly<Record<string, unknown>> | undefined {
+    const provider = this.#options.heartbeatExtras;
+    if (provider === undefined) return undefined;
+    let extras: Readonly<Record<string, unknown>>;
+    try {
+      extras = provider();
+    } catch {
+      // The provider is application code: its exception is not logged.
+      this.#logger.error("heartbeatExtras provider failed; publishing without extras", {
+        subject: this.#subject.heartbeat,
+        error: "exception",
+      });
+      return undefined;
+    }
+    const clash = Object.keys(extras).filter((key) => HEARTBEAT_FIELDS.has(key));
+    if (clash.length > 0) {
+      this.#logger.error("heartbeatExtras reuse §8.3 field names; publishing without extras", {
+        subject: this.#subject.heartbeat,
+        fields: clash.sort().join(","),
+      });
+      return undefined;
+    }
+    try {
+      JSON.stringify(extras);
+    } catch {
+      this.#logger.error("heartbeatExtras do not serialize; publishing without extras", {
+        subject: this.#subject.heartbeat,
+        error: "exception",
+      });
+      return undefined;
+    }
+    return extras;
+  }
+
+  /**
+   * Publish one heartbeat frame. With a signer bound at `start()` the frame
+   * carries an `Agent-Sender` header of the sender-identity extension:
+   * `sub` the heartbeat subject as published, `ts` the frame's own `ts`, a
+   * fresh nonce, `sig` over subject · ts · nonce · sha256 of the exact
+   * bytes published. Nothing in the payload changes; a 0.3 subscriber
+   * ignores headers. Without a signer the frame goes out bare, as today.
+   *
+   * A signer that fails mid-life (a wiped key) costs the beat its
+   * signature, never the beat: 0.3 callers keep seeing liveness, and a
+   * receiver that requires signed heartbeats counts an unsigned beat as a
+   * claim and shows the agent as down until signing works again. Logged at
+   * `error` on every beat.
+   * A signer slower than the interval (a remote HSM) never piles beats up
+   * or lands them out of order: `#startHeartbeats` skips a tick while the
+   * previous beat is still pending, the sequential loop of the Python
+   * publisher by construction.
+   */
+  async #publishHeartbeat(): Promise<void> {
+    const service = this.#service;
+    if (!service) return;
+    const payload = buildHeartbeatPayload(
+      this.#subject,
+      this.#heartbeatIntervalS,
+      service.info().id,
+      this.#heartbeatOptions(),
+    );
+    const data = encodeHeartbeatPayload(payload);
+    const sender = this.#heartbeatSigner;
+    let hdrs: MsgHdrs | undefined;
+    if (sender !== undefined) {
+      try {
+        hdrs = await signHeartbeat({
+          sender,
+          subject: this.#subject.heartbeat,
+          ts: payload.ts,
+          data,
+        });
+      } catch (err) {
+        this.#logger.error("heartbeat signing failed; publishing unsigned", {
+          subject: this.#subject.heartbeat,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+      // `stop()` may have begun while the signer was busy: no beat after it.
+      if (this.#heartbeatsStopped) return;
+    }
+    this.#options.nc.publish(
+      this.#subject.heartbeat,
+      data,
+      hdrs !== undefined ? { headers: hdrs } : {},
+    );
+  }
+
+  /** The first beat is out when this resolves (§8.5: subscribe, then discover). */
+  async #startHeartbeats(): Promise<void> {
+    this.#heartbeatsStopped = false;
+    const beat = (): void => {
+      // One beat at a time. A tick that finds the previous beat still
+      // being signed is skipped — logged, because a signer that keeps
+      // missing the interval is worth an operator's attention — rather
+      // than started alongside it, which could publish an older `ts`
+      // after a newer one and let a stalled signer accumulate calls.
+      if (this.#heartbeatInFlight !== null) {
+        this.#logger.warn("heartbeat skipped: the previous beat is still being signed", {
+          subject: this.#subject.heartbeat,
+        });
+        return;
+      }
+      this.#heartbeatInFlight = this.#publishHeartbeat()
+        .catch((err: unknown) => {
+          this.#logger.error("heartbeat publish failed", {
+            subject: this.#subject.heartbeat,
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        })
+        .finally(() => {
+          this.#heartbeatInFlight = null;
+        });
     };
-    publish();
-    this.#heartbeatTimer = setInterval(publish, this.#heartbeatIntervalS * 1000);
+    await this.#publishHeartbeat();
+    this.#heartbeatTimer = setInterval(beat, this.#heartbeatIntervalS * 1000);
     // Allow the Node process to exit even if the timer is still active.
     this.#heartbeatTimer.unref?.();
   }
@@ -742,13 +1019,16 @@ export class AgentService {
         this.#subject,
         this.#heartbeatIntervalS,
         service.info().id,
-        this.#options.session !== undefined ? { session: this.#options.session } : {},
+        this.#heartbeatOptions(),
       );
       msg.respond(encodeHeartbeatPayload(payload));
-    } catch (err) {
+    } catch {
+      this.#logger.error("status handler failed", {
+        subject: msg.subject,
+        error: "exception",
+      });
       try {
-        const desc = err instanceof Error ? err.message : String(err);
-        msg.respondError(500, sanitizeErrorDesc(`status handler error: ${desc}`));
+        msg.respondError(500, "status handler error");
       } catch {
         /* connection may already be gone */
       }
@@ -788,10 +1068,10 @@ export class AgentService {
         return;
       }
       sender = admission.sender;
-    } catch (err) {
+    } catch {
       this.#logger.error("sender classification failed", {
         subject: msg.subject,
-        error: err instanceof Error ? err.message : String(err),
+        error: "exception",
       });
       try {
         msg.respondError(500, "sender classification error");
@@ -805,6 +1085,82 @@ export class AgentService {
 
     const response = new PromptResponse(msg, this.#options.nc, sender);
 
+    // Everything from the ack on is the innermost `next()` of the request
+    // interceptors: an interceptor that refuses before calling it leaves
+    // the caller an error frame and the terminator, and no ack.
+    let started = false;
+    // Set once the handler returns: from then on the caller has its full
+    // reply, and a failure is no longer the caller's.
+    let answered = false;
+    let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+    const stopKeepalive = (): void => {
+      if (keepaliveTimer !== null) {
+        clearInterval(keepaliveTimer);
+        keepaliveTimer = null;
+      }
+    };
+    const serve = async (): Promise<void> => {
+      if (started) throw new Error("request interceptor called next() more than once");
+      started = true;
+      keepaliveTimer = this.#ackAndKeepAlive(msg);
+      await handler(envelope, response);
+      answered = true;
+    };
+    const ctx: RequestInterceptorContext = {
+      envelope,
+      sender,
+      subject: msg.subject,
+      headers: msg.headers,
+    };
+
+    try {
+      await runIntercepted(this.#interceptors, ctx, serve);
+      if (!started) {
+        // Neither refused nor answered: a stream with no ack is no answer.
+        throw new Error("request interceptor returned without calling next()");
+      }
+    } catch (err) {
+      // Stop keep-alive BEFORE the §9 error frame so an ack chunk can't
+      // race in between the error and the terminator.
+      stopKeepalive();
+      if (answered) {
+        // A request interceptor failed after its next() returned: the
+        // handler's reply went out in full, so it stands, and the stream
+        // ends with its terminator (below) and no error frame.
+        this.#logger.error(
+          "request interceptor failed after the handler completed; the reply is kept",
+          { subject: msg.subject, error: "exception" },
+        );
+        return;
+      }
+      const rejected = rejectionOf(err);
+      if (rejected === undefined) {
+        this.#logger.error("prompt handler failed", {
+          subject: msg.subject,
+          error: "exception",
+        });
+      } else {
+        this.#logger.warn("prompt request refused", { subject: msg.subject, code: rejected[0] });
+      }
+      try {
+        const [code, desc] = rejected ?? [500, "handler error"];
+        msg.respondError(code, sanitizeErrorDesc(desc));
+      } catch {
+        /* connection may already be gone */
+      }
+    } finally {
+      stopKeepalive();
+      // §6.5 + §9.3: every stream — successful or errored — ends with a
+      // zero-byte body message that carries NO NATS headers.
+      tryRespondTerminator(msg);
+    }
+  }
+
+  /**
+   * Emit the leading ack and start the keep-alive cadence; returns its
+   * timer, `null` when keep-alive is disabled.
+   */
+  #ackAndKeepAlive(msg: ServiceMsg): ReturnType<typeof setInterval> | null {
     // §6.4: emit the mandatory leading `ack` status chunk as the first
     // message on the reply subject, before the handler runs. Confirms
     // request acceptance and resets the caller's inactivity timeout
@@ -830,54 +1186,72 @@ export class AgentService {
     // model. The §6.4 spec mandates only the leading ack above;
     // periodic acks remain a valid wire shape and stay in the SDK
     // as additional defense.
-    let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-    if (this.#keepaliveIntervalS !== null) {
-      const intervalMs = this.#keepaliveIntervalS * 1000;
-      keepaliveTimer = setInterval(() => {
-        try {
-          msg.respond(ackBytes);
-        } catch {
-          // best-effort; clear so we don't keep firing on a dead request
-          if (keepaliveTimer) clearInterval(keepaliveTimer);
-          keepaliveTimer = null;
-        }
-      }, intervalMs);
-      keepaliveTimer.unref?.();
-    }
-
-    const stopKeepalive = (): void => {
-      if (keepaliveTimer !== null) {
-        clearInterval(keepaliveTimer);
-        keepaliveTimer = null;
-      }
-    };
-
-    try {
-      await handler(envelope, response);
-    } catch (err) {
-      // Stop keep-alive BEFORE the §9 error frame so an ack chunk can't
-      // race in between the error and the terminator.
-      stopKeepalive();
+    if (this.#keepaliveIntervalS === null) return null;
+    const intervalMs = this.#keepaliveIntervalS * 1000;
+    const timer = setInterval(() => {
       try {
-        const desc = err instanceof Error ? err.message : String(err);
-        const isProtocolError =
-          // Cross-realm / duplicate-module guard: adapters may throw a
-          // ProtocolError class from another installed SDK copy.
-          err instanceof ProtocolError || (err instanceof Error && err.name === "ProtocolError");
-        msg.respondError(
-          isProtocolError ? 400 : 500,
-          sanitizeErrorDesc(isProtocolError ? desc : `handler error: ${desc}`),
-        );
+        msg.respond(ackBytes);
       } catch {
-        /* connection may already be gone */
+        // best-effort; stop so we don't keep firing on a dead request
+        clearInterval(timer);
       }
-    } finally {
-      stopKeepalive();
-      // §6.5 + §9.3: every stream — successful or errored — ends with a
-      // zero-byte body message that carries NO NATS headers.
-      tryRespondTerminator(msg);
-    }
+    }, intervalMs);
+    timer.unref?.();
+    return timer;
   }
+}
+
+// The §8.3 field names: a `heartbeatExtras` entry under one of them would
+// overwrite the real field on the wire, or, for the two declarations the
+// encoder writes after the extras, be overwritten by it. Either way the
+// provider is wrong, so its extras are refused, as in the Python host.
+const HEARTBEAT_FIELDS: ReadonlySet<string> = new Set([
+  "agent",
+  "owner",
+  "session",
+  "instance_id",
+  "ts",
+  "interval_s",
+  "protocol_version",
+  "endpoints",
+]);
+
+/**
+ * Run `serve` inside `interceptors`, the first the outermost: each one's
+ * `next()` runs the rest of the chain.
+ */
+function runIntercepted(
+  interceptors: ReadonlyArray<RequestInterceptor>,
+  ctx: RequestInterceptorContext,
+  serve: () => Promise<void>,
+): Promise<void> {
+  const at = (index: number): Promise<void> => {
+    const interceptor = interceptors[index];
+    if (interceptor === undefined) return serve();
+    return Promise.resolve(interceptor.aroundRequest(ctx, () => at(index + 1)));
+  };
+  return at(0);
+}
+
+/**
+ * The §9 code and description a thrown value answers with, or `undefined`
+ * for a plain failure (a `500` with a generic description — the message
+ * of an arbitrary error is not the caller's business).
+ */
+function rejectionOf(err: unknown): readonly [number, string] | undefined {
+  // Cross-realm / duplicate-module guard: adapters may throw an error
+  // class from another installed SDK copy, so the name counts as well.
+  if (
+    err instanceof RequestRejectedError ||
+    (err instanceof Error && err.name === "RequestRejectedError")
+  ) {
+    const { code, description } = err as RequestRejectedError;
+    return [code, description];
+  }
+  if (err instanceof ProtocolError || (err instanceof Error && err.name === "ProtocolError")) {
+    return [400, err.message];
+  }
+  return undefined;
 }
 
 function tryRespondTerminator(msg: ServiceMsg): void {

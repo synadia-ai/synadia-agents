@@ -1,10 +1,10 @@
 # pi-headless
 
-A headless NATS agent host for the [PI coding agent](https://github.com/earendil-works/pi), built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `ReferenceAgent`) and conforming to the Synadia Agent Protocol for NATS **v0.3** (verb-first subjects + `status` endpoint).
+A headless NATS agent host for the [PI coding agent](https://github.com/earendil-works/pi), built on `@synadia-ai/agents` (caller-side primitives) and `@synadia-ai/agent-service` (host-side `AgentService`) and conforming to the Synadia Agent Protocol for NATS **v0.3** (verb-first subjects + `status` endpoint).
 
-Each spawned PI session registers as its own NATS agent instance under `agents.prompt.pi-headless.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.pi-headless.<owner>.<name>` (default `name = "control"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` endpoint (which returns help text) and a `status` endpoint that replies with the same payload as a heartbeat.
+Each spawned PI session registers as its own logical NATS agent instance under `agents.prompt.pi-headless.<owner>.<session_id>` - discoverable via `$SRV.INFO.agents` and promptable with any protocol-compliant client, including the `@synadia-ai/agents` SDK. A small **controller** service at `agents.prompt.pi-headless.<owner>.<name>` (default `name = "control"`) adds request/reply endpoints for session lifecycle - `spawn`, `stop`, `list` - alongside the protocol-required `prompt` and `status` endpoints.
 
-In short: one process, many PI sessions, all first-class NATS agents.
+In short: one process, one NATS connection, many first-class logical PI agents. When signed sender identity is enabled, the controller and every session share that connection's one cryptographic user identity; session ids and subjects remain routing labels, not separate cryptographic identities.
 
 Paired with [`examples/agent-web-ui/`](../agent-web-ui) you also get a browser-based **PI Exec** workspace that picks up spawned sessions automatically, surfaces lifetime/queue metadata, and includes a fan-out composer for running one prompt across many working directories in parallel.
 
@@ -39,6 +39,9 @@ nats-pi-headless --context localhost
 
 PI auth / model registry comes from `~/.pi/agent/auth.json` (the same
 location `pi` uses) — independent of how you launched the host.
+
+Sender identity is off by default and incoming prompt policy is permissive,
+so existing contexts and URL-based connections continue to work unchanged.
 
 ## Quickstart (run from a local clone)
 
@@ -83,6 +86,8 @@ Optional defaults live in `~/.pi-headless/config.json`:
 {
   "context": "localhost",
   "name": "control",
+  "senderIdentity": "off",
+  "minSenderTrust": "any",
   "defaultModel": "anthropic/claude-sonnet-4-5",
   "defaultThinkingLevel": "off",
   "defaultMaxLifetimeS": 1800
@@ -91,17 +96,72 @@ Optional defaults live in `~/.pi-headless/config.json`:
 
 Env overrides:
 
-| Variable | Overrides | Default |
-| --- | --- | --- |
-| `SYNADIA_PI_HEADLESS_OWNER`, `SYNADIA_OWNER` | Owner subject token; per-agent var wins, then fleet-wide, then the legacy `PI_HEADLESS_OWNER` | `$USER` |
-| `SYNADIA_PI_HEADLESS_NAME`, `SYNADIA_NAME` | Controller instance name; same chain (legacy: `PI_HEADLESS_NAME`) | `control` |
-| `PI_HEADLESS_DEFAULT_MODEL` | Default model spec for spawns | (none — caller must set, or PI picks) |
-| `PI_HEADLESS_DEFAULT_THINKING_LEVEL` | Default thinking level for spawns | (none) |
-| `PI_HEADLESS_DEFAULT_MAX_LIFETIME` | Default session lifetime, in seconds | `1800` |
+| Variable                                     | Overrides                                                                                     | Default                               |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `NATS_CONTEXT`, `NATS_URL`                   | NATS connection target; a context wins over a URL                                             | (required)                            |
+| `NATS_SENDER_IDENTITY`                       | Outgoing/registration sender identity: `off` or `signed`                                      | `off`                                 |
+| `NATS_MIN_SENDER_TRUST`                      | Incoming prompt policy: `any` or `signed`                                                     | `any`                                 |
+| `SYNADIA_PI_HEADLESS_OWNER`, `SYNADIA_OWNER` | Owner subject token; per-agent var wins, then fleet-wide, then the legacy `PI_HEADLESS_OWNER` | `$USER`                               |
+| `SYNADIA_PI_HEADLESS_NAME`, `SYNADIA_NAME`   | Controller instance name; same chain (legacy: `PI_HEADLESS_NAME`)                             | `control`                             |
+| `PI_HEADLESS_DEFAULT_MODEL`                  | Default model spec for spawns                                                                 | (none — caller must set, or PI picks) |
+| `PI_HEADLESS_DEFAULT_THINKING_LEVEL`         | Default thinking level for spawns                                                             | (none)                                |
+| `PI_HEADLESS_DEFAULT_MAX_LIFETIME`           | Default session lifetime, in seconds                                                          | `1800`                                |
 
 Precedence (high → low): CLI flags → env vars → `~/.pi-headless/config.json` → built-in defaults.
 
 PI auth / model registry comes from `~/.pi/agent/auth.json` (the same location `pi` uses).
+
+### Optional sender identity
+
+The two identity settings are independent. The default is equivalent to:
+
+```json
+{
+  "senderIdentity": "off",
+  "minSenderTrust": "any"
+}
+```
+
+To register the controller and every spawned session with the user identity
+already used by their shared NATS connection:
+
+```bash
+NATS_CONTEXT=prod NATS_SENDER_IDENTITY=signed bun run start
+```
+
+The selected context must authenticate with signing material (`creds`,
+`nkey`, or `user_jwt` plus `user_seed`). The shared SDK helper reads the
+connection credentials once and derives both NATS authentication and the
+signer from that same retained snapshot. There is no second identity-credentials
+setting. Token, username/password, and anonymous connections remain supported
+with `NATS_SENDER_IDENTITY=off`.
+
+To require a signature-valid sender on controller and session **prompt**
+endpoints, set the inbound policy separately:
+
+```bash
+NATS_MIN_SENDER_TRUST=signed bun run start --context prod
+```
+
+This does not enable the host's own sender identity. Conversely, enabling the
+host identity does not make inbound policy strict. Invalid or missing
+signatures on a strict prompt endpoint are rejected before the acknowledgement
+and before PI receives the model prompt. Sender information is written only to
+the operator diagnostic log and is never inserted into model input.
+
+The `spawn`, `stop`, and `list` extension endpoints retain their existing raw
+request/reply contract; `minSenderTrust` applies to protocol prompt endpoints.
+
+### Shared connection identity
+
+One NATS connection authenticates as one user. This process deliberately keeps
+one connection, so the controller and all spawned sessions use the same signer
+and register the same cryptographic identity. Their `name`, `session_id`,
+subjects, trace ids, and `metadata.role` distinguish logical instances for
+routing and observability, but cannot prove that one particular logical
+session—as opposed to another session on the process—performed an action.
+Independently credentialed per-session connections are not part of this
+example.
 
 ## Subject layout
 
@@ -110,14 +170,14 @@ Verb-first throughout — protocol verbs and pi-headless extension verbs share t
 ```
 agents.prompt.pi-headless.<owner>.<name>      ← controller prompt endpoint (help text)
 agents.status.pi-headless.<owner>.<name>      ← controller status (replies with heartbeat-shaped payload)
-agents.hb.pi-headless.<owner>.<name>          ← controller heartbeat (30 s)
+agents.hb.pi-headless.<owner>.<name>          ← controller heartbeat (5 s)
 agents.spawn.pi-headless.<owner>.<name>       ← POST JSON → session descriptor
 agents.stop.pi-headless.<owner>.<name>        ← POST { session_id } → { ok: true }
 agents.list.pi-headless.<owner>.<name>        ← (empty) → { sessions: [...] }
 
 agents.prompt.pi-headless.<owner>.<session_id>  ← spawned session prompt
 agents.status.pi-headless.<owner>.<session_id>  ← spawned session status
-agents.hb.pi-headless.<owner>.<session_id>      ← spawned session heartbeat (30 s)
+agents.hb.pi-headless.<owner>.<session_id>      ← spawned session heartbeat (5 s)
 ```
 
 ## Wire examples
@@ -148,19 +208,29 @@ Programmatically with the SDK:
 
 ```ts
 import { connect } from "@nats-io/transport-node";
-import { Agents } from "@synadia-ai/agents";
+import { Agents, resolveNatsConnectionBundle } from "@synadia-ai/agents";
 
-const nc = await connect({ servers: "nats://localhost:4222" });
-const agents = new Agents({ nc });
+const bundle = await resolveNatsConnectionBundle(
+  { context: "prod" },
+  { identity: "signed" }, // use "off" for an identity-free caller
+);
+const nc = await connect(bundle.connectionOptions);
+const agents = new Agents({
+  nc,
+  ...(bundle.signer ? { identity: { signer: bundle.signer } } : {}),
+});
 
 const all = await agents.discover();
-const session = all.find(a => a.name === "sess-a1b2c3d4")!;
-for await (const ev of await session.prompt("summarise the files in this directory")) {
+const session = all.find((a) => a.name === "sess-a1b2c3d4")!;
+for await (const ev of await session.prompt(
+  "summarise the files in this directory",
+)) {
   if (ev.type === "response") process.stdout.write(ev.text);
 }
 
 await agents.close();
 await nc.close();
+bundle.wipe(); // only after the connection is closed
 ```
 
 ### Stop
@@ -181,11 +251,11 @@ nats req agents.list.pi-headless.$USER.control ''
 
 Custom endpoints respond with NATS micro-service error headers (`Nats-Service-Error-Code` / `Nats-Service-Error`):
 
-| Code | When                                                                 |
-|------|----------------------------------------------------------------------|
+| Code | When                                                                     |
+| ---- | ------------------------------------------------------------------------ |
 | 400  | Bad JSON, missing cwd, unknown model, invalid thinking level, bad base64 |
-| 404  | `stop` for an unknown session                                        |
-| 500  | PI SDK threw during prompt execution                                  |
+| 404  | `stop` for an unknown session                                            |
+| 500  | PI SDK threw during prompt execution                                     |
 
 Session prompt endpoints follow protocol §9.
 
@@ -195,9 +265,14 @@ Session prompt endpoints follow protocol §9.
 - `bun run scripts/list.ts` - print active sessions from every reachable controller.
 - `bun run scripts/stop.ts SESSION_ID` - dispose a session.
 
+The helpers use the same connection-bundle helper. With
+`NATS_SENDER_IDENTITY=signed`, prompts sent by `spawn.ts` use a signer derived
+from the helper process's selected connection credentials. This is a separate
+CLI process and connection from the running headless host.
+
 ## Notes
 
-- **Session identity.** The 4th subject token is the session id; `metadata.session` echoes it. Controllers use `name = "control"` by default and sessions carry `metadata.role = "session"`.
+- **Logical session routing.** The 5th subject token is the session id; `metadata.session` echoes it. Controllers use `name = "control"` by default and sessions carry `metadata.role = "session"`. These labels do not create separate cryptographic identities; all services on the process share its one connection identity.
 - **Metadata marker.** The controller carries `metadata.role = "controller"` so clients can tell it apart from sessions. The shared `agent: "pi-headless"` token already disambiguates this from the regular `agent: "pi"` runtime.
 - **Multiple controllers per host.** On startup the controller probes `$SRV.INFO.agents` and, if its target prompt subject is already claimed, picks the next free `<name>-2`, `<name>-3`, … suffix automatically. So booting a second pi-headless with default settings leaves the first as `control` and the second as `control-2` without explicit `--name` flags. (For deterministic naming or two stable controllers side-by-side, still pass `--name` explicitly.)
 - **Resilient reconnects.** The controller wraps connection options with the SDK's `withAgentReconnectDefaults`, so it retries indefinitely (`maxReconnectAttempts: -1`) and stays in the reconnect loop through host sleep or short broker outages. Log lines: `pi-headless: NATS disconnected from … — retrying…` is transient; `pi-headless: NATS connection closed — agent is off-bus until restart` is terminal (usually repeated auth errors).

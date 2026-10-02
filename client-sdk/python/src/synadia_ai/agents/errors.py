@@ -173,15 +173,38 @@ class IdentityUnavailableError(IdentityError):
 
 
 class IdentityMismatchError(IdentityError):
-    """The configured signer's public key is not the connection's user NKEY."""
+    """The configured signer is not the live connection's NKEY identity."""
 
-    def __init__(self, signer_public_key: str, identity_user: str) -> None:
-        super().__init__(
-            f"identity mismatch: the configured signer holds {signer_public_key} but the "
-            f"connection's user NKEY is {identity_user}"
-        )
+    def __init__(
+        self,
+        signer_public_key: str,
+        identity_user: str,
+        *,
+        signer_account: str | None = None,
+        identity_account: str | None = None,
+        credential_user: str | None = None,
+    ) -> None:
+        if credential_user is not None:
+            message = (
+                f"identity mismatch: the configured signer holds {signer_public_key} but its "
+                f"credentials JWT names user {credential_user}"
+            )
+        elif signer_public_key != identity_user:
+            message = (
+                f"identity mismatch: the configured signer holds {signer_public_key} but the "
+                f"connection's user NKEY is {identity_user}"
+            )
+        else:
+            message = (
+                f"identity mismatch: the configured signer belongs to account {signer_account} "
+                f"but the connection is authenticated in account {identity_account}"
+            )
+        super().__init__(message)
         self.signer_public_key = signer_public_key
         self.identity_user = identity_user
+        self.signer_account = signer_account
+        self.identity_account = identity_account
+        self.credential_user = credential_user
 
 
 class InvalidAgentIdError(IdentityError):
@@ -207,6 +230,8 @@ class SenderSignatureRequiredError(IdentityError):
             "identity.signer is configured"
         )
         self.subject = subject
+        self.code = 401
+        self.description = "signature required"
 
 
 class SenderVerificationError(IdentityError):

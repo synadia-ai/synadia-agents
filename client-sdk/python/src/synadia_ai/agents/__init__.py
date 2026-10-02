@@ -13,10 +13,16 @@ Public API entry points:
   kwargs for :func:`nats.connect`.
 * :func:`parse_nats_url` — parse a NATS URL (with optional userinfo
   for token / user:password) into kwargs for :func:`nats.connect`.
+* :func:`resolve_nats_connection_bundle` — snapshot connection auth once
+  and optionally derive a sender signer from that same source.
 * :class:`Identity` + the ``signer_from_*`` helpers — the sender-identity
-  extension (``Agent-Sender`` on every ``prompt`` / ``status`` request,
+  extension (optional ``Agent-Sender`` on ``prompt`` / ``status`` requests,
   ``Agents.self_id()``, the signed wrappers); the shared codec lives in
   :mod:`synadia_ai.agents.identity` and is re-exported here.
+* :class:`PromptInterceptor` — the hook that runs before every prompt an
+  :class:`Agents` client publishes (``Agents(interceptors=[...])``), for
+  extensions that add envelope fields, headers, or signed messages of
+  their own.
 
 The agent-host surface (``AgentService``, ``PromptStream``,
 ``PromptHandler``) lives in the sibling package
@@ -41,6 +47,17 @@ from .agent import (
     StreamMessage,
 )
 from .agents import DEFAULT_REQUEST_SIGNED_TIMEOUT_S, NATS_MSG_ID_HEADER, Agents
+from .attachments import (
+    DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES,
+    SavedAttachment,
+    save_attachments,
+)
+from .connection_bundle import (
+    CredentialSource,
+    IdentityMode,
+    NatsConnectionBundle,
+    resolve_nats_connection_bundle,
+)
 from .context import NatsContextFile, load_context_options, parse_nats_url, read_context_file
 from .discovery import (
     DEFAULT_DISCOVER_MAX_WAIT_S,
@@ -85,6 +102,7 @@ from .errors import (
 from .heartbeat import (
     DEFAULT_LIVENESS_SLACK,
     HEARTBEAT_SUBJECT,
+    HeartbeatEndpoint,
     HeartbeatPayload,
     Liveness,
 )
@@ -120,6 +138,7 @@ from .identity import (
     expected_sender_header_bytes,
     format_sender,
     format_sender_timestamp,
+    is_valid_sender_nonce,
     max_sender_header_bytes,
     normalize_account_token_position,
     parse_sender_header,
@@ -139,13 +158,39 @@ from .identity import (
     verify_sender,
     verify_sender_header,
 )
+from .interceptor import (
+    PromptExtras,
+    PromptInterceptor,
+    PromptInterceptorContext,
+    PromptSigning,
+    PublishingPromptInterceptor,
+)
 from .messages import Chunk, QueryChunk, ResponseChunk, StatusChunk
 from .subjects import AgentSubject
+from .tools import (
+    AGENT_TOOL_NAMES,
+    AGENT_TOOLS_QUESTION_REFUSAL,
+    BLOCKING_AGENT_TOOLS,
+    DEFAULT_AGENT_TOOLS_MAX_CALLS,
+    AgentCallState,
+    AgentToolResult,
+    AgentTools,
+    AgentToolsExtension,
+    AgentToolsPromptContext,
+    AgentToolsPromptRewrite,
+    AgentToolsReplyContext,
+    SettledInfo,
+    agent_tool_definitions,
+)
 
 __all__ = [
     "AGENT_ID_SIGNED_INPUT_TAG",
     "AGENT_SENDER_HEADER",
     "AGENT_SENDER_SIGNED_INPUT_TAG",
+    "AGENT_TOOLS_QUESTION_REFUSAL",
+    "AGENT_TOOL_NAMES",
+    "BLOCKING_AGENT_TOOLS",
+    "DEFAULT_AGENT_TOOLS_MAX_CALLS",
     "DEFAULT_DISCOVER_MAX_WAIT_S",
     "DEFAULT_DISCOVER_STALL_S",
     "DEFAULT_LIVENESS_SLACK",
@@ -153,6 +198,7 @@ __all__ = [
     "DEFAULT_REPLAY_WINDOW_S",
     "DEFAULT_REQUEST_SIGNED_TIMEOUT_S",
     "DEFAULT_RESOLVE_TTL_S",
+    "DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES",
     "DEFAULT_STATUS_TIMEOUT_S",
     "DEFAULT_STREAM_INACTIVITY_TIMEOUT_S",
     "HEARTBEAT_SUBJECT",
@@ -171,24 +217,34 @@ __all__ = [
     "STATUS_QUEUE_GROUP",
     "USER_INFO_SUBJECT",
     "Agent",
+    "AgentCallState",
     "AgentId",
     "AgentInfo",
     "AgentNotFound",
     "AgentSenderHeader",
     "AgentSubject",
+    "AgentToolResult",
+    "AgentTools",
+    "AgentToolsExtension",
+    "AgentToolsPromptContext",
+    "AgentToolsPromptRewrite",
+    "AgentToolsReplyContext",
     "Agents",
     "AgentsClosedError",
     "Attachment",
     "AttachmentsNotSupportedError",
     "Chunk",
     "ClaimedSender",
+    "CredentialSource",
     "DiscoverFilter",
     "EndpointInfo",
     "Envelope",
+    "HeartbeatEndpoint",
     "HeartbeatPayload",
     "Identity",
     "IdentityError",
     "IdentityMismatchError",
+    "IdentityMode",
     "IdentityUnavailableError",
     "InvalidAgentIdError",
     "InvalidSubjectToken",
@@ -196,6 +252,7 @@ __all__ = [
     "MalformedSenderHeaderError",
     "MinSenderTrust",
     "NatsAgentError",
+    "NatsConnectionBundle",
     "NatsContextError",
     "NatsContextFile",
     "NkeySigner",
@@ -203,17 +260,24 @@ __all__ = [
     "NonceSeen",
     "PayloadTooLargeError",
     "PromptEmptyError",
+    "PromptExtras",
+    "PromptInterceptor",
+    "PromptInterceptorContext",
+    "PromptSigning",
     "ProtocolError",
+    "PublishingPromptInterceptor",
     "Query",
     "QueryChunk",
     "QueryTimeout",
     "ResponseChunk",
+    "SavedAttachment",
     "SenderClaim",
     "SenderInfo",
     "SenderResolver",
     "SenderSignatureRequiredError",
     "SenderSigner",
     "SenderVerificationError",
+    "SettledInfo",
     "StatusChunk",
     "StreamMaxWaitExceededError",
     "StreamMessage",
@@ -221,6 +285,7 @@ __all__ = [
     "ValidationError",
     "VerifiedSender",
     "VerifyMode",
+    "agent_tool_definitions",
     "build_agent_info",
     "build_claim_header",
     "build_signed_input",
@@ -231,6 +296,7 @@ __all__ = [
     "expected_sender_header_bytes",
     "format_sender",
     "format_sender_timestamp",
+    "is_valid_sender_nonce",
     "load_context_options",
     "max_sender_header_bytes",
     "normalize_account_token_position",
@@ -241,7 +307,9 @@ __all__ = [
     "read_context_file",
     "read_sender_header_value",
     "refresh_self_id",
+    "resolve_nats_connection_bundle",
     "resolve_sender",
+    "save_attachments",
     "self_id",
     "serialize_sender_header",
     "sign_agent_id",

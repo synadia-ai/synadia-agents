@@ -20,6 +20,8 @@ _IDENTITY_ENV_VARS = (
     "SYNADIA_NAME",
     "NATS_AGENT_NAME",
     "NATS_SESSION",
+    "NATS_SENDER_IDENTITY",
+    "NATS_MIN_SENDER_TRUST",
 )
 
 
@@ -41,6 +43,8 @@ def test_defaults_include_df_agent(tmp_path: Path, monkeypatch: Any) -> None:
     assert config.deerflow_timeout_s == 60.0
     assert config.query_timeout_s == 300.0
     assert config.max_payload is None
+    assert config.sender_identity == "off"
+    assert config.min_sender_trust == "any"
     assert config.redacted_dict()["prompt_subject"] == "agents.prompt.df.<owner>.default"
 
 
@@ -54,6 +58,8 @@ def test_config_file_then_env_then_cli_precedence(tmp_path: Path, monkeypatch: A
                 'session = "file-session"',
                 'deerflow_url = "http://file.example"',
                 'nats_context = "file-context"',
+                'sender_identity = "off"',
+                'min_sender_trust = "any"',
                 "deerflow_timeout_s = 12.5",
                 "query_timeout_s = 45",
                 'max_payload = "256KB"',
@@ -74,6 +80,8 @@ def test_config_file_then_env_then_cli_precedence(tmp_path: Path, monkeypatch: A
     monkeypatch.setenv("DEERFLOW_CSRF_TOKEN", "env-csrf")
     monkeypatch.setenv("DEERFLOW_USERNAME", "env@example.com")
     monkeypatch.setenv("DEERFLOW_PASSWORD", "env-password")
+    monkeypatch.setenv("NATS_SENDER_IDENTITY", "signed")
+    monkeypatch.setenv("NATS_MIN_SENDER_TRUST", "signed")
 
     config = resolve_config(
         config_file=config_file,
@@ -84,6 +92,7 @@ def test_config_file_then_env_then_cli_precedence(tmp_path: Path, monkeypatch: A
         deerflow_csrf_token="cli-csrf",
         deerflow_username="cli@example.com",
         deerflow_password="cli-password",
+        sender_identity="off",
     )
 
     assert config.agent == "from-file"
@@ -102,6 +111,20 @@ def test_config_file_then_env_then_cli_precedence(tmp_path: Path, monkeypatch: A
     assert config.deerflow_password == "cli-password"
     assert config.redacted_dict()["deerflow_username"] == "cli@example.com"
     assert config.redacted_dict()["deerflow_password"] == "[REDACTED]"
+    assert config.sender_identity == "off"
+    assert config.min_sender_trust == "signed"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("sender_identity", "automatic"), ("min_sender_trust", "verified")),
+)
+def test_identity_config_rejects_unknown_values(tmp_path: Path, field: str, value: str) -> None:
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(f'{field} = "{value}"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match=field):
+        resolve_config(config_file=config_file)
 
 
 def test_synadia_identity_env_precedence(tmp_path: Path, monkeypatch: Any) -> None:

@@ -1,6 +1,7 @@
 {
   "name": "claude-channel-nats",
   "version": "0.5.1",
+  "private": true,
   "description": "Synadia Agent Protocol for NATS channel for Claude Code. Exposes a Claude Code session as a discoverable, spec-compliant agent on NATS via an MCP server.",
   "author": "Synadia Communications",
   "license": "Apache-2.0",
@@ -14,18 +15,23 @@
     "url": "https://github.com/synadia-ai/synadia-agents/issues"
   },
   "type": "module",
-  "bin": "./server.ts",
+  "bin": "./runtime/server.js",
   "scripts": {
-    "start": "bun install --no-summary && bun server.ts"
+    "build": "bun ./scripts/build-runtime.ts",
+    "start": "bun ./runtime/server.js",
+    "test": "bun test ./test && bun ./scripts/roundtrip-test.ts && bun ./scripts/identity-roundtrip-test.ts",
+    "typecheck": "tsc --noEmit",
+    "verify:bundle": "bun ./scripts/verify-bundle.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "@nats-io/transport-node": "^3.4.0",
-    "@nats-io/services": "^3.4.0",
-    "@synadia-ai/agents": "^0.5.0",
-    "@synadia-ai/agent-service": "^0.5.0"
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@nats-io/transport-node": "3.4.0",
+    "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
+    "@synadia-ai/agents": "file:../../client-sdk/typescript",
+    "zod": "4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0"
+    "@types/node": "25.9.5",
+    "typescript": "5.9.3"
   }
 }

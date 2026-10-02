@@ -1,16 +1,19 @@
-// Per-session glue: bridges one Claude Agent SDK session to a SDK
-// `ReferenceAgent` registered on the protocol-standard subject. Handles
-// envelope parsing, request queueing for serial drain (the SDK's `query()`
+// Per-session glue: bridges one Claude Agent SDK session to a production
+// `AgentService` registered on the protocol-standard subject. Handles
+// request queueing for serial drain (the SDK's `query()`
 // is one full multi-turn round-trip per call, and concurrent re-entry into
 // the same logical session would interleave context), typed-chunk
 // streaming, error headers, tool-call observability, interactive
 // permission requests via §7 query chunks, per-token streaming, cost
 // tracking, and disposal.
 
-import { createInbox } from "@nats-io/nats-core";
 import type { NatsConnection } from "@nats-io/nats-core";
-import type { ServiceMsg } from "@nats-io/services";
-import { ReferenceAgent } from "@synadia-ai/agent-service/testing";
+import type {
+  MinSenderTrust,
+  RequestEnvelope,
+  SenderSigner,
+} from "@synadia-ai/agents";
+import { AgentService, PromptResponse } from "@synadia-ai/agent-service";
 import {
   query,
   type CanUseTool,
@@ -20,20 +23,14 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { cleanupStaged, decorateWithAttachments, stageAttachments } from "./attachments.js";
-import {
-  costStatus,
-  queryChunk,
-  responseText,
-  statusAck,
-  toolResultStatus,
-  toolUseStatus,
-} from "./chunk-encoder.js";
-import { EnvelopeError, parseEnvelope, type ParsedAttachment } from "./envelope.js";
+import { costStatus, toolResultStatus, toolUseStatus } from "./chunk-encoder.js";
 import {
   sessionHeartbeatSubject,
   sessionPromptSubject,
   sessionStatusSubject,
 } from "./subjects.js";
+import { protocolLogger } from "./protocol-logger.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 export interface ManagedSessionOptions {
   readonly nc: NatsConnection;
@@ -45,6 +42,9 @@ export interface ManagedSessionOptions {
   readonly permissionMode: PermissionMode;
   readonly maxTurns: number;
   readonly maxLifetimeS: number;
+  /** One shared connection signer; every logical session on this connection uses it. */
+  readonly signer?: SenderSigner;
+  readonly minSenderTrust?: MinSenderTrust;
   /** Absolute path to the `claude` binary, forwarded to the SDK. */
   readonly claudeCodePath?: string;
 }
@@ -75,10 +75,19 @@ export interface SessionSummary {
 
 interface PendingRequest {
   readonly requestId: string;
-  readonly msg: ServiceMsg;
+  readonly response: PromptResponse;
   readonly body: string;
   readonly createdAt: number;
   readonly stagedDir: string | undefined;
+  readonly completion: Deferred;
+  readonly handlerClosed: Deferred;
+}
+
+interface Deferred {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+  readonly reject: (error: Error) => void;
+  readonly settled: () => boolean;
 }
 
 // 5s — snappy enough that the dashboard's stale-eviction loop
@@ -105,7 +114,7 @@ export class ManagedSession {
 
   private readonly nc: NatsConnection;
   private readonly owner: string;
-  private readonly refAgent: ReferenceAgent;
+  private readonly agentService: AgentService;
   private readonly pendingRequests = new Map<string, PendingRequest>();
   private readonly requestQueue: string[] = [];
   private readonly activeAborts = new Set<AbortController>();
@@ -144,31 +153,34 @@ export class ManagedSession {
       max_lifetime_s: String(this.maxLifetimeS),
     };
 
-    // `maxPayload` is intentionally omitted — `ReferenceAgent` defaults to
+    // `maxPayload` is intentionally omitted — `AgentService` defaults to
     // the broker's negotiated `nc.info.max_payload` (e.g. 8 MB on NGS, 1 MB
     // on a default `nats-server`), which is exactly what we want each
     // session to advertise.
-    this.refAgent = new ReferenceAgent({
+    this.agentService = new AgentService({
       nc: this.nc,
       agent: "cc-headless",
       owner: this.owner,
       name: this.sessionId,
       session: this.sessionId,
       description: `claude-code-headless session ${this.sessionId} (${this.cwd})`,
-      version: "0.4.0",
+      version: PACKAGE_VERSION,
       attachmentsOk: true,
       heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
       extraMetadata,
-      promptHandler: (msg) => this.handlePrompt(msg),
+      minSenderTrust: opts.minSenderTrust ?? "any",
+      logger: protocolLogger,
+      ...(opts.signer ? { identity: { signer: opts.signer } } : {}),
     });
+    this.agentService.onPrompt((envelope, response) => this.handlePrompt(envelope, response));
   }
 
   async start(): Promise<void> {
-    await this.refAgent.start();
+    await this.agentService.start();
   }
 
   get instanceId(): string {
-    return this.refAgent.instanceId;
+    return this.agentService.instanceId;
   }
 
   get isDisposed(): boolean {
@@ -203,23 +215,12 @@ export class ManagedSession {
 
   // ─── Prompt path ────────────────────────────────────────────────────────────
 
-  private async handlePrompt(msg: ServiceMsg): Promise<void> {
+  private async handlePrompt(
+    envelope: RequestEnvelope,
+    response: PromptResponse,
+  ): Promise<void> {
     if (this.disposed) {
-      // Send an error header before the §6.5 terminator so callers can
-      // tell "session was stopped" apart from "stream completed cleanly
-      // with no chunks." Both have a zero-byte body, so without the
-      // error header they look identical on the wire.
-      try {
-        msg.respondError(503, "session stopped");
-      } catch {
-        /* connection gone */
-      }
-      try {
-        msg.respond("");
-      } catch {
-        /* connection gone */
-      }
-      return;
+      throw new Error("session stopped");
     }
 
     // Reject prompts to a session whose lifetime ran out. The manager's
@@ -227,37 +228,7 @@ export class ManagedSession {
     // a prompt that arrives between expiry and the next sweep would be
     // served normally — accepting work the session is about to drop.
     if (this.expired()) {
-      try {
-        msg.respondError(410, "session expired");
-      } catch {
-        /* connection gone */
-      }
-      try {
-        msg.respond("");
-      } catch {
-        /* connection gone */
-      }
-      return;
-    }
-
-    let envelope;
-    try {
-      envelope = parseEnvelope(msg.data);
-    } catch (e) {
-      if (e instanceof EnvelopeError) {
-        try {
-          msg.respondError(e.code, e.message);
-        } catch {
-          /* noop */
-        }
-        try {
-          msg.respond("");
-        } catch {
-          /* noop */
-        }
-        return;
-      }
-      throw e;
+      throw new Error("session expired");
     }
 
     let stagedDir: string | undefined;
@@ -265,35 +236,43 @@ export class ManagedSession {
     const attachments = envelope.attachments;
     if (attachments && attachments.length > 0) {
       try {
-        const staged = await stageAttachments(this.sessionId, attachments as ParsedAttachment[]);
+        const staged = await stageAttachments(this.sessionId, attachments);
         stagedDir = staged.dir;
         body = decorateWithAttachments(body, staged.paths);
-      } catch (e) {
-        try {
-          msg.respondError(400, `failed to stage attachments: ${(e as Error).message}`);
-        } catch {
-          /* noop */
-        }
-        try {
-          msg.respond("");
-        } catch {
-          /* noop */
-        }
-        return;
+      } catch {
+        throw new Error("failed to stage attachments");
       }
     }
 
+    // Attachment staging yields to the event loop. Re-check lifecycle state
+    // before publishing this handler into the queue so dispose() cannot miss
+    // a request that began just before shutdown or expiry.
+    if (this.disposed || this.expired()) {
+      if (stagedDir) await cleanupStaged({ dir: stagedDir, paths: [] });
+      throw new Error(this.disposed ? "session stopped" : "session expired");
+    }
+
     const requestId = `${this.sessionId}-${++this.requestCounter}`;
+    const completion = deferred();
+    const handlerClosed = deferred();
     this.pendingRequests.set(requestId, {
       requestId,
-      msg,
+      response,
       body,
       createdAt: Date.now(),
       stagedDir,
+      completion,
+      handlerClosed,
     });
     this.requestQueue.push(requestId);
     this.lastActivity = Date.now();
     void this.drain();
+    try {
+      await completion.promise;
+    } finally {
+      if (stagedDir) await cleanupStaged({ dir: stagedDir, paths: [] });
+      handlerClosed.resolve();
+    }
   }
 
   private async drain(): Promise<void> {
@@ -306,6 +285,12 @@ export class ManagedSession {
       void this.drain();
       return;
     }
+    if (this.expired()) {
+      this.pendingRequests.delete(next);
+      pr.completion.reject(new Error("session expired"));
+      if (this.requestQueue.length > 0) setImmediate(() => void this.drain());
+      return;
+    }
 
     this.activeRequestId = next;
     this.lastActivity = Date.now();
@@ -313,17 +298,7 @@ export class ManagedSession {
     const abortController = new AbortController();
     this.activeAborts.add(abortController);
 
-    // Reply subject for chunks streamed back to the caller; also where any
-    // §7 query chunks emitted by canUseTool will land.
-    const replySubject = pr.msg.reply ?? "";
-
     try {
-      try {
-        pr.msg.respond(statusAck());
-      } catch {
-        /* noop */
-      }
-
       const queryOptions: Options = {
         cwd: this.cwd,
         model: this.model,
@@ -338,7 +313,7 @@ export class ManagedSession {
         // that isn't auto-allowed by the current permissionMode + allowedTools.
         // We surface it as a §7 query chunk, await the caller's reply, and
         // resolve the SDK promise accordingly.
-        canUseTool: this.makeCanUseTool(replySubject, abortController.signal),
+        canUseTool: this.makeCanUseTool(pr.response, abortController.signal),
       };
       if (this.sdkSessionId) {
         queryOptions.resume = this.sdkSessionId;
@@ -360,11 +335,7 @@ export class ManagedSession {
           // the final blocks (incl. tool_use) via the assistant event below.
           const text = extractPartialText(ev);
           if (text && text.length > 0) {
-            try {
-              pr.msg.respond(responseText(text));
-            } catch {
-              /* noop */
-            }
+            await pr.response.send(text);
           }
           continue;
         }
@@ -375,11 +346,7 @@ export class ManagedSession {
           for (const block of ev.message.content) {
             if (block.type === "tool_use") {
               const tu = block as { id: string; name: string; input: Record<string, unknown> };
-              try {
-                pr.msg.respond(toolUseStatus(tu.id, tu.name, tu.input));
-              } catch {
-                /* noop */
-              }
+              await pr.response.send(toolUseStatus(tu.id, tu.name, tu.input));
             }
             // text blocks: already streamed via partials; intentionally skip.
           }
@@ -398,11 +365,9 @@ export class ManagedSession {
                   is_error?: boolean;
                 };
                 const output = stringifyToolResultContent(tr.content);
-                try {
-                  pr.msg.respond(toolResultStatus(tr.tool_use_id, output, tr.is_error === true));
-                } catch {
-                  /* noop */
-                }
+                await pr.response.send(
+                  toolResultStatus(tr.tool_use_id, output, tr.is_error === true),
+                );
               }
             }
           }
@@ -415,17 +380,9 @@ export class ManagedSession {
           if (ev.subtype === "success") {
             const turnCost = (ev as { total_cost_usd?: number }).total_cost_usd ?? 0;
             this.totalCostUsd += turnCost;
-            try {
-              pr.msg.respond(costStatus(turnCost, this.totalCostUsd));
-            } catch {
-              /* noop */
-            }
+            await pr.response.send(costStatus(turnCost, this.totalCostUsd));
           } else {
-            try {
-              pr.msg.respondError(500, `claude-agent-sdk: ${ev.subtype}`);
-            } catch {
-              /* noop */
-            }
+            throw new Error(`claude-agent-sdk: ${ev.subtype}`);
           }
           break;
         }
@@ -433,27 +390,16 @@ export class ManagedSession {
     } catch (e) {
       const err = e as Error;
       if (err.name === "AbortError" || abortController.signal.aborted) {
-        // Disposal aborted us; just terminate the reply.
+        pr.completion.reject(new Error("session stopped"));
       } else {
-        try {
-          pr.msg.respondError(500, err.message || "agent error");
-        } catch {
-          /* noop */
-        }
+        pr.completion.reject(new Error(`agent turn failed (${err.name || "Error"})`));
       }
     } finally {
       this.activeAborts.delete(abortController);
-      try {
-        pr.msg.respond("");
-      } catch {
-        /* noop */
-      }
-      if (pr.stagedDir) {
-        void cleanupStaged({ dir: pr.stagedDir, paths: [] });
-      }
       this.pendingRequests.delete(next);
       this.activeRequestId = null;
       this.lastActivity = Date.now();
+      if (!pr.completion.settled()) pr.completion.resolve();
 
       if (!this.disposed && this.requestQueue.length > 0) {
         setImmediate(() => void this.drain());
@@ -462,59 +408,20 @@ export class ManagedSession {
   }
 
   /**
-   * Build a canUseTool callback bound to the active request's reply subject.
-   * Each invocation emits a fresh §7 query chunk on a unique inbox, awaits a
-   * single-message reply (with a 2-minute timeout), and translates the
-   * caller's text reply into a PermissionResult the SDK understands.
+   * Build a canUseTool callback bound to the active PromptResponse. The
+   * production host SDK owns the §7 inbox, query chunk, timeout, and cleanup.
    */
   private makeCanUseTool(
-    replySubject: string,
+    response: PromptResponse,
     abortSignal: AbortSignal,
   ): CanUseTool {
     return async (toolName, input, opts): Promise<PermissionResult> => {
-      // No reply subject means the caller bailed before we got here — deny.
-      if (!replySubject) {
-        return { behavior: "deny", message: "no active reply channel" };
-      }
-      const replyInbox = createInbox();
-      const sub = this.nc.subscribe(replyInbox, { max: 1 });
       const promptText = buildPermissionPrompt(toolName, input, opts);
       try {
-        this.nc.publish(replySubject, queryChunk(opts.toolUseID, replyInbox, promptText));
-        await this.nc.flush();
-      } catch (e) {
-        try {
-          sub.unsubscribe();
-        } catch {
-          /* noop */
-        }
-        return { behavior: "deny", message: `failed to emit query: ${(e as Error).message}` };
-      }
-      const timer = setTimeout(() => {
-        try {
-          sub.unsubscribe();
-        } catch {
-          /* noop */
-        }
-      }, PERMISSION_TIMEOUT_MS);
-      const onAbort = (): void => {
-        try {
-          sub.unsubscribe();
-        } catch {
-          /* noop */
-        }
-      };
-      abortSignal.addEventListener("abort", onAbort, { once: true });
-      try {
-        for await (const m of sub) {
-          const reply = m.string().trim();
-          return interpretPermissionReply(reply, input);
-        }
-        // Subscription ended without a message — timeout, abort, or stream end.
-        return { behavior: "deny", message: "permission request timed out" };
-      } finally {
-        clearTimeout(timer);
-        abortSignal.removeEventListener("abort", onAbort);
+        const answer = await askUntilAbort(response, promptText, abortSignal);
+        return interpretPermissionReply(answer, input);
+      } catch {
+        return { behavior: "deny", message: "permission request timed out or was cancelled" };
       }
     };
   }
@@ -537,18 +444,7 @@ export class ManagedSession {
         this.pendingRequests.delete(id);
         const qi = this.requestQueue.indexOf(id);
         if (qi >= 0) this.requestQueue.splice(qi, 1);
-        // Surface as an explicit timeout error so the caller's onError fires —
-        // a bare terminator would look identical to a successful completion.
-        try {
-          pr.msg.respondError(408, "request timed out in queue");
-        } catch {
-          /* noop */
-        }
-        try {
-          pr.msg.respond("");
-        } catch {
-          /* noop */
-        }
+        pr.completion.reject(new Error("request timed out in queue"));
         removed += 1;
       }
     }
@@ -571,36 +467,74 @@ export class ManagedSession {
     }
     this.activeAborts.clear();
 
-    // Terminate in-flight replies so callers don't hang. Mirror the
-    // pruneStale pattern: surface as a 503 error before the terminator so
-    // queued-but-not-active callers see onError("session stopped") rather
-    // than a misleading onDone identical to a clean completion.
+    const handlerClosures = Array.from(
+      this.pendingRequests.values(),
+      (pr) => pr.handlerClosed.promise,
+    );
     for (const pr of this.pendingRequests.values()) {
-      try {
-        pr.msg.respondError(503, "session stopped");
-      } catch {
-        /* noop */
-      }
-      try {
-        pr.msg.respond("");
-      } catch {
-        /* noop */
-      }
+      pr.completion.reject(new Error("session stopped"));
     }
-    this.pendingRequests.clear();
     this.requestQueue.length = 0;
+    await Promise.allSettled(handlerClosures);
+    this.pendingRequests.clear();
 
     try {
-      await this.refAgent.stop();
+      await this.agentService.stop();
     } catch (e) {
       process.stderr.write(
-        `claude-code-headless: refAgent.stop() failed for ${this.sessionId}: ${(e as Error).message}\n`,
+        `claude-code-headless: AgentService.stop() failed for ${this.sessionId} (${e instanceof Error ? e.name : "unknown error"})\n`,
       );
     }
   }
 }
 
 // ─── Pure helpers ────────────────────────────────────────────────────────────
+
+function deferred(): Deferred {
+  let resolvePromise!: () => void;
+  let rejectPromise!: (error: Error) => void;
+  let done = false;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  promise.catch(() => undefined);
+  return {
+    promise,
+    resolve() {
+      if (done) return;
+      done = true;
+      resolvePromise();
+    },
+    reject(error) {
+      if (done) return;
+      done = true;
+      rejectPromise(error);
+    },
+    settled: () => done,
+  };
+}
+
+async function askUntilAbort(
+  response: PromptResponse,
+  prompt: string,
+  signal: AbortSignal,
+): Promise<string> {
+  if (signal.aborted) throw new Error("permission request cancelled");
+  let rejectAbort!: (error: Error) => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject;
+  });
+  const onAbort = (): void => rejectAbort(new Error("permission request cancelled"));
+  signal.addEventListener("abort", onAbort, { once: true });
+  const asked = response.ask(prompt, { timeoutMs: PERMISSION_TIMEOUT_MS });
+  asked.catch(() => undefined);
+  try {
+    return (await Promise.race([asked, aborted])).prompt;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+}
 
 function extractPartialText(ev: unknown): string | undefined {
   // SDK shape: { type: "stream_event", event: BetaRawMessageStreamEvent, ... }

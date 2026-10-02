@@ -76,7 +76,7 @@ bun run start        # http://localhost:3300
 ## Flags & env
 
 ```
-bun run server/index.ts [--host 127.0.0.1] [--port 3300] [--context current] [--servers nats://...] [--dev]
+bun run server/index.ts [--host 127.0.0.1] [--port 3300] [--context current] [--servers nats://...] [--sender-identity off|signed] [--dev]
 ```
 
 | flag | env | default | meaning |
@@ -85,7 +85,14 @@ bun run server/index.ts [--host 127.0.0.1] [--port 3300] [--context current] [--
 | `--port <n>` | `PORT` | `3300` | HTTP + WS port |
 | `--context <name>` | `NATS_CONTEXT` | `current` | NATS CLI context in `~/.config/nats/context/` |
 | `--servers <url>` | `NATS_URL` | - | Raw NATS URL (overrides context if given) |
+| `--creds <path>` | `NATS_CREDS` | - | Connection credentials file for URL mode |
+| `--sender-identity <mode>` | `NATS_SENDER_IDENTITY` | `off` | `signed` signs outgoing prompts with the same credentials used for the NATS connection |
 | `--dev` | - | off | Skip static serving; requires `bun run vite` alongside |
+
+The SDK connection-bundle helper owns context/credential loading and signer
+derivation. Signed mode fails unless the selected connection credentials can
+sign; there is no separate identity credential. Leaving the default `off`
+keeps all prompts identity-free.
 
 ## Spawning sessions and fan-out
 

@@ -75,7 +75,11 @@ export {
 // Liveness — caller-side type + decoder. The encoder side
 // (`buildHeartbeatPayload`, `encodeHeartbeatPayload`) lives in the host
 // SDK at `@synadia-ai/agent-service`.
-export { type HeartbeatPayload, decodeHeartbeatPayload } from "./heartbeat/payload.js";
+export {
+  type HeartbeatEndpoint,
+  type HeartbeatPayload,
+  decodeHeartbeatPayload,
+} from "./heartbeat/payload.js";
 export {
   type Liveness,
   DEFAULT_LIVENESS_SLACK,
@@ -101,14 +105,27 @@ export {
   normalizeAttachments,
 } from "./prompt/attachments.js";
 export {
+  type SaveAttachmentsOptions,
+  type SavedAttachment,
+  DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES,
+  saveAttachments,
+} from "./prompt/save-attachments.js";
+export {
   type PromptOptions,
   type StatusOptions,
   DEFAULT_PROMPT_MAX_WAIT_MS,
   DEFAULT_STATUS_TIMEOUT_MS,
 } from "./prompt/options.js";
 export {
+  type PromptExtras,
+  type PromptInterceptor,
+  type PromptInterceptorContext,
+  type PromptSigning,
+} from "./prompt/interceptor.js";
+export {
   PromptStream,
   buildServiceErrorFromMsg,
+  type PreparedRequest,
   type PromptStreamOptions,
   type StreamMessage,
   type ResponseAttachment,
@@ -192,6 +209,7 @@ export {
   encodedHeaderLength,
   expectedSenderHeaderBytes,
   formatSenderTimestamp,
+  isValidSenderNonce,
   maxSenderHeaderBytes,
   normalizeAccountTokenPosition,
   parseSenderHeader,
@@ -240,6 +258,34 @@ export {
 export { type IdentityOptions } from "./identity/context.js";
 export { base64UrlDecode, base64UrlEncode, sha256, sha256Hex } from "./identity/crypto.js";
 
+// The agent tools (docs/agent-tools.md): discover, prompt, wait, answer,
+// cancel and list other agents, as tools a model calls.
+export {
+  AGENT_TOOLS_QUESTION_REFUSAL,
+  AgentTools,
+  DEFAULT_AGENT_TOOLS_MAX_CALLS,
+  type AgentCallResult,
+  type AgentCallState,
+  type AgentToolCallOptions,
+  type AgentToolResult,
+  type AgentToolsExtension,
+  type AgentToolsOptions,
+  type AgentToolsPromptContext,
+  type AgentToolsPromptRewrite,
+  type AgentToolsReplyContext,
+  type AgentToolsRequestInterceptor,
+  type PromptScopeOptions,
+  type ReturnedFile,
+  type SettledInfo,
+} from "./tools/agent-tools.js";
+export {
+  AGENT_TOOL_NAMES,
+  agentToolDefinitions,
+  BLOCKING_AGENT_TOOLS,
+  type AgentToolDefinition,
+  type AgentToolName,
+} from "./tools/definitions.js";
+
 // Logging
 export { type Logger, SILENT_LOGGER } from "./internal/logger.js";
 
@@ -260,6 +306,16 @@ export {
   readContextFile,
   type NatsContextFile,
 } from "./context.js";
+
+// One-snapshot connection credentials + optional sender signer.
+export {
+  resolveNatsConnectionBundle,
+  type NatsConnectionBundle,
+  type NatsConnectionSource,
+  type NatsUrlConnectionSource,
+  type ResolveNatsConnectionBundleOptions,
+  type SignedNatsConnectionBundle,
+} from "./connection-bundle.js";
 
 // Opinionated reconnect defaults for agent runtimes — see #121.
 export { AGENT_RECONNECT_DEFAULTS, withAgentReconnectDefaults } from "./connect-defaults.js";

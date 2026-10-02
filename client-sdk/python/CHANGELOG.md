@@ -8,6 +8,201 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Added
+
+- **`HeartbeatEndpoint.subject` must be non-empty.** An empty declared
+  subject now fails validation, and a heartbeat carrying one decodes with
+  `endpoints` dropped, as the TypeScript decoder does.
+
+- **The heartbeat's declared prompt endpoint.** `HeartbeatPayload` gains
+  optional `protocol_version` and `endpoints` (`HeartbeatEndpoint`: `subject`
+  and the §2.1 endpoint metadata), so a listener on the heartbeat knows where
+  and how to prompt an instance — `min_sender_trust` included — without
+  `$SRV.INFO`. A malformed declaration is dropped, never fatal; neither is
+  serialised when unset.
+
+- **The agent tools: `AgentTools`.** The tools an agent gives its model to
+  discover and prompt other agents — `discover_agents`, `prompt_agent`,
+  `wait_agent`, `answer_agent`, `cancel_agent`, `list_agent_calls` — as one
+  helper, to the contract in
+  [`docs/agent-tools.md`](../../docs/agent-tools.md), the same as the
+  TypeScript SDK's. `agent_tool_definitions()` are the six definitions,
+  embedded as `synadia_ai/agents/tools/definitions.json`, a copy of
+  `test-fixtures/agent-tools/`, and `tools.definitions` those the helper
+  offers; `await tools.execute(name, args, tool_call_id=...)` runs one call
+  and returns the JSON result as a dict.
+  - `prompt_agent` blocks by default and returns the reply, a question with
+    its `call_id`, or an error, now with `state`; `wait: false` returns at
+    once and the call keeps reading its stream in a task of its own.
+    `wait_agent` returns the earliest call that finished or asked, with
+    `remaining`; `answer_agent` answers a question and goes on in the
+    call's mode; `cancel_agent` refuses open questions and drops the
+    stream. States: `running`, `input_required`, `completed`, `failed`,
+    `cancelled`, `expired`. A call that fails or expires refuses its open
+    questions too, so the asking agent does not wait out its own timeout.
+  - A call belongs to the prompt being served: pass
+    `tools.request_interceptor` in `AgentService(interceptors=[...])` —
+    structurally a `RequestInterceptor` (`around_request(ctx, call_next)`),
+    so this package still does not depend on `synadia-ai-agent-service` —
+    or serve inside `async with tools.prompt_scope(caller=...)`; the scope
+    rides a `contextvars` variable. When the prompt ends, its open calls are
+    cancelled and their questions refused (`AGENT_TOOLS_QUESTION_REFUSAL`);
+    while calls are open, every result carries `open_calls` and
+    `open_calls_note`. Outside a served prompt,
+    `on_settled(result, SettledInfo(awaited=...))` reports each call that
+    finishes.
+  - Configuration, never parameters: `max_wait_s` (10 minutes),
+    `max_wait_agent_s` (the cap on `wait_agent`'s `timeout_ms`),
+    `max_calls` per scope (256; finished calls are dropped, the one that
+    finished longest ago first), the roots files may be sent from, the
+    staging directory where returned files are saved with
+    `save_attachments`, one directory per call. The staging directory is
+    always a root, the default one or `staging_dir`, so a returned file can
+    be sent on; `attachment_roots` adds to it and names none by default, so
+    the working directory, which may hold a `.env`, is out unless a host
+    names it. A relative root or `staging_dir` is taken from the working
+    directory at construction, so a later change of directory moves none of
+    them.
+  - `tools=` offers a subset of the six: `definitions` holds only those,
+    in the contract's order, and `execute` refuses any other in words.
+    Without `wait_agent` nothing can be detached: `prompt_agent` and
+    `answer_agent` lose their `wait` parameter, a description that
+    mentions `wait_agent` reads its blocking-only words (embedded as
+    `synadia_ai/agents/tools/blocking.json`, a copy of
+    `test-fixtures/agent-tools/blocking.json`), and `wait: false` is
+    refused. A subset that makes no sense — none, a tool that works on
+    calls without `prompt_agent`, or `prompt_agent` without `answer_agent`,
+    which a question from the prompted agent needs — raises `ValueError` at
+    construction. What a result tells the model to do next points only to
+    tools offered. `BLOCKING_AGENT_TOOLS` names the three an agent that runs
+    no calls at once offers — `discover_agents`, `prompt_agent`,
+    `answer_agent` — and `AGENT_TOOL_NAMES` all six, both tuples in the
+    contract's order.
+  - Loop guards: the agent's own address, and the agent whose signed
+    prompt is being served. Errors come back as results, in words.
+  - The model's tool-call ID reaches every prompt interceptor as
+    `ctx.context["tool_call_id"]`. `AgentToolsExtension` subclasses add
+    discovery fields, rewrite a prompt before it is sent, and look at a
+    reply. One that sets a field the contract defines is a bug: the
+    discovery and prompt hooks raise; a reply look fails the call and logs
+    an error through `logger`.
+
+  Nothing changes on the wire, and the protocol version stays `0.3`.
+- **Prompt interceptors.** `Agents(nc=nc, interceptors=[...])` — every
+  `Agent` it hands out inherits them; `Agent(..., interceptors=...)` takes
+  them directly. A `PromptInterceptor` runs at publish time — on the
+  stream's first `__anext__`, in a copy of the `contextvars` context
+  `prompt()` was called in — in two phases that see the same per-prompt
+  `ctx` (`PromptInterceptorContext`): the target `agent`, the `prompt`
+  text, `envelope_extras` (the extra fields of an `Envelope` passed to
+  `prompt()`, a read-only copy; empty for a text prompt), the opaque
+  `context` from the new `prompt(..., context=...)`, the `connection`, and
+  `identity` (`PromptSigning`: `can_sign`, `self_id()`,
+  `publish_signed()`).
+  - `async before_prompt(ctx)`, after the sender identity is resolved,
+    returns `PromptExtras` — extra envelope `fields` and `headers`, and a
+    `state` the SDK hands back — or `None`, and has no side effects.
+    Several are merged in order, the later winning a key. A field the
+    envelope defines or the `Agent-Sender` header is refused with
+    `NatsAgentError`; an exception fails the prompt before anything is
+    sent. A field the caller's envelope also carries is replaced, as
+    between interceptors.
+  - `async before_publish(ctx, extras)`, optional
+    (`PublishingPromptInterceptor`), runs only after the `Agent-Sender`
+    header is signed and the size checked, immediately before the prompt
+    is published, with what that interceptor's `before_prompt` returned.
+    That is where an interceptor publishes its own messages, so they
+    describe a prompt that goes out; an exception is logged and does not
+    stop the prompt.
+
+  A prompt never iterated, or one `prompt()` itself rejects, runs neither
+  phase.
+  Without interceptors nothing changes on the wire. The TypeScript SDK has
+  the same hook.
+- **`Envelope.extras` (§5.6).** The top-level fields an envelope does not
+  define, verbatim; `encode()` now writes a `null` among them too, so a
+  decode → encode round trip keeps what a peer sent. `is_envelope_field`
+  (in `synadia_ai.agents.envelope`) names the fields the codec owns.
+- **Signing with a chosen nonce.** `sign_sender` / `publish_signed` /
+  `request_signed` take `nonce=`: sign with the id a message body carries,
+  so it is the `Agent-Sender` nonce and the `Nats-Msg-Id` too.
+  `is_valid_sender_nonce` checks the header grammar
+  (`[A-Za-z0-9_-]{1,64}`); a nonce outside it is an `IdentityError`.
+- **`save_attachments(attachments, directory, *, max_total_bytes=...)`.**
+  The receiving counterpart of `Attachment.from_path`, synchronous like it:
+  writes the attachments of a reply (§6.3), a mid-stream query (§7.1) or an
+  inbound envelope into `directory`, created if missing, so a caller can
+  hand its model paths instead of base64. One `SavedAttachment` per input,
+  in order: `filename` as sent, `size_bytes`, and the absolute `path`, or
+  `path=None` with `skipped="over_limit" | "invalid_content"`. The sender's
+  name is untrusted and reduced to a safe base name, the same on every OS:
+  no path, no control characters, no characters that change text
+  direction, no leading or trailing dots or whitespace, `< > : " | ? *`
+  replaced by `_`, a Windows device name (`CON`, `nul.txt`, `CONIN$`)
+  prefixed with `_`, at most 200 UTF-8 bytes. Files are created with
+  `open(..., "xb")` and mode 0600: nothing is overwritten, no symlink is
+  followed, a taken name becomes `name (2).ext`. A directory the call
+  creates gets mode 0700; one that exists keeps its mode. Content that is
+  not strict RFC 4648 §4 base64 is never written; the decoded bytes per
+  call stop at `DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES` (64 MiB; `None`
+  disables it). Real I/O errors raise `OSError`. The TypeScript SDK's
+  `saveAttachments` behaves the same, on the shared cases in
+  `test-fixtures/attachments/`. Nothing on the wire changes.
+- **`HeartbeatPayload.extras`.** Unknown heartbeat fields are now kept
+  (`extra="allow"`), readable on `extras` and preserved verbatim on
+  re-encode, as the TypeScript SDK does; they used to be dropped on
+  decode.
+- `SenderSignatureRequiredError` exposes stable `code` (`401`),
+  `description` (`"signature required"`), and `subject` attributes for
+  handling local signed-target preflight failures without parsing a message.
+- `AgentSenderHeader.to_log_dict()` provides a structured-log view with
+  `nonce` and `sig` redacted. Those proof fields remain directly readable for
+  signing and wire serialization; generic dataclass reflection such as
+  `dataclasses.asdict()` must not be used for logging this type.
+- `resolve_nats_connection_bundle(...)` snapshots a selected `nats` CLI
+  context or direct URL plus `.creds` / nkey connection source exactly once.
+  `identity="off"` is the default and exposes no signer;
+  `identity="signed"` derives the signer from that same authentication
+  snapshot and fails clearly when the connection uses token, user/password,
+  JWT-without-seed, or anonymous authentication. The returned connection
+  options use captured JWT/signature callbacks for `.creds` reconnects, not
+  a mutable path; nkey files are normalized once before both connection auth
+  and signing. `wipe()` is idempotent and must run after the NATS connection
+  closes. Bundle representations are redacted; callers must still never log
+  the necessarily sensitive `connection_options` mapping.
+
+### Changed
+
+- `discover_agents`' filter descriptions now say which token of the address
+  `agents.prompt.<agent>.<owner>.<name>` each one matches, so a model looks
+  an agent up by its kind or role rather than by its instance name. Nothing
+  on the wire changes.
+
+- Sender identity is now opt-in: omitting `identity` performs no lookup and
+  sends no `Agent-Sender` header; explicit `Identity()` enables unsigned
+  claims, and `send_unsigned_claim=False` performs no automatic identity
+  work.
+- Every identity-bearing request uses an uncached live
+  `$SYS.REQ.USER.INFO` answer. A configured signer's user and credentials-JWT
+  account must match that live connection; any failure is fatal and never
+  downgrades to unsigned or headerless delivery. Explicit diagnostic
+  `self_id()` calls remain memoised.
+- NATS URL errors redact token and user/password userinfo. URL and context
+  bundle resolution preserve WebSocket paths and query strings. The existing
+  `load_context_options` API and auth precedence remain compatible.
+
+### Fixed
+
+- **`Agent.prompt(envelope)` sends the envelope's extra fields (§5.6).** It
+  used to send only `prompt` and `attachments`, so an agent relaying the
+  envelope it received dropped the top-level fields the protocol does not
+  define, which §5.6 obliges a relay to preserve. Now they go out verbatim
+  (a `null` among them), after the protocol's fields, and count toward
+  `max_payload`; relaying a decoded envelope sends its bytes unchanged. A
+  prompt interceptor's field of the same name replaces one. A caller that
+  wants the old behaviour passes `Envelope(prompt=..., attachments=...)`.
+  The TypeScript SDK's `prompt()` takes text only, so it has no such path.
+
 ## [0.8.0] - 2026-08-29
 
 The caller side of the **sender-identity extension** (PR-P1 of the
@@ -17,7 +212,8 @@ identity plan). Every `prompt` / `status` request can now carry an
 ed25519 signature bound to the subject, the payload, a timestamp and a
 nonce. The wire protocol stays `0.3`; support is advertised by feature
 detection (`min_sender_trust` on the prompt endpoint ⇔ the agent
-implements the extension; `Agent-Sender` sent ⇔ the caller does). Spec:
+implements the extension; `Agent-Sender` sent ⇔ the caller does). The
+extension is additive to protocol `0.3`. Spec:
 [`core-protocol.md` §13](https://github.com/synadia-ai/synadia-agent-sdk-docs/blob/main/core-protocol.md#13-sender-identity-optional-extension).
 Byte-for-byte compatible with the TypeScript SDK (`@synadia-ai/agents`
 0.6.0): the shared known-answer vectors under

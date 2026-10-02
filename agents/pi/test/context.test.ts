@@ -1,82 +1,64 @@
-// Unit tests for contextToConnectOpts TLS handling.
-//
-// NATS CLI contexts store cert/key/ca as file *paths*; the loader must
-// read their contents into the standard `tls.cert`/`key`/`ca` options
-// (portable across runtimes — Bun's transport never consumed the
-// Node-only `certFile`/`keyFile`/`caFile` helper fields) rather than
-// passing the paths through. Mirrors the SDK's `loadContextOptions`
-// semantics, including `tls_first` alone producing `handshakeFirst`
-// with no file reads.
-//
-// Run with: bun test test/context.test.ts
+import { describe, expect, test } from "bun:test";
+import { resolveConnectionSettings } from "../extensions/nats-channel.ts";
 
-import { test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { contextToConnectOpts } from "../extensions/nats-channel.ts";
-
-let baseDir: string;
-
-beforeAll(() => {
-	baseDir = mkdtempSync(join(tmpdir(), "pi-nats-ctx-"));
-});
-
-afterAll(() => {
-	rmSync(baseDir, { recursive: true, force: true });
-});
-
-test("loads TLS file contents into standard tls options", () => {
-	const certPath = join(baseDir, "client.pem");
-	const keyPath = join(baseDir, "client.key");
-	const caPath = join(baseDir, "ca.pem");
-	writeFileSync(certPath, "client-cert");
-	writeFileSync(keyPath, "client-key");
-	writeFileSync(caPath, "ca-cert");
-	const opts = contextToConnectOpts({
-		url: "tls://nats.example.com:4222",
-		cert: certPath,
-		key: keyPath,
-		ca: caPath,
-		tls_first: true,
+describe("PI connection settings", () => {
+	test("identity-free and permissive are independent defaults", () => {
+		expect(resolveConnectionSettings({}, {})).toEqual({
+			source: { url: "demo.nats.io" },
+			contextLabel: "default",
+			senderIdentity: "off",
+			minSenderTrust: "any",
+		});
 	});
-	expect(opts.tls).toEqual({
-		cert: "client-cert",
-		key: "client-key",
-		ca: "ca-cert",
-		handshakeFirst: true,
+
+	test("context wins over URL and is passed to the shared bundle helper", () => {
+		expect(
+			resolveConnectionSettings(
+				{ context: "configured" },
+				{ NATS_CONTEXT: "from-env", NATS_URL: "nats://ignored:4222" },
+			),
+		).toMatchObject({
+			source: { context: "from-env" },
+			contextLabel: "from-env",
+		});
 	});
-});
 
-test("loads a partial TLS triple (ca only)", () => {
-	const caPath = join(baseDir, "ca-only.pem");
-	writeFileSync(caPath, "ca-only-cert");
-	const opts = contextToConnectOpts({
-		url: "tls://nats.example.com:4222",
-		ca: caPath,
+	test("URL is used only when no context is selected", () => {
+		expect(resolveConnectionSettings({}, { NATS_URL: "nats://localhost:4223" })).toMatchObject({
+			source: { url: "nats://localhost:4223" },
+			contextLabel: "$NATS_URL",
+		});
 	});
-	expect(opts.tls).toEqual({ ca: "ca-only-cert" });
-});
 
-test("sets handshakeFirst alone when only tls_first is set", () => {
-	const opts = contextToConnectOpts({
-		url: "tls://nats.example.com:4222",
-		tls_first: true,
+	test("signed self identity does not imply signed-only admission", () => {
+		expect(resolveConnectionSettings({ senderIdentity: "signed" }, {})).toMatchObject({
+			senderIdentity: "signed",
+			minSenderTrust: "any",
+		});
 	});
-	expect(opts.tls).toEqual({ handshakeFirst: true });
-});
 
-test("throws a clear error when a TLS file is missing", () => {
-	const certPath = join(baseDir, "missing-client.pem");
-	expect(() =>
-		contextToConnectOpts({
-			url: "tls://nats.example.com:4222",
-			cert: certPath,
-		}),
-	).toThrow(`failed to read TLS cert file ${certPath}`);
-});
+	test("signed-only admission does not require host self identity", () => {
+		expect(resolveConnectionSettings({ minSenderTrust: "signed" }, {})).toMatchObject({
+			senderIdentity: "off",
+			minSenderTrust: "signed",
+		});
+	});
 
-test("leaves tls undefined when no TLS fields are set", () => {
-	const opts = contextToConnectOpts({ url: "nats://localhost:4222" });
-	expect(opts.tls).toBeUndefined();
+	test("environment overrides file modes", () => {
+		expect(
+			resolveConnectionSettings(
+				{ senderIdentity: "off", minSenderTrust: "any" },
+				{ NATS_SENDER_IDENTITY: "signed", NATS_MIN_SENDER_TRUST: "signed" },
+			),
+		).toMatchObject({ senderIdentity: "signed", minSenderTrust: "signed" });
+	});
+
+	test("invalid modes fail before connection", () => {
+		expect(() => resolveConnectionSettings({}, { NATS_SENDER_IDENTITY: "maybe" })).toThrow(
+			/NATS_SENDER_IDENTITY/,
+		);
+		expect(() => resolveConnectionSettings({}, { NATS_MIN_SENDER_TRUST: "verified" })).toThrow(
+			/NATS_MIN_SENDER_TRUST/,
+		);
+	});
 });

@@ -16,6 +16,13 @@
 //                                helpers for emitting response chunks.
 //   - {@link buildHeartbeatPayload}, {@link encodeHeartbeatPayload} —
 //                                heartbeat-publisher helpers.
+//   - {@link signHeartbeat}, {@link signHeartbeatHeader} —
+//                                the `Agent-Sender` header on a heartbeat
+//                                (`sub` the heartbeat subject, `ts` the
+//                                frame's own), for hand-rolled publishers.
+//   - {@link RequestInterceptor}, {@link RequestRejectedError} — the hook
+//                                around the prompt handler
+//                                (`AgentServiceOptions.interceptors`).
 //   - {@link SenderGate}, {@link NonceCache} — sender-identity
 //                                classification for hand-rolled services
 //                                (the shared codec lives in the caller
@@ -38,6 +45,12 @@ export {
   type AgentServiceOptions,
   type PromptHandler,
 } from "./service.js";
+
+export {
+  RequestRejectedError,
+  type RequestInterceptor,
+  type RequestInterceptorContext,
+} from "./interceptor.js";
 
 export {
   DEFAULT_MIN_SENDER_TRUST,
@@ -67,3 +80,9 @@ export {
   buildHeartbeatPayload,
   encodeHeartbeatPayload,
 } from "./heartbeat/payload.js";
+export {
+  type HeartbeatSigner,
+  type SignHeartbeatOptions,
+  signHeartbeat,
+  signHeartbeatHeader,
+} from "./heartbeat/sender.js";

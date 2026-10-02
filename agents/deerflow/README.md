@@ -122,6 +122,8 @@ cat > "$(deerflow-nats-channel configure)" <<'TOML'
 # ~/.config/synadia/deerflow-channel/config.toml
 # Prefer NATS_CONTEXT/NATS_URL and NATS_OWNER in the environment for deployments.
 nats_context = "prod"
+sender_identity = "off"
+min_sender_trust = "any"
 owner = "acme"
 session = "research"
 agent = "df"
@@ -147,6 +149,8 @@ TOML
 | `deerflow_csrf_token` | no | — | Debug fallback only: explicit CSRF token sent as `X-CSRF-Token`. Prefer automatic login. Redacted from `doctor` output. |
 | `nats_context` | no | — | NATS CLI context name. Recommended for NGS/managed NATS because credentials stay in the NATS context. If neither `nats_context` nor `nats_url` is set, the wrapper uses the currently selected NATS CLI context. |
 | `nats_url` | no | — | Raw NATS server URL. Useful for local development. If unset, `nats_context` or the current NATS CLI context is used. |
+| `sender_identity` | no | `off` | `signed` derives the host signer from the credentials used for the NATS connection. |
+| `min_sender_trust` | no | `any` | `signed` rejects headerless or invalidly signed prompts. |
 | `deerflow_timeout_s` | no | `60` | HTTP connect/read timeout for DeerFlow Gateway health and stream calls. |
 | `query_timeout_s` | no | `300` | Seconds to wait for a caller reply to a DeerFlow clarification query before failing the stream. |
 | `max_payload` | no | NATS server limit | Optional smaller prompt endpoint `max_payload` cap. By default the host advertises the connected NATS server limit; if configured, the value is honored unless the server limit is smaller. |
@@ -172,6 +176,8 @@ TOML
 | `DEERFLOW_CSRF_TOKEN` | `deerflow_csrf_token` | Debug fallback CSRF token sent as `X-CSRF-Token`. Prefer automatic login. Redacted from `doctor` output. |
 | `NATS_CONTEXT` | `nats_context` | NATS CLI context. Prefer this over raw URLs in production. |
 | `NATS_URL` | `nats_url` | Direct NATS server URL. |
+| `NATS_SENDER_IDENTITY` | `sender_identity` | `off` or connection-bound `signed`; default `off`. |
+| `NATS_MIN_SENDER_TRUST` | `min_sender_trust` | `any` or `signed`; default `any`. |
 | `DEERFLOW_TIMEOUT_S` | `deerflow_timeout_s` | Positive number of seconds for DeerFlow HTTP calls. |
 | `DEERFLOW_QUERY_TIMEOUT_S` | `query_timeout_s` | Positive number of seconds to wait for clarification replies. |
 | `DEERFLOW_MAX_PAYLOAD` | `max_payload` | Human byte string such as `256KB`, `1MB`, or `2MB`. |
@@ -188,6 +194,8 @@ deerflow-nats-channel doctor \
   --session research \
   --deerflow-url http://localhost:2026 \
   --deerflow-username operator@example.com \
+  --sender-identity off \
+  --min-sender-trust any \
   --deerflow-timeout-s 60 \
   --query-timeout-s 300 \
   --max-payload 1MB \
@@ -195,6 +203,11 @@ deerflow-nats-channel doctor \
 ```
 
 Use flags for one-off smoke checks. Use env vars or TOML for services.
+
+Sender identity and incoming trust are independent. The shared connection
+bundle reads the selected context once and supplies both NATS authentication
+and, in signed mode, the matching host signer. There is no separate identity
+credential. The defaults preserve identity-free startup and headerless callers.
 
 ## Commands
 

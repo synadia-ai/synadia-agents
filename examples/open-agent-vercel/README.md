@@ -26,19 +26,55 @@ sandbox shape that fits their threat model.
 
 Same precedence as the `agents/open-agent/` CLI:
 
-1. `NATS_URL` env var, if set — wins over everything.
-2. `--nats-context <name>` flag — resolves a saved `nats` CLI context.
+1. `--nats-context <name>` flag — resolves a saved `nats` CLI context.
    Use `current` to pick whichever context `nats context select` last
    chose.
-3. Otherwise: `nats://127.0.0.1:4222`.
+2. `NATS_CONTEXT` env var.
+3. `NATS_URL` env var, only when no context is selected.
+4. Otherwise: `nats://127.0.0.1:4222`.
 
 ```bash
 # Saved context (e.g. an NGS account)
 bun start --nats-context my-ngs-account
+# or
+NATS_CONTEXT=my-ngs-account bun start
 
-# Direct URL — overrides any context
+# Direct URL fallback
 NATS_URL=nats://nats.example.com:4222 bun start
 ```
+
+### Optional sender identity
+
+Identity remains opt-in and incoming policy remains permissive by default:
+
+```bash
+NATS_SENDER_IDENTITY=off NATS_MIN_SENDER_TRUST=any bun start
+```
+
+To register the bridge with the NATS user identity already used by its
+connection, select a seed-bearing context and enable signed identity:
+
+```bash
+NATS_CONTEXT=my-ngs-account NATS_SENDER_IDENTITY=signed bun start
+```
+
+The context must authenticate with `creds`, `nkey`, or `user_jwt` plus
+`user_seed`. The centralized Open Agent connection helper reads that source
+once and derives both the NATS authenticator and registration signer from the
+same retained snapshot. There is no separate identity credentials setting.
+Token, username/password, and anonymous URL connections continue to work with
+identity off.
+
+Incoming trust is independent. Require a signature-valid caller without
+enabling the bridge's own registration identity by setting:
+
+```bash
+NATS_CONTEXT=my-ngs-account NATS_MIN_SENDER_TRUST=signed bun start
+```
+
+Invalid or missing signatures on a strict endpoint are rejected before the
+acknowledgement and before the Open Agent tool loop receives the prompt.
+Responses and mid-stream query replies are not independently signed.
 
 ## Models
 
@@ -70,6 +106,7 @@ bun install
 # Default: Vercel AI Gateway
 VERCEL_TOKEN=... AI_GATEWAY_API_KEY=... \
   OPEN_AGENT_OWNER=$USER OPEN_AGENT_SESSION=demo \
+  NATS_SENDER_IDENTITY=off NATS_MIN_SENDER_TRUST=any \
   bun start
 
 # Or: OpenRouter

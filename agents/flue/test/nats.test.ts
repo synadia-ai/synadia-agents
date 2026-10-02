@@ -2,11 +2,11 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { resolveNatsOptions } from "../src/nats.js";
+import { resolveNatsBundle } from "../src/nats.js";
 
 const DUMMY_CREDS = `-----BEGIN NATS USER JWT-----\nabc\n------END NATS USER JWT------\n\n-----BEGIN USER NKEY SEED-----\nnot-a-real-seed-fixture\n------END USER NKEY SEED------\n`;
 
-describe("resolveNatsOptions", () => {
+describe("resolveNatsBundle", () => {
   test("test creds fixture does not embed NKEY seed-shaped material", () => {
     expect(DUMMY_CREDS).not.toMatch(/S[A-Z0-9]{57}/);
   });
@@ -16,9 +16,12 @@ describe("resolveNatsOptions", () => {
     const creds = join(dir, "user.creds");
     writeFileSync(creds, DUMMY_CREDS, "utf8");
 
-    const opts = await resolveNatsOptions({ url: "nats://demo.example:4222", creds });
+    const bundle = await resolveNatsBundle({ url: "nats://demo.example:4222", creds });
 
-    expect(opts.servers).toEqual(["nats://demo.example:4222"]);
-    expect(opts.authenticator).toBeDefined();
+    expect(bundle.connectionOptions.servers).toEqual(["nats://demo.example:4222"]);
+    expect(bundle.connectionOptions.authenticator).toBeDefined();
+    expect(bundle.signer).toBeUndefined();
+    bundle.wipe();
+    expect(bundle.connectionOptions.authenticator).toBeUndefined();
   });
 });

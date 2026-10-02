@@ -1,17 +1,11 @@
 // Enumerate every agent reachable on the NATS system and print a summary.
 // Useful as a quick sanity check when bringing up a new environment.
 
-import { connect as natsConnect } from "@nats-io/transport-node";
-import { Agents, loadContextOptions, parseNatsUrl } from "@synadia-ai/agents";
+import { openExampleAgents } from "./_connection";
 
 async function main(): Promise<void> {
-  const opts = process.env["NATS_CONTEXT"]
-    ? await loadContextOptions(process.env["NATS_CONTEXT"])
-    : process.env["NATS_URL"]
-      ? parseNatsUrl(process.env["NATS_URL"])
-      : { servers: "nats://127.0.0.1:4222" };
-  const nc = await natsConnect(opts);
-  const agents = new Agents({ nc });
+  const connection = await openExampleAgents();
+  const { agents } = connection;
 
   try {
     const found = await agents.discover();
@@ -32,8 +26,7 @@ async function main(): Promise<void> {
       console.log();
     }
   } finally {
-    await agents.close();
-    await nc.close();
+    await connection.close();
   }
 }
 

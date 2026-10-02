@@ -21,19 +21,23 @@ only (heartbeat wildcard sub, in-flight stream cancellation), and the
 underlying :class:`~nats.aio.client.Client` is the caller's
 responsibility.
 
-Sender identity (extension): pass ``identity=Identity(signer=…, name=…)``
-to sign every ``prompt`` / ``status`` request; without a signer the SDK
-sends an unsigned claim when the connection has an NKEY identity, and
-nothing otherwise. :meth:`Agents.self_id` is the connection's own agent
+Sender identity is off by default: no lookup and no header. Pass
+``identity=Identity(signer=…, name=…)`` to sign every ``prompt`` /
+``status`` request; an explicit identity without a signer sends an unsigned
+claim when the connection has an NKEY identity. :meth:`Agents.self_id` is the connection's own agent
 ID; :meth:`Agents.sign_sender` / :meth:`Agents.publish_signed` /
 :meth:`Agents.request_signed` sign arbitrary publishes (JetStream
 included); :meth:`Agents.resolve_sender` is the reverse lookup.
+
+Prompt interceptors: ``interceptors=[...]`` runs each one before every
+prompt an :class:`Agent` from this client publishes (see
+:mod:`synadia_ai.agents.interceptor`).
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from ._logging import get_logger
@@ -48,22 +52,22 @@ from .discovery import (
     matches_filter,
     ping_instance,
 )
-from .errors import SenderSignatureRequiredError
 from .heartbeat import HeartbeatListener, HeartbeatTracker, Liveness
 from .identity.agent_id import AgentId
 from .identity.options import (
     Identity,
-    kickoff_self_id,
-    plan_sender_header,
     refresh_self_id_for,
     self_id_for,
 )
 from .identity.resolve_sender import DEFAULT_RESOLVE_TTL_S, SenderResolver
-from .identity.sender_header import (
-    AGENT_SENDER_HEADER,
-    AgentSenderHeader,
-    serialize_sender_header,
+from .identity.sender_header import serialize_sender_header
+from .identity.signed_publish import (
+    NATS_MSG_ID_HEADER,
+    signed_publish_headers,
+    signed_sender_header,
+    to_bytes,
 )
+from .interceptor import PromptInterceptor
 
 if TYPE_CHECKING:
     import logging
@@ -76,9 +80,6 @@ log = get_logger(__name__)
 # Default `request_signed()` timeout — 2 seconds (mirrors the TS SDK's
 # DEFAULT_REQUEST_SIGNED_TIMEOUT_MS).
 DEFAULT_REQUEST_SIGNED_TIMEOUT_S: float = 2.0
-
-#: JetStream de-duplication header; `publish_signed` sets it to the nonce.
-NATS_MSG_ID_HEADER = "Nats-Msg-Id"
 
 
 class Agents:
@@ -94,6 +95,12 @@ class Agents:
     :class:`~synadia_ai.agents.identity.Identity`; its ``name`` is
     validated up front). ``resolve_ttl_s`` is the TTL of the
     ``$SRV.INFO`` index behind :meth:`resolve_sender` (default 10 s).
+
+    ``interceptors`` run, in order, before every prompt an :class:`Agent`
+    from this client publishes — each may publish signed messages of its
+    own and add envelope fields and headers (see
+    :class:`~synadia_ai.agents.interceptor.PromptInterceptor`). Default:
+    none, and prompts are exactly what the protocol sends.
     """
 
     def __init__(
@@ -105,6 +112,7 @@ class Agents:
         logger: logging.Logger | None = None,
         identity: Identity | None = None,
         resolve_ttl_s: float = DEFAULT_RESOLVE_TTL_S,
+        interceptors: Sequence[PromptInterceptor] = (),
     ) -> None:
         if prompt_max_wait_s <= 0:
             raise ValueError(f"prompt_max_wait_s must be > 0 (got {prompt_max_wait_s!r}).")
@@ -113,6 +121,8 @@ class Agents:
         self._prompt_max_wait_s = prompt_max_wait_s
         self._logger = logger if logger is not None else log
         self._identity = identity
+        # Copied: a caller mutating its list afterwards changes nothing here.
+        self._interceptors = tuple(interceptors)
         self._resolver = SenderResolver(nc, ttl_s=resolve_ttl_s)
         self._tracker = HeartbeatTracker(nc)
         # Set when close() is called; passed to every Agent so in-flight
@@ -161,6 +171,11 @@ class Agents:
         """The sender-identity options this client was constructed with."""
         return self._identity
 
+    @property
+    def interceptors(self) -> tuple[PromptInterceptor, ...]:
+        """The prompt interceptors every :class:`Agent` from this client runs, in order."""
+        return self._interceptors
+
     async def discover(
         self,
         *,
@@ -191,12 +206,11 @@ class Agents:
 
         The first call to :meth:`discover` lazily starts the heartbeat
         wildcard subscription BEFORE publishing the discovery PING,
-        enforcing §8.5 automatically. It also *starts* the connection's
-        identity lookup (fire-and-forget) so the first ``prompt()``
-        usually finds it memoised — it never waits for it.
+        enforcing §8.5 automatically. Discovery itself never starts sender-
+        identity lookup; identity is resolved only by an explicitly enabled
+        identity-bearing request.
         """
         self._ensure_open()
-        kickoff_self_id(self._identity, self._nc)
         if not self._tracker.is_started:
             await self._tracker.start()
         infos = await discover_agent_infos(
@@ -213,6 +227,7 @@ class Agents:
                 prompt_max_wait_s=self._prompt_max_wait_s,
                 close_event=self._close_event,
                 identity=self._identity,
+                interceptors=self._interceptors,
             )
             for info in infos
             if matches_filter(info, filter)
@@ -270,15 +285,16 @@ class Agents:
     # --- sender identity -------------------------------------------------
 
     async def self_id(self) -> AgentId:
-        """The connection's own agent ID (``{account}.{user}``), learned once per connection.
+        """The connection's own agent ID (``{account}.{user}``).
 
-        From the credentials JWT when the signer carries one, else from
-        ``$SYS.REQ.USER.INFO``. Raises :class:`NoIdentityError` (no NKEY
+        Obtained from ``$SYS.REQ.USER.INFO``. A configured signer is bound
+        to that live user and account without using the signer-less memo.
+        Raises :class:`NoIdentityError` (no NKEY
         user — the message names the fix),
         :class:`IdentityUnavailableError` (no answer / permission
         violation) or :class:`IdentityMismatchError` (a configured signer
-        holds a different key). Failures are retried after 30 s;
-        :meth:`refresh_self_id` retries at once.
+        holds a different identity). Signer-less diagnostic lookups and
+        failures are memoised; :meth:`refresh_self_id` retries at once.
         """
         self._ensure_open()
         return await self_id_for(self._identity, self._nc)
@@ -289,21 +305,32 @@ class Agents:
         return await refresh_self_id_for(self._identity, self._nc)
 
     async def sign_sender(
-        self, subject: str, payload: bytes | str, *, sub: str | None = None
+        self,
+        subject: str,
+        payload: bytes | str,
+        *,
+        sub: str | None = None,
+        nonce: str | None = None,
     ) -> str:
         """Build a complete ``Agent-Sender`` header *value* for a publish to ``subject``.
 
-        The SDK supplies the id, ``ts`` and a fresh nonce. Pass the exact
-        subject and payload you will publish; set ``sub`` only behind a
-        rename by your own account (sign the exporter's subject). Works
-        for any publish, JetStream included
+        The SDK supplies the id, ``ts`` and a fresh nonce — or ``nonce``,
+        for a message whose body carries its own id: sign with that id and
+        it is the nonce and (with :meth:`publish_signed`) the
+        ``Nats-Msg-Id`` as well. It must match ``[A-Za-z0-9_-]{1,64}`` and
+        be unique per signer. Pass the exact subject and payload you will
+        publish; set ``sub`` only behind a rename by your own account (sign
+        the exporter's subject). Works for any publish, JetStream included
         (``headers={"Agent-Sender": value}``).
 
         Raises :class:`SenderSignatureRequiredError` when no signer is
-        configured, else the :meth:`self_id` error when the identity is
-        unavailable.
+        configured, :class:`IdentityError` for a malformed ``nonce``, else
+        the :meth:`self_id` error when the identity is unavailable.
         """
-        header = await self._signed_header(subject, _to_bytes(payload), sub)
+        self._ensure_open()
+        header = await signed_sender_header(
+            self._identity, self._nc, subject, to_bytes(payload), sub=sub, nonce=nonce
+        )
         return serialize_sender_header(header)
 
     async def publish_signed(
@@ -313,16 +340,20 @@ class Agents:
         *,
         sub: str | None = None,
         headers: Mapping[str, str] | None = None,
+        nonce: str | None = None,
     ) -> None:
         """Sign and publish in one step (core ``nc.publish``).
 
         Sets ``Nats-Msg-Id`` to the nonce so a JetStream stream's
         de-duplication window helps consumers. ``headers`` are merged in
-        (``Agent-Sender`` / ``Nats-Msg-Id`` win). Same error rules as
-        :meth:`sign_sender`.
+        (``Agent-Sender`` / ``Nats-Msg-Id`` win); ``nonce`` as on
+        :meth:`sign_sender`. Same error rules as :meth:`sign_sender`.
         """
-        data = _to_bytes(payload)
-        hdrs = await self._signed_headers(subject, data, sub, headers)
+        self._ensure_open()
+        data = to_bytes(payload)
+        hdrs = await signed_publish_headers(
+            self._identity, self._nc, subject, data, sub=sub, headers=headers, nonce=nonce
+        )
         await self._nc.publish(subject, data, headers=hdrs)
 
     async def request_signed(
@@ -333,16 +364,20 @@ class Agents:
         sub: str | None = None,
         headers: Mapping[str, str] | None = None,
         timeout_s: float = DEFAULT_REQUEST_SIGNED_TIMEOUT_S,
+        nonce: str | None = None,
     ) -> Msg:
         """Sign and send a **single-reply** request on the SDK inbox.
 
         For services that answer once; prompt streams go through
-        :meth:`Agent.prompt`. Same error rules as :meth:`sign_sender`,
-        plus :class:`TimeoutError` / :class:`~nats.errors.NoRespondersError`
-        from the transport.
+        :meth:`Agent.prompt`. ``nonce`` as on :meth:`sign_sender`. Same
+        error rules as :meth:`sign_sender`, plus :class:`TimeoutError` /
+        :class:`~nats.errors.NoRespondersError` from the transport.
         """
-        data = _to_bytes(payload)
-        hdrs = await self._signed_headers(subject, data, sub, headers)
+        self._ensure_open()
+        data = to_bytes(payload)
+        hdrs = await signed_publish_headers(
+            self._identity, self._nc, subject, data, sub=sub, headers=headers, nonce=nonce
+        )
         return await request_one(self._nc, subject, data, timeout_s=timeout_s, headers=hdrs)
 
     async def resolve_sender(self, id: AgentId | str) -> AgentInfo | None:
@@ -355,29 +390,6 @@ class Agents:
         """
         self._ensure_open()
         return await self._resolver.resolve(id)
-
-    async def _signed_header(
-        self, subject: str, payload: bytes, sub: str | None
-    ) -> AgentSenderHeader:
-        self._ensure_open()
-        if self._identity is None or self._identity.signer is None:
-            raise SenderSignatureRequiredError(subject)
-        plan = await plan_sender_header(
-            self._identity, self._nc, sub if sub is not None else subject, require_signed=True
-        )
-        if plan is None:  # unreachable with a signer; keeps the type checker honest
-            raise SenderSignatureRequiredError(subject)
-        return await plan.build(payload)
-
-    async def _signed_headers(
-        self, subject: str, payload: bytes, sub: str | None, extra: Mapping[str, str] | None
-    ) -> dict[str, str]:
-        header = await self._signed_header(subject, payload, sub)
-        hdrs: dict[str, str] = dict(extra) if extra else {}
-        hdrs[AGENT_SENDER_HEADER] = serialize_sender_header(header)
-        if header.nonce is not None:
-            hdrs[NATS_MSG_ID_HEADER] = header.nonce
-        return hdrs
 
     async def close(self) -> None:
         """Tear down SDK-owned state. Idempotent.
@@ -401,10 +413,6 @@ class Agents:
     def _ensure_open(self) -> None:
         if self._closed:
             raise RuntimeError("synadia_ai.agents.Agents is closed")
-
-
-def _to_bytes(payload: bytes | str) -> bytes:
-    return payload.encode("utf-8") if isinstance(payload, str) else payload
 
 
 __all__ = ["DEFAULT_REQUEST_SIGNED_TIMEOUT_S", "NATS_MSG_ID_HEADER", "Agents"]
