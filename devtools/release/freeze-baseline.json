@@ -41,11 +41,11 @@
       "size": 2461
     },
     "agents/acp/bun.lock": {
-      "sha256": "1297ea49b0eaffc4db851f8c876ac93ad00255f2ec7c750f95ded397845315ae",
-      "size": 3644
+      "sha256": "59760dadcb7c8e2908983f70db65bc1324607cf3055388021b1a2342aeecc9a5",
+      "size": 3672
     },
     "agents/acp/package.json": {
-      "sha256": "d903128f277d12027db40686a26adaf5a3c4c555f0919151b3b63550fb1fb5b0",
+      "sha256": "fe5001aed3c20c592d9ad3f1b4ebbf868ab96152ab549a7a32377adc0e843899",
       "size": 1682
     },
     "agents/claude-code/bun.lock": {
@@ -57,11 +57,11 @@
       "size": 1332
     },
     "agents/codex/bun.lock": {
-      "sha256": "76d3c40b7b0b09b8e78e6c95403b8fdcce86f84936b588f9c69911dc92d4d9e9",
-      "size": 3238
+      "sha256": "581c73ba6af933d3b46767d231513677181fea712e50e1df34f291fdf14ef39c",
+      "size": 3266
     },
     "agents/codex/package.json": {
-      "sha256": "7afd31bfe93f8e1b66070ade227a3f1dbd31322eabca6761a2dc7ca35158418c",
+      "sha256": "d70ddcd9d3df43fec73dc4751b85f3bc03e252758869bb493eaed312aa128d92",
       "size": 2202
     },
     "agents/deerflow/pyproject.toml": {
@@ -109,11 +109,11 @@
       "size": 2069
     },
     "agents/opencode/bun.lock": {
-      "sha256": "cac2a8168d93f13881b0d0c250b9e6635f91b8739924cd6cca802805d4615583",
-      "size": 4588
+      "sha256": "bf4e3d1968ca80001ea793a8901ae5a6d0e94f5eeef3b0516a7a2339124b1c0a",
+      "size": 4616
     },
     "agents/opencode/package.json": {
-      "sha256": "a8368f9017be44b4ea335141ef11734ec102292d9cef168489dc93e9d76a7c47",
+      "sha256": "05604cfccfdfd18be0b94250574a078c26ad5081f0bc708a7c1307df62800a73",
       "size": 2085
     },
     "agents/pi/package.json": {
