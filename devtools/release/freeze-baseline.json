@@ -37,7 +37,7 @@
       "size": 79946
     },
     "agent-sdk/typescript/package.json": {
-      "sha256": "74284b7244e79f7c305299df50d15cdb181a187af88c22030ebb9756fd97320d",
+      "sha256": "bb962859e29da372330895c8cb17b71a0e822e025c9f6c2fc78df6f3c271ed08",
       "size": 2461
     },
     "agents/acp/bun.lock": {
@@ -133,7 +133,7 @@
       "size": 79680
     },
     "client-sdk/typescript/package.json": {
-      "sha256": "ea3c00b045561a5a444ba901c0c0984b01a813f7b9ad22b016a2e12f0d6d3ba1",
+      "sha256": "1158848282a62d1329d35fdc8c6c79f72058d8363166de31bcdadc0c05dca092",
       "size": 2519
     },
     "devtools/release/cooldown-policy.json": {
