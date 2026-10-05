@@ -16,12 +16,14 @@ import {
   clearOpenRequests,
   finalText,
   hooksActive,
+  nudgeFilePath,
   openFilePath,
   readOpenRequests,
   readSessionRecord,
   readTurnActivity,
   readTurnStop,
   recordHookEvent,
+  recordRefusedStop,
   resolveClaudeSessionId,
   sessionFilePath,
   sessionsDir,
@@ -196,6 +198,32 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     writeOpenRequests(stateDir, PID, [])
     recordHookEvent(stateDir, PID, stop, 4000)
     expect(readTurnStop(source)).toEqual({ sessionId: SESSION, background: false, atMs: 4000 })
+  })
+
+  test('the refused stop\'s text comes first; the stop after it gives its own only when that had none', () => {
+    const stop = { ...idle, stop_hook_active: true }
+    writeOpenRequests(stateDir, PID, ['7'])
+    // The answer, written before the nudge; a remark after it.
+    recordRefusedStop(stateDir, PID, { ...idle, last_assistant_message: 'the answer' }, 1000)
+    expect(readTurnStop(source)).toBeUndefined()
+    recordHookEvent(stateDir, PID, { ...stop, last_assistant_message: 'noted' }, 2000)
+    expect(readTurnStop(source)?.finalText).toBe('the answer')
+    // Taken once: the file goes with the stop that took it.
+    expect(existsSync(nudgeFilePath(stateDir, PID))).toBe(false)
+    // A refused stop with no text: the next stop's own.
+    recordRefusedStop(stateDir, PID, idle, 3000)
+    recordHookEvent(stateDir, PID, { ...stop, last_assistant_message: 'written after' }, 4000)
+    expect(readTurnStop(source)?.finalText).toBe('written after')
+    // A refusal older than the last recorded stop belongs to another turn.
+    recordRefusedStop(stateDir, PID, { ...idle, last_assistant_message: 'old turn' }, 4000)
+    recordHookEvent(stateDir, PID, { ...stop, last_assistant_message: 'this turn' }, 5000)
+    expect(readTurnStop(source)?.finalText).toBe('this turn')
+    // No prompt open: no text kept, and the refusal's file still goes.
+    recordRefusedStop(stateDir, PID, { ...idle, last_assistant_message: 'x' }, 6000)
+    writeOpenRequests(stateDir, PID, [])
+    recordHookEvent(stateDir, PID, stop, 7000)
+    expect(readTurnStop(source)?.finalText).toBeUndefined()
+    expect(existsSync(nudgeFilePath(stateDir, PID))).toBe(false)
   })
 
   test('the final text: last_assistant_message first, else the transcript\'s last assistant message', () => {
@@ -376,19 +404,20 @@ describe('hooks/session-event.ts: the script Claude Code runs', () => {
     expect(takeToolUse(source, 'prompt_agent', { address: 'a', prompt: 'p' })).toBe('toolu_hook')
   })
 
-  test('a stop with an open prompt prints the refusal and records nothing; the stop after it records', async () => {
+  test('a stop with an open prompt prints the refusal and records no stop; the stop after it records the refused one\'s text', async () => {
     const env = { CLAUDE_PID: String(PID), NATS_STATE_DIR: stateDir }
     const stop = { hook_event_name: 'Stop', session_id: SESSION, background_tasks: [], session_crons: [] }
     writeOpenRequests(stateDir, PID, ['3'])
-    const refused = await runHook(JSON.stringify(stop), env)
+    const refused = await runHook(JSON.stringify({ ...stop, last_assistant_message: 'the answer' }), env)
     expect(refused.code).toBe(0)
     const decision = JSON.parse(refused.stdout) as { decision: string; reason: string }
     expect(decision.decision).toBe('block')
     expect(decision.reason).toContain('"3"')
     expect(existsSync(stopFilePath(stateDir, PID))).toBe(false)
-    expect(await runHook(JSON.stringify({ ...stop, stop_hook_active: true, last_assistant_message: 'my answer' }), env))
+    expect(existsSync(nudgeFilePath(stateDir, PID))).toBe(true)
+    expect(await runHook(JSON.stringify({ ...stop, stop_hook_active: true, last_assistant_message: 'noted' }), env))
       .toEqual({ code: 0, stdout: '' })
-    expect(readTurnStop(source)).toMatchObject({ background: false, finalText: 'my answer' })
+    expect(readTurnStop(source)).toMatchObject({ background: false, finalText: 'the answer' })
   })
 
   test('garbage input or no CLAUDE_PID still exits 0 and writes nothing', async () => {

@@ -11,10 +11,11 @@
  *   another turn by itself. When a served prompt that owns the turn is
  *   still open, the hook first refuses the stop, once: it prints
  *   `{"decision":"block","reason":…}` naming the request and telling the
- *   model to send its answer with the reply tool, and records nothing. At
- *   the stop that follows (`stop_hook_active`) it never refuses, and it
- *   records the turn's final text, which the server sends as the reply
- *   when the model still did not.
+ *   model to send its answer with the reply tool, and records no stop, only
+ *   that stop's final text. At the stop that follows (`stop_hook_active`)
+ *   it never refuses, and it records the turn's final text — the refused
+ *   stop's, else its own — which the server sends as the reply when the
+ *   model still did not.
  * - PreToolUse, every tool call: record the turn the call belongs to (its
  *   prompt id, and when the turn's first call was made), so the server can
  *   tell which served prompt a permission question comes from. For the
@@ -36,7 +37,7 @@
 import { writeSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { recordHookEvent, stopRefusal } from '../src/session-id.js'
+import { recordHookEvent, recordRefusedStop, stopRefusal } from '../src/session-id.js'
 
 /** Well inside the hook's timeout in `hooks.json`: past it, exit without a word. */
 const DEADLINE_MS = 5_000
@@ -57,8 +58,14 @@ try {
       const record = input as Record<string, unknown>
       const refusal = stopRefusal(stateDir, pid, record)
       if (refusal !== undefined) {
-        // A refused stop is no stop: nothing is recorded, the turn goes on.
-        // Synchronously: the process exits right after.
+        // A refused stop is no stop: the turn goes on. Only its final text
+        // is kept, for the stop that follows. Synchronously: the process
+        // exits right after.
+        try {
+          recordRefusedStop(stateDir, pid, record)
+        } catch {
+          // The stop that follows falls back to its own text.
+        }
         writeSync(1, `${JSON.stringify({ decision: 'block', reason: refusal })}\n`)
       } else {
         recordHookEvent(stateDir, pid, record)

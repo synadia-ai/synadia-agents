@@ -25,6 +25,9 @@ import { join } from 'node:path'
  *                     the turn's end, whether background work could start
  *                     another, and the turn's final text when a served prompt
  *                     may still be waiting for it
+ *   - `<pid>.nudge`   a Stop the hook refused: `{ final_text, at_ms }`, the
+ *                     text the model wrote before it was told to reply. Not
+ *                     a stop; the next recorded Stop takes it and removes it
  *   - `<pid>.turn`    PreToolUse, every tool call: `{ prompt_id, first_ms,
  *                     at_ms }`, the turn the latest call belongs to and when
  *                     that turn's first call was made
@@ -90,6 +93,11 @@ export function sessionFilePath(stateDir: string, pid: number | string): string 
 /** The file the Stop hook writes for Claude Code process `pid` when a turn ends. */
 export function stopFilePath(stateDir: string, pid: number | string): string {
   return join(sessionsDir(stateDir), `${pid}.stop`)
+}
+
+/** The file the Stop hook writes when it refuses a stop: that stop's final text. */
+export function nudgeFilePath(stateDir: string, pid: number | string): string {
+  return join(sessionsDir(stateDir), `${pid}.nudge`)
 }
 
 /** The file the PreToolUse hook writes on every tool call: the current turn. */
@@ -196,8 +204,14 @@ export function recordHookEvent(
     const background = backgroundWork(input)
     // The final text is kept only when a served prompt may still be waiting
     // for it: the server's file lists one, or cannot be read.
+    // The text of a stop the hook refused in this turn comes first: a model
+    // writes its answer before it is told to reply, and what it writes after
+    // that is a reaction to being told.
     const open = readOpenRequests(stateDir, pid)
-    const text = open === undefined || open.length > 0 ? finalText(input) : undefined
+    const text =
+      open === undefined || open.length > 0
+        ? (refusedStopText(stateDir, pid) ?? finalText(input))
+        : undefined
     mkdirSync(sessionsDir(stateDir), { recursive: true })
     writeAtomically(
       stopFilePath(stateDir, pid),
@@ -208,6 +222,7 @@ export function recordHookEvent(
         at_ms: now,
       })}\n`,
     )
+    removeQuietly(nudgeFilePath(stateDir, pid))
     return 'stop'
   }
   if (event === 'PreToolUse') {
@@ -300,6 +315,40 @@ export function stopRefusal(
     'and cannot see this session\'s own output. Send your answer with the reply tool ' +
     '(load it with ToolSearch if it is deferred), with the request_id and done: true.'
   )
+}
+
+/**
+ * Keep the final text of a stop the hook refuses, for the stop that follows
+ * in the same turn. Not a stop: the Stop file is not touched, so the server
+ * counts nothing. Written even without text, so a refused stop with none
+ * does not leave an older one's to be taken.
+ */
+export function recordRefusedStop(
+  stateDir: string,
+  pid: number | string,
+  input: Readonly<Record<string, unknown>>,
+  now: number = Date.now(),
+): void {
+  const text = finalText(input)
+  mkdirSync(sessionsDir(stateDir), { recursive: true })
+  writeAtomically(
+    nudgeFilePath(stateDir, pid),
+    `${JSON.stringify({ ...(text !== undefined ? { final_text: text } : {}), at_ms: now })}\n`,
+  )
+}
+
+/**
+ * The text a refused stop kept, when the refusal came after the last
+ * recorded Stop (this turn's), else `undefined`.
+ */
+function refusedStopText(stateDir: string, pid: number | string): string | undefined {
+  const nudge = readJson(nudgeFilePath(stateDir, pid))
+  const at = epochMs(nudge?.at_ms)
+  if (nudge === undefined || at === undefined) return undefined
+  const lastStop = epochMs(readJson(stopFilePath(stateDir, pid))?.at_ms)
+  if (lastStop !== undefined && at <= lastStop) return undefined
+  const text = nudge.final_text
+  return typeof text === 'string' && text.length > 0 ? text : undefined
 }
 
 /**
@@ -607,7 +656,7 @@ export function sweepDeadSessions(stateDir: string): void {
     return
   }
   for (const name of names) {
-    const match = /^(\d+)(\.stop|\.turn|\.tools|\.open)?$/.exec(name)
+    const match = /^(\d+)(\.stop|\.turn|\.tools|\.open|\.nudge)?$/.exec(name)
     if (!match || processAlive(Number(match[1]))) continue
     removeQuietly(join(sessionsDir(stateDir), name))
   }

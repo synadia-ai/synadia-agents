@@ -48,8 +48,11 @@ All notable changes to the Claude Code NATS channel are documented here.
   `request_id` and telling the model to send its answer with `reply` (`done: true`); it never
   refuses the stop that follows (`stop_hook_active`). If that turn stops again with the request
   open, the plugin sends the turn's final assistant text as the reply and completes the
-  request — Claude Code's `last_assistant_message`, or the last assistant message in the
-  transcript for a Claude Code that does not send it. Only a turn with no final text still
+  request: the text written before the refused stop, kept in `<state dir>/sessions/<pid>.nudge`
+  (not counted as a stop), and the text of the stop after it only when the refused one had
+  none, since what a nudged model writes is often just a reaction to the nudge. Each is Claude
+  Code's `last_assistant_message`, or the last assistant message in the transcript for a
+  Claude Code that does not send it. Only a turn with no final text still
   ends in the `500` error. The hook learns which requests own the running turn from
   `<state dir>/sessions/<pid>.open`, written by the server, and fails open: no file, a
   malformed one, a server no longer running, or 5 seconds gone, and it lets the turn end.

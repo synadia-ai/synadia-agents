@@ -610,7 +610,7 @@ async function stillOpen(requestId: string): Promise<boolean> {
   return !info.isError
 }
 
-console.log('\n[case 7] a turn that stops without the reply is refused once, then answered with its final text')
+console.log('\n[case 7] a turn that stops without the reply is refused once, then answered with the text written before the refusal')
 {
   await turnStop()
   let requestId = ''
@@ -623,8 +623,8 @@ console.log('\n[case 7] a turn that stops without the reply is refused once, the
       assertRefused(first, id, 'the first stop')
       await Bun.sleep(1500)
       if (!(await stillOpen(id))) fail('the prompt was ended at a refused stop')
-      // The nudged turn stops again, still without reply.
-      const second = await turnStop({ stop_hook_active: true, last_assistant_message: 'the answer, as plain text' })
+      // Nudged, it only remarks on the nudge, and stops again without reply.
+      const second = await turnStop({ stop_hook_active: true, last_assistant_message: 'Noted, the answer is above.' })
       if (second !== '') fail(`the stop after a refusal was refused again: ${second}`)
     },
   }
@@ -637,6 +637,29 @@ console.log('\n[case 7] a turn that stops without the reply is refused once, the
   }
   const term = chunks.at(-1)!
   if (term.bytes !== 0 || term.hasHeaders) fail('the final-text stream lacks a clean terminator')
+  const ended = await promptEndedEvent(requestId)
+  if (ended?.outcome !== 'ok' || ended.reason !== 'final_text') fail(`promptEnded was ${JSON.stringify(ended)}`)
+}
+
+console.log('\n[case 7d] a refused stop with no text: the text written after the nudge is sent')
+{
+  await turnStop()
+  let requestId = ''
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      await toolCall('prompt-7d')
+      assertRefused(await turnStop(), id, 'the first stop')
+      const second = await turnStop({ stop_hook_active: true, last_assistant_message: 'the answer, written after the nudge' })
+      if (second !== '') fail(`the stop after a refusal was refused again: ${second}`)
+    },
+  }
+  const chunks = await collectChunks('check this and answer late')
+  if (chunks.some(chunk => chunk.error)) fail('the late-text prompt got an error frame')
+  const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+  if (responses.length !== 1 || responses[0]!.data !== 'the answer, written after the nudge') {
+    fail(`the caller got ${JSON.stringify(responses)}, not the text written after the nudge`)
+  }
   const ended = await promptEndedEvent(requestId)
   if (ended?.outcome !== 'ok' || ended.reason !== 'final_text') fail(`promptEnded was ${JSON.stringify(ended)}`)
 }

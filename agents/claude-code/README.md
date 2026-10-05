@@ -237,11 +237,14 @@ answers with the turn's final text, and only then gives up:
    follows (`stop_hook_active`), and the hook never refuses that one.
 2. **The final text.** If the turn stops again with the request still
    open, the plugin sends the turn's final assistant text as the reply
-   (`done=true`) and completes the request. The text is Claude Code's
-   `last_assistant_message` from the `Stop` hook's input, or, from a
-   Claude Code that does not send it, the last assistant message in the
-   session transcript. It is the model's last words, which may be a closing
-   remark rather than the answer.
+   (`done=true`) and completes the request. That is the text the model
+   wrote before the refused stop — where a model that answers in plain text
+   puts its answer — and only when that stop had none, the text of the stop
+   that follows, which is otherwise only a reaction to the nudge. Each is
+   Claude Code's `last_assistant_message` from the `Stop` hook's input, or,
+   from a Claude Code that does not send it, the last assistant message in
+   the session transcript. It is still the model's last words before a
+   stop, which may be a closing remark rather than the answer.
 3. **An error.** Only a turn with no final text ends the request with an
    error, rather than leave its caller waiting until the 30-minute request
    TTL. The caller gets the protocol's error frame (§9), then the
@@ -524,7 +527,8 @@ see itself, under `<state dir>/sessions/`, keyed by the Claude Code process
 | Hook | File | Records | Why |
 | --- | --- | --- | --- |
 | `SessionStart` | `<pid>` | `{ "session_id", "source", "at_ms" }` | the session Claude Code uses now; `/clear` starts a new one under the same MCP server |
-| `Stop` | `<pid>.stop` | `{ "session_id", "background", "final_text", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call; `background` says whether background tasks or session crons could start another turn by themselves; `final_text`, the turn's last assistant text, is kept only while a request may still be waiting for it; a request the turn left without its reply is answered with that text or ended (see [When the model stops without replying](#when-the-model-stops-without-replying)). A stop the hook refuses records nothing |
+| `Stop` (refused) | `<pid>.nudge` | `{ "final_text", "at_ms" }` | the text of a stop the hook refused, kept for the stop that follows in the same turn, which takes it and removes the file; not a stop (see [When the model stops without replying](#when-the-model-stops-without-replying)) |
+| `Stop` | `<pid>.stop` | `{ "session_id", "background", "final_text", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call; `background` says whether background tasks or session crons could start another turn by themselves; `final_text`, the turn's last assistant text, is kept only while a request may still be waiting for it; a request the turn left without its reply is answered with that text or ended (see [When the model stops without replying](#when-the-model-stops-without-replying)). A stop the hook refuses records no stop |
 | `PreToolUse` (every tool) | `<pid>.turn` | `{ "prompt_id", "first_ms", "at_ms" }` | the turn the latest tool call belongs to and when its first call was made, so a permission question goes to the request that owns the turn (see [Which caller is asked](#which-caller-is-asked)) |
 | `PreToolUse` (agent tools) | `<pid>.tools/<tool_use_id>` | `{ "tool_use_id", "tool_name", "tool_input", "at_ms" }` | the model's id for the tool call, which the server hands to the agent tools; the server removes the file when the call arrives |
 
