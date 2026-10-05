@@ -1,7 +1,9 @@
 // The hooks' files: what the hook script writes for SessionStart, Stop and
 // PreToolUse, and how the server reads them — the session id, the turn's
 // end, the tool-call id for one call, the sweep of dead processes' files,
-// and the poll that turns them into the extensions' session events.
+// and the poll that turns them into the extensions' session events. And
+// the file the server writes for the Stop hook: the open prompts that own
+// the turn, which make the hook refuse the turn's first stop.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -11,18 +13,26 @@ import { fileURLToPath } from 'node:url'
 import {
   TOOL_USE_MAX_AGE_MS,
   claudePid,
+  clearOpenRequests,
+  finalText,
   hooksActive,
+  nudgeFilePath,
+  openFilePath,
+  readOpenRequests,
   readSessionRecord,
   readTurnActivity,
   readTurnStop,
   recordHookEvent,
+  recordRefusedStop,
   resolveClaudeSessionId,
   sessionFilePath,
   sessionsDir,
   stopFilePath,
+  stopRefusal,
   sweepDeadSessions,
   takeToolUse,
   toolUsesDir,
+  writeOpenRequests,
   type SessionIdSource,
 } from '../src/session-id.js'
 import { watchSessionEvents } from '../src/session-events.js'
@@ -134,6 +144,106 @@ describe('recordHookEvent: what each hook writes', () => {
       tool_name: 'prompt_agent',
     })).toBe('turn')
     expect(readdirSync(sessionsDir(stateDir))).toEqual([`${PID}.turn`])
+  })
+})
+
+describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
+  const idle = { hook_event_name: 'Stop', session_id: SESSION, background_tasks: [], session_crons: [] }
+
+  test('an open prompt owning the turn refuses the stop, once, naming the request', () => {
+    writeOpenRequests(stateDir, PID, ['7'])
+    const reason = stopRefusal(stateDir, PID, idle)
+    expect(reason).toContain('"7"')
+    expect(reason).toContain('reply tool')
+    expect(reason).toContain('done: true')
+    // The stop after a refusal is never refused.
+    expect(stopRefusal(stateDir, PID, { ...idle, stop_hook_active: true })).toBeUndefined()
+  })
+
+  test('no open prompt, background work, or a stop that does not say: no refusal', () => {
+    writeOpenRequests(stateDir, PID, [])
+    expect(stopRefusal(stateDir, PID, idle)).toBeUndefined()
+    writeOpenRequests(stateDir, PID, ['7'])
+    expect(stopRefusal(stateDir, PID, { ...idle, background_tasks: [{ id: 'bg' }] })).toBeUndefined()
+    expect(stopRefusal(stateDir, PID, { hook_event_name: 'Stop', session_id: SESSION })).toBeUndefined()
+    expect(stopRefusal(stateDir, PID, { ...idle, hook_event_name: 'PreToolUse' })).toBeUndefined()
+  })
+
+  test('fails open: no file, a malformed one, a server no longer running', () => {
+    expect(readOpenRequests(stateDir, PID)).toBeUndefined()
+    expect(stopRefusal(stateDir, PID, idle)).toBeUndefined()
+    mkdirSync(sessionsDir(stateDir), { recursive: true })
+    writeFileSync(openFilePath(stateDir, PID), '{"server_pid":')
+    expect(stopRefusal(stateDir, PID, idle)).toBeUndefined()
+    writeFileSync(openFilePath(stateDir, PID), JSON.stringify({ server_pid: process.pid, request_ids: ['../x'] }))
+    expect(stopRefusal(stateDir, PID, idle)).toBeUndefined()
+    writeOpenRequests(stateDir, PID, ['7'], 2_147_483_646)
+    expect(readOpenRequests(stateDir, PID)).toBeUndefined()
+    expect(stopRefusal(stateDir, PID, idle)).toBeUndefined()
+    writeOpenRequests(stateDir, PID, ['7'])
+    clearOpenRequests(stateDir, PID)
+    expect(stopRefusal(stateDir, PID, idle)).toBeUndefined()
+  })
+
+  test('the Stop keeps the final text only while a prompt may wait for it', () => {
+    const stop = { ...idle, stop_hook_active: true, last_assistant_message: '  the answer  ' }
+    writeOpenRequests(stateDir, PID, ['7'])
+    recordHookEvent(stateDir, PID, stop, 2000)
+    expect(readTurnStop(source)).toEqual({ sessionId: SESSION, background: false, finalText: 'the answer', atMs: 2000 })
+    // The server's file cannot be read: kept, so the caller still gets it.
+    clearOpenRequests(stateDir, PID)
+    recordHookEvent(stateDir, PID, stop, 3000)
+    expect(readTurnStop(source)?.finalText).toBe('the answer')
+    // No prompt open: not kept.
+    writeOpenRequests(stateDir, PID, [])
+    recordHookEvent(stateDir, PID, stop, 4000)
+    expect(readTurnStop(source)).toEqual({ sessionId: SESSION, background: false, atMs: 4000 })
+  })
+
+  test('the refused stop\'s text comes first; the stop after it gives its own only when that had none', () => {
+    const stop = { ...idle, stop_hook_active: true }
+    writeOpenRequests(stateDir, PID, ['7'])
+    // The answer, written before the nudge; a remark after it.
+    recordRefusedStop(stateDir, PID, { ...idle, last_assistant_message: 'the answer' }, 1000)
+    expect(readTurnStop(source)).toBeUndefined()
+    recordHookEvent(stateDir, PID, { ...stop, last_assistant_message: 'noted' }, 2000)
+    expect(readTurnStop(source)?.finalText).toBe('the answer')
+    // Taken once: the file goes with the stop that took it.
+    expect(existsSync(nudgeFilePath(stateDir, PID))).toBe(false)
+    // A refused stop with no text: the next stop's own.
+    recordRefusedStop(stateDir, PID, idle, 3000)
+    recordHookEvent(stateDir, PID, { ...stop, last_assistant_message: 'written after' }, 4000)
+    expect(readTurnStop(source)?.finalText).toBe('written after')
+    // A refusal older than the last recorded stop belongs to another turn.
+    recordRefusedStop(stateDir, PID, { ...idle, last_assistant_message: 'old turn' }, 4000)
+    recordHookEvent(stateDir, PID, { ...stop, last_assistant_message: 'this turn' }, 5000)
+    expect(readTurnStop(source)?.finalText).toBe('this turn')
+    // No prompt open: no text kept, and the refusal's file still goes.
+    recordRefusedStop(stateDir, PID, { ...idle, last_assistant_message: 'x' }, 6000)
+    writeOpenRequests(stateDir, PID, [])
+    recordHookEvent(stateDir, PID, stop, 7000)
+    expect(readTurnStop(source)?.finalText).toBeUndefined()
+    expect(existsSync(nudgeFilePath(stateDir, PID))).toBe(false)
+  })
+
+  test('the final text: last_assistant_message first, else the transcript\'s last assistant message', () => {
+    expect(finalText({ last_assistant_message: 'given' })).toBe('given')
+    expect(finalText({ last_assistant_message: '   ' })).toBeUndefined()
+    const transcript = join(stateDir, 'transcript.jsonl')
+    const line = (entry: unknown): string => `${JSON.stringify(entry)}\n`
+    writeFileSync(transcript, [
+      line({ type: 'user', message: { role: 'user', content: 'question' } }),
+      line({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'earlier' }] } }),
+      line({ type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: 'first part' }] } }),
+      'not json\n',
+      line({ type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: 'second part' }] } }),
+    ].join(''))
+    expect(finalText({ transcript_path: transcript })).toBe('first part\nsecond part')
+    // A last message with no text has none: not an earlier message's.
+    writeFileSync(transcript, line({ type: 'assistant', message: { id: 'm3', content: [{ type: 'tool_use', name: 'x' }] } }), { flag: 'a' })
+    expect(finalText({ transcript_path: transcript })).toBeUndefined()
+    expect(finalText({ transcript_path: join(stateDir, 'missing.jsonl') })).toBeUndefined()
+    expect(finalText({})).toBeUndefined()
   })
 })
 
@@ -292,6 +402,22 @@ describe('hooks/session-event.ts: the script Claude Code runs', () => {
     }), env)).toEqual({ code: 0, stdout: '' })
     expect(readSessionRecord(source)).toMatchObject({ sessionId: SESSION, source: 'resume' })
     expect(takeToolUse(source, 'prompt_agent', { address: 'a', prompt: 'p' })).toBe('toolu_hook')
+  })
+
+  test('a stop with an open prompt prints the refusal and records no stop; the stop after it records the refused one\'s text', async () => {
+    const env = { CLAUDE_PID: String(PID), NATS_STATE_DIR: stateDir }
+    const stop = { hook_event_name: 'Stop', session_id: SESSION, background_tasks: [], session_crons: [] }
+    writeOpenRequests(stateDir, PID, ['3'])
+    const refused = await runHook(JSON.stringify({ ...stop, last_assistant_message: 'the answer' }), env)
+    expect(refused.code).toBe(0)
+    const decision = JSON.parse(refused.stdout) as { decision: string; reason: string }
+    expect(decision.decision).toBe('block')
+    expect(decision.reason).toContain('"3"')
+    expect(existsSync(stopFilePath(stateDir, PID))).toBe(false)
+    expect(existsSync(nudgeFilePath(stateDir, PID))).toBe(true)
+    expect(await runHook(JSON.stringify({ ...stop, stop_hook_active: true, last_assistant_message: 'noted' }), env))
+      .toEqual({ code: 0, stdout: '' })
+    expect(readTurnStop(source)).toMatchObject({ background: false, finalText: 'the answer' })
   })
 
   test('garbage input or no CLAUDE_PID still exits 0 and writes nothing', async () => {

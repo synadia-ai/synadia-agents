@@ -69,7 +69,7 @@ export default function (ctx) {
     started: () => log({ event: 'started' }),
     events: {
       promptAccepted: (r) => log({ event: 'promptAccepted', id: r.id, sessionId: r.sessionId ?? null, extras: r.extras, bound: als.getStore() ?? null }),
-      promptEnded: (r, outcome) => log({ event: 'promptEnded', id: r.id, outcome }),
+      promptEnded: (r, outcome, _at, reason) => log({ event: 'promptEnded', id: r.id, outcome, reason: reason ?? null }),
       aroundToolCall: (r, tool, run) => { log({ event: 'aroundToolCall', id: r?.id ?? null, tool, bound: als.getStore() ?? null }); return run() },
       sessionStarted: (id, source) => log({ event: 'sessionStarted', id, source }),
       turnStopped: (id) => log({ event: 'turnStopped', id: id ?? null }),
@@ -86,12 +86,16 @@ function extensionEvents(): ExtensionEvent[] {
 // The plugin's hook, run from source as Claude Code runs it; this process
 // stands in for Claude Code, so its pid keys the files and the sweep keeps them.
 const SESSION_ID = '5c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f'
-async function runHook(input: Record<string, unknown>): Promise<void> {
+// Returns what the hook printed: nothing, or a refused stop's decision.
+async function runHook(input: Record<string, unknown>): Promise<string> {
   const child = Bun.spawn([process.execPath, join(sourceRoot, 'hooks', 'session-event.ts')], {
     stdin: new TextEncoder().encode(JSON.stringify(input)),
+    stdout: 'pipe',
     env: { ...process.env, CLAUDE_PID: String(process.pid), NATS_STATE_DIR: stateDir },
   })
+  const stdout = await new Response(child.stdout).text()
   if ((await child.exited) !== 0) throw new Error('hook exited non-zero')
+  return stdout
 }
 await runHook({ hook_event_name: 'SessionStart', session_id: SESSION_ID, source: 'startup' })
 
@@ -343,8 +347,10 @@ async function toolCall(promptId: string, tool = 'Bash'): Promise<void> {
   })
 }
 // A turn's end with nothing left in the background: Claude Code is quiet.
-async function turnStop(): Promise<void> {
-  await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID, background_tasks: [], session_crons: [] })
+// `extra` adds Claude Code's other Stop fields (`stop_hook_active`,
+// `last_assistant_message`); returns what the hook printed.
+async function turnStop(extra: Record<string, unknown> = {}): Promise<string> {
+  return runHook({ hook_event_name: 'Stop', session_id: SESSION_ID, background_tasks: [], session_crons: [], ...extra })
 }
 // A turn's end with a background task still running: another turn may follow.
 async function turnStopWithBackground(): Promise<void> {
@@ -575,16 +581,90 @@ function assertTurnEnd(chunks: Collected[], label: string): void {
   const term = chunks.at(-1)!
   if (term.bytes !== 0 || term.hasHeaders) fail(`${label}: the stream lacks a clean terminator`)
 }
-async function promptEndedOutcome(requestId: string): Promise<unknown> {
+async function promptEndedEvent(requestId: string): Promise<ExtensionEvent | undefined> {
   for (let i = 0; i < 40; i++) {
     const ended = extensionEvents().find(e => e.event === 'promptEnded' && e.id === requestId)
-    if (ended) return ended.outcome
+    if (ended) return ended
     await Bun.sleep(50)
   }
   return undefined
 }
+async function promptEndedOutcome(requestId: string): Promise<unknown> {
+  return (await promptEndedEvent(requestId))?.outcome
+}
+// The hook refused the stop, naming the request; `''` means it let it be.
+function assertRefused(printed: string, requestId: string, label: string): void {
+  let decision: { decision?: unknown; reason?: unknown } = {}
+  try {
+    decision = JSON.parse(printed) as typeof decision
+  } catch {
+    return fail(`${label}: the hook did not refuse the stop (printed ${JSON.stringify(printed)})`)
+  }
+  if (decision.decision !== 'block' || typeof decision.reason !== 'string' || !decision.reason.includes(`"${requestId}"`)) {
+    fail(`${label}: the refusal was ${printed}`)
+  }
+}
+// The served prompt is still open: request_info still answers for it.
+async function stillOpen(requestId: string): Promise<boolean> {
+  const info = await mcp.callTool({ name: 'request_info', arguments: { request_id: requestId } })
+  return !info.isError
+}
 
-console.log('\n[case 7] a turn that ends without the reply ends its own prompt with an error')
+console.log('\n[case 7] a turn that stops without the reply is refused once, then answered with the text written before the refusal')
+{
+  await turnStop()
+  let requestId = ''
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      await toolCall('prompt-7')
+      // The model writes its answer as plain text and stops without calling reply.
+      const first = await turnStop({ last_assistant_message: 'the answer, as plain text' })
+      assertRefused(first, id, 'the first stop')
+      await Bun.sleep(1500)
+      if (!(await stillOpen(id))) fail('the prompt was ended at a refused stop')
+      // Nudged, it only remarks on the nudge, and stops again without reply.
+      const second = await turnStop({ stop_hook_active: true, last_assistant_message: 'Noted, the answer is above.' })
+      if (second !== '') fail(`the stop after a refusal was refused again: ${second}`)
+    },
+  }
+  const chunks = await collectChunks('check this and answer in plain text')
+  assertAck(chunks[0])
+  if (chunks.some(chunk => chunk.error)) fail('the final-text prompt got an error frame')
+  const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+  if (responses.length !== 1 || responses[0]!.data !== 'the answer, as plain text') {
+    fail(`the caller got ${JSON.stringify(responses)}, not the final text`)
+  }
+  const term = chunks.at(-1)!
+  if (term.bytes !== 0 || term.hasHeaders) fail('the final-text stream lacks a clean terminator')
+  const ended = await promptEndedEvent(requestId)
+  if (ended?.outcome !== 'ok' || ended.reason !== 'final_text') fail(`promptEnded was ${JSON.stringify(ended)}`)
+}
+
+console.log('\n[case 7d] a refused stop with no text: the text written after the nudge is sent')
+{
+  await turnStop()
+  let requestId = ''
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      await toolCall('prompt-7d')
+      assertRefused(await turnStop(), id, 'the first stop')
+      const second = await turnStop({ stop_hook_active: true, last_assistant_message: 'the answer, written after the nudge' })
+      if (second !== '') fail(`the stop after a refusal was refused again: ${second}`)
+    },
+  }
+  const chunks = await collectChunks('check this and answer late')
+  if (chunks.some(chunk => chunk.error)) fail('the late-text prompt got an error frame')
+  const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+  if (responses.length !== 1 || responses[0]!.data !== 'the answer, written after the nudge') {
+    fail(`the caller got ${JSON.stringify(responses)}, not the text written after the nudge`)
+  }
+  const ended = await promptEndedEvent(requestId)
+  if (ended?.outcome !== 'ok' || ended.reason !== 'final_text') fail(`promptEnded was ${JSON.stringify(ended)}`)
+}
+
+console.log('\n[case 7b] a nudged turn that stops with no final text ends its prompt with an error')
 {
   await turnStop()
   let requestId = ''
@@ -592,20 +672,42 @@ console.log('\n[case 7] a turn that ends without the reply ends its own prompt w
   currentCase = {
     replyHandler: async id => {
       requestId = id
-      await toolCall('prompt-7')
-      // The model stops without calling reply.
+      await toolCall('prompt-7b')
+      assertRefused(await turnStop(), id, 'the first stop')
+      // Stops again with no text at all (nor a transcript to read it from).
       stoppedAt = Date.now()
-      await turnStop()
+      await turnStop({ stop_hook_active: true })
     },
   }
   const chunks = await collectChunks('check this and forget to reply')
   assertTurnEnd(chunks, 'the owned prompt')
   const endedAfter = (chunks.find(chunk => chunk.error)?.atMs ?? Infinity) - stoppedAt
   if (endedAfter > 3000) fail(`the owned prompt ended ${endedAfter} ms after its Stop`)
-  const outcome = await promptEndedOutcome(requestId)
-  if (outcome !== 'error') fail(`promptEnded for the owned prompt was ${String(outcome)}`)
+  const ended = await promptEndedEvent(requestId)
+  if (ended?.outcome !== 'error' || ended.reason !== 'no_reply') fail(`promptEnded was ${JSON.stringify(ended)}`)
   const late = await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'too late' } })
   if (!late.isError) fail('a reply after the turn ended was accepted')
+}
+
+console.log('\n[case 7c] a turn that called reply is not refused, and its end carries no reason')
+{
+  await turnStop()
+  let requestId = ''
+  let printed: string | undefined
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      await toolCall('prompt-7c')
+      await mcp.callTool({ name: 'reply', arguments: { request_id: id, text: 'answered' } })
+      printed = await turnStop({ last_assistant_message: 'done' })
+    },
+  }
+  const chunks = await collectChunks('answer properly')
+  if (chunks.some(chunk => chunk.error)) fail('the answered prompt got an error frame')
+  for (let i = 0; i < 40 && printed === undefined; i++) await Bun.sleep(50)
+  if (printed !== '') fail(`the stop of an answered turn was refused: ${String(printed)}`)
+  const ended = await promptEndedEvent(requestId)
+  if (ended?.outcome !== 'ok' || ended.reason !== null) fail(`promptEnded was ${JSON.stringify(ended)}`)
 }
 
 console.log('\n[case 8] a prompt delivered during a turn survives its Stop and ends at the grace period')

@@ -53,7 +53,7 @@
       "size": 99548
     },
     "agents/claude-code/package.json": {
-      "sha256": "94c8f5ac334887c7421c2aa588a9b26f8caf8fd000910dc20a3fe63e3e4ecd96",
+      "sha256": "afe67747e494f0361c68748364c383769afc3fa018bb1c8b81555721dd685d90",
       "size": 1332
     },
     "agents/codex/bun.lock": {

@@ -21,13 +21,25 @@ import { join } from 'node:path'
  * Claude Code hands its hooks and its MCP servers alike as `CLAUDE_PID`:
  *
  *   - `<pid>`         SessionStart: `{ session_id, source, at_ms }`
- *   - `<pid>.stop`    Stop: `{ session_id, background, at_ms }`, the turn's
- *                     end, and whether background work could start another
+ *   - `<pid>.stop`    Stop: `{ session_id, background, final_text, at_ms }`,
+ *                     the turn's end, whether background work could start
+ *                     another, and the turn's final text when a served prompt
+ *                     may still be waiting for it
+ *   - `<pid>.nudge`   a Stop the hook refused: `{ final_text, at_ms }`, the
+ *                     text the model wrote before it was told to reply. Not
+ *                     a stop; the next recorded Stop takes it and removes it
  *   - `<pid>.turn`    PreToolUse, every tool call: `{ prompt_id, first_ms,
  *                     at_ms }`, the turn the latest call belongs to and when
  *                     that turn's first call was made
  *   - `<pid>.tools/`  PreToolUse, one file per agent-tool call:
  *                     `{ tool_use_id, tool_name, tool_input, at_ms }`
+ *
+ * One file goes the other way, written by the server for the Stop hook:
+ *
+ *   - `<pid>.open`    `{ server_pid, request_ids, at_ms }`, the served
+ *                     prompts that own the running turn and are still open.
+ *                     At a Stop that would end one of them, the hook refuses
+ *                     the stop once and tells the model to reply.
  *
  * Every file is written atomically (a rename), so a reader sees a whole
  * record or the previous one. The hooks write whether or not an extension
@@ -83,9 +95,19 @@ export function stopFilePath(stateDir: string, pid: number | string): string {
   return join(sessionsDir(stateDir), `${pid}.stop`)
 }
 
+/** The file the Stop hook writes when it refuses a stop: that stop's final text. */
+export function nudgeFilePath(stateDir: string, pid: number | string): string {
+  return join(sessionsDir(stateDir), `${pid}.nudge`)
+}
+
 /** The file the PreToolUse hook writes on every tool call: the current turn. */
 export function turnFilePath(stateDir: string, pid: number | string): string {
   return join(sessionsDir(stateDir), `${pid}.turn`)
+}
+
+/** The file the server writes for the Stop hook: the open prompts that own the turn. */
+export function openFilePath(stateDir: string, pid: number | string): string {
+  return join(sessionsDir(stateDir), `${pid}.open`)
 }
 
 /** The directory the PreToolUse hook writes one file per tool call into. */
@@ -180,15 +202,27 @@ export function recordHookEvent(
   }
   if (event === 'Stop') {
     const background = backgroundWork(input)
+    // The final text is kept only when a served prompt may still be waiting
+    // for it: the server's file lists one, or cannot be read.
+    // The text of a stop the hook refused in this turn comes first: a model
+    // writes its answer before it is told to reply, and what it writes after
+    // that is a reaction to being told.
+    const open = readOpenRequests(stateDir, pid)
+    const text =
+      open === undefined || open.length > 0
+        ? (refusedStopText(stateDir, pid) ?? finalText(input))
+        : undefined
     mkdirSync(sessionsDir(stateDir), { recursive: true })
     writeAtomically(
       stopFilePath(stateDir, pid),
       `${JSON.stringify({
         ...(sessionId ? { session_id: sessionId } : {}),
         ...(background !== undefined ? { background } : {}),
+        ...(text !== undefined ? { final_text: text } : {}),
         at_ms: now,
       })}\n`,
     )
+    removeQuietly(nudgeFilePath(stateDir, pid))
     return 'stop'
   }
   if (event === 'PreToolUse') {
@@ -247,6 +281,170 @@ function recordTurnActivity(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The turn's end: the nudge and the final text
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The Stop hook's answer to a stop that would end a served prompt without
+ * its reply: the reason to give the model when the stop is refused, or
+ * `undefined` to let the turn end. It refuses only when all of these hold:
+ *
+ *   - Claude Code is not already continuing after a refused stop
+ *     (`stop_hook_active`), so the model is told once per turn;
+ *   - the stop says no background work is left, the only stop at which the
+ *     server ends the prompt that owned the turn;
+ *   - the server's file names open prompts that own the turn, and the
+ *     server that wrote it is still running.
+ *
+ * Anything it cannot tell lets the turn end (fail open): no file, a
+ * malformed one, a server gone.
+ */
+export function stopRefusal(
+  stateDir: string,
+  pid: number | string,
+  input: Readonly<Record<string, unknown>>,
+): string | undefined {
+  if (input.hook_event_name !== 'Stop' || input.stop_hook_active === true) return undefined
+  if (backgroundWork(input) !== false) return undefined
+  const open = readOpenRequests(stateDir, pid)
+  if (open === undefined || open.length === 0) return undefined
+  const ids = open.map(id => `"${id}"`).join(', ')
+  return (
+    `The NATS channel ${open.length === 1 ? 'request' : 'requests'} ${ids} ` +
+    `${open.length === 1 ? 'is' : 'are'} still open: the sender has not received an answer, ` +
+    'and cannot see this session\'s own output. Send your answer with the reply tool ' +
+    '(load it with ToolSearch if it is deferred), with the request_id and done: true.'
+  )
+}
+
+/**
+ * Keep the final text of a stop the hook refuses, for the stop that follows
+ * in the same turn. Not a stop: the Stop file is not touched, so the server
+ * counts nothing. Written even without text, so a refused stop with none
+ * does not leave an older one's to be taken.
+ */
+export function recordRefusedStop(
+  stateDir: string,
+  pid: number | string,
+  input: Readonly<Record<string, unknown>>,
+  now: number = Date.now(),
+): void {
+  const text = finalText(input)
+  mkdirSync(sessionsDir(stateDir), { recursive: true })
+  writeAtomically(
+    nudgeFilePath(stateDir, pid),
+    `${JSON.stringify({ ...(text !== undefined ? { final_text: text } : {}), at_ms: now })}\n`,
+  )
+}
+
+/**
+ * The text a refused stop kept, when the refusal came after the last
+ * recorded Stop (this turn's), else `undefined`.
+ */
+function refusedStopText(stateDir: string, pid: number | string): string | undefined {
+  const nudge = readJson(nudgeFilePath(stateDir, pid))
+  const at = epochMs(nudge?.at_ms)
+  if (nudge === undefined || at === undefined) return undefined
+  const lastStop = epochMs(readJson(stopFilePath(stateDir, pid))?.at_ms)
+  if (lastStop !== undefined && at <= lastStop) return undefined
+  const text = nudge.final_text
+  return typeof text === 'string' && text.length > 0 ? text : undefined
+}
+
+/**
+ * Write the open prompts that own the running turn, for the Stop hook. The
+ * server calls this whenever the set changes, and with none at start.
+ */
+export function writeOpenRequests(
+  stateDir: string,
+  pid: number | string,
+  requestIds: readonly string[],
+  serverPid: number = process.pid,
+  now: number = Date.now(),
+): void {
+  mkdirSync(sessionsDir(stateDir), { recursive: true })
+  writeAtomically(
+    openFilePath(stateDir, pid),
+    `${JSON.stringify({ server_pid: serverPid, request_ids: requestIds, at_ms: now })}\n`,
+  )
+}
+
+/** Remove the server's file, at shutdown. Best effort. */
+export function clearOpenRequests(stateDir: string, pid: number | string): void {
+  removeQuietly(openFilePath(stateDir, pid))
+}
+
+/**
+ * The open prompts the server's file names, or `undefined` when it cannot
+ * be told: no file, a malformed one, or a server no longer running.
+ */
+export function readOpenRequests(stateDir: string, pid: number | string): string[] | undefined {
+  const value = readJson(openFilePath(stateDir, pid))
+  if (!value) return undefined
+  const serverPid = value.server_pid
+  const ids = value.request_ids
+  if (typeof serverPid !== 'number' || !Number.isSafeInteger(serverPid) || serverPid <= 0) {
+    return undefined
+  }
+  if (!Array.isArray(ids) || !ids.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id))) {
+    return undefined
+  }
+  if (!processAlive(serverPid)) return undefined
+  return ids as string[]
+}
+
+/**
+ * The text of the turn's last assistant message, trimmed, or `undefined`
+ * when it has none. Claude Code hands it to the Stop hook as
+ * `last_assistant_message`; a Claude Code that does not is read from the
+ * session's transcript (`transcript_path`, one JSON entry per line), where
+ * the last assistant message may span several entries with one message id.
+ */
+export function finalText(input: Readonly<Record<string, unknown>>): string | undefined {
+  if ('last_assistant_message' in input) {
+    const given = input.last_assistant_message
+    return typeof given === 'string' && given.trim().length > 0 ? given.trim() : undefined
+  }
+  const path = input.transcript_path
+  if (typeof path !== 'string' || path.length === 0) return undefined
+  let text: string
+  try {
+    text = readFileSync(path, 'utf8')
+  } catch {
+    return undefined
+  }
+  let lastId: unknown
+  let parts: string[] = []
+  for (const line of text.split('\n')) {
+    if (line.trim().length === 0) continue
+    let entry: unknown
+    try {
+      entry = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (typeof entry !== 'object' || entry === null) continue
+    const { type, message, uuid } = entry as Record<string, unknown>
+    if (type !== 'assistant' || typeof message !== 'object' || message === null) continue
+    const { id, content } = message as Record<string, unknown>
+    const messageId = id ?? uuid
+    if (messageId === undefined || messageId !== lastId) {
+      lastId = messageId
+      parts = []
+    }
+    if (typeof content === 'string') parts.push(content)
+    else if (Array.isArray(content)) {
+      for (const block of content) {
+        const b = block as Record<string, unknown> | null
+        if (b?.type === 'text' && typeof b.text === 'string') parts.push(b.text)
+      }
+    }
+  }
+  const joined = parts.join('\n').trim()
+  return joined.length > 0 ? joined : undefined
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Reading: what the server makes of the files
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -262,6 +460,8 @@ export type StopRecord = {
   readonly sessionId?: string
   /** Background work could start another turn; absent when Claude Code did not say. */
   readonly background?: boolean
+  /** The turn's final text, kept when a served prompt may still be waiting for it. */
+  readonly finalText?: string
   readonly atMs: number
 }
 
@@ -320,6 +520,9 @@ export function readTurnStop(source: SessionIdSource): StopRecord | undefined {
   return {
     ...(isClaudeSessionId(value.session_id) ? { sessionId: value.session_id } : {}),
     ...(typeof value.background === 'boolean' ? { background: value.background } : {}),
+    ...(typeof value.final_text === 'string' && value.final_text.length > 0
+      ? { finalText: value.final_text }
+      : {}),
     atMs,
   }
 }
@@ -453,7 +656,7 @@ export function sweepDeadSessions(stateDir: string): void {
     return
   }
   for (const name of names) {
-    const match = /^(\d+)(\.stop|\.turn|\.tools)?$/.exec(name)
+    const match = /^(\d+)(\.stop|\.turn|\.tools|\.open|\.nudge)?$/.exec(name)
     if (!match || processAlive(Number(match[1]))) continue
     removeQuietly(join(sessionsDir(stateDir), name))
   }

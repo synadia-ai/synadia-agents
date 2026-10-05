@@ -47,17 +47,20 @@ import {
   loadExtensions,
   resolveExtensionEntries,
   type ComposedExtensions,
+  type EndReason,
   type Outcome,
   type ServedRequest,
 } from "./src/extensions.js";
 import {
   claudePid,
+  clearOpenRequests,
   hooksActive,
   readTurnActivity,
   readTurnStop,
   resolveClaudeSessionId,
   sweepDeadSessions,
   takeToolUse,
+  writeOpenRequests,
   type SessionIdSource,
 } from "./src/session-id.js";
 import { TurnLedger, type TurnView } from "./src/permission-routing.js";
@@ -86,8 +89,9 @@ const REQUEST_TTL_MS = 30 * 60 * 1000;
 const TURN_END_POLL_MS = 1_000;
 /**
  * The §9 error a caller gets when Claude Code's turn ends without a `done`
- * reply to its prompt: an error frame, never response text, so the caller
- * can tell it from the model's words.
+ * reply to its prompt and without final text to send in its place: an error
+ * frame, never response text, so the caller can tell it from the model's
+ * words.
  */
 const TURN_END_CODE = 500;
 const TURN_END_DESCRIPTION =
@@ -118,7 +122,14 @@ type PendingRequest = {
   /** Set once a presence check found the caller's connection gone. */
   callerGone?: boolean;
   /** How and when the request settled, set by whoever settles it. */
-  ended?: { readonly outcome: Outcome; readonly atMs: number };
+  ended?: {
+    readonly outcome: Outcome;
+    readonly atMs: number;
+    /** Absent when the model's own `done` reply settled it. */
+    readonly reason?: EndReason;
+  };
+  /** Set while the turn's final text is being sent as the reply. */
+  answeringWithFinalText?: boolean;
 };
 
 type StagedAttachment = { readonly filename: string; readonly path: string };
@@ -478,6 +489,22 @@ async function run(): Promise<void> {
       hooksActive: hooksActive(sessionSource),
     });
 
+    // The open prompts that own the running turn, for the Stop hook
+    // (src/session-id.ts): written when the set changes, and at start.
+    let openWritten: string | undefined;
+    const syncOpenRequests = (): void => {
+      if (shuttingDown) return;
+      const owning = turns.owning();
+      const key = owning.join(",");
+      if (key === openWritten) return;
+      try {
+        writeOpenRequests(stateDir, sessionSource.parentPid, owning);
+        openWritten = key;
+      } catch {
+        // The hook fails open without the file; the next change retries.
+      }
+    };
+
     const removePending = (requestId: string): void => {
       const pending = pendingRequests.get(requestId);
       if (!pending) return;
@@ -487,31 +514,89 @@ async function run(): Promise<void> {
       if (lastActiveRequestId === requestId) {
         lastActiveRequestId = Array.from(pendingRequests.keys()).at(-1);
       }
+      syncOpenRequests();
     };
 
-    // A served prompt whose turn ended without its `done` reply is ended
-    // with an error rather than left open until the TTL
+    // The turn's final text as the `done` reply, for a turn that ended
+    // without one after the hook's nudge. Should the send fail, the prompt
+    // ends as a turn without a reply.
+    const answerWithFinalText = async (
+      pending: PendingRequest,
+      requestId: string,
+      text: string,
+    ): Promise<void> => {
+      pending.answeringWithFinalText = true;
+      try {
+        for (const slice of splitResponseText(text, maxPayloadBytes)) {
+          await pending.response.send(slice);
+        }
+      } catch {
+        logEvent("final text not sent", { requestId, sender: pending.sender });
+        pending.ended ??= {
+          outcome: "error",
+          atMs: Date.now(),
+          reason: "no_reply",
+        };
+        pending.completion.reject(
+          new RequestRejectedError(TURN_END_CODE, TURN_END_DESCRIPTION),
+        );
+        syncOpenRequests();
+        return;
+      }
+      logEvent("response sent", {
+        requestId,
+        bytes: Buffer.byteLength(text),
+        done: true,
+        from: "final text",
+      });
+      pending.ended ??= {
+        outcome: "ok",
+        atMs: Date.now(),
+        reason: "final_text",
+      };
+      pending.completion.resolve();
+      syncOpenRequests();
+    };
+
+    // A served prompt whose turn ended without its `done` reply is answered
+    // with the turn's final text when there is one, and otherwise ended with
+    // an error rather than left open until the TTL
     // (src/permission-routing.ts says which, and when).
     const endUnanswered = (): void => {
       if (pendingRequests.size === 0) return;
       const now = Date.now();
-      for (const { requestId, reason } of turns.unanswered(
+      for (const { requestId, reason, finalText } of turns.unanswered(
         turnView(),
         now,
         settings.turnStartGraceMs,
       )) {
         const pending = pendingRequests.get(requestId);
-        if (!pending || pending.completion.settled()) continue;
+        if (
+          !pending ||
+          pending.completion.settled() ||
+          pending.answeringWithFinalText
+        )
+          continue;
+        if (finalText !== undefined) {
+          logEvent("request answered with the turn's final text", {
+            requestId,
+            sender: pending.sender,
+            reason,
+          });
+          void answerWithFinalText(pending, requestId, finalText);
+          continue;
+        }
         logEvent("request ended without a reply", {
           requestId,
           sender: pending.sender,
           reason,
         });
-        pending.ended ??= { outcome: "error", atMs: now };
+        pending.ended ??= { outcome: "error", atMs: now, reason: "no_reply" };
         pending.completion.reject(
           new RequestRejectedError(TURN_END_CODE, TURN_END_DESCRIPTION),
         );
       }
+      syncOpenRequests();
     };
 
     const activeRequest = (requestId: string): ToolCallRequest | undefined => {
@@ -611,6 +696,7 @@ async function run(): Promise<void> {
       pendingRequests.set(requestId, pending);
       lastActiveRequestId = requestId;
       turns.delivered(requestId, turnView(), Date.now());
+      syncOpenRequests();
       // Synchronous, in the handler's context, so an extension reads here
       // what its own request interceptor bound.
       extensions.events.promptAccepted(served);
@@ -637,7 +723,11 @@ async function run(): Promise<void> {
             },
           });
         } catch {
-          pending.ended = { outcome: "error", atMs: Date.now() };
+          pending.ended = {
+            outcome: "error",
+            atMs: Date.now(),
+            reason: "delivery",
+          };
           completion.resolve();
           throw new Error("channel delivery failed");
         }
@@ -648,7 +738,12 @@ async function run(): Promise<void> {
       } finally {
         removePending(requestId);
         const ended = pending.ended ?? { outcome: "ok", atMs: Date.now() };
-        extensions.events.promptEnded(served, ended.outcome, ended.atMs);
+        extensions.events.promptEnded(
+          served,
+          ended.outcome,
+          ended.atMs,
+          ended.reason,
+        );
         handlerClosed.resolve();
       }
     });
@@ -868,6 +963,7 @@ async function run(): Promise<void> {
       if (done) {
         pending.ended ??= { outcome: "ok", atMs: Date.now() };
         pending.completion.resolve();
+        syncOpenRequests();
       }
       return {
         content: [{ type: "text", text: done ? "sent and completed" : "sent" }],
@@ -880,13 +976,18 @@ async function run(): Promise<void> {
         if (pending.createdAt >= cutoff || pending.completion.settled())
           continue;
         logEvent("request expired", { requestId, sender: pending.sender });
-        pending.ended ??= { outcome: "timeout", atMs: Date.now() };
+        pending.ended ??= {
+          outcome: "timeout",
+          atMs: Date.now(),
+          reason: "expired",
+        };
         pending.completion.reject(new Error("request expired"));
       }
     }, 60_000);
     ttlTimer.unref();
     const turnEndTimer = setInterval(endUnanswered, TURN_END_POLL_MS);
     turnEndTimer.unref();
+    syncOpenRequests();
 
     // Claude must be ready to receive channel notifications before NATS advertises
     // the prompt endpoint; otherwise a just-discovered caller can lose a prompt.
@@ -921,6 +1022,7 @@ async function run(): Promise<void> {
         clearInterval(ttlTimer);
         clearInterval(turnEndTimer);
         sessionEvents?.stop();
+        clearOpenRequests(stateDir, sessionSource.parentPid);
         logEvent("shutting down");
         // The extensions hear of the stop before the service leaves the bus.
         if (firstAttempt) await extensions.stopping();
@@ -931,7 +1033,11 @@ async function run(): Promise<void> {
           (pending) => pending.handlerClosed.promise,
         );
         for (const pending of pendingRequests.values()) {
-          pending.ended ??= { outcome: "error", atMs: Date.now() };
+          pending.ended ??= {
+            outcome: "error",
+            atMs: Date.now(),
+            reason: "shutdown",
+          };
           pending.completion.reject(new Error("channel shutting down"));
         }
         await Promise.allSettled(closed);
