@@ -66,7 +66,15 @@ the model works in. PI also runs the hand-over of a prompt to its loop
 inside `aroundInject`, and asks `providerHeaders` for headers to add to
 the provider request of an active prompt. OpenClaw runs the turn's
 dispatch inside `aroundDispatch`. Claude Code reports `sessionStarted`
-and `turnStopped` from its hooks. A wrapper must call its `run` argument
+and `turnStopped` from its hooks, and passes `promptEnded` a fourth
+argument, the reason, when the model did not end the prompt with its own
+reply: `final_text` (outcome `ok`: the turn ended without a reply, and the
+plugin sent the turn's final text as the reply), `no_reply` (the turn
+ended with no reply and no final text), `shutdown` (the plugin stopped with
+the prompt open), `delivery` (the prompt could not be handed to Claude
+Code), all with outcome `error`, or `expired` (the prompt outlived the
+plugin's limit, outcome `timeout`). The argument is left out when the
+model replied, and a prompt that failed otherwise carries none. A wrapper must call its `run` argument
 once, synchronously, and return its value. A wrapper may be an async
 function: the plugin still takes `run`'s own value, and the wrapper must
 call `run` once, before its first `await`, so the step keeps its timing.

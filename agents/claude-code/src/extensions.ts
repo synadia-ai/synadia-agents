@@ -110,6 +110,24 @@ export interface ServedRequest {
 export type Outcome = "ok" | "error" | "timeout";
 
 /**
+ * How a prompt ended when the model did not end it with its own reply;
+ * absent when it did.
+ *
+ * - `final_text`: the turn ended without a reply, and the plugin sent the
+ *   turn's final text as the reply (outcome `ok`);
+ * - `no_reply`: the turn ended with no reply and no final text (`error`);
+ * - `shutdown`: the plugin stopped with the prompt open (`error`);
+ * - `delivery`: the prompt could not be handed to the harness (`error`);
+ * - `expired`: the prompt outlived the plugin's limit (`timeout`).
+ */
+export type EndReason =
+  | "final_text"
+  | "no_reply"
+  | "shutdown"
+  | "delivery"
+  | "expired";
+
+/**
  * The harness's events. Two kinds: a notification, called and forgotten,
  * and a wrapper, which the plugin calls around one of its own steps. A
  * wrapper must call `run` once, synchronously, and return its value — a
@@ -125,8 +143,16 @@ export interface HarnessEvents {
   // Every harness.
   /** Inside the prompt handler, after every interceptor ran. */
   promptAccepted?(request: ServedRequest): void;
-  /** When the plugin settles the request. */
-  promptEnded?(request: ServedRequest, outcome: Outcome, atMs: number): void;
+  /**
+   * When the plugin settles the request. Claude Code passes `reason` when
+   * the model did not end the prompt with its own reply.
+   */
+  promptEnded?(
+    request: ServedRequest,
+    outcome: Outcome,
+    atMs: number,
+    reason?: EndReason,
+  ): void;
   /** Around every agent-tool call, with the request the model works in. */
   aroundToolCall?<T>(
     request: ServedRequest | undefined,
@@ -454,7 +480,12 @@ export class ExtensionMetadataError extends Error {
 /** Claude Code's events as the plugin calls them, fail-open over every extension. */
 export interface ClaudeCodeHarnessEventDispatch {
   promptAccepted(request: ServedRequest): void;
-  promptEnded(request: ServedRequest, outcome: Outcome, atMs: number): void;
+  promptEnded(
+    request: ServedRequest,
+    outcome: Outcome,
+    atMs: number,
+    reason?: EndReason,
+  ): void;
   aroundToolCall<T>(
     request: ServedRequest | undefined,
     toolName: string,
@@ -805,8 +836,14 @@ export function composeExtensions(
       promptAccepted(request) {
         notify("promptAccepted", (handler) => handler(request));
       },
-      promptEnded(request, outcome, atMs) {
-        notify("promptEnded", (handler) => handler(request, outcome, atMs));
+      promptEnded(request, outcome, atMs, reason) {
+        // The reason only when there is one, so a handler sees the three
+        // arguments it always saw for a prompt the model answered.
+        notify("promptEnded", (handler) =>
+          reason === undefined
+            ? handler(request, outcome, atMs)
+            : handler(request, outcome, atMs, reason),
+        );
       },
       aroundToolCall(request, toolName, run) {
         return wrapAll(

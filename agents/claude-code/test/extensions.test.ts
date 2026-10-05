@@ -453,7 +453,8 @@ describe("composeExtensions: Claude Code's events, fail-open", () => {
         loaded("a", {
           events: {
             promptAccepted: (r) => calls.push(`a.accepted ${r.id}`),
-            promptEnded: (r, outcome, at) => calls.push(`a.ended ${r.id} ${outcome} ${at}`),
+            promptEnded: (r, outcome, at, ...rest) =>
+              calls.push(`a.ended ${r.id} ${outcome} ${at} ${rest.length > 0 ? String(rest[0]) : "-"}`),
           },
         }),
         loaded("b", {
@@ -470,13 +471,18 @@ describe("composeExtensions: Claude Code's events, fail-open", () => {
     composed.events.promptAccepted(request);
     composed.events.promptAccepted(request);
     composed.events.promptEnded(request, "ok", 123);
-    composed.events.promptEnded(request, "error", 124);
+    composed.events.promptEnded(request, "error", 124, "no_reply");
+    composed.events.promptEnded(request, "ok", 125, "final_text");
+    // The reason only when there is one: a prompt the model answered keeps
+    // the three arguments.
     expect(calls).toEqual([
       "a.accepted 7",
       "a.accepted 7",
-      "a.ended 7 ok 123",
+      "a.ended 7 ok 123 -",
       "b.ended 7",
-      "a.ended 7 error 124",
+      "a.ended 7 error 124 no_reply",
+      "b.ended 7",
+      "a.ended 7 ok 125 final_text",
       "b.ended 7",
     ]);
     expect(logger.lines).toEqual(['warn extension "b" promptAccepted failed: b fails']);

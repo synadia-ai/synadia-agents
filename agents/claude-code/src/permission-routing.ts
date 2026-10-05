@@ -47,6 +47,12 @@ import type { StopRecord, TurnActivity } from './session-id.js'
  *     starts a queued prompt's turn right after a Stop, so a quiet grace
  *     period says it is not queued; a turn is seen by its first tool call,
  *     so the grace period must outlast the model's first reply.
+ *
+ * A prompt that owned its turn carries that Stop's final text, when the
+ * hook kept one, so the server can send it as the reply. The Stop hook
+ * learns which prompts own the running turn ({@link TurnLedger.owning}) and
+ * refuses that turn's first Stop while one is open, so the model is told to
+ * reply before the turn ends.
  */
 
 /** What the hook files say right now. */
@@ -61,6 +67,8 @@ export interface TurnView {
 export type TurnEnd = {
   readonly requestId: string
   readonly reason: 'its turn ended' | 'no turn started for it'
+  /** Its turn's final text, for a prompt that owned the turn, when the hook kept one. */
+  readonly finalText?: string
 }
 
 /** The request a question goes to, or why it goes to none. */
@@ -119,7 +127,12 @@ export class TurnLedger {
     for (const [requestId, d] of this.deliveries) {
       if (d.firstStop === undefined || this.finished(requestId)) continue
       if (d.startsTurn && d.firstStop.background === false && d.firstStop.atMs > d.atMs) {
-        ended.push({ requestId, reason: 'its turn ended' })
+        const finalText = d.firstStop.finalText
+        ended.push({
+          requestId,
+          reason: 'its turn ended',
+          ...(finalText !== undefined ? { finalText } : {}),
+        })
       } else if (graceOver) {
         ended.push({ requestId, reason: 'no turn started for it' })
       }
@@ -138,6 +151,21 @@ export class TurnLedger {
     this.deliveries.set(requestId, { atMs: nowMs, stopsBefore: this.stops, startsTurn })
     this.lastDeliveryMs = nowMs
     return startsTurn
+  }
+
+  /**
+   * The open prompts that own the running turn, or the next one: delivered
+   * while Claude Code was quiet, with no Stop seen since. At most one in
+   * practice; the Stop hook names them when it refuses a stop.
+   */
+  owning(): string[] {
+    const ids: string[] = []
+    for (const [requestId, d] of this.deliveries) {
+      if (d.startsTurn && d.stopsBefore === this.stops && !this.finished(requestId)) {
+        ids.push(requestId)
+      }
+    }
+    return ids
   }
 
   /** Drop a request that has left the server. */

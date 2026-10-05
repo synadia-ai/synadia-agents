@@ -40,7 +40,23 @@ All notable changes to the Claude Code NATS channel are documented here.
   survives the `Stop` and is ended once no turn has started within `turnStartGraceMs` of the
   latest `Stop` (5 minutes by default; `SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS` wins over
   the config field). Each is logged as `request ended without a reply` with its request id and
-  reason, and reaches the extensions' `promptEnded` with the outcome `error`.
+  reason, and reaches the extensions' `promptEnded` with the outcome `error` (and the reason
+  `no_reply`).
+
+- A turn that ends without the `reply` is no longer given up at once. At the `Stop` of a turn
+  whose request is still open, the `Stop` hook refuses the stop once, naming the open
+  `request_id` and telling the model to send its answer with `reply` (`done: true`); it never
+  refuses the stop that follows (`stop_hook_active`). If that turn stops again with the request
+  open, the plugin sends the turn's final assistant text as the reply and completes the
+  request — Claude Code's `last_assistant_message`, or the last assistant message in the
+  transcript for a Claude Code that does not send it. Only a turn with no final text still
+  ends in the `500` error. The hook learns which requests own the running turn from
+  `<state dir>/sessions/<pid>.open`, written by the server, and fails open: no file, a
+  malformed one, a server no longer running, or 5 seconds gone, and it lets the turn end.
+- `promptEnded` takes an optional fourth argument, the reason a prompt ended when the model
+  did not end it with its own reply: `final_text` (outcome `ok`), `no_reply`, `shutdown`,
+  `delivery` (outcome `error`) or `expired` (outcome `timeout`). It is left out when the model
+  replied, so existing handlers see what they always saw.
 
 ### Changed
 
@@ -60,3 +76,4 @@ All notable changes to the Claude Code NATS channel are documented here.
 - The marketplace plugin runs a committed, deterministic, self-contained bundle and no longer
   installs mutable dependencies whenever its MCP server starts.
 - Synchronized the existing package and Claude plugin descriptor version at `0.5.1`.
+- Version `0.6.0`, package and Claude plugin descriptor.

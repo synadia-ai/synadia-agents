@@ -160,6 +160,24 @@ describe('TurnLedger: a turn that ends without the done reply ends its prompt', 
     ])
   })
 
+  test('the turn\'s final text comes with a prompt that owned it; the Stop hook learns who owns the turn', () => {
+    const finished = new Set<string>()
+    const turns = ledger(finished)
+    expect(turns.owning()).toEqual([])
+    turns.delivered('1', view(idleStop(100)), 200)
+    expect(turns.owning()).toEqual(['1'])
+    const stop: StopRecord = { atMs: 500, background: false, finalText: 'the answer' }
+    expect(turns.unanswered(view(stop, call('p1', 300)), 501, GRACE)).toEqual([
+      { requestId: '1', reason: 'its turn ended', finalText: 'the answer' },
+    ])
+    // Past its Stop it owns no turn; nor does a finished one.
+    expect(turns.owning()).toEqual([])
+    turns.delivered('2', view(stop), 600)
+    expect(turns.owning()).toEqual(['2'])
+    finished.add('2')
+    expect(turns.owning()).toEqual([])
+  })
+
   test('a prompt with its done reply is left alone', () => {
     const finished = new Set<string>()
     const turns = ledger(finished)
