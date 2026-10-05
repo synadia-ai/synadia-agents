@@ -540,6 +540,7 @@ async function run(): Promise<void> {
         pending.completion.reject(
           new RequestRejectedError(TURN_END_CODE, TURN_END_DESCRIPTION),
         );
+        syncOpenRequests();
         return;
       }
       logEvent("response sent", {
@@ -554,6 +555,7 @@ async function run(): Promise<void> {
         reason: "final_text",
       };
       pending.completion.resolve();
+      syncOpenRequests();
     };
 
     // A served prompt whose turn ended without its `done` reply is answered
