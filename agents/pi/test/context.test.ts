@@ -50,6 +50,11 @@ describe("PI connection settings", () => {
 		expect(resolveConnectionSettings({}, { NATS_URL: "nats://a:4222", NATS_CREDS: "" }).source).toEqual({ url: "nats://a:4222" });
 	});
 
+	test("credentials without NATS_URL fail rather than go to the public default", () => {
+		expect(() => resolveConnectionSettings({}, { NATS_CREDS: "/c.creds" })).toThrow(/without NATS_URL/);
+		expect(() => resolveConnectionSettings({}, { NATS_CREDENTIALS: "/c.creds", NATS_URL: "" })).toThrow(/without NATS_URL/);
+	});
+
 	test("a context wins over NATS_URL and NATS_CREDS", () => {
 		expect(
 			resolveConnectionSettings({}, { NATS_CONTEXT: "prod", NATS_URL: "nats://a:4222", NATS_CREDS: "/c.creds" }).source,
