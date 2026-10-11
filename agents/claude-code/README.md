@@ -493,6 +493,7 @@ shown below; environment settings override the corresponding config fields.
 | `NATS_SESSION_NAME` | Session name — legacy alias, still honored below the `SYNADIA_*` vars | *(unset — falls through to config `sessionName`, then the `$CLAUDE_CWD` basename)* |
 | `NATS_CONTEXT` | NATS CLI context to connect with (wins over config `context`) | — |
 | `NATS_URL` | Raw NATS URL; used when no context is set via env or config | `demo.nats.io` |
+| `NATS_CREDS`, `NATS_CREDENTIALS` | Credentials file to connect with at `NATS_URL`, when no context is set; fails without `NATS_URL`; `NATS_CREDS` wins, empty means unset | — |
 | `NATS_SENDER_IDENTITY` | Host identity mode: `off` or `signed` | config `senderIdentity`, then `off` |
 | `NATS_MIN_SENDER_TRUST` | Inbound sender policy: `any` or `signed` | config `minSenderTrust`, then `any` |
 | `NATS_AGENT_TOOLS` | The agent tools offered: `blocking`, `all` or `off`; empty means `blocking` | config `agentTools`, then `blocking` |

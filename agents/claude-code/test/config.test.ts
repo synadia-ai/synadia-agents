@@ -52,6 +52,37 @@ describe('resolveRuntimeSettings', () => {
     })
   })
 
+  test('NATS_CREDS connects with NATS_URL and a credentials file, no context needed', () => {
+    expect(resolveRuntimeSettings({}, {
+      NATS_URL: 'tls://connect.example:4222',
+      NATS_CREDS: '/run/secrets/agent.creds',
+    })).toMatchObject({
+      connectionSource: { url: 'tls://connect.example:4222', creds: '/run/secrets/agent.creds' },
+      connectionLabel: '$NATS_URL',
+    })
+  })
+
+  test('NATS_CREDENTIALS is NATS_CREDS\'s alias, NATS_CREDS winning, empty meaning unset', () => {
+    expect(resolveRuntimeSettings({}, { NATS_URL: 'nats://a:4222', NATS_CREDENTIALS: '/b.creds' }).connectionSource)
+      .toEqual({ url: 'nats://a:4222', creds: '/b.creds' })
+    expect(resolveRuntimeSettings({}, { NATS_URL: 'nats://a:4222', NATS_CREDS: '/c.creds', NATS_CREDENTIALS: '/b.creds' }).connectionSource)
+      .toEqual({ url: 'nats://a:4222', creds: '/c.creds' })
+    expect(resolveRuntimeSettings({}, { NATS_URL: 'nats://a:4222', NATS_CREDS: '' }).connectionSource)
+      .toEqual({ url: 'nats://a:4222' })
+  })
+
+  test('credentials without NATS_URL fail rather than go to the public default', () => {
+    expect(() => resolveRuntimeSettings({}, { NATS_CREDS: '/c.creds' })).toThrow(/without NATS_URL/)
+    expect(() => resolveRuntimeSettings({}, { NATS_CREDENTIALS: '/c.creds', NATS_URL: '' })).toThrow(/without NATS_URL/)
+  })
+
+  test('a context wins over NATS_URL and NATS_CREDS', () => {
+    expect(resolveRuntimeSettings({}, { NATS_CONTEXT: 'prod', NATS_URL: 'nats://a:4222', NATS_CREDS: '/c.creds' }).connectionSource)
+      .toEqual({ context: 'prod' })
+    expect(resolveRuntimeSettings({ context: 'configured' }, { NATS_CREDS: '/c.creds' }).connectionSource)
+      .toEqual({ context: 'configured' })
+  })
+
   test('agentTools: blocking by default, the config field, NATS_AGENT_TOOLS winning, empty meaning the default', () => {
     expect(resolveRuntimeSettings({}, {}).agentTools).toBe('blocking')
     expect(resolveRuntimeSettings({ agentTools: 'all' }, {}).agentTools).toBe('all')

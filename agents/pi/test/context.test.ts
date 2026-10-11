@@ -30,6 +30,38 @@ describe("PI connection settings", () => {
 		});
 	});
 
+	test("NATS_CREDS connects with NATS_URL and a credentials file, no context needed", () => {
+		expect(
+			resolveConnectionSettings({}, { NATS_URL: "tls://connect.example:4222", NATS_CREDS: "/run/secrets/agent.creds" }),
+		).toMatchObject({
+			source: { url: "tls://connect.example:4222", creds: "/run/secrets/agent.creds" },
+			contextLabel: "$NATS_URL",
+		});
+	});
+
+	test("NATS_CREDENTIALS is NATS_CREDS's alias, NATS_CREDS winning, empty meaning unset", () => {
+		expect(resolveConnectionSettings({}, { NATS_URL: "nats://a:4222", NATS_CREDENTIALS: "/b.creds" }).source).toEqual({
+			url: "nats://a:4222",
+			creds: "/b.creds",
+		});
+		expect(
+			resolveConnectionSettings({}, { NATS_URL: "nats://a:4222", NATS_CREDS: "/c.creds", NATS_CREDENTIALS: "/b.creds" }).source,
+		).toEqual({ url: "nats://a:4222", creds: "/c.creds" });
+		expect(resolveConnectionSettings({}, { NATS_URL: "nats://a:4222", NATS_CREDS: "" }).source).toEqual({ url: "nats://a:4222" });
+	});
+
+	test("credentials without NATS_URL fail rather than go to the public default", () => {
+		expect(() => resolveConnectionSettings({}, { NATS_CREDS: "/c.creds" })).toThrow(/without NATS_URL/);
+		expect(() => resolveConnectionSettings({}, { NATS_CREDENTIALS: "/c.creds", NATS_URL: "" })).toThrow(/without NATS_URL/);
+	});
+
+	test("a context wins over NATS_URL and NATS_CREDS", () => {
+		expect(
+			resolveConnectionSettings({}, { NATS_CONTEXT: "prod", NATS_URL: "nats://a:4222", NATS_CREDS: "/c.creds" }).source,
+		).toEqual({ context: "prod" });
+		expect(resolveConnectionSettings({ context: "configured" }, { NATS_CREDS: "/c.creds" }).source).toEqual({ context: "configured" });
+	});
+
 	test("signed self identity does not imply signed-only admission", () => {
 		expect(resolveConnectionSettings({ senderIdentity: "signed" }, {})).toMatchObject({
 			senderIdentity: "signed",
