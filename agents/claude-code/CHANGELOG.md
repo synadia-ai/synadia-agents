@@ -6,6 +6,8 @@ All notable changes to the Claude Code NATS channel are documented here.
 
 ### Added
 
+- `NATS_CREDS` (alias `NATS_CREDENTIALS`): with no context, the channel connects at `NATS_URL` with
+  this credentials file, so a container needs no NATS context file. A context still wins.
 - Optional connection-bound signed host identity through `senderIdentity` and independent inbound
   sender policy through `minSenderTrust`.
 - Safe, explicit `request_info` inspection for the classified sender of an active request.

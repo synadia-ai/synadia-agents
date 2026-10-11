@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `NATS_CREDS` (alias `NATS_CREDENTIALS`): with no context, the extension connects at `NATS_URL` with
+  this credentials file, so a container needs no NATS context file. A context still wins.
 - **Agent tools.** PI's model is offered the SDK's agent tools through
   `pi.registerTool()` once the session is on the bus: `discover_agents`,
   `prompt_agent` and `answer_agent` by default (the SDK's

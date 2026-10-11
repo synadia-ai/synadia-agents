@@ -187,16 +187,25 @@ function parseChoice<T extends string>(
   );
 }
 
-/** Resolve source and independent outgoing-identity/inbound-trust modes. */
+/**
+ * Resolve source and independent outgoing-identity/inbound-trust modes.
+ *
+ * A context wins. Without one, `NATS_URL` and a credentials file from
+ * `NATS_CREDS` (or its alias `NATS_CREDENTIALS`) connect directly, so a
+ * container needs no context file.
+ */
 export function resolveConnectionSettings(
   config: PiNatsConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): PiConnectionSettings {
   const context = env.NATS_CONTEXT ?? config.context;
   const url = env.NATS_URL;
+  const creds = env.NATS_CREDS || env.NATS_CREDENTIALS;
   const source: NatsConnectionSource = context
     ? { context }
-    : { url: url || DEFAULT_NATS_URL };
+    : creds
+      ? { url: url || DEFAULT_NATS_URL, creds }
+      : { url: url || DEFAULT_NATS_URL };
   return {
     source,
     contextLabel: context ?? (url ? "$NATS_URL" : "default"),

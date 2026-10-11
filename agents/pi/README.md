@@ -79,6 +79,7 @@ identity and trust use the NATS-wide variables shown below.
 | ----------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `NATS_CONTEXT`          | `context`                 | Highest precedence — see below.                                                                                                                                             |
 | `NATS_URL`              | raw URL (no auth context) | Used only when `NATS_CONTEXT` and `config.context` are both unset.                                                                                                          |
+| `NATS_CREDS`            | credentials file          | Connects at `NATS_URL` with this file when no context is set; `NATS_CREDENTIALS` is its alias, `NATS_CREDS` winning; empty means unset.                                    |
 | `NATS_SENDER_IDENTITY`  | `senderIdentity`          | `off` or `signed`; overrides the config file.                                                                                                                               |
 | `NATS_MIN_SENDER_TRUST` | `minSenderTrust`          | `any` or `signed`; overrides the config file.                                                                                                                               |
 | `SYNADIA_PI_OWNER`      | `owner`                   | Per-agent override — highest owner precedence.                                                                                                                              |
@@ -95,7 +96,7 @@ identity and trust use the NATS-wide variables shown below.
 
 1. Built-in default — `demo.nats.io`, no auth
 2. `config.context` — wizard-set / hand-edited NATS CLI context
-3. `$NATS_URL` — raw URL fallback (only consulted when no context is set)
+3. `$NATS_URL` — raw URL fallback (only consulted when no context is set), with `$NATS_CREDS` when it is set
 4. **`$NATS_CONTEXT`** — wins over everything
 
 For `sessionName`: `$SYNADIA_PI_NAME` > `$SYNADIA_NAME` > `$NATS_SESSION_NAME` (legacy) > `config.sessionName` > CWD-basename default.
