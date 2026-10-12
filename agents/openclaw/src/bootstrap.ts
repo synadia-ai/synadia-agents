@@ -3,21 +3,23 @@ import { envAgentName } from "./accounts.js";
 
 /**
  * Returns the function that ensures channels.nats.accounts.default exists so
- * the gateway starts the channel. It runs once: in "full" mode openclaw fires
- * both setRuntime AND registerFull, and the config write is async, so without
- * the guard both callbacks pass the idempotency check before the first write
- * lands and we double-log "created default channel config entry".
+ * the gateway starts the channel. It runs once the config could be read: in
+ * "full" mode openclaw fires both setRuntime AND registerFull, and the config
+ * write is async, so without the guard both callbacks pass the idempotency
+ * check before the first write lands and we double-log "created default
+ * channel config entry". A first call that cannot read the config leaves the
+ * second its retry.
  */
 export function createNatsConfigBootstrap(): (runtime: PluginRuntime) => void {
   let attempted = false;
   return (runtime) => {
     if (attempted) return;
-    attempted = true;
-    ensureNatsChannelConfig(runtime);
+    attempted = ensureNatsChannelConfig(runtime);
   };
 }
 
-function ensureNatsChannelConfig(runtime: PluginRuntime): void {
+/** Returns whether the config was read, which settles the bootstrap. */
+function ensureNatsChannelConfig(runtime: PluginRuntime): boolean {
   try {
     // OpenClaw 2026.8 replaced direct load/write methods with current/mutate.
     // Use the new focused mutation API when present and retain the legacy path
@@ -30,7 +32,7 @@ function ensureNatsChannelConfig(runtime: PluginRuntime): void {
     const nats = (channels.nats ?? {}) as Record<string, unknown>;
     const accounts = (nats.accounts ?? {}) as Record<string, unknown>;
 
-    if (channels.nats && accounts.default !== undefined) return;
+    if (channels.nats && accounts.default !== undefined) return true;
 
     // The account schema requires agentName, so the empty skeleton fails
     // validation. When the environment names the agent, the channel starts
@@ -40,7 +42,7 @@ function ensureNatsChannelConfig(runtime: PluginRuntime): void {
       console.log(
         `[nats] agent name from ${nameEnv.name}; no channel config entry needed`,
       );
-      return;
+      return true;
     }
 
     const write = configApi.mutateConfigFile
@@ -58,8 +60,10 @@ function ensureNatsChannelConfig(runtime: PluginRuntime): void {
           `[nats] could not persist channel config skeleton: ${err}`,
         ),
       );
+    return true;
   } catch (err) {
     console.warn(`[nats] could not ensure channel config: ${err}`);
+    return false;
   }
 }
 

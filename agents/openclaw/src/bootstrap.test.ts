@@ -79,6 +79,23 @@ describe("createNatsConfigBootstrap", () => {
     expect(mutateConfigFile).toHaveBeenCalledTimes(1);
   });
 
+  it("retries on the second callback when the first cannot read the config", async () => {
+    const { runtime, mutateConfigFile, written } = fakeRuntime({});
+    const config = (runtime as unknown as { config: { current: () => unknown } }).config;
+    const current = config.current;
+    config.current = () => {
+      throw new Error("not ready");
+    };
+    const ensure = createNatsConfigBootstrap();
+    ensure(runtime);
+    expect(mutateConfigFile).not.toHaveBeenCalled();
+    config.current = current;
+    ensure(runtime);
+    await vi.waitFor(() => expect(written).toHaveLength(1));
+    ensure(runtime);
+    expect(mutateConfigFile).toHaveBeenCalledTimes(1);
+  });
+
   it("writes nothing when the config already has the default account", () => {
     const { runtime, mutateConfigFile } = fakeRuntime({
       channels: { nats: { accounts: { default: { agentName: "configured" } } } },
