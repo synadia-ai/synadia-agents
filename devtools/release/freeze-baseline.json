@@ -105,7 +105,7 @@
       "size": 1030
     },
     "agents/openclaw/package.json": {
-      "sha256": "c54cc6acf00d0138ffa397eed42ade1286c7b05aa808ecf0f29a577a02629bb7",
+      "sha256": "bbba168d1db4ae79196899f5a9a0deaccba73cfc3706475e75285b1b6480a175",
       "size": 2069
     },
     "agents/opencode/bun.lock": {

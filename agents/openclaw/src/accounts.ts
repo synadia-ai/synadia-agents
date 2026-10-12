@@ -114,14 +114,18 @@ function firstDefinedEnv(
   return undefined;
 }
 
+/**
+ * The agent name the environment supplies, with the variable that supplied
+ * it, or undefined when none of the name variables is set.
+ */
+export function envAgentName(): { name: string; value: string } | undefined {
+  return firstDefinedEnv("SYNADIA_OPENCLAW_NAME", "SYNADIA_NAME", "NATS_AGENT_NAME");
+}
+
 export function listNatsAccountIds(cfg: OpenClawConfig): string[] {
   const ids = Object.keys(getAccounts(cfg));
   const result = ids.length > 0 ? ids : [DEFAULT_ACCOUNT_ID];
-  const nameEnv = firstDefinedEnv(
-    "SYNADIA_OPENCLAW_NAME",
-    "SYNADIA_NAME",
-    "NATS_AGENT_NAME",
-  );
+  const nameEnv = envAgentName();
   console.log(
     `[nats] listAccountIds: ${JSON.stringify(result)} (config keys: ${ids.length}, name env: ${
       nameEnv ? `${nameEnv.name}=${nameEnv.value}` : "unset"
@@ -208,11 +212,7 @@ export function resolveNatsAccount(
     "NATS_URL",
     true,
   );
-  const nameEnv = firstDefinedEnv(
-    "SYNADIA_OPENCLAW_NAME",
-    "SYNADIA_NAME",
-    "NATS_AGENT_NAME",
-  );
+  const nameEnv = envAgentName();
   if (nameEnv) {
     applyEnvOverride(
       resolved,
