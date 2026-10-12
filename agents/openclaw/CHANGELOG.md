@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.7] — 2026-10-12
+
+### Fixed
+
+- No more "could not persist channel config skeleton … must have required
+  property 'agentName'" at install and at every gateway start when the
+  agent's name comes from the environment (`SYNADIA_OPENCLAW_NAME`,
+  `SYNADIA_NAME` or `NATS_AGENT_NAME`). The plugin wrote an empty
+  `channels.nats.accounts.default`, which its own schema rejects; the channel
+  starts from the environment, so the plugin now writes nothing then. With
+  no name in the config or the environment it writes the skeleton as before.
+
 ### Added
 
 - **Agent tools.** OpenClaw's model is offered the SDK's agent tools through

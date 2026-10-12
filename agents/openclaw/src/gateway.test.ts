@@ -405,7 +405,7 @@ describe("the extensions", () => {
     const { controller, running, ctx } = await started(resolved);
     const state = counter();
     expect(state.ctx.harness).toBe("openclaw");
-    expect(state.ctx.plugin).toEqual({ name: "@synadia-ai/nats-channel", version: "0.5.6" });
+    expect(state.ctx.plugin).toEqual({ name: "@synadia-ai/nats-channel", version: "0.5.7" });
     expect(state.ctx.settings).toEqual({
       owner: "acme",
       name: "echo",
