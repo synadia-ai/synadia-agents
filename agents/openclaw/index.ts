@@ -20,9 +20,9 @@ export default defineChannelPluginEntry({
     // channel plugins that aren't yet in `cfg.channels.<id>`). Without this,
     // a fresh install never bootstraps `channels.nats.accounts.default = {}`,
     // so the gateway never iterates the channel. Skipped when the environment
-    // names the agent (see src/bootstrap.ts). registerFull below is a
-    // belt-and-suspenders for the full-mode path used by bundled/catalog-known
-    // plugins.
+    // names the agent or nothing does (see src/bootstrap.ts). registerFull
+    // below is a belt-and-suspenders for the full-mode path used by
+    // bundled/catalog-known plugins.
     ensureNatsChannelConfig(runtime);
   },
   registerFull(api: OpenClawPluginApi) {

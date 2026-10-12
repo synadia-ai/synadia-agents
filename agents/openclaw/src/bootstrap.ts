@@ -45,6 +45,20 @@ function ensureNatsChannelConfig(runtime: PluginRuntime): boolean {
       return true;
     }
 
+    // With no name anywhere the skeleton cannot pass the schema either, and
+    // the channel cannot start until a name is set: say where it comes from.
+    const configNamed = Object.values(accounts).some(
+      (account) =>
+        typeof (account as { agentName?: unknown } | null)?.agentName === "string" &&
+        (account as { agentName: string }).agentName !== "",
+    );
+    if (!configNamed) {
+      console.log(
+        "[nats] agent name not set yet: it comes from SYNADIA_OPENCLAW_NAME, or channels.nats.accounts.default.agentName",
+      );
+      return true;
+    }
+
     const write = configApi.mutateConfigFile
       ? configApi.mutateConfigFile({
           afterWrite: { mode: "auto" },
