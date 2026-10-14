@@ -245,6 +245,7 @@
       "role": "publishable",
       "layer": 1,
       "lock": "client-sdk/python/uv.lock",
+      "registry_lock": "devtools/release/registry-locks/py-caller.uv.lock",
       "internal_edges": [],
       "stage_remove_files": [".gitignore"],
       "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "docs", "examples", "pyproject.toml", "src"]
@@ -257,6 +258,7 @@
       "role": "publishable",
       "layer": 2,
       "lock": "agent-sdk/python/uv.lock",
+      "registry_lock": "devtools/release/registry-locks/py-host.uv.lock",
       "internal_edges": ["synadia-ai-agents"],
       "stage_remove_files": [".gitignore"],
       "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "docs", "examples", "pyproject.toml", "src"]
@@ -269,6 +271,7 @@
       "role": "publishable",
       "layer": 3,
       "lock": "agents/deerflow/uv.lock",
+      "registry_lock": "devtools/release/registry-locks/deerflow.uv.lock",
       "internal_edges": ["synadia-ai-agents", "synadia-ai-agent-service"],
       "stage_license_from": "LICENSE",
       "sdist_roots": ["CHANGELOG.md", "LICENSE", "README.md", "examples", "pyproject.toml", "src"]

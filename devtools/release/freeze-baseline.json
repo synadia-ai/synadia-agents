@@ -137,12 +137,12 @@
       "size": 2519
     },
     "devtools/release/cooldown-policy.json": {
-      "sha256": "448a94fa59cfcba9f896db9f7c4c70d5f2cced0b3494418f02a5734c925c493f",
-      "size": 390
+      "sha256": "6a55c0312a45feeeb3eb30e8779b424392f8b86fab9199fa6f85367aa887f439",
+      "size": 878
     },
     "devtools/release/plan.json": {
-      "sha256": "ec71671bbe24c72c65ed5229bdc1830d7e9f6e0fa016b54e862b23c8c1e50a45",
-      "size": 11225
+      "sha256": "83d89c775ebcb12f3aa4ce59e57092ea47df832b191bbc8ce00d6153a4db7626",
+      "size": 11450
     },
     "devtools/release/python-build-constraints.txt": {
       "sha256": "f414ac60a696061f1080ee2b0e2f067dcadb3314ff5dbaee2489bd14c225ab8d",
@@ -152,13 +152,17 @@
       "sha256": "6fcc9e51d8a27c449b5fd414b3436019936eb1e4d99638e80f09d931b9f7a7b6",
       "size": 173
     },
+    "devtools/release/registry-locks/py-caller.uv.lock": {
+      "sha256": "b9486c4263258f144eb465cc38472a6f0f96da7eefa3be6e31bc17b1646bdc8d",
+      "size": 120755
+    },
     "devtools/release/release.py": {
-      "sha256": "aa5e8a33b450bab2d87d86146a2f03ca60e97ebdb33c666646a484bacb2bc732",
-      "size": 73547
+      "sha256": "e7ee1793d3aa254a135a1f5c658b401fe748dd7e75dc1c27da20f9929c023d72",
+      "size": 74890
     },
     "devtools/release/versions.json": {
-      "sha256": "53ca98a878887284a94b0fab92d7e51c348a16682e03c65609f2d307e454fd21",
-      "size": 699
+      "sha256": "a80a3f1a0af7d589609a1d0fd93e41ee69b031863db43a1f04a6057a508c6903",
+      "size": 747
     },
     "devtools/release/versions.rehearsal.json": {
       "sha256": "8713b93e48af97d77c1af10eb97c659c27a9d3bca0a5997a5409d0cdaef0b268",

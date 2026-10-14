@@ -1,21 +1,21 @@
 {
   "phase": "candidate",
   "versions": {
-    "@synadia-ai/agents": null,
-    "@synadia-ai/agent-service": null,
-    "@synadia-ai/acp-nats-channel": null,
-    "@synadia-ai/codex-nats-channel": null,
-    "@synadia-ai/opencode-nats-channel": null,
-    "@synadia-ai/eve-nats-channel": null,
-    "@synadia-ai/flue-nats-channel": null,
-    "@synadia-ai/nats-channel": null,
-    "@synadia-ai/nats-pi-channel": null,
-    "@synadia-ai/nats-claude-code-headless": null,
-    "@synadia-ai/nats-pi-headless": null,
-    "@synadia-ai/grok-nats-channel": null,
-    "claude-channel-nats": null,
-    "synadia-ai-agents": null,
-    "synadia-ai-agent-service": null,
-    "synadia-ai-nats-deerflow-channel": null
+    "@synadia-ai/agents": "0.6.0",
+    "@synadia-ai/agent-service": "0.6.0",
+    "@synadia-ai/acp-nats-channel": "0.1.0",
+    "@synadia-ai/codex-nats-channel": "0.1.0",
+    "@synadia-ai/opencode-nats-channel": "0.1.0",
+    "@synadia-ai/eve-nats-channel": "0.1.0",
+    "@synadia-ai/flue-nats-channel": "0.1.0",
+    "@synadia-ai/nats-channel": "0.5.7",
+    "@synadia-ai/nats-pi-channel": "0.5.6",
+    "@synadia-ai/nats-claude-code-headless": "0.5.4",
+    "@synadia-ai/nats-pi-headless": "0.5.5",
+    "@synadia-ai/grok-nats-channel": "0.1.0",
+    "claude-channel-nats": "0.6.0",
+    "synadia-ai-agents": "0.8.0",
+    "synadia-ai-agent-service": "0.5.0",
+    "synadia-ai-nats-deerflow-channel": "0.2.0"
   }
 }

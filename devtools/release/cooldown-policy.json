@@ -1,10 +1,16 @@
 {
   "schema_version": 1,
-  "status": "unresolved",
-  "minimum_age_seconds": null,
-  "external_freeze_cutoff": "2026-08-25T00:00:00Z",
-  "enforcement_points": [],
+  "status": "resolved",
+  "minimum_age_seconds": 604800,
+  "external_freeze_cutoff": "2026-10-07T00:00:00Z",
+  "enforcement_points": [
+    "Python candidate registry locks use uv lock --exclude-newer at the recorded cutoff.",
+    "Python artifact builds and clean installs receive UV_EXCLUDE_NEWER from the recorded cutoff."
+  ],
   "npm_internal_exclusions": [],
-  "python_internal_exclusions": [],
-  "note": "Fill from the real organization policy before candidate publication. Rehearsal is allowed while unresolved; publication validation fails closed."
+  "python_internal_exclusions": [
+    "synadia-ai-agents",
+    "synadia-ai-agent-service"
+  ],
+  "note": "Package owner Rene confirmed a seven-day hold-off for external dependencies on 2026-10-14. The fixed midnight UTC cutoff is conservative for this release. Python exceptions apply only to the verified first-party dependency edges of the selected package; external runtime and build dependencies retain the cutoff. No npm publication is requested by this Python release preparation."
 }

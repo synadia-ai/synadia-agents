@@ -46,6 +46,26 @@ class DependencySpecTests(unittest.TestCase):
 
 
 class StagingTransformTests(unittest.TestCase):
+    def test_registry_lock_is_copied_only_for_candidate_and_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            development = root / "uv.lock"
+            approved = root / "candidate.lock"
+            development.write_text("development source lock")
+            approved.write_text("approved registry lock")
+            entry = {"id": "test", "lock": "uv.lock", "registry_lock": "candidate.lock"}
+            release.stage_python_registry_lock(root, entry, "rehearsal")
+            self.assertEqual(development.read_text(), "development source lock")
+            release.stage_python_registry_lock(root, entry, "candidate")
+            self.assertEqual(development.read_bytes(), approved.read_bytes())
+            release.validate_candidate_registry_lock(root, entry)
+            development.write_text("stale lock")
+            with self.assertRaisesRegex(release.ReleaseError, "differs from approved"):
+                release.validate_candidate_registry_lock(root, entry)
+            approved.unlink()
+            with self.assertRaisesRegex(release.ReleaseError, "missing approved"):
+                release.validate_candidate_registry_lock(root, entry)
+
     def test_npm_transform_breaks_cycle_and_exact_pins_edges(self) -> None:
         manifest = {
             "name": "@example/caller",

@@ -153,3 +153,13 @@ npm publish /absolute/path/to/approved-package.tgz \
 
 The Python tag workflows likewise publish downloaded, digest-checked build
 artifacts; the publish jobs do not rebuild.
+
+Python development locks stay beside their source projects. Candidate
+registry locks live under `registry-locks/`, at the paths declared in
+`plan.json`. Candidate staging copies a prepared registry lock over its
+development counterpart after the project metadata is transformed. This
+keeps local development sources out of published artifacts without breaking
+the source test jobs. Prepare each downstream registry lock only after its
+exact upstream version is on PyPI. The candidate preflight checks the lock
+with the same external cutoff and scoped first-party exceptions used by
+artifact installation; a missing or stale registry lock still fails.
