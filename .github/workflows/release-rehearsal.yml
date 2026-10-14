@@ -73,7 +73,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        package-id: [py-caller]
+        package-id: [py-caller, py-host]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -84,6 +84,8 @@ jobs:
           python-version: "3.11"
       - name: Install interpreter before offline lock checks
         run: uv python install 3.11
+      - name: Install verified broker for artifact protocol checks
+        run: bash devtools/release/install-test-broker.sh "$NATS_SERVER_VERSION" "$NATS_SERVER_SHA256" "$RUNNER_TEMP/candidate-broker"
       - name: Qualify prepared candidate artifacts
         run: |
           python3 devtools/release/release.py stage \

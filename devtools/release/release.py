@@ -868,6 +868,7 @@ def freeze_paths(repo: Path, plan: dict[str, Any]) -> list[str]:
         ],
         "devtools/release/plan.json",
         "devtools/release/release.py",
+        "devtools/release/install-test-broker.sh",
         "devtools/release/python-build-constraints.txt",
         "devtools/release/python-build-requirements.in",
         "devtools/release/versions.rehearsal.json",

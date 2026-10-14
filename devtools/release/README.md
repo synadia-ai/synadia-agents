@@ -165,8 +165,15 @@ with the same external cutoff and scoped first-party exceptions used by
 artifact installation; a missing or stale registry lock still fails.
 
 The release rehearsal also runs the actual candidate preflight and artifact
-installation path for its explicit Python candidate matrix. It starts with
-`py-caller`; add `py-host` when its upstream release and approved registry
-lock are ready. These checks install Python before the offline lock check,
+installation path for its explicit Python candidate matrix: `py-caller`
+and `py-host`. Both now have approved registry locks. These checks install
+Python before the offline lock check,
 as both Python publication workflows do. The rehearsal version graph alone
 does not exercise the candidate registry-lock gate.
+
+Service artifact checks also run an actual NATS request/response. Each CI
+runner that builds or verifies them must install the test broker; the
+source job's installation does not carry into another job. The shared
+`install-test-broker.sh` verifies the pinned archive and binary version in
+a new explicit directory, then adds its binary directory to GitHub's path.
+Its refusal controls are registered in `tests/test_install_broker.py`.

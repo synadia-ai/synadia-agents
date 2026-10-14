@@ -5,20 +5,20 @@
       "size": 8973
     },
     ".github/workflows/release-python-agent-service.yml": {
-      "sha256": "32e58675c36c70a44762c343b08e6ba520acf2e0eabe64ee66147c30c3bb50ea",
-      "size": 5695
+      "sha256": "9e5aeb90194f126f85e46ad67bdeebf0f48961912095cdb46d5c179fa9a5591b",
+      "size": 6143
     },
     ".github/workflows/release-python-deerflow.yml": {
       "sha256": "75b138b7bd772bb62582c2456bfa43b3828035ad0c77195ee3f22406a2432813",
       "size": 4927
     },
     ".github/workflows/release-python.yml": {
-      "sha256": "16281f4513e1ba08be536edf444e865e5309b4259fc63d7c43537ae2c799b8f6",
-      "size": 5659
+      "sha256": "341c956ca156facb28048792beee76b4cf40ead70e13c5a32917ab0420f21957",
+      "size": 5690
     },
     ".github/workflows/release-rehearsal.yml": {
-      "sha256": "b8e672e2a7de8ea2fd3f7982981b69d2aaf7bac24eea97d764f6a6cf7869959d",
-      "size": 7018
+      "sha256": "3409852c0f28d867e1c8f6387dd7e13237866bda8b89b1752a3e35ac41b1d54e",
+      "size": 7229
     },
     ".github/workflows/rollout-ci-summary.yml": {
       "sha256": "be74c44ee4ba3ea36470ca73914c8393744c43d9d5e8bf18bd4360cf136aab3e",
@@ -140,6 +140,10 @@
       "sha256": "6a55c0312a45feeeb3eb30e8779b424392f8b86fab9199fa6f85367aa887f439",
       "size": 878
     },
+    "devtools/release/install-test-broker.sh": {
+      "sha256": "c9fb76c463ac187882a8d51840c0a947333360816584f6a88634f21c3f4e81cb",
+      "size": 1564
+    },
     "devtools/release/plan.json": {
       "sha256": "83d89c775ebcb12f3aa4ce59e57092ea47df832b191bbc8ce00d6153a4db7626",
       "size": 11450
@@ -156,9 +160,13 @@
       "sha256": "0375f28284cb2ffc8a9ed87439a140e50d0ad9bde7d0ad9a0aef7b2a54b626d4",
       "size": 120755
     },
+    "devtools/release/registry-locks/py-host.uv.lock": {
+      "sha256": "da23801f588f5f78f90ea7f755fcf38ff6963ac91662f3427ec4b36b2eed9a91",
+      "size": 123976
+    },
     "devtools/release/release.py": {
-      "sha256": "77e93b67921cc023c7537b21d443c5889c14f887817a10bcb6f6abc8d5366845",
-      "size": 75151
+      "sha256": "dbd77cc17470772422bcbf7714b56660e296be733ea7614502a433eb33767723",
+      "size": 75202
     },
     "devtools/release/versions.json": {
       "sha256": "fad34f88783a025590fdcd52c51241256af3a44fd595df98a1e13380a4259507",
