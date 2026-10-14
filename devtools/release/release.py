@@ -1430,7 +1430,8 @@ def python_cooldown_args(
     }
     result: list[str] = []
     for name in sorted(set(exclusions) & internal_names):
-        result.extend(["--exclude-newer-package", f"{name}=9999-12-31T23:59:59Z"])
+        # The pinned Linux uv rejects the maximum year-9999 timestamp.
+        result.extend(["--exclude-newer-package", f"{name}=2100-01-01T00:00:00Z"])
     return result
 
 

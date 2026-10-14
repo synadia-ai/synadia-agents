@@ -446,8 +446,8 @@ source = { registry = "https://pypi.org/simple" }
                 )
             command = execute.call_args.args[0]
             self.assertIn("2026-10-07T00:00:00Z", command)
-            self.assertIn("synadia-ai-agents=9999-12-31T23:59:59Z", command)
-            self.assertNotIn("synadia-ai-agent-service=9999-12-31T23:59:59Z", command)
+            self.assertIn("synadia-ai-agents=2100-01-01T00:00:00Z", command)
+            self.assertNotIn("synadia-ai-agent-service=2100-01-01T00:00:00Z", command)
             policy.pop("external_freeze_cutoff")
             policy_file.write_text(json.dumps(policy))
             with self.assertRaisesRegex(
