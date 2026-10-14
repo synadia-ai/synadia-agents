@@ -17,8 +17,8 @@
       "size": 5659
     },
     ".github/workflows/release-rehearsal.yml": {
-      "sha256": "b8e672e2a7de8ea2fd3f7982981b69d2aaf7bac24eea97d764f6a6cf7869959d",
-      "size": 7018
+      "sha256": "3f55cd5b42f9af29b292a9cec5a3417b51997af0947674183dc3b4e2dfcaea29",
+      "size": 7027
     },
     ".github/workflows/rollout-ci-summary.yml": {
       "sha256": "be74c44ee4ba3ea36470ca73914c8393744c43d9d5e8bf18bd4360cf136aab3e",
@@ -155,6 +155,10 @@
     "devtools/release/registry-locks/py-caller.uv.lock": {
       "sha256": "0375f28284cb2ffc8a9ed87439a140e50d0ad9bde7d0ad9a0aef7b2a54b626d4",
       "size": 120755
+    },
+    "devtools/release/registry-locks/py-host.uv.lock": {
+      "sha256": "da23801f588f5f78f90ea7f755fcf38ff6963ac91662f3427ec4b36b2eed9a91",
+      "size": 123976
     },
     "devtools/release/release.py": {
       "sha256": "77e93b67921cc023c7537b21d443c5889c14f887817a10bcb6f6abc8d5366845",

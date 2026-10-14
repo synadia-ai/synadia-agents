@@ -73,7 +73,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        package-id: [py-caller]
+        package-id: [py-caller, py-host]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
