@@ -536,6 +536,24 @@ def rewrite_pyproject(
     return result
 
 
+def stage_python_registry_lock(root: Path, entry: dict[str, Any], phase: str) -> None:
+    if phase == "candidate" and entry.get("registry_lock"):
+        registry_lock = root / entry["registry_lock"]
+        if registry_lock.is_file():
+            shutil.copyfile(registry_lock, root / entry["lock"])
+
+
+def validate_candidate_registry_lock(root: Path, entry: dict[str, Any]) -> None:
+    if entry.get("registry_lock"):
+        registry_lock = root / entry["registry_lock"]
+        if not registry_lock.is_file():
+            fail(f"missing approved Python registry lock: {entry['registry_lock']}")
+        if sha256_file(registry_lock) != sha256_file(root / entry["lock"]):
+            fail(
+                f"staged Python lock differs from approved registry lock: {entry['id']}"
+            )
+
+
 def stage_release(
     repo: Path, plan_path: Path, versions_path: Path, source: str, output: Path
 ) -> None:
@@ -565,6 +583,7 @@ def stage_release(
             write_json(path, rewritten)
             if license_source := entry.get("stage_license_from"):
                 shutil.copyfile(temp / license_source, path.parent / "LICENSE")
+
             descriptor = entry.get("plugin_descriptor")
             if descriptor:
                 descriptor_path = temp / descriptor
@@ -586,6 +605,8 @@ def stage_release(
                 target.unlink()
             if license_source := entry.get("stage_license_from"):
                 shutil.copyfile(temp / license_source, path.parent / "LICENSE")
+
+            stage_python_registry_lock(temp, entry, phase)
 
         marker = {
             "schema_version": 1,
@@ -717,17 +738,24 @@ def validate_python_lock(
     # Let uv validate the entire solution, not only internal edges. This catches
     # stale or incompatible external resolutions while remaining offline and
     # incapable of rewriting the approved lock.
-    run(
-        [
-            "uv",
-            "lock",
-            "--check",
-            "--offline",
-            "--project",
-            str(package_dir(entry)),
-        ],
-        cwd=root,
-    )
+    command = [
+        "uv",
+        "lock",
+        "--check",
+        "--offline",
+        "--project",
+        str(package_dir(entry)),
+    ]
+    policy_path = root / "devtools/release/cooldown-policy.json"
+    if not policy_path.is_file():
+        fail("Python registry lock validation requires the cooldown policy file")
+    policy = read_json(policy_path)
+    cutoff = policy.get("external_freeze_cutoff")
+    if not isinstance(cutoff, str) or not cutoff:
+        fail("Python registry lock validation requires an external freeze cutoff")
+    command.extend(["--exclude-newer", cutoff])
+    command.extend(python_cooldown_args(policy, [entry]))
+    run(command, cwd=root)
 
 
 def validate_stage(
@@ -820,6 +848,7 @@ def validate_stage(
                 fail(f"non-exact Python internal requirement {dependencies[name]!r}")
         lock_required = required_lock_ids is None or entry["id"] in required_lock_ids
         if require_registry_locks and lock_required and entry["role"] == "publishable":
+            validate_candidate_registry_lock(root, entry)
             validate_python_lock(root, entry, versions)
 
     qualifier = " with registry locks" if require_registry_locks else ""
@@ -832,6 +861,11 @@ def freeze_paths(repo: Path, plan: dict[str, Any]) -> list[str]:
         *[entry["path"] for entry in plan["python"]],
         *[entry["lock"] for entry in plan["npm"] if entry.get("lock")],
         *[entry["lock"] for entry in plan["python"] if entry.get("lock")],
+        *[
+            entry["registry_lock"]
+            for entry in plan["python"]
+            if entry.get("registry_lock")
+        ],
         "devtools/release/plan.json",
         "devtools/release/release.py",
         "devtools/release/python-build-constraints.txt",
@@ -1397,7 +1431,8 @@ def python_cooldown_args(
     }
     result: list[str] = []
     for name in sorted(set(exclusions) & internal_names):
-        result.extend(["--exclude-newer-package", f"{name}=9999-12-31T23:59:59Z"])
+        # The pinned Linux uv rejects the maximum year-9999 timestamp.
+        result.extend(["--exclude-newer-package", f"{name}=2100-01-01T00:00:00Z"])
     return result
 
 
