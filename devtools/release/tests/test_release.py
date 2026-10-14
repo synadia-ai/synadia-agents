@@ -369,6 +369,11 @@ class ValidationTests(unittest.TestCase):
     def test_python_lock_validation_delegates_complete_solution_to_uv(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            policy_file = root / "devtools/release/cooldown-policy.json"
+            policy_file.parent.mkdir(parents=True)
+            policy_file.write_text(
+                json.dumps({"external_freeze_cutoff": "2026-10-07T00:00:00Z"})
+            )
             package = root / "package"
             package.mkdir()
             (package / "uv.lock").write_text(
@@ -401,6 +406,8 @@ source = { editable = \".\" }
                     "--offline",
                     "--project",
                     "package",
+                    "--exclude-newer",
+                    "2026-10-07T00:00:00Z",
                 ],
                 cwd=root,
             )
@@ -456,6 +463,15 @@ source = { registry = "https://pypi.org/simple" }
                 release.validate_python_lock(
                     root, entry, {"synadia-ai-agents": "0.8.0"}
                 )
+            policy_file.unlink()
+            with (
+                mock.patch.object(release, "run") as execute,
+                self.assertRaisesRegex(release.ReleaseError, "cooldown policy file"),
+            ):
+                release.validate_python_lock(
+                    root, entry, {"synadia-ai-agents": "0.8.0"}
+                )
+            execute.assert_not_called()
 
     def test_python_artifact_smoke_covers_every_supported_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
