@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import importlib.util
 import io
+import json
 import tarfile
 import tempfile
 import unittest
@@ -403,6 +404,58 @@ source = { editable = \".\" }
                 ],
                 cwd=root,
             )
+
+    def test_python_lock_cutoff_exempts_only_the_selected_first_party_edge(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "package").mkdir()
+            (root / "package/uv.lock").write_text("""version = 1
+[[package]]
+name = "root-package"
+version = "1.0.0"
+source = { editable = "." }
+[package.metadata]
+requires-dist = [{ name = "synadia-ai-agents", specifier = "==0.8.0" }]
+[[package]]
+name = "synadia-ai-agents"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+""")
+            policy_file = root / "devtools/release/cooldown-policy.json"
+            policy_file.parent.mkdir(parents=True)
+            policy = {
+                "external_freeze_cutoff": "2026-10-07T00:00:00Z",
+                "python_internal_exclusions": [
+                    "synadia-ai-agents",
+                    "synadia-ai-agent-service",
+                ],
+            }
+            policy_file.write_text(json.dumps(policy))
+            entry = {
+                "id": "root",
+                "name": "root-package",
+                "path": "package/pyproject.toml",
+                "lock": "package/uv.lock",
+                "internal_edges": ["synadia-ai-agents"],
+            }
+            with mock.patch.object(release, "run") as execute:
+                release.validate_python_lock(
+                    root, entry, {"synadia-ai-agents": "0.8.0"}
+                )
+            command = execute.call_args.args[0]
+            self.assertIn("2026-10-07T00:00:00Z", command)
+            self.assertIn("synadia-ai-agents=9999-12-31T23:59:59Z", command)
+            self.assertNotIn("synadia-ai-agent-service=9999-12-31T23:59:59Z", command)
+            policy.pop("external_freeze_cutoff")
+            policy_file.write_text(json.dumps(policy))
+            with self.assertRaisesRegex(
+                release.ReleaseError, "requires an external freeze cutoff"
+            ):
+                release.validate_python_lock(
+                    root, entry, {"synadia-ai-agents": "0.8.0"}
+                )
 
     def test_python_artifact_smoke_covers_every_supported_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

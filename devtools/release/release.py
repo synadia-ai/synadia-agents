@@ -749,9 +749,11 @@ def validate_python_lock(
     policy_path = root / "devtools/release/cooldown-policy.json"
     if policy_path.is_file():
         policy = read_json(policy_path)
-        if cutoff := policy.get("external_freeze_cutoff"):
-            command.extend(["--exclude-newer", cutoff])
-            command.extend(python_cooldown_args(policy, [entry]))
+        cutoff = policy.get("external_freeze_cutoff")
+        if not isinstance(cutoff, str) or not cutoff:
+            fail("Python registry lock validation requires an external freeze cutoff")
+        command.extend(["--exclude-newer", cutoff])
+        command.extend(python_cooldown_args(policy, [entry]))
     run(command, cwd=root)
 
 

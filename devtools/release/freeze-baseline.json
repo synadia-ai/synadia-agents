@@ -157,8 +157,8 @@
       "size": 120755
     },
     "devtools/release/release.py": {
-      "sha256": "e7ee1793d3aa254a135a1f5c658b401fe748dd7e75dc1c27da20f9929c023d72",
-      "size": 74890
+      "sha256": "db2c8c4e340ac126db728e444ac09586ac6e4ede030037725fc95a08680f380a",
+      "size": 75018
     },
     "devtools/release/versions.json": {
       "sha256": "a80a3f1a0af7d589609a1d0fd93e41ee69b031863db43a1f04a6057a508c6903",
