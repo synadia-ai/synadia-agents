@@ -163,3 +163,10 @@ the source test jobs. Prepare each downstream registry lock only after its
 exact upstream version is on PyPI. The candidate preflight checks the lock
 with the same external cutoff and scoped first-party exceptions used by
 artifact installation; a missing or stale registry lock still fails.
+
+The release rehearsal also runs the actual candidate preflight and artifact
+installation path for its explicit Python candidate matrix. It starts with
+`py-caller`; add `py-host` when its upstream release and approved registry
+lock are ready. These checks install Python before the offline lock check,
+as both Python publication workflows do. The rehearsal version graph alone
+does not exercise the candidate registry-lock gate.
