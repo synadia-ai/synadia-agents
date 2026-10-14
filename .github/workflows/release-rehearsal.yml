@@ -66,6 +66,44 @@ jobs:
       - name: Verify frozen dependency inputs
         run: python3 devtools/release/release.py freeze check
 
+  python-candidates:
+    name: Candidate ${{ matrix.package-id }} wheel/sdist
+    needs: validate
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: true
+      matrix:
+        package-id: [py-caller]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.11"
+      - name: Install interpreter before offline lock checks
+        run: uv python install 3.11
+      - name: Qualify prepared candidate artifacts
+        run: |
+          python3 devtools/release/release.py stage \
+            --source "$GITHUB_SHA" \
+            --versions devtools/release/versions.json \
+            --output "$RUNNER_TEMP/candidate-stage"
+          python3 devtools/release/release.py publication-preflight \
+            --stage "$RUNNER_TEMP/candidate-stage" \
+            --package-id "${{ matrix.package-id }}"
+          python3 devtools/release/release.py build-python \
+            --stage "$RUNNER_TEMP/candidate-stage" \
+            --package-id "${{ matrix.package-id }}" \
+            --output "$RUNNER_TEMP/candidate-artifacts"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.package-id }}-candidate-${{ github.sha }}
+          path: ${{ runner.temp }}/candidate-artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
   npm-artifacts:
     name: Build and test npm artifacts
     needs: validate

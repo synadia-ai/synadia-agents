@@ -69,6 +69,9 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: "3.11"
 
+      - name: Install interpreter before offline lock checks
+        run: uv python install 3.11
+
       - name: Verify tag and stage candidate
         run: |
           tag_version="${GITHUB_REF_NAME#python-agent-service-v}"

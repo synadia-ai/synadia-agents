@@ -5,20 +5,20 @@
       "size": 8973
     },
     ".github/workflows/release-python-agent-service.yml": {
-      "sha256": "dd4ea202103012f5dcf752cc1f1dadecc1abe573641fab78ffb33127f1f491a1",
-      "size": 5597
+      "sha256": "32e58675c36c70a44762c343b08e6ba520acf2e0eabe64ee66147c30c3bb50ea",
+      "size": 5695
     },
     ".github/workflows/release-python-deerflow.yml": {
       "sha256": "75b138b7bd772bb62582c2456bfa43b3828035ad0c77195ee3f22406a2432813",
       "size": 4927
     },
     ".github/workflows/release-python.yml": {
-      "sha256": "244bc1207e298af901c0b74697bd658d45804c626ca599bb4fe4253dbcb342d1",
-      "size": 5561
+      "sha256": "16281f4513e1ba08be536edf444e865e5309b4259fc63d7c43537ae2c799b8f6",
+      "size": 5659
     },
     ".github/workflows/release-rehearsal.yml": {
-      "sha256": "d749ddda96b481151167c166a070dc97a9c12040efc76bad9cbf6640b876c18c",
-      "size": 5469
+      "sha256": "b8e672e2a7de8ea2fd3f7982981b69d2aaf7bac24eea97d764f6a6cf7869959d",
+      "size": 7018
     },
     ".github/workflows/rollout-ci-summary.yml": {
       "sha256": "be74c44ee4ba3ea36470ca73914c8393744c43d9d5e8bf18bd4360cf136aab3e",
@@ -29,7 +29,7 @@
       "size": 3577
     },
     "agent-sdk/python/uv.lock": {
-      "sha256": "d92b9ddcd8ca168b98619405e9702fbc72ca6c90d22c0623fd19fe949c643afb",
+      "sha256": "9e2aa85d32930a6f78616ae1b789e62b906d9a7bb58cd00ae16dc10f115d6d68",
       "size": 123857
     },
     "agent-sdk/typescript/bun.lock": {
@@ -69,7 +69,7 @@
       "size": 2595
     },
     "agents/deerflow/uv.lock": {
-      "sha256": "71c69e4e3f8b3d9287e70a98e3297bb1ebf88a3d5a791c792ae5811db189a067",
+      "sha256": "36e25f6325ae5a862815a40b4c0663ebe2c329bca2e2372a2db981d618993e95",
       "size": 135577
     },
     "agents/eve/bun.lock": {
@@ -121,11 +121,11 @@
       "size": 1436
     },
     "client-sdk/python/pyproject.toml": {
-      "sha256": "e293366da6c2b687127462b65c5f24e4420fe311d715924726c50ea704da291f",
+      "sha256": "b7ac31b038c07590803a8eb4ac5768a561ba86ac39ad7861699d1cee76581a1b",
       "size": 3409
     },
     "client-sdk/python/uv.lock": {
-      "sha256": "ede3983765d225ccd2afe838bdd3d43f162da74d27fd7c74678a507a49395676",
+      "sha256": "26e6fa49465f762840e30f1c0178ea3375bf2ce7d65e55cc57de8dcbc3562034",
       "size": 120705
     },
     "client-sdk/typescript/bun.lock": {
@@ -153,7 +153,7 @@
       "size": 173
     },
     "devtools/release/registry-locks/py-caller.uv.lock": {
-      "sha256": "b9486c4263258f144eb465cc38472a6f0f96da7eefa3be6e31bc17b1646bdc8d",
+      "sha256": "0375f28284cb2ffc8a9ed87439a140e50d0ad9bde7d0ad9a0aef7b2a54b626d4",
       "size": 120755
     },
     "devtools/release/release.py": {
@@ -161,7 +161,7 @@
       "size": 75151
     },
     "devtools/release/versions.json": {
-      "sha256": "a80a3f1a0af7d589609a1d0fd93e41ee69b031863db43a1f04a6057a508c6903",
+      "sha256": "fad34f88783a025590fdcd52c51241256af3a44fd595df98a1e13380a4259507",
       "size": 747
     },
     "devtools/release/versions.rehearsal.json": {

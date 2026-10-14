@@ -8,6 +8,14 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-14
+
+The 0.8.0 tag stopped before upload because its artifact job had no Python interpreter
+for the offline lock check. The publication workflows now install that
+interpreter explicitly, and CI qualifies candidate artifacts before tagging.
+No runtime change was made to correct that release failure. This release
+includes the changes below and the earlier 0.8.0 candidate changes.
+
 ### Added
 
 - **`HeartbeatEndpoint.subject` must be non-empty.** An empty declared

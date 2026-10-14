@@ -14,7 +14,7 @@
     "@synadia-ai/nats-pi-headless": "0.5.5",
     "@synadia-ai/grok-nats-channel": "0.1.0",
     "claude-channel-nats": "0.6.0",
-    "synadia-ai-agents": "0.8.0",
+    "synadia-ai-agents": "0.8.1",
     "synadia-ai-agent-service": "0.5.0",
     "synadia-ai-nats-deerflow-channel": "0.2.0"
   }
