@@ -72,6 +72,9 @@ jobs:
       - name: Install interpreter before offline lock checks
         run: uv python install 3.11
 
+      - name: Install verified broker for artifact protocol checks
+        run: bash devtools/release/install-test-broker.sh "$NATS_SERVER_VERSION" "$NATS_SERVER_SHA256" "$RUNNER_TEMP/service-build-broker"
+
       - name: Verify tag and stage candidate
         run: |
           tag_version="${GITHUB_REF_NAME#python-agent-service-v}"
@@ -118,6 +121,9 @@ jobs:
         with:
           name: py-host-release-${{ github.sha }}
           path: ${{ runner.temp }}/python-artifacts
+
+      - name: Install verified broker for downloaded artifact checks
+        run: bash devtools/release/install-test-broker.sh "$NATS_SERVER_VERSION" "$NATS_SERVER_SHA256" "$RUNNER_TEMP/service-verify-broker"
 
       - run: |
           python3 devtools/release/release.py verify-python-artifacts \

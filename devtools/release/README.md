@@ -170,3 +170,10 @@ installation path for its explicit Python candidate matrix. It starts with
 lock are ready. These checks install Python before the offline lock check,
 as both Python publication workflows do. The rehearsal version graph alone
 does not exercise the candidate registry-lock gate.
+
+Service artifact checks also run an actual NATS request/response. Each CI
+runner that builds or verifies them must install the test broker; the
+source job's installation does not carry into another job. The shared
+`install-test-broker.sh` verifies the pinned archive and binary version in
+a new explicit directory, then adds its binary directory to GitHub's path.
+Its refusal controls are registered in `tests/test_install_broker.py`.

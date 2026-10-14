@@ -5,8 +5,8 @@
       "size": 8973
     },
     ".github/workflows/release-python-agent-service.yml": {
-      "sha256": "32e58675c36c70a44762c343b08e6ba520acf2e0eabe64ee66147c30c3bb50ea",
-      "size": 5695
+      "sha256": "ab4089ba37cb444dd5036898d0276b1c4f2188ff7f84611e85201fc438d571f0",
+      "size": 6112
     },
     ".github/workflows/release-python-deerflow.yml": {
       "sha256": "75b138b7bd772bb62582c2456bfa43b3828035ad0c77195ee3f22406a2432813",
@@ -17,8 +17,8 @@
       "size": 5659
     },
     ".github/workflows/release-rehearsal.yml": {
-      "sha256": "3f55cd5b42f9af29b292a9cec5a3417b51997af0947674183dc3b4e2dfcaea29",
-      "size": 7027
+      "sha256": "3409852c0f28d867e1c8f6387dd7e13237866bda8b89b1752a3e35ac41b1d54e",
+      "size": 7229
     },
     ".github/workflows/rollout-ci-summary.yml": {
       "sha256": "be74c44ee4ba3ea36470ca73914c8393744c43d9d5e8bf18bd4360cf136aab3e",
@@ -140,6 +140,10 @@
       "sha256": "6a55c0312a45feeeb3eb30e8779b424392f8b86fab9199fa6f85367aa887f439",
       "size": 878
     },
+    "devtools/release/install-test-broker.sh": {
+      "sha256": "c9fb76c463ac187882a8d51840c0a947333360816584f6a88634f21c3f4e81cb",
+      "size": 1564
+    },
     "devtools/release/plan.json": {
       "sha256": "83d89c775ebcb12f3aa4ce59e57092ea47df832b191bbc8ce00d6153a4db7626",
       "size": 11450
@@ -161,8 +165,8 @@
       "size": 123976
     },
     "devtools/release/release.py": {
-      "sha256": "77e93b67921cc023c7537b21d443c5889c14f887817a10bcb6f6abc8d5366845",
-      "size": 75151
+      "sha256": "dbd77cc17470772422bcbf7714b56660e296be733ea7614502a433eb33767723",
+      "size": 75202
     },
     "devtools/release/versions.json": {
       "sha256": "fad34f88783a025590fdcd52c51241256af3a44fd595df98a1e13380a4259507",
