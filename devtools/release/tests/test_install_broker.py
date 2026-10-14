@@ -31,6 +31,15 @@ class BrokerInstallationTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 2)
             self.assertEqual(marker.read_bytes(), b"preserve existing files")
+            linked_output = root / "linked-output"
+            linked_output.symlink_to(output, target_is_directory=True)
+            result = subprocess.run(
+                ["bash", str(SCRIPT), "2.12.7", "0" * 64, str(linked_output)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(marker.read_bytes(), b"preserve existing files")
 
     def test_wrong_download_digest_cannot_install_or_change_github_path(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -165,9 +165,9 @@ with the same external cutoff and scoped first-party exceptions used by
 artifact installation; a missing or stale registry lock still fails.
 
 The release rehearsal also runs the actual candidate preflight and artifact
-installation path for its explicit Python candidate matrix. It starts with
-`py-caller`; add `py-host` when its upstream release and approved registry
-lock are ready. These checks install Python before the offline lock check,
+installation path for its explicit Python candidate matrix: `py-caller`
+and `py-host`. Both now have approved registry locks. These checks install
+Python before the offline lock check,
 as both Python publication workflows do. The rehearsal version graph alone
 does not exercise the candidate registry-lock gate.
 

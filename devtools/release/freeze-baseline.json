@@ -5,16 +5,16 @@
       "size": 8973
     },
     ".github/workflows/release-python-agent-service.yml": {
-      "sha256": "ab4089ba37cb444dd5036898d0276b1c4f2188ff7f84611e85201fc438d571f0",
-      "size": 6112
+      "sha256": "9e5aeb90194f126f85e46ad67bdeebf0f48961912095cdb46d5c179fa9a5591b",
+      "size": 6143
     },
     ".github/workflows/release-python-deerflow.yml": {
       "sha256": "75b138b7bd772bb62582c2456bfa43b3828035ad0c77195ee3f22406a2432813",
       "size": 4927
     },
     ".github/workflows/release-python.yml": {
-      "sha256": "16281f4513e1ba08be536edf444e865e5309b4259fc63d7c43537ae2c799b8f6",
-      "size": 5659
+      "sha256": "341c956ca156facb28048792beee76b4cf40ead70e13c5a32917ab0420f21957",
+      "size": 5690
     },
     ".github/workflows/release-rehearsal.yml": {
       "sha256": "3409852c0f28d867e1c8f6387dd7e13237866bda8b89b1752a3e35ac41b1d54e",

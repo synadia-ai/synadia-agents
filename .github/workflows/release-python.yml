@@ -7,6 +7,9 @@ on:
     tags:
       - "python-v*"
 
+permissions:
+  contents: read
+
 concurrency:
   group: release-python-${{ github.ref }}
   cancel-in-progress: false
