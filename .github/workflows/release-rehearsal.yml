@@ -97,7 +97,7 @@ jobs:
             --stage "$RUNNER_TEMP/candidate-stage" \
             --package-id "${{ matrix.package-id }}" \
             --output "$RUNNER_TEMP/candidate-artifacts"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.package-id }}-candidate-${{ github.sha }}
           path: ${{ runner.temp }}/candidate-artifacts/
@@ -144,7 +144,7 @@ jobs:
             --stage "$RUNNER_TEMP/release-stage" \
             --output "$RUNNER_TEMP/npm-artifacts"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-release-rehearsal-${{ github.sha }}
           path: ${{ runner.temp }}/npm-artifacts/
@@ -189,7 +189,7 @@ jobs:
             --stage "$RUNNER_TEMP/release-stage" \
             --output "$RUNNER_TEMP/python-artifacts"
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-release-rehearsal-${{ github.sha }}
           path: ${{ runner.temp }}/python-artifacts/
