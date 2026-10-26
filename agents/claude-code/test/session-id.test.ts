@@ -6,18 +6,21 @@
 // the turn, which make the hook refuse the turn's first stop.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   TOOL_USE_MAX_AGE_MS,
+  channelPrompt,
   claudePid,
   clearOpenRequests,
+  eventsFilePath,
   finalText,
   hooksActive,
   nudgeFilePath,
   openFilePath,
+  readEvents,
   readOpenRequests,
   readSessionRecord,
   readTurnActivity,
@@ -128,6 +131,89 @@ describe('recordHookEvent: what each hook writes', () => {
       tool_input: { address: 'a', prompt: 'p' },
     }, 3000)).toBe('tool')
     expect(readdirSync(toolUsesDir(stateDir, PID))).toEqual(['toolu_01ABC'])
+  })
+
+  test('the events log: a channel message\'s submit carries its request, typed text none, and no text is written', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const submit = (prompt: string, promptId: string | undefined, now: number) =>
+      recordHookEvent(stateDir, PID, {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION,
+        ...(promptId !== undefined ? { prompt_id: promptId } : {}),
+        prompt,
+      }, now)
+    expect(submit('TYPED-SECRET say OK', 'p1', 10)).toBe('submit')
+    expect(submit(`<channel source="${CHANNEL}" request_id="3" session="s" ts="t">CHANNEL-SECRET`, 'p1', 20)).toBe('submit')
+    // Another channel plugin's message: its request is never ours.
+    submit('<channel source="plugin:other:telegram" request_id="1">OTHER-SECRET', 'p2', 30)
+    // A tag without both attributes, or a request id that is a path: none either.
+    submit(`<channel source="${CHANNEL}">x`, 'p2', 40)
+    submit(`<channel source="${CHANNEL}" request_id="../x">x`, 'p2', 41)
+    // No prompt id: the line still goes in, without one.
+    submit('/mhello', undefined, 50)
+    const text = readFileSync(eventsFilePath(stateDir, PID), 'utf8')
+    expect(text).not.toContain('SECRET')
+    expect(text).not.toContain('mhello')
+    expect(text.trim().split('\n')).toHaveLength(6)
+    expect(readEvents(stateDir, PID)).toEqual([
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p1', atMs: 10 } },
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p1', requestId: '3', source: CHANNEL, atMs: 20 } },
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p2', atMs: 30 } },
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p2', atMs: 40 } },
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p2', atMs: 41 } },
+      { kind: 'submit', submit: { sessionId: SESSION, atMs: 50 } },
+    ])
+  })
+
+  test('the events log: a recorded Stop, whole, and a StopFailure; a refused Stop is no line', () => {
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'Stop',
+      session_id: SESSION,
+      prompt_id: 'p1',
+      background_tasks: [],
+      session_crons: [],
+    }, 100)
+    // A refused stop records its text for the next one, and nothing else.
+    recordRefusedStop(stateDir, PID, { hook_event_name: 'Stop', session_id: SESSION, prompt_id: 'p2' }, 150)
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'StopFailure',
+      session_id: SESSION,
+      prompt_id: 'p2',
+      error: 'rate_limit',
+      last_assistant_message: 'FAILED-SECRET',
+    }, 200)
+    expect(readEvents(stateDir, PID)).toEqual([
+      { kind: 'stop', stop: { sessionId: SESSION, promptId: 'p1', background: false, atMs: 100 } },
+      { kind: 'failure', failure: { sessionId: SESSION, promptId: 'p2', atMs: 200 } },
+    ])
+    expect(readFileSync(eventsFilePath(stateDir, PID), 'utf8')).not.toContain('SECRET')
+    // A StopFailure is not a Stop: `.stop` holds the first one still.
+    expect(readTurnStop(source)).toEqual({ sessionId: SESSION, background: false, atMs: 100 })
+  })
+
+  test('the events log: a line still being written, or a malformed one, is not read', () => {
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: 'p1', prompt: 'x' }, 10)
+    appendFileSync(eventsFilePath(stateDir, PID), 'not json\n{"event":"stop","at_ms":"soon"}\n{"event":"submit","at_ms":20')
+    expect(readEvents(stateDir, PID)).toEqual([
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p1', atMs: 10 } },
+    ])
+  })
+
+  test('channelPrompt reads the tag only', () => {
+    expect(channelPrompt('<channel source="plugin:p:nats" request_id="12">hi')).toEqual({
+      requestId: '12',
+      source: 'plugin:p:nats',
+    })
+    for (const prompt of [
+      'hi <channel source="plugin:p:nats" request_id="1">',
+      '<channel source="nats" request_id="1">',
+      '<channel request_id="1" source="plugin:p:natsx">',
+      `<channel source="plugin:p:nats" ${'x'.repeat(2000)} request_id="1">`,
+      '<channel source="plugin:p:nats" request_id="1"',
+      42,
+    ]) {
+      expect(channelPrompt(prompt)).toBeUndefined()
+    }
   })
 
   test('malformed input writes nothing: a bad session id, a tool-use id that is a path, another event', () => {
@@ -284,21 +370,21 @@ describe('takeToolUse: the PreToolUse id reaches the call it was recorded for', 
   test('matches the MCP tool name by its last segment and removes the record', () => {
     record('toolu_1', 'mcp__plugin_nats-channel_nats__discover_agents', {}, 1000)
     expect(takeToolUse(source, 'prompt_agent', {}, 1001)).toBeUndefined()
-    expect(takeToolUse(source, 'discover_agents', {}, 1001)).toBe('toolu_1')
+    expect(takeToolUse(source, 'discover_agents', {}, 1001)?.toolUseId).toBe('toolu_1')
     expect(takeToolUse(source, 'discover_agents', {}, 1002)).toBeUndefined()
   })
 
   test('parallel calls of one tool each get the id whose input matches their arguments', () => {
     record('toolu_a', 'mcp__nats__prompt_agent', { address: 'x', prompt: 'one' }, 1000)
     record('toolu_b', 'mcp__nats__prompt_agent', { prompt: 'two', address: 'y' }, 1001)
-    expect(takeToolUse(source, 'prompt_agent', { address: 'y', prompt: 'two' }, 1002)).toBe('toolu_b')
-    expect(takeToolUse(source, 'prompt_agent', { address: 'x', prompt: 'one' }, 1002)).toBe('toolu_a')
+    expect(takeToolUse(source, 'prompt_agent', { address: 'y', prompt: 'two' }, 1002)?.toolUseId).toBe('toolu_b')
+    expect(takeToolUse(source, 'prompt_agent', { address: 'x', prompt: 'one' }, 1002)?.toolUseId).toBe('toolu_a')
   })
 
   test('without an input match the oldest record of the tool wins', () => {
     record('toolu_new', 'mcp__nats__prompt_agent', { prompt: 'n' }, 2000)
     record('toolu_old', 'mcp__nats__prompt_agent', { prompt: 'o' }, 1000)
-    expect(takeToolUse(source, 'prompt_agent', { prompt: 'other' }, 2001)).toBe('toolu_old')
+    expect(takeToolUse(source, 'prompt_agent', { prompt: 'other' }, 2001)?.toolUseId).toBe('toolu_old')
   })
 
   test('stale records are dropped, not handed to a later call', () => {
@@ -309,6 +395,19 @@ describe('takeToolUse: the PreToolUse id reaches the call it was recorded for', 
 
   test('no directory means no id', () => {
     expect(takeToolUse(source, 'prompt_agent', {})).toBeUndefined()
+  })
+
+  test('the record names the turn that made the call, when Claude Code gave its prompt id', () => {
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'PreToolUse',
+      tool_use_id: 'toolu_p',
+      tool_name: 'mcp__nats__prompt_agent',
+      tool_input: {},
+      prompt_id: 'p7',
+    }, 1000)
+    record('toolu_none', 'mcp__nats__discover_agents', {}, 1000)
+    expect(takeToolUse(source, 'prompt_agent', {}, 1001)).toEqual({ toolUseId: 'toolu_p', promptId: 'p7' })
+    expect(takeToolUse(source, 'discover_agents', {}, 1001)).toEqual({ toolUseId: 'toolu_none' })
   })
 })
 
@@ -322,7 +421,7 @@ describe('sweepDeadSessions', () => {
     }
     sweepDeadSessions(stateDir)
     expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual(
-      [`${process.pid}`, `${process.pid}.stop`, `${process.pid}.turn`, `${process.pid}.tools`].sort(),
+      [`${process.pid}`, `${process.pid}.stop`, `${process.pid}.events`, `${process.pid}.turn`, `${process.pid}.tools`].sort(),
     )
   })
 })
@@ -353,6 +452,74 @@ describe('watchSessionEvents: the hooks as the extensions\' events', () => {
         // A Stop without a session id is the current session's.
         'stopped next 50',
       ])
+    } finally {
+      watcher.stop()
+    }
+  })
+
+  test('the events log and the latest tool call: each line once, whole lines only, in the order of their times', () => {
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }, 5)
+    // Before start: not reported.
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: 'p0', prompt: 'x' }, 6)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'PreToolUse', session_id: SESSION, prompt_id: 'p0', tool_name: 'Bash' }, 7)
+    const calls: string[] = []
+    const watcher = watchSessionEvents(source, {
+      sessionStarted: (id) => calls.push(`started ${id}`),
+      turnStopped: (id, stop) => calls.push(`stopped ${id ?? '-'} ${stop.promptId ?? '-'} ${stop.atMs}`),
+      promptSubmitted: (submit) => calls.push(`submitted ${submit.promptId ?? '-'} ${submit.requestId ?? '-'} ${submit.atMs}`),
+      turnFailed: (failure) => calls.push(`failed ${failure.promptId ?? '-'} ${failure.atMs}`),
+      turnActivity: (activity) => calls.push(`activity ${activity.promptId ?? '-'} ${activity.atMs}`),
+    }, 60_000)
+    try {
+      expect(calls).toEqual([`started ${SESSION}`])
+      calls.length = 0
+      // Within one poll: a submit, a tool call, a Stop, the next turn's
+      // tool call and its failure. `.turn` keeps only the latest call.
+      recordHookEvent(stateDir, PID, {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION,
+        prompt_id: 'p1',
+        prompt: '<channel source="plugin:nats-channel:nats" request_id="4">hi',
+      }, 10)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'PreToolUse', session_id: SESSION, prompt_id: 'p1', tool_name: 'Bash' }, 11)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', session_id: SESSION, prompt_id: 'p1' }, 20)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'PreToolUse', session_id: SESSION, prompt_id: 'p2', tool_name: 'Bash' }, 30)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'StopFailure', session_id: SESSION, prompt_id: 'p2' }, 40)
+      // A line still being written waits for the next poll.
+      appendFileSync(eventsFilePath(stateDir, PID), '{"event":"submit","prompt_id":"p3","at_ms":50')
+      watcher.poll()
+      expect(calls).toEqual([
+        'submitted p1 4 10',
+        `stopped ${SESSION} p1 20`,
+        'activity p2 30',
+        'failed p2 40',
+      ])
+      appendFileSync(eventsFilePath(stateDir, PID), '}\n')
+      watcher.poll()
+      watcher.poll()
+      expect(calls.slice(4)).toEqual(['submitted p3 - 50'])
+    } finally {
+      watcher.stop()
+    }
+  })
+
+  test('a poll a handler starts reports nothing twice', () => {
+    const calls: string[] = []
+    let watcher: ReturnType<typeof watchSessionEvents> | undefined
+    watcher = watchSessionEvents(source, {
+      sessionStarted: () => undefined,
+      turnStopped: () => undefined,
+      promptSubmitted: (submit) => {
+        calls.push(`submitted ${submit.atMs}`)
+        watcher?.poll()
+      },
+    }, 60_000)
+    try {
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p1', prompt: 'x' }, 10)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p1', prompt: 'y' }, 11)
+      watcher.poll()
+      watcher.poll()
+      expect(calls).toEqual(['submitted 10', 'submitted 11'])
     } finally {
       watcher.stop()
     }
@@ -401,7 +568,7 @@ describe('hooks/session-event.ts: the script Claude Code runs', () => {
       tool_input: { address: 'a', prompt: 'p' },
     }), env)).toEqual({ code: 0, stdout: '' })
     expect(readSessionRecord(source)).toMatchObject({ sessionId: SESSION, source: 'resume' })
-    expect(takeToolUse(source, 'prompt_agent', { address: 'a', prompt: 'p' })).toBe('toolu_hook')
+    expect(takeToolUse(source, 'prompt_agent', { address: 'a', prompt: 'p' })?.toolUseId).toBe('toolu_hook')
   })
 
   test('a stop with an open prompt prints the refusal and records no stop; the stop after it records the refused one\'s text', async () => {

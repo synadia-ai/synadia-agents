@@ -891,7 +891,7 @@ async function run(): Promise<void> {
         const name = request.params.name;
         // The PreToolUse hook recorded the model's id for this call before
         // Claude Code sent it; it goes to the helper only.
-        const toolCallId = takeToolUse(sessionSource, name, args);
+        const toolCallId = takeToolUse(sessionSource, name, args)?.toolUseId;
         const choice = chooseRequest(args, activeRequest, lastActiveRequestId);
         if (choice.kind === "inactive") {
           return {

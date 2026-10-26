@@ -58,6 +58,18 @@ describe('TurnLedger: a prompt delivered to a quiet Claude Code owns the turn it
     })
   })
 
+  test('a Stop older than one already counted counts not at all', () => {
+    const turns = ledger()
+    // The read of `.stop` saw the later Stop first; the log's earlier one
+    // arrives after it and must not end the new prompt's turn.
+    turns.observeStop(idleStop(100))
+    expect(turns.delivered('1', view(idleStop(150)), 200)).toBe(true)
+    turns.observeStop(idleStop(120))
+    turns.observeStop(idleStop(150))
+    expect(turns.owning()).toEqual(['1'])
+    expect(turns.ownerOf(view(idleStop(150), call('p1', 300)))).toEqual({ kind: 'owner', requestId: '1' })
+  })
+
   test('a forgotten request owns nothing', () => {
     const turns = ledger()
     turns.delivered('1', view(idleStop(100)), 200)

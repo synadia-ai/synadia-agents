@@ -101,9 +101,15 @@ export class TurnLedger {
    */
   constructor(private readonly finished: (requestId: string) => boolean) {}
 
-  /** Count a Stop the watcher or a read saw; the same record counts once. */
+  /**
+   * Count a Stop the watcher or a read saw; the same record counts once,
+   * and one older than the last counted not at all: the watcher reports
+   * every Stop of the hooks' log, and a read of `.stop` may already have
+   * seen a later one.
+   */
   observeStop(stop: StopRecord | undefined): void {
-    if (stop === undefined || stop.atMs === this.lastStop?.atMs) return
+    if (stop === undefined) return
+    if (this.lastStop !== undefined && stop.atMs <= this.lastStop.atMs) return
     for (const d of this.deliveries.values()) {
       if (d.stopsBefore === this.stops) d.firstStop = stop
     }
