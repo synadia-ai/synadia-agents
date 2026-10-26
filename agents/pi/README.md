@@ -20,7 +20,7 @@ Then start PI normally:
 pi
 ```
 
-You should see `Connected to NATS (<server>) as agents.prompt.pi.<you>.<session>` and a footer status line `NATS: agents.prompt.pi.<you>.<session>`.
+You should see `Connected to NATS (<source>) as agents.prompt.pi.<you>.<session>` and a footer status line `NATS: agents.prompt.pi.<you>.<session>`.
 
 ## Configure
 
@@ -58,7 +58,7 @@ Config file lives at `~/.pi/agent/nats-channel.json`:
 
 | Field            | Required | Default                   | Description                                                                                                                                                                                                               |
 | ---------------- | -------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `context`        | no       | —                         | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). When unset, falls back to `$NATS_URL` or, if that's also unset, the built-in `demo.nats.io`.                                                |
+| `context`        | no       | —                         | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). Used only when the environment names no server: `$NATS_CONTEXT`, `$NATS_URL` and `$NATS_CREDS`/`$NATS_CREDENTIALS` all unset. When unset, falls back to `$NATS_URL` or, if that's also unset, the built-in `demo.nats.io`. |
 | `sessionName`    | no       | sanitized basename of CWD | The 5th subject token. Override to give your session a stable, addressable name.                                                                                                                                          |
 | `owner`          | no       | `$USER`                   | The 4th subject token. Override to scope the session to a service account, deployment, or tenant instead of the OS user — sanitized to a legal subject token. The owner env vars (below) take precedence over this field. |
 | `senderIdentity` | no       | `"off"`                   | `"signed"` registers PI with the NATS user identity from the selected connection credentials.                                                                                                                             |
@@ -77,9 +77,9 @@ identity and trust use the NATS-wide variables shown below.
 
 | Variable                | Sets                      | Notes                                                                                                                                                                       |
 | ----------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NATS_CONTEXT`          | `context`                 | Highest precedence — see below.                                                                                                                                             |
-| `NATS_URL`              | raw URL (no auth context) | Used only when `NATS_CONTEXT` and `config.context` are both unset.                                                                                                          |
-| `NATS_CREDS`            | credentials file          | Connects at `NATS_URL` with this file when no context is set, and fails without `NATS_URL`; `NATS_CREDENTIALS` is its alias, `NATS_CREDS` winning; empty means unset.                                    |
+| `NATS_CONTEXT`          | `context`                 | Highest precedence — see below. Set but empty means no context at all, not even `config.context`.                                                                          |
+| `NATS_URL`              | raw URL (no auth context) | Used when `NATS_CONTEXT` is unset or empty; when set, `config.context` is not read. Empty means unset.                                                                      |
+| `NATS_CREDS`            | credentials file          | Connects at `NATS_URL` with this file when no context is selected, and fails without `NATS_URL`; when set, `config.context` is not read. `NATS_CREDENTIALS` is its alias, `NATS_CREDS` winning; empty means unset. |
 | `NATS_SENDER_IDENTITY`  | `senderIdentity`          | `off` or `signed`; overrides the config file.                                                                                                                               |
 | `NATS_MIN_SENDER_TRUST` | `minSenderTrust`          | `any` or `signed`; overrides the config file.                                                                                                                               |
 | `SYNADIA_PI_OWNER`      | `owner`                   | Per-agent override — highest owner precedence.                                                                                                                              |
@@ -95,9 +95,11 @@ identity and trust use the NATS-wide variables shown below.
 ### Resolution order
 
 1. Built-in default — `demo.nats.io`, no auth
-2. `config.context` — wizard-set / hand-edited NATS CLI context
-3. `$NATS_URL` — raw URL fallback (only consulted when no context is set), with `$NATS_CREDS` when it is set
-4. **`$NATS_CONTEXT`** — wins over everything
+2. `config.context` — wizard-set / hand-edited NATS CLI context, used only when the environment names no server
+3. `$NATS_URL` with `$NATS_CREDS` when it is set — an explicit server in the environment beats a remembered context: when either is set, `config.context` is not read
+4. **`$NATS_CONTEXT`** — wins over everything; set but empty, it selects no context at all, so `$NATS_URL` or the default
+
+The start line and `/nats-status` name where the connection came from: `context <name> from NATS_CONTEXT` (with `, NATS_URL unused` when `$NATS_URL` or the credentials are set too), `context <name> from ~/.pi/agent/nats-channel.json`, `$NATS_URL`, or `default`.
 
 For `sessionName`: `$SYNADIA_PI_NAME` > `$SYNADIA_NAME` > `$NATS_SESSION_NAME` (legacy) > `config.sessionName` > CWD-basename default.
 

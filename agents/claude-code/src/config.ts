@@ -83,21 +83,42 @@ export function loadConfig(path: string): NatsChannelConfig {
 /**
  * Resolve configuration without reading any NATS context or credential file.
  *
- * A context wins. Without one, `NATS_URL` and a credentials file from
- * `NATS_CREDS` (or its alias `NATS_CREDENTIALS`) connect directly, so a
- * container needs no context file. Credentials without `NATS_URL` fail
- * rather than go to the public default server.
+ * The connection, in order:
+ *
+ * 1. `NATS_CONTEXT` set and non-empty: that context, whatever else is set.
+ * 2. `NATS_CONTEXT` set but empty: no context, neither the variable's nor
+ *    the config file's.
+ * 3. `NATS_URL`, `NATS_CREDS` or `NATS_CREDENTIALS` set and non-empty: the
+ *    server they name; the config file's `context` is not read. An explicit
+ *    server in the environment beats a remembered context.
+ * 4. Otherwise the config file's `context`.
+ *
+ * Without a context, `NATS_URL` and a credentials file from `NATS_CREDS` (or
+ * its alias `NATS_CREDENTIALS`, `NATS_CREDS` winning) connect directly, so a
+ * container needs no context file; without either, `demo.nats.io`. Empty
+ * means unset. Credentials without `NATS_URL` fail rather than go to the
+ * public default server.
+ *
+ * The label names where the connection came from; `configFile` is the
+ * config file as the label prints it.
  */
 export function resolveRuntimeSettings(
   config: NatsChannelConfig,
   env: NodeJS.ProcessEnv,
+  configFile = 'config.json',
 ): RuntimeSettings {
-  const context = env.NATS_CONTEXT ?? config.context
-  const url = env.NATS_URL
-  const creds = env.NATS_CREDS || env.NATS_CREDENTIALS
+  const url = env.NATS_URL || undefined
+  const creds = env.NATS_CREDS || env.NATS_CREDENTIALS || undefined
+  const direct = url !== undefined || creds !== undefined
+  const fromEnv = env.NATS_CONTEXT !== undefined
+  const context = fromEnv
+    ? env.NATS_CONTEXT || undefined
+    : direct
+      ? undefined
+      : config.context || undefined
   if (!context && creds && !url) {
     throw new Error(
-      'NATS_CREDS/NATS_CREDENTIALS is set without NATS_URL: set NATS_URL to the server the credentials are for',
+      'invalid NATS_CREDS/NATS_CREDENTIALS: set without NATS_URL; set NATS_URL to the server the credentials are for',
     )
   }
   const senderIdentity = enumSetting(
@@ -132,9 +153,9 @@ export function resolveRuntimeSettings(
       ? { context }
       : creds
         ? { url: url as string, creds }
-        : { url: url ?? 'demo.nats.io' },
+        : { url: url || 'demo.nats.io' },
     connectionLabel: context
-      ? `context: ${context}`
+      ? `context ${context} from ${fromEnv ? 'NATS_CONTEXT' : configFile}${fromEnv && direct ? ', NATS_URL unused' : ''}`
       : url
         ? '$NATS_URL'
         : 'default: demo.nats.io',

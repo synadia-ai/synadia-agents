@@ -140,8 +140,11 @@ const QUEUED_PROMPT_TTL_MS = 30 * 60 * 1000;
 // Config / paths
 // ─────────────────────────────────────────────────────────────────────────────
 
-const STATE_DIR = join(homedir(), ".pi", "agent");
+const STATE_DIR_IN_HOME = join(".pi", "agent");
+const STATE_DIR = join(homedir(), STATE_DIR_IN_HOME);
 const CONFIG_FILE = join(STATE_DIR, "nats-channel.json");
+/** The config file as the README names it, `~` for the home folder. */
+const CONFIG_FILE_LABEL = join("~", STATE_DIR_IN_HOME, "nats-channel.json");
 const ATTACHMENTS_ROOT = join(STATE_DIR, "attachments");
 const DEFAULT_NATS_URL = "demo.nats.io";
 
@@ -190,31 +193,53 @@ function parseChoice<T extends string>(
 /**
  * Resolve source and independent outgoing-identity/inbound-trust modes.
  *
- * A context wins. Without one, `NATS_URL` and a credentials file from
- * `NATS_CREDS` (or its alias `NATS_CREDENTIALS`) connect directly, so a
- * container needs no context file. Credentials without `NATS_URL` fail
- * rather than go to the public default server.
+ * The connection, in order:
+ *
+ * 1. `NATS_CONTEXT` set and non-empty: that context, whatever else is set.
+ * 2. `NATS_CONTEXT` set but empty: no context, neither the variable's nor
+ *    the config file's.
+ * 3. `NATS_URL`, `NATS_CREDS` or `NATS_CREDENTIALS` set and non-empty: the
+ *    server they name; the config file's `context` is not read. An explicit
+ *    server in the environment beats a remembered context.
+ * 4. Otherwise the config file's `context`.
+ *
+ * Without a context, `NATS_URL` and a credentials file from `NATS_CREDS` (or
+ * its alias `NATS_CREDENTIALS`, `NATS_CREDS` winning) connect directly, so a
+ * container needs no context file; without either, the default server.
+ * Empty means unset. Credentials without `NATS_URL` fail rather than go to
+ * the public default server. The label names where the connection came from.
  */
 export function resolveConnectionSettings(
   config: PiNatsConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): PiConnectionSettings {
-  const context = env.NATS_CONTEXT ?? config.context;
-  const url = env.NATS_URL;
-  const creds = env.NATS_CREDS || env.NATS_CREDENTIALS;
+  const url = env.NATS_URL || undefined;
+  const creds = env.NATS_CREDS || env.NATS_CREDENTIALS || undefined;
+  const direct = url !== undefined || creds !== undefined;
+  const fromEnv = env.NATS_CONTEXT !== undefined;
+  const context = fromEnv
+    ? env.NATS_CONTEXT || undefined
+    : direct
+      ? undefined
+      : config.context || undefined;
+  const contextFrom = fromEnv ? "NATS_CONTEXT" : CONFIG_FILE_LABEL;
   if (!context && creds && !url) {
     throw new Error(
-      "NATS_CREDS/NATS_CREDENTIALS is set without NATS_URL: set NATS_URL to the server the credentials are for",
+      "invalid NATS_CREDS/NATS_CREDENTIALS: set without NATS_URL; set NATS_URL to the server the credentials are for",
     );
   }
   const source: NatsConnectionSource = context
     ? { context }
     : creds
       ? { url: url as string, creds }
-      : { url: url || DEFAULT_NATS_URL };
+      : { url: url ?? DEFAULT_NATS_URL };
   return {
     source,
-    contextLabel: context ?? (url ? "$NATS_URL" : "default"),
+    contextLabel: context
+      ? `context ${context} from ${contextFrom}${fromEnv && direct ? ", NATS_URL unused" : ""}`
+      : url
+        ? "$NATS_URL"
+        : "default",
     senderIdentity: parseChoice(
       "NATS_SENDER_IDENTITY/senderIdentity",
       env.NATS_SENDER_IDENTITY ?? config.senderIdentity,

@@ -117,12 +117,14 @@ async function readBoundUrl() {
 const SERVER_URL = await readBoundUrl();
 console.log(`  (spawned nats-server at ${SERVER_URL})`);
 
-// The harness's resolution chain is `NATS_CONTEXT > config.context >
-// NATS_URL > default`. The PI agent's persisted config (e.g. a developer's
-// `~/.pi/agent/nats-channel.json` pointing at NGS) beats `NATS_URL`, so
-// `NATS_URL` alone isn't enough to redirect the harness here. Write a
-// throwaway NATS context file with the spawned server's URL and point
-// `NATS_CONTEXT` at it — that wins unconditionally.
+// The harness's resolution chain is `NATS_CONTEXT > NATS_URL/NATS_CREDS >
+// config.context > default`: the PI agent's persisted config (e.g. a
+// developer's `~/.pi/agent/nats-channel.json` naming a context) counts only
+// when the environment names no server, and a `NATS_CONTEXT` the invoking
+// shell exports would still win over `NATS_URL`. Write a throwaway NATS
+// context file with the spawned server's URL (and the credentials in the
+// authenticated modes) and point `NATS_CONTEXT` at it — that wins
+// unconditionally.
 const NATS_CONTEXT_DIR = join(homedir(), ".config", "nats", "context");
 mkdirSync(NATS_CONTEXT_DIR, { recursive: true });
 const SMOKE_CONTEXT_NAME = `pi-smoke-${process.pid}`;
