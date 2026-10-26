@@ -51,6 +51,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **An explicit server in the environment beats a remembered context.** The
+  `context` in `~/.pi/agent/nats-channel.json` now counts only when the
+  environment names no server: with `NATS_URL`, `NATS_CREDS` or
+  `NATS_CREDENTIALS` set and non-empty (and `NATS_CONTEXT` unset), PI
+  connects to that server and does not read the file's context. Before, the
+  file's context won, so a stale context could send PI to another server than
+  the one its environment named. `NATS_CONTEXT` still wins over everything,
+  and set but empty it still selects no context at all. Credentials without
+  `NATS_URL` now fail even when the file names a context.
+- The start line, the retry warning and `/nats-status` name where the
+  connection came from: `context <name> from NATS_CONTEXT` (with
+  `, NATS_URL unused` when `NATS_URL` or the credentials are set too),
+  `context <name> from ~/.pi/agent/nats-channel.json`, `$NATS_URL` or
+  `default`. An empty `NATS_CONTEXT` no longer reads as `()`.
 - Migrated protocol hosting to `AgentService`. Sender admission now happens
   before the SDK-owned acknowledgement, while queued PI turns keep a deferred
   `PromptResponse` open until `agent_settled`, expiration, or shutdown. Expired and

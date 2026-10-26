@@ -19,7 +19,7 @@ describe("PI connection settings", () => {
 			),
 		).toMatchObject({
 			source: { context: "from-env" },
-			contextLabel: "from-env",
+			contextLabel: "context from-env from NATS_CONTEXT, NATS_URL unused",
 		});
 	});
 
@@ -59,7 +59,71 @@ describe("PI connection settings", () => {
 		expect(
 			resolveConnectionSettings({}, { NATS_CONTEXT: "prod", NATS_URL: "nats://a:4222", NATS_CREDS: "/c.creds" }).source,
 		).toEqual({ context: "prod" });
-		expect(resolveConnectionSettings({ context: "configured" }, { NATS_CREDS: "/c.creds" }).source).toEqual({ context: "configured" });
+		// The config file's context is not read when the environment names a server.
+		expect(() => resolveConnectionSettings({ context: "configured" }, { NATS_CREDS: "/c.creds" })).toThrow(/without NATS_URL/);
+	});
+
+	test("NATS_URL and credentials in the environment beat the config file's context", () => {
+		expect(
+			resolveConnectionSettings(
+				{ context: "configured" },
+				{ NATS_URL: "tls://connect.example:4222", NATS_CREDS: "/run/secrets/agent.creds" },
+			),
+		).toMatchObject({
+			source: { url: "tls://connect.example:4222", creds: "/run/secrets/agent.creds" },
+			contextLabel: "$NATS_URL",
+		});
+		expect(
+			resolveConnectionSettings({ context: "configured" }, { NATS_URL: "nats://a:4222", NATS_CREDENTIALS: "/b.creds" }).source,
+		).toEqual({ url: "nats://a:4222", creds: "/b.creds" });
+	});
+
+	test("NATS_URL alone beats the config file's context", () => {
+		expect(resolveConnectionSettings({ context: "configured" }, { NATS_URL: "nats://localhost:4223" })).toMatchObject({
+			source: { url: "nats://localhost:4223" },
+			contextLabel: "$NATS_URL",
+		});
+	});
+
+	test("the config file's context counts when the environment names no server", () => {
+		expect(resolveConnectionSettings({ context: "configured" }, {})).toMatchObject({
+			source: { context: "configured" },
+			contextLabel: "context configured from ~/.pi/agent/nats-channel.json",
+		});
+		// Empty variables are unset.
+		expect(
+			resolveConnectionSettings({ context: "configured" }, { NATS_URL: "", NATS_CREDS: "", NATS_CREDENTIALS: "" }),
+		).toMatchObject({
+			source: { context: "configured" },
+			contextLabel: "context configured from ~/.pi/agent/nats-channel.json",
+		});
+	});
+
+	test("NATS_CONTEXT wins over the config file's context and names itself", () => {
+		expect(resolveConnectionSettings({ context: "configured" }, { NATS_CONTEXT: "prod" })).toMatchObject({
+			source: { context: "prod" },
+			contextLabel: "context prod from NATS_CONTEXT",
+		});
+		expect(resolveConnectionSettings({}, { NATS_CONTEXT: "prod", NATS_CREDS: "/c.creds" })).toMatchObject({
+			source: { context: "prod" },
+			contextLabel: "context prod from NATS_CONTEXT, NATS_URL unused",
+		});
+	});
+
+	test("an empty NATS_CONTEXT selects no context, not even the config file's", () => {
+		expect(resolveConnectionSettings({ context: "configured" }, { NATS_CONTEXT: "" })).toMatchObject({
+			source: { url: "demo.nats.io" },
+			contextLabel: "default",
+		});
+		expect(
+			resolveConnectionSettings({ context: "configured" }, { NATS_CONTEXT: "", NATS_URL: "nats://localhost:4222" }),
+		).toMatchObject({
+			source: { url: "nats://localhost:4222" },
+			contextLabel: "$NATS_URL",
+		});
+		expect(() => resolveConnectionSettings({ context: "configured" }, { NATS_CONTEXT: "", NATS_CREDS: "/c.creds" })).toThrow(
+			/without NATS_URL/,
+		);
 	});
 
 	test("signed self identity does not imply signed-only admission", () => {
