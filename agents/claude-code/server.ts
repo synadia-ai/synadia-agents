@@ -103,6 +103,9 @@ const TURN_END_CODE = 500;
 const TURN_END_DESCRIPTION =
   "the Claude Code turn ended without a reply to this prompt";
 const DEFAULT_MAX_PAYLOAD_BYTES = parseHumanBytes(DEFAULT_MAX_PAYLOAD);
+/** The state directory under the home directory when `NATS_STATE_DIR` is not set. */
+const STATE_DIR_IN_HOME = join(".claude", "channels", "nats");
+const CONFIG_FILE_NAME = "config.json";
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT =
   basename(MODULE_DIR) === "runtime" ? dirname(MODULE_DIR) : MODULE_DIR;
@@ -397,8 +400,7 @@ async function run(): Promise<void> {
     join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"),
   );
   const stateDir =
-    process.env.NATS_STATE_DIR ??
-    join(homedir(), ".claude", "channels", "nats");
+    process.env.NATS_STATE_DIR ?? join(homedir(), STATE_DIR_IN_HOME);
   const attachmentRoot = join(stateDir, "attachments");
   mkdirSync(attachmentRoot, { recursive: true });
   // The hooks' files for this Claude Code process (`hooks/session-event.ts`).
@@ -409,14 +411,14 @@ async function run(): Promise<void> {
     parentPid: claudePid(process.env, process.ppid),
   };
 
-  const configFile = join(stateDir, "config.json");
+  const configFile = join(stateDir, CONFIG_FILE_NAME);
   const config = loadConfig(configFile);
   // The label prints NATS_STATE_DIR's path as given, `~` for the default.
   const settings = resolveRuntimeSettings(
     config,
     process.env,
     process.env.NATS_STATE_DIR === undefined
-      ? join("~", ".claude", "channels", "nats", "config.json")
+      ? join("~", STATE_DIR_IN_HOME, CONFIG_FILE_NAME)
       : configFile,
   );
   const owner = resolveOwner(config);
