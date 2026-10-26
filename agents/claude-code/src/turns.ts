@@ -220,7 +220,13 @@ export class TurnTracker {
 
   /** UserPromptSubmit: rules 1 and 2. */
   submitted(submit: SubmitRecord): void {
-    if (submit.promptId === undefined) return
+    if (submit.promptId === undefined) {
+      // No turn to follow, but a line of the log between two channel
+      // submits all the same: they are not taken together (rule 6), as the
+      // Stop hook reads it.
+      if (submit.requestId === undefined) this.#breakBatch()
+      return
+    }
     const promptId = this.#resolve(submit.promptId)
     if (!this.#binding) {
       this.#binding = true
@@ -262,7 +268,7 @@ export class TurnTracker {
     }
     if (this.#current?.promptId === promptId) {
       // Typed text while the turn runs: no channel message joins it later by rule 6.
-      this.#current.batchUntilMs = undefined
+      this.#breakBatch()
       return
     }
     this.#end({ kind: 'next', atMs: submit.atMs })
@@ -280,7 +286,11 @@ export class TurnTracker {
 
   /** A recorded Stop: rules 3 and 4. */
   stopped(stop: StopRecord): void {
-    if (!this.#binding || stop.promptId === undefined) return
+    if (!this.#binding) return
+    if (stop.promptId === undefined) {
+      this.#breakBatch()
+      return
+    }
     const promptId = this.#resolve(stop.promptId)
     const opened = this.#surface(promptId, stop.atMs, stop.sessionId)
     const current = this.#current
@@ -292,7 +302,11 @@ export class TurnTracker {
 
   /** A StopFailure: rules 3 and 4. */
   failed(failure: FailureRecord): void {
-    if (!this.#binding || failure.promptId === undefined) return
+    if (!this.#binding) return
+    if (failure.promptId === undefined) {
+      this.#breakBatch()
+      return
+    }
     const promptId = this.#resolve(failure.promptId)
     const opened = this.#surface(promptId, failure.atMs, failure.sessionId)
     const current = this.#current
@@ -326,6 +340,15 @@ export class TurnTracker {
     this.#end({ kind: 'next', atMs: since })
     this.#beginLocal(promptId, since, sessionId ?? this.hooks.currentSession?.())
     return true
+  }
+
+  /**
+   * Rule 6: no channel submit joins the current turn from here on. Any line
+   * of the log but a channel submit breaks a batch, here as in the Stop
+   * hook's join (`waitingRequests`).
+   */
+  #breakBatch(): void {
+    if (this.#current !== undefined) this.#current.batchUntilMs = undefined
   }
 
   /** The prompt id a record's id names: itself, or the one its message was taken with. */

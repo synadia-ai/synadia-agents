@@ -592,6 +592,8 @@ export function waitingRequests(
   const takenIn = new Map<string, string | undefined>()
   let batch: { promptId: string | undefined; atMs: number; requestIds: string[] } | undefined
   for (const event of events) {
+    // Any line but a channel submit breaks a batch: a Stop, a failure, a
+    // typed submit, a submit without a prompt id (as the turns read it).
     if (event.kind !== 'submit' || event.submit.requestId === undefined) {
       batch = undefined
       continue

@@ -462,3 +462,27 @@ describe('rule 6: channel messages taken together', () => {
     expect(local.calls).toContain('ended pT (local) [] by next at 110')
   })
 })
+
+describe('rule 6: what breaks a batch, as the Stop hook reads it', () => {
+  test('typed text under the running turn\'s id, a submit without a prompt id, or a Stop without one, between two channel submits', () => {
+    const between: Array<[string, (t: TurnTracker) => void]> = [
+      ['typed', (t) => t.submitted(typed('pA', 110))],
+      ['no prompt id', (t) => t.submitted(typed(undefined, 110))],
+      ['a Stop without a prompt id', (t) => t.stopped(stop(undefined, 110))],
+    ]
+    for (const [what, line] of between) {
+      const { tracker, calls } = tracked({ binding: true }, new Set(['1', '2']))
+      tracker.submitted(channel('pA', '1', 100))
+      line(tracker)
+      tracker.submitted(channel('pB', '2', 120))
+      expect([what, calls]).toEqual([
+        what,
+        [
+          `started 1 in pA (served) at 100 ${SESSION}`,
+          'ended pA (served) [1] by next at 120',
+          `started 2 in pB (served) at 120 ${SESSION}`,
+        ],
+      ])
+    }
+  })
+})

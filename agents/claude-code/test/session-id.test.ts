@@ -434,6 +434,26 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pF' })).toContain('"6" is')
   })
 
+  test('by prompt id: typed text, or a submit without a prompt id, between two channel submits keeps them apart', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const channelSubmit = (promptId: string, requestId: string, now: number) =>
+      recordHookEvent(stateDir, PID, {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION,
+        prompt_id: promptId,
+        prompt: `<channel source="${CHANNEL}" request_id="${requestId}">x`,
+      }, now)
+    writeOpenRequests(stateDir, PID, [], process.pid, 100, { openIds: ['1', '2', '3', '4'] })
+    channelSubmit('pA', '1', 1_000)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: 'pA', prompt: 'typed' }, 1_010)
+    channelSubmit('pB', '2', 1_020)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pB' })).toContain('"2" is')
+    channelSubmit('pC', '3', 1_030)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt: 'no id' }, 1_040)
+    channelSubmit('pD', '4', 1_050)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pD' })).toContain('"4" is')
+  })
+
   test('without prompt ids, the server\'s owners decide, as before', () => {
     // A submit without a prompt id, and a Stop without one: the owning set.
     recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt: 'x' }, 10)
