@@ -417,16 +417,40 @@ describe('rule 6: channel messages taken together', () => {
     expect(tracker.turn('d6014bb9')?.requests).toEqual(['1', '2', '3'])
   })
 
-  test('not after the turn ran a tool, not past the window, not after typed text: the next turn, as before', () => {
+  test('the gap is the hooks\' time, not the signal: 1.2 s apart (a slow hook of the user\'s), still one turn', () => {
+    const { tracker, calls } = tracked({ binding: true }, new Set(['1', '2']))
+    tracker.submitted(channel('pA', '1', 100))
+    tracker.submitted(channel('pB', '2', 1_300))
+    tracker.stopped(stop('pB', 1_400))
+    expect(calls).toEqual([
+      `started 1 in pA (served) at 100 ${SESSION}`,
+      'rebound 1 to pB',
+      `started 2 in pB (served) at 1300 ${SESSION}`,
+      'ended pB (served) [1,2] by stop at 1400',
+    ])
+  })
+
+  test('not after the turn ran a tool, not past the bound, not after typed text: the next turn, as before', () => {
     const ran = tracked({ binding: true }, new Set(['1', '2']))
     ran.tracker.submitted(channel('pA', '1', 100))
     ran.tracker.activity(call('pA', 130))
     ran.tracker.submitted(channel('pB', '2', 150))
     expect(ran.calls).toContain('ended pA (served) [1] by next at 150')
+    // Past the bound, which stands in for a lost Stop line.
     const late = tracked({ binding: true }, new Set(['1', '2']))
     late.tracker.submitted(channel('pA', '1', 100))
-    late.tracker.submitted(channel('pB', '2', 1_101))
-    expect(late.calls).toContain('ended pA (served) [1] by next at 1101')
+    late.tracker.submitted(channel('pB', '2', 30_101))
+    expect(late.calls).toContain('ended pA (served) [1] by next at 30101')
+    // A Stop of the first between the two: two turns.
+    const stopped = tracked({ binding: true }, new Set(['1', '2']))
+    stopped.tracker.submitted(channel('pA', '1', 100))
+    stopped.tracker.stopped(stop('pA', 110))
+    stopped.tracker.submitted(channel('pB', '2', 120))
+    expect(stopped.calls).toEqual([
+      `started 1 in pA (served) at 100 ${SESSION}`,
+      'ended pA (served) [1] by stop at 110',
+      `started 2 in pB (served) at 120 ${SESSION}`,
+    ])
     const typedFirst = tracked({ binding: true }, new Set(['1']))
     typedFirst.tracker.submitted(channel('pA', '1', 100))
     typedFirst.tracker.submitted(typed('pT', 120))

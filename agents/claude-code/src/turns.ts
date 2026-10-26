@@ -74,9 +74,10 @@ import {
  *      turn for that very record;
  *   5. at shutdown the current turn ends now;
  *   6. channel messages taken together: a channel submit under a new id
- *      within {@link CHANNEL_BATCH_MS} of the one before, while the served
- *      turn that one began has no other record yet, renames that turn
- *      instead of ending it. Its requests keep their start and are bound to
+ *      that follows the one before with nothing of the served turn that
+ *      one began between (no tool call, Stop, failure or other submit),
+ *      renames that turn instead of ending it; {@link CHANNEL_BATCH_MS}
+ *      only bounds the gap, against a lost Stop line. Its requests keep their start and are bound to
  *      the new id (`promptRebound`), the new request joins, and the earlier
  *      ids name the same turn from then on.
  *
@@ -152,8 +153,7 @@ const ENDED_KEPT = 256
 /** The prefix of a local turn's id: request ids are numbers, so the two never meet. */
 export const LOCAL_TURN_PREFIX = 'local-'
 
-// Rule 6's window, CHANNEL_BATCH_MS, is the Stop hook's too (src/session-id.ts):
-// measured 20 ms apart; a turn interrupted and replaced by hand takes seconds.
+// Rule 6's bound, CHANNEL_BATCH_MS, is the Stop hook's too (src/session-id.ts).
 
 type OpenTurn = {
   promptId: string
@@ -162,7 +162,10 @@ type OpenTurn = {
   sessionId: string | undefined
   requests: string[]
   local?: LocalTurn
-  /** Rule 6: until when a channel submit under a new id is taken with this turn. */
+  /**
+   * Rule 6: until when a channel submit under a new id is taken with this
+   * turn; cleared by anything of the turn but its channel submits.
+   */
   batchUntilMs?: number | undefined
 }
 

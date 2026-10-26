@@ -422,12 +422,15 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     submit('pC', '3', 1_040)
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pC' })).toContain('"1", "2", "3"')
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pA' })).toBeUndefined()
-    // A Stop between, or a gap past the window: separate turns.
+    // A Stop line between two channel submits keeps them apart, however close.
     recordHookEvent(stateDir, PID, { ...idle, prompt_id: 'pC', stop_hook_active: true }, 1_100)
-    submit('pD', '4', 1_200)
+    submit('pD', '4', 1_110)
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pD' })).toContain('"4" is')
-    submit('pE', '5', 5_000)
-    submit('pF', '6', 6_500)
+    // 1.2 s apart (a slow hook of the user's) with nothing between: one turn.
+    submit('pE', '5', 2_310)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pE' })).toContain('"4", "5"')
+    // Past the bound, which stands in for a lost Stop line: apart.
+    submit('pF', '6', 40_000)
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pF' })).toContain('"6" is')
   })
 
