@@ -402,11 +402,13 @@ describe('TurnLedger: an API error (StopFailure) ends the turn\'s prompt at once
   test('by prompt id: the prompt bound to the failed turn ends at once, with the error, never with a final text', () => {
     const turns = ledger()
     turns.startBinding()
-    turns.delivered('1', view(idleStop(100)), 200)
+    // The last Stop before the failure kept a final text: never this turn's.
+    const earlier: StopRecord = { atMs: 100, background: false, finalText: 'the earlier turn\'s answer' }
+    turns.delivered('1', view(earlier), 200)
     turns.bind('1', 'pF')
     turns.observeFailure({ ...billing, promptId: 'pF' })
     turns.turnEnded('pF', { kind: 'failure', failure: { error: 'billing_error', errorDetails: 'Your credit balance is too low.' } })
-    const ended = turns.unanswered(view(idleStop(100)), 501, GRACE)
+    const ended = turns.unanswered(view(earlier), 501, GRACE)
     expect(ended).toEqual([
       {
         requestId: '1',
@@ -423,9 +425,10 @@ describe('TurnLedger: an API error (StopFailure) ends the turn\'s prompt at once
     // '1' owns the turn; '2' arrives while it runs.
     expect(turns.delivered('1', view(idleStop(100)), 200)).toBe(true)
     expect(turns.delivered('2', view(idleStop(100), call('p1', 300)), 400)).toBe(false)
-    // Claude Code fires StopFailure, never Stop: `.stop` still holds the old Stop.
+    // Claude Code fires StopFailure, never Stop: `.stop` still holds the old
+    // Stop, with an earlier turn's final text that must not go to '1'.
     turns.observeFailure(billing)
-    const stopped = view(idleStop(100), call('p1', 300))
+    const stopped = view({ atMs: 100, background: false, finalText: 'the earlier turn\'s answer' }, call('p1', 300))
     expect(turns.unanswered(stopped, 501, GRACE)).toEqual([
       { requestId: '1', reason: 'its turn failed', failure: { error: 'billing_error', errorDetails: 'Your credit balance is too low.' } },
     ])
