@@ -896,11 +896,18 @@ console.log('\n[case 11] a prompt Claude Code takes while the extensions start i
     stderr: 'pipe',
   })
   void new Response(gap.stdout).text()
+  // Its stderr, read as it comes: a chatty channel never blocks on a full
+  // pipe, and a failure below shows what the channel said.
+  let gapStderr = ''
+  void (async () => {
+    const decoder = new TextDecoder()
+    for await (const chunk of gap.stderr) gapStderr += decoder.decode(chunk, { stream: true })
+  })()
   let up = false
   for (let attempt = 0; attempt < 40 && !up; attempt++) {
     up = (await discovery.discover({ timeoutMs: 100, filter: { agent: 'claude-code', owner: OWNER, name: gapName } })).length > 0
   }
-  if (!up) fail('the second channel did not register')
+  if (!up) fail(`the second channel did not register; its stderr:\n${gapStderr}`)
   let took = false
   const chunks = await collectChunks('taken while the extensions start', async chunk => {
     if (took || !chunk.body.includes('"ack"')) return
@@ -923,7 +930,10 @@ console.log('\n[case 11] a prompt Claude Code takes while the extensions start i
   }, `agents.prompt.cc.${OWNER}.${gapName}`)
   const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
   if (chunks.some(chunk => chunk.error) || responses.length !== 1 || responses[0]!.data !== 'the answer taken early') {
-    fail(`the prompt taken while the extensions started got ${JSON.stringify(chunks.map(chunk => chunk.error ?? chunk.body.slice(0, 60)))}`)
+    fail(
+      `the prompt taken while the extensions started got ${JSON.stringify(chunks.map(chunk => chunk.error ?? chunk.body.slice(0, 60)))}; ` +
+        `the second channel's stderr:\n${gapStderr}`,
+    )
   }
   // SIGTERM, which the channel handles as a shutdown; then gone for sure.
   gap.kill()
