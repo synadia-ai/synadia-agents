@@ -43,7 +43,7 @@ describe('resolveRuntimeSettings', () => {
       },
     )).toEqual({
       connectionSource: { context: 'production' },
-      connectionLabel: 'context: production',
+      connectionLabel: 'context production from NATS_CONTEXT, NATS_URL unused',
       senderIdentity: 'signed',
       minSenderTrust: 'signed',
       permissionMode: 'terminal',
@@ -79,8 +79,78 @@ describe('resolveRuntimeSettings', () => {
   test('a context wins over NATS_URL and NATS_CREDS', () => {
     expect(resolveRuntimeSettings({}, { NATS_CONTEXT: 'prod', NATS_URL: 'nats://a:4222', NATS_CREDS: '/c.creds' }).connectionSource)
       .toEqual({ context: 'prod' })
-    expect(resolveRuntimeSettings({ context: 'configured' }, { NATS_CREDS: '/c.creds' }).connectionSource)
-      .toEqual({ context: 'configured' })
+    // The config file's context is not read when the environment names a server.
+    expect(() => resolveRuntimeSettings({ context: 'configured' }, { NATS_CREDS: '/c.creds' })).toThrow(/without NATS_URL/)
+  })
+
+  test('NATS_URL and credentials in the environment beat the config file\'s context', () => {
+    expect(resolveRuntimeSettings(
+      { context: 'configured' },
+      { NATS_URL: 'tls://connect.example:4222', NATS_CREDS: '/run/secrets/agent.creds' },
+    )).toMatchObject({
+      connectionSource: { url: 'tls://connect.example:4222', creds: '/run/secrets/agent.creds' },
+      connectionLabel: '$NATS_URL',
+    })
+    expect(resolveRuntimeSettings({ context: 'configured' }, { NATS_URL: 'nats://a:4222', NATS_CREDENTIALS: '/b.creds' }).connectionSource)
+      .toEqual({ url: 'nats://a:4222', creds: '/b.creds' })
+  })
+
+  test('NATS_URL alone beats the config file\'s context', () => {
+    expect(resolveRuntimeSettings({ context: 'configured' }, { NATS_URL: 'nats://localhost:4223' })).toMatchObject({
+      connectionSource: { url: 'nats://localhost:4223' },
+      connectionLabel: '$NATS_URL',
+    })
+  })
+
+  test('the config file\'s context counts when the environment names no server, and the label names the file', () => {
+    expect(resolveRuntimeSettings({ context: 'configured' }, {})).toMatchObject({
+      connectionSource: { context: 'configured' },
+      connectionLabel: 'context configured from config.json',
+    })
+    expect(resolveRuntimeSettings({ context: 'configured' }, {}, '~/.claude/channels/nats/config.json')).toMatchObject({
+      connectionSource: { context: 'configured' },
+      connectionLabel: 'context configured from ~/.claude/channels/nats/config.json',
+    })
+    // Empty variables are unset.
+    expect(resolveRuntimeSettings(
+      { context: 'configured' },
+      { NATS_URL: '', NATS_CREDS: '', NATS_CREDENTIALS: '' },
+      '/srv/nats-state/config.json',
+    )).toMatchObject({
+      connectionSource: { context: 'configured' },
+      connectionLabel: 'context configured from /srv/nats-state/config.json',
+    })
+  })
+
+  test('NATS_CONTEXT wins over the config file\'s context and names itself', () => {
+    expect(resolveRuntimeSettings({ context: 'configured' }, { NATS_CONTEXT: 'prod' }, '/x/config.json')).toMatchObject({
+      connectionSource: { context: 'prod' },
+      connectionLabel: 'context prod from NATS_CONTEXT',
+    })
+    expect(resolveRuntimeSettings({}, { NATS_CONTEXT: 'prod', NATS_CREDS: '/c.creds' })).toMatchObject({
+      connectionSource: { context: 'prod' },
+      connectionLabel: 'context prod from NATS_CONTEXT, NATS_URL unused',
+    })
+  })
+
+  test('an empty NATS_CONTEXT selects no context, not even the config file\'s', () => {
+    expect(resolveRuntimeSettings({ context: 'configured' }, { NATS_CONTEXT: '' })).toMatchObject({
+      connectionSource: { url: 'demo.nats.io' },
+      connectionLabel: 'default: demo.nats.io',
+    })
+    expect(resolveRuntimeSettings({ context: 'configured' }, { NATS_CONTEXT: '', NATS_URL: 'nats://localhost:4222' })).toMatchObject({
+      connectionSource: { url: 'nats://localhost:4222' },
+      connectionLabel: '$NATS_URL',
+    })
+    expect(() => resolveRuntimeSettings({ context: 'configured' }, { NATS_CONTEXT: '', NATS_CREDS: '/c.creds' }))
+      .toThrow(/without NATS_URL/)
+  })
+
+  test('an empty NATS_URL is unset: the default server, not the URL ""', () => {
+    expect(resolveRuntimeSettings({}, { NATS_URL: '' })).toMatchObject({
+      connectionSource: { url: 'demo.nats.io' },
+      connectionLabel: 'default: demo.nats.io',
+    })
   })
 
   test('agentTools: blocking by default, the config field, NATS_AGENT_TOOLS winning, empty meaning the default', () => {

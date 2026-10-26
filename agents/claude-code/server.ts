@@ -398,8 +398,16 @@ async function run(): Promise<void> {
     parentPid: claudePid(process.env, process.ppid),
   };
 
-  const config = loadConfig(join(stateDir, "config.json"));
-  const settings = resolveRuntimeSettings(config, process.env);
+  const configFile = join(stateDir, "config.json");
+  const config = loadConfig(configFile);
+  // The label prints NATS_STATE_DIR's path as given, `~` for the default.
+  const settings = resolveRuntimeSettings(
+    config,
+    process.env,
+    process.env.NATS_STATE_DIR === undefined
+      ? join("~", ".claude", "channels", "nats", "config.json")
+      : configFile,
+  );
   const owner = resolveOwner(config);
   const extensions = await loadChannelExtensions(config, {
     owner,
@@ -418,10 +426,8 @@ async function run(): Promise<void> {
   let sessionEvents: SessionEventWatcher | undefined;
 
   try {
-    bundle = await resolveNatsConnectionBundle(settings.connectionSource, {
-      identity: settings.senderIdentity,
-    });
-    bundle.connectionOptions.name = "claude-code-nats-channel";
+    // Before the bundle: a context that cannot be read fails there, and the
+    // source says which context it was and where it came from.
     logEvent("connecting", {
       source: settings.connectionLabel,
       senderIdentity: settings.senderIdentity,
@@ -429,6 +435,10 @@ async function run(): Promise<void> {
       agentTools: settings.agentTools,
       extensions: extensions.names,
     });
+    bundle = await resolveNatsConnectionBundle(settings.connectionSource, {
+      identity: settings.senderIdentity,
+    });
+    bundle.connectionOptions.name = "claude-code-nats-channel";
     nc = await connect(withAgentReconnectDefaults(bundle.connectionOptions));
 
     const identity =
