@@ -23,8 +23,10 @@ import {
   runAgentTool,
   toolNamesFor,
   type ToolCallRequest,
+  type TurnLookup,
 } from '../src/agent-tools.js'
-import type { ServedRequest } from '../src/extensions.js'
+import type { LocalTurn, ServedRequest } from '../src/extensions.js'
+import type { Turn } from '../src/turns.js'
 
 // The helper only stores the client until a tool call needs the bus.
 const offlineAgents = new Agents({ nc: {} as unknown as NatsConnection })
@@ -101,6 +103,70 @@ describe('chooseRequest: request_id, else the last active request', () => {
   })
 })
 
+describe('chooseRequest: without request_id, the turn that made the call', () => {
+  const r1: ToolCallRequest = { served: { id: '1', extras: {} }, enter: (fn) => fn() }
+  const r2: ToolCallRequest = { served: { id: '2', extras: {} }, enter: (fn) => fn() }
+  const r3: ToolCallRequest = { served: { id: '3', extras: {} }, enter: (fn) => fn() }
+  const open = new Map<string, ToolCallRequest>([['1', r1], ['2', r2], ['3', r3]])
+  const active = (id: string): ToolCallRequest | undefined => open.get(id)
+  const typedTurn: LocalTurn = { id: 'local-pT', local: true, sessionId: 's' }
+  const turnsOf = (byId: Record<string, Turn>, current?: Turn): TurnLookup => ({
+    turn: (promptId) => byId[promptId],
+    current: () => current,
+  })
+  const served = (promptId: string, requests: string[]): Turn => ({ promptId, kind: 'served', startedAtMs: 1, requests })
+  const local: Turn = { promptId: 'pT', kind: 'local', startedAtMs: 1, requests: [], local: typedTurn }
+
+  test('2: the call\'s prompt id names a local turn: the call runs in it, even with a request queued', () => {
+    const turns = turnsOf({ pT: local })
+    expect(chooseRequest({}, active, '3', { promptId: 'pT', turns })).toEqual({ kind: 'local', turn: typedTurn })
+  })
+
+  test('2: it names a served turn: its request; with several folded in, the last started that is open', () => {
+    expect(chooseRequest({}, active, '3', { promptId: 'pS', turns: turnsOf({ pS: served('pS', ['1']) }) })).toEqual({
+      kind: 'request',
+      request: r1,
+    })
+    const both = turnsOf({ pS: served('pS', ['1', '2']) })
+    expect(chooseRequest({}, active, '3', { promptId: 'pS', turns: both })).toEqual({ kind: 'request', request: r2 })
+    open.delete('2')
+    try {
+      expect(chooseRequest({}, active, '3', { promptId: 'pS', turns: both })).toEqual({ kind: 'request', request: r1 })
+    } finally {
+      open.set('2', r2)
+    }
+  })
+
+  test('a served turn whose requests have all finished gives none, never the queued request', () => {
+    const done = turnsOf({ pS: served('pS', ['9']) })
+    expect(chooseRequest({}, active, '3', { promptId: 'pS', turns: done })).toEqual({ kind: 'none' })
+    // A turn a channel message started after its request had ended.
+    expect(chooseRequest({}, active, '3', { promptId: 'pE', turns: turnsOf({ pE: served('pE', []) }) })).toEqual({
+      kind: 'none',
+    })
+  })
+
+  test('3: no PreToolUse record, or a prompt id not followed: the turn running now', () => {
+    expect(chooseRequest({}, active, '3', { turns: turnsOf({}, local) })).toEqual({ kind: 'local', turn: typedTurn })
+    expect(chooseRequest({}, active, '3', { promptId: 'pX', turns: turnsOf({}, served('pS', ['1', '2'])) })).toEqual({
+      kind: 'request',
+      request: r2,
+    })
+  })
+
+  test('4: turns not followed (no record, no turn running): the last active request, as before', () => {
+    expect(chooseRequest({}, active, '3', { promptId: 'pX', turns: turnsOf({}) })).toEqual({ kind: 'request', request: r3 })
+    expect(chooseRequest({}, active, '3', {})).toEqual({ kind: 'request', request: r3 })
+  })
+
+  test('1: request_id still wins over the turn', () => {
+    expect(chooseRequest({ request_id: '1' }, active, '3', { promptId: 'pT', turns: turnsOf({ pT: local }) })).toEqual({
+      kind: 'request',
+      request: r1,
+    })
+  })
+})
+
 describe('runAgentTool', () => {
   test('passes the arguments without request_id, the PreToolUse id and the signal, inside aroundToolCall, in the request\'s context', async () => {
     const als = new AsyncLocalStorage<string>()
@@ -139,6 +205,32 @@ describe('runAgentTool', () => {
     }])
     // The wrapper runs in the request's context too.
     expect(wrapped).toEqual([['42', 'prompt_agent', 'request:42']])
+  })
+
+  test('a local turn: no re-entry, and the wrapper is told the turn', async () => {
+    const als = new AsyncLocalStorage<string>()
+    const turn: LocalTurn = { id: 'local-p1', local: true }
+    const seen: Array<[string | undefined, boolean, string | undefined]> = []
+    const result = await als.run('the server\'s own', () =>
+      runAgentTool({
+        tools: {
+          async execute() {
+            return { store: als.getStore() }
+          },
+        },
+        name: 'prompt_agent',
+        args: { address: 'a', prompt: 'p' },
+        request: turn,
+        toolCallId: 'toolu_l',
+        signal: undefined,
+        aroundToolCall: (r, _n, run) => {
+          seen.push([r?.id, r !== undefined && 'local' in r, als.getStore()])
+          return run()
+        },
+      }),
+    )
+    expect(seen).toEqual([['local-p1', true, 'the server\'s own']])
+    expect(result).toEqual({ store: 'the server\'s own' })
   })
 
   test('without a request or a recorded id: the wrapper gets undefined and no toolCallId is passed', async () => {

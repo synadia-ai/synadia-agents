@@ -943,10 +943,19 @@ async function run(): Promise<void> {
 
       if (tools && agentToolNames.has(request.params.name)) {
         const name = request.params.name;
+        // The hooks' records up to this call, so the turn that made it is
+        // known.
+        sessionEvents?.poll();
         // The PreToolUse hook recorded the model's id for this call before
-        // Claude Code sent it; it goes to the helper only.
-        const toolCallId = takeToolUse(sessionSource, name, args)?.toolUseId;
-        const choice = chooseRequest(args, activeRequest, lastActiveRequestId);
+        // Claude Code sent it, and the call's prompt id: the id goes to the
+        // helper only, the prompt id names the turn the call is for.
+        const toolUse = takeToolUse(sessionSource, name, args);
+        const choice = chooseRequest(args, activeRequest, lastActiveRequestId, {
+          ...(toolUse?.promptId !== undefined
+            ? { promptId: toolUse.promptId }
+            : {}),
+          ...(tracker !== undefined ? { turns: tracker } : {}),
+        });
         if (choice.kind === "inactive") {
           return {
             content: [
@@ -963,8 +972,13 @@ async function run(): Promise<void> {
             tools,
             name,
             args,
-            request: choice.kind === "request" ? choice.request : undefined,
-            toolCallId,
+            request:
+              choice.kind === "request"
+                ? choice.request
+                : choice.kind === "local"
+                  ? choice.turn
+                  : undefined,
+            toolCallId: toolUse?.toolUseId,
             signal: extra.signal,
             aroundToolCall: extensions.events.aroundToolCall,
           });
