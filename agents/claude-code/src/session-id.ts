@@ -43,7 +43,10 @@ import { join } from 'node:path'
  *                     "stop", session_id, prompt_id, background?,
  *                     final_text?, at_ms }`, the same as `<pid>.stop`; and
  *                     StopFailure `{ event: "failure", session_id, prompt_id,
- *                     at_ms }`, a turn ended by an API error
+ *                     error, error_details?, at_ms }`, a turn ended by an
+ *                     API error: its type (`billing_error`, `rate_limit`, …)
+ *                     and its details cut to 200 characters, never the
+ *                     turn's text
  *
  * `.stop` and `.turn` hold one record each: the latest. Claude Code's hooks
  * run faster than the server polls (a short turn's submit and Stop are tens
@@ -55,10 +58,21 @@ import { join } from 'node:path'
  *
  * One file goes the other way, written by the server for the Stop hook:
  *
- *   - `<pid>.open`    `{ server_pid, request_ids, at_ms }`, the served
- *                     prompts that own the running turn and are still open.
- *                     At a Stop that would end one of them, the hook refuses
- *                     the stop once and tells the model to reply.
+ *   - `<pid>.open`    `{ server_pid, request_ids, open_ids, since_ms,
+ *                     at_ms }`: `request_ids` the open served prompts the
+ *                     server's ledger says own the running turn, `open_ids`
+ *                     every open served prompt the server has delivered,
+ *                     `since_ms` when the server started. At a Stop that
+ *                     would end one of the prompts waiting for that turn,
+ *                     the hook refuses the stop once and tells the model to
+ *                     reply. Which prompts wait for a turn, the hook works
+ *                     out by itself, never waiting for the server: a short
+ *                     turn's Stop comes before the server's next poll. For
+ *                     a Stop with a prompt id P, once the log holds a
+ *                     submit with a prompt id, they are the `open_ids` whose
+ *                     latest submit in the log since `since_ms` carried P:
+ *                     the UserPromptSubmit hook wrote it before that turn
+ *                     ran. Otherwise `request_ids`.
  *
  * Every file but `.events` is written atomically (a rename), so a reader
  * sees a whole record or the previous one; `.events` is appended to, and a
@@ -207,6 +221,9 @@ const CHANNEL_SOURCE_RE = /^plugin:[^"]+:nats$/
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 // How far into a prompt the opening tag is looked for.
 const CHANNEL_TAG_MAX = 1024
+// A StopFailure's error type and details, as long as they are kept.
+const FAILURE_ERROR_MAX = 64
+export const FAILURE_DETAILS_MAX = 200
 
 /**
  * The request a submitted prompt carries when it is this channel's message:
@@ -224,6 +241,16 @@ export function channelPrompt(prompt: unknown): { requestId: string; source: str
   if (source === undefined || requestId === undefined) return undefined
   if (!CHANNEL_SOURCE_RE.test(source) || !REQUEST_ID_RE.test(requestId)) return undefined
   return { requestId, source }
+}
+
+/**
+ * A StopFailure field as kept: one line, no control characters, at most
+ * `max` characters; `undefined` for anything that is not a non-empty string.
+ */
+function failureText(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = Array.from(value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()).slice(0, max).join('')
+  return text.length > 0 ? text : undefined
 }
 
 /** Append one line to the events log; never through a rename, so no line is lost. */
@@ -263,10 +290,16 @@ export function recordHookEvent(
     return 'submit'
   }
   if (event === 'StopFailure') {
+    // The error's type and details; never the turn's text
+    // (`last_assistant_message`).
+    const error = failureText(input.error, FAILURE_ERROR_MAX)
+    const details = failureText(input.error_details, FAILURE_DETAILS_MAX)
     appendEvent(stateDir, pid, {
       event: 'failure',
       ...(sessionId ? { session_id: sessionId } : {}),
       ...(promptId ? { prompt_id: promptId } : {}),
+      ...(error !== undefined ? { error } : {}),
+      ...(details !== undefined ? { error_details: details } : {}),
       at_ms: now,
     })
     return 'failure'
@@ -284,13 +317,13 @@ export function recordHookEvent(
   if (event === 'Stop') {
     const background = backgroundWork(input)
     // The final text is kept only when a served prompt may still be waiting
-    // for it: the server's file lists one, or cannot be read.
+    // for it: one waits for this turn, or the server's file cannot be read.
     // The text of a stop the hook refused in this turn comes first: a model
     // writes its answer before it is told to reply, and what it writes after
     // that is a reaction to being told.
-    const open = readOpenRequests(stateDir, pid)
+    const waiting = waitingRequests(stateDir, pid, input)
     const text =
-      open === undefined || open.length > 0
+      waiting === undefined || waiting.length > 0
         ? (refusedStopText(stateDir, pid) ?? finalText(input))
         : undefined
     const record = {
@@ -375,9 +408,9 @@ function recordTurnActivity(
  *   - Claude Code is not already continuing after a refused stop
  *     (`stop_hook_active`), so the model is told once per turn;
  *   - the stop says no background work is left, the only stop at which the
- *     server ends the prompt that owned the turn;
- *   - the server's file names open prompts that own the turn, and the
- *     server that wrote it is still running.
+ *     server ends the prompts waiting for the turn;
+ *   - open prompts wait for this turn ({@link waitingRequests}), and the
+ *     server that wrote its file is still running.
  *
  * Anything it cannot tell lets the turn end (fail open): no file, a
  * malformed one, a server gone.
@@ -389,7 +422,7 @@ export function stopRefusal(
 ): string | undefined {
   if (input.hook_event_name !== 'Stop' || input.stop_hook_active === true) return undefined
   if (backgroundWork(input) !== false) return undefined
-  const open = readOpenRequests(stateDir, pid)
+  const open = waitingRequests(stateDir, pid, input)
   if (open === undefined || open.length === 0) return undefined
   const ids = open.map(id => `"${id}"`).join(', ')
   return (
@@ -435,8 +468,10 @@ function refusedStopText(stateDir: string, pid: number | string): string | undef
 }
 
 /**
- * Write the open prompts that own the running turn, for the Stop hook. The
- * server calls this whenever the set changes, and with none at start.
+ * Write the open prompts for the Stop hook: `requestIds` those the ledger
+ * says own the running turn, `open.openIds` every open prompt delivered
+ * (`requestIds` when not given), `open.sinceMs` when the server started.
+ * The server calls this whenever the sets change, and with none at start.
  */
 export function writeOpenRequests(
   stateDir: string,
@@ -444,12 +479,29 @@ export function writeOpenRequests(
   requestIds: readonly string[],
   serverPid: number = process.pid,
   now: number = Date.now(),
+  open: { readonly openIds?: readonly string[]; readonly sinceMs?: number } = {},
 ): void {
   mkdirSync(sessionsDir(stateDir), { recursive: true })
   writeAtomically(
     openFilePath(stateDir, pid),
-    `${JSON.stringify({ server_pid: serverPid, request_ids: requestIds, at_ms: now })}\n`,
+    `${JSON.stringify({
+      server_pid: serverPid,
+      request_ids: requestIds,
+      open_ids: open.openIds ?? requestIds,
+      ...(open.sinceMs !== undefined ? { since_ms: open.sinceMs } : {}),
+      at_ms: now,
+    })}\n`,
   )
+}
+
+/** The server's file for the Stop hook, as read. */
+export type OpenRequests = {
+  /** The open prompts the server's ledger says own the running turn. */
+  readonly requestIds: string[]
+  /** Every open prompt the server has delivered. */
+  readonly openIds: string[]
+  /** When the server started: request ids restart with each server. */
+  readonly sinceMs?: number
 }
 
 /** Remove the server's file, at shutdown. Best effort. */
@@ -458,22 +510,68 @@ export function clearOpenRequests(stateDir: string, pid: number | string): void 
 }
 
 /**
- * The open prompts the server's file names, or `undefined` when it cannot
- * be told: no file, a malformed one, or a server no longer running.
+ * The open prompts the server's file says own the running turn, or
+ * `undefined` when it cannot be told: no file, a malformed one, or a
+ * server no longer running.
  */
 export function readOpenRequests(stateDir: string, pid: number | string): string[] | undefined {
+  return readOpenFile(stateDir, pid)?.requestIds
+}
+
+/** The server's whole file, or `undefined` as {@link readOpenRequests}. */
+export function readOpenFile(stateDir: string, pid: number | string): OpenRequests | undefined {
   const value = readJson(openFilePath(stateDir, pid))
   if (!value) return undefined
   const serverPid = value.server_pid
-  const ids = value.request_ids
+  const ids = requestIdList(value.request_ids)
+  const openIds = value.open_ids === undefined ? ids : requestIdList(value.open_ids)
   if (typeof serverPid !== 'number' || !Number.isSafeInteger(serverPid) || serverPid <= 0) {
     return undefined
   }
-  if (!Array.isArray(ids) || !ids.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id))) {
-    return undefined
-  }
+  if (ids === undefined || openIds === undefined) return undefined
   if (!processAlive(serverPid)) return undefined
-  return ids as string[]
+  const sinceMs = epochMs(value.since_ms)
+  return { requestIds: ids, openIds, ...(sinceMs !== undefined ? { sinceMs } : {}) }
+}
+
+function requestIdList(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every(id => typeof id === 'string' && REQUEST_ID_RE.test(id))
+    ? (value as string[])
+    : undefined
+}
+
+/**
+ * The open prompts the turn a Stop ends leaves without their reply, for the
+ * Stop hook, or `undefined` when the server's file cannot be read (fail
+ * safe: the final text is kept, the stop not refused).
+ *
+ * Once the log holds a submit with a prompt id, and the Stop carries its
+ * turn's prompt id P: the delivered prompts still open whose latest submit
+ * since the server started carried P — the turn they began, or the one
+ * they were folded into. A prompt not yet taken into a turn waits for none.
+ * Otherwise, the prompts the server's ledger says own the turn.
+ */
+export function waitingRequests(
+  stateDir: string,
+  pid: number | string,
+  input: Readonly<Record<string, unknown>>,
+): string[] | undefined {
+  const open = readOpenFile(stateDir, pid)
+  if (open === undefined) return undefined
+  const promptId = isClaudeSessionId(input.prompt_id) ? input.prompt_id : undefined
+  if (promptId === undefined) return open.requestIds
+  const events = readEvents(stateDir, pid)
+  if (!events.some(event => event.kind === 'submit' && event.submit.promptId !== undefined)) {
+    return open.requestIds
+  }
+  // Request ids restart with each server: the latest submit of each wins.
+  const takenIn = new Map<string, string | undefined>()
+  for (const event of events) {
+    if (event.kind !== 'submit' || event.submit.requestId === undefined) continue
+    if (open.sinceMs !== undefined && event.submit.atMs < open.sinceMs) continue
+    takenIn.set(event.submit.requestId, event.submit.promptId)
+  }
+  return open.openIds.filter(id => takenIn.get(id) === promptId)
 }
 
 /**
@@ -566,6 +664,10 @@ export type SubmitRecord = {
 export type FailureRecord = {
   readonly sessionId?: string
   readonly promptId?: string
+  /** The API error's type, as Claude Code named it: `billing_error`, `rate_limit`, … */
+  readonly error?: string
+  /** Its details, cut to {@link FAILURE_DETAILS_MAX} characters. */
+  readonly errorDetails?: string
   readonly atMs: number
 }
 
@@ -672,8 +774,19 @@ export function parseEventLine(line: string): SessionEvent | undefined {
       const stop = stopRecordOf(record)
       return stop ? { kind: 'stop', stop } : undefined
     }
-    case 'failure':
-      return { kind: 'failure', failure: { ...ids, atMs } }
+    case 'failure': {
+      const error = failureText(record.error, FAILURE_ERROR_MAX)
+      const details = failureText(record.error_details, FAILURE_DETAILS_MAX)
+      return {
+        kind: 'failure',
+        failure: {
+          ...ids,
+          ...(error !== undefined ? { error } : {}),
+          ...(details !== undefined ? { errorDetails: details } : {}),
+          atMs,
+        },
+      }
+    }
     default:
       return undefined
   }

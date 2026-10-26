@@ -64,7 +64,11 @@ import {
   writeOpenRequests,
   type SessionIdSource,
 } from "./src/session-id.js";
-import { TurnLedger, type TurnView } from "./src/permission-routing.js";
+import {
+  TurnLedger,
+  turnFailedDescription,
+  type TurnView,
+} from "./src/permission-routing.js";
 import { TurnTracker } from "./src/turns.js";
 import {
   watchSessionEvents,
@@ -386,6 +390,9 @@ async function loadChannelExtensions(
 }
 
 async function run(): Promise<void> {
+  // Request ids restart with each server; the Stop hook reads only the
+  // submits made since this one started.
+  const startedAtMs = Date.now();
   const pluginVersion = loadPluginVersion(
     join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"),
   );
@@ -506,16 +513,25 @@ async function run(): Promise<void> {
       hooksActive: hooksActive(sessionSource),
     });
 
-    // The open prompts that own the running turn, for the Stop hook
-    // (src/session-id.ts): written when the set changes, and at start.
+    // The open prompts, for the Stop hook (src/session-id.ts): those that
+    // own the running turn and every one delivered, written when either
+    // set changes, and at start.
     let openWritten: string | undefined;
     const syncOpenRequests = (): void => {
       if (shuttingDown) return;
       const owning = turns.owning();
-      const key = owning.join(",");
+      const open = turns.open();
+      const key = `${owning.join(",")}|${open.join(",")}`;
       if (key === openWritten) return;
       try {
-        writeOpenRequests(stateDir, sessionSource.parentPid, owning);
+        writeOpenRequests(
+          stateDir,
+          sessionSource.parentPid,
+          owning,
+          process.pid,
+          Date.now(),
+          { openIds: open, sinceMs: startedAtMs },
+        );
         openWritten = key;
       } catch {
         // The hook fails open without the file; the next change retries.
@@ -583,7 +599,7 @@ async function run(): Promise<void> {
     const endUnanswered = (): void => {
       if (pendingRequests.size === 0) return;
       const now = Date.now();
-      for (const { requestId, reason, finalText } of turns.unanswered(
+      for (const { requestId, reason, finalText, failure } of turns.unanswered(
         turnView(),
         now,
         settings.turnStartGraceMs,
@@ -595,6 +611,16 @@ async function run(): Promise<void> {
           pending.answeringWithFinalText
         )
           continue;
+        if (failure !== undefined) {
+          // An API error ended the turn: the caller's error frame names it.
+          const description = turnFailedDescription(failure);
+          logEvent(description, { requestId, sender: pending.sender });
+          pending.ended ??= { outcome: "error", atMs: now, reason: "no_reply" };
+          pending.completion.reject(
+            new RequestRejectedError(TURN_END_CODE, description),
+          );
+          continue;
+        }
         if (finalText !== undefined) {
           logEvent("request answered with the turn's final text", {
             requestId,
@@ -792,6 +818,9 @@ async function run(): Promise<void> {
       readonly input_preview: string;
     }): Promise<"allow" | "deny"> => {
       const tool = params.tool_name;
+      // The hooks' records up to the asking call, so a prompt folded into
+      // the turn just before it is known.
+      sessionEvents?.poll();
       const owner = turns.ownerOf(turnView());
       if (owner.kind === "none") {
         logEvent("permission denied without an owning request", {
@@ -1041,6 +1070,10 @@ async function run(): Promise<void> {
       {
         isOpen: (requestId) => activeRequest(requestId) !== undefined,
         currentSession: () => resolveClaudeSessionId(sessionSource),
+        bindingStarted: () => {
+          logEvent("turns followed by prompt id");
+          turns.startBinding();
+        },
         promptStarted: (requestId, turn, atMs, sessionId) => {
           const pending = pendingRequests.get(requestId);
           if (!pending) return;
@@ -1050,7 +1083,27 @@ async function run(): Promise<void> {
             turn: turn.kind,
             atMs,
           });
+          turns.bind(requestId, turn.promptId);
+          syncOpenRequests();
           startPrompt(pending, atMs, sessionId);
+        },
+        turnEnded: (turn, end) => {
+          turns.turnEnded(
+            turn.promptId,
+            end.kind === "stop"
+              ? { kind: "stop", stop: end.stop }
+              : end.kind === "failure"
+                ? {
+                    kind: "failure",
+                    failure: {
+                      ...(end.error !== undefined ? { error: end.error } : {}),
+                      ...(end.errorDetails !== undefined
+                        ? { errorDetails: end.errorDetails }
+                        : {}),
+                    },
+                  }
+                : { kind: end.kind },
+          );
         },
         localTurnStarted: (turn, atMs) => {
           logEvent("local turn started", { turn: turn.id, atMs });
@@ -1066,13 +1119,22 @@ async function run(): Promise<void> {
         lastStopMs: readTurnStop(sessionSource)?.atMs,
       },
     );
+    if (tracker.binding()) turns.startBinding();
     // The hooks' records: the session, the turns, as the extensions' events.
     sessionEvents = watchSessionEvents(sessionSource, {
       sessionStarted: (sessionId, source) =>
         extensions.events.sessionStarted(sessionId, source),
-      promptSubmitted: (submit) => tracker?.submitted(submit),
-      turnActivity: (activity) => tracker?.activity(activity),
+      promptSubmitted: (submit) => {
+        tracker?.submitted(submit);
+        endUnanswered();
+      },
+      turnActivity: (activity) => {
+        tracker?.activity(activity);
+        endUnanswered();
+      },
       turnFailed: (failure) => {
+        // An API error ends the turn as a Stop would, without final text.
+        turns.observeFailure(failure);
         tracker?.failed(failure);
         endUnanswered();
       },

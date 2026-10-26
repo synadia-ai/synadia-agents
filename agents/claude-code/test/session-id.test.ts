@@ -21,6 +21,7 @@ import {
   nudgeFilePath,
   openFilePath,
   readEvents,
+  readOpenFile,
   readOpenRequests,
   readSessionRecord,
   readTurnActivity,
@@ -182,11 +183,33 @@ describe('recordHookEvent: what each hook writes', () => {
       error: 'rate_limit',
       last_assistant_message: 'FAILED-SECRET',
     }, 200)
+    // The error's details, cut to 200 characters on one line.
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'StopFailure',
+      session_id: SESSION,
+      prompt_id: 'p3',
+      error: 'billing_error',
+      error_details: `Your credit balance is too low.\n${'x'.repeat(300)}`,
+      last_assistant_message: 'FAILED-SECRET',
+    }, 300)
     expect(readEvents(stateDir, PID)).toEqual([
       { kind: 'stop', stop: { sessionId: SESSION, promptId: 'p1', background: false, atMs: 100 } },
-      { kind: 'failure', failure: { sessionId: SESSION, promptId: 'p2', atMs: 200 } },
+      { kind: 'failure', failure: { sessionId: SESSION, promptId: 'p2', error: 'rate_limit', atMs: 200 } },
+      {
+        kind: 'failure',
+        failure: {
+          sessionId: SESSION,
+          promptId: 'p3',
+          error: 'billing_error',
+          errorDetails: `Your credit balance is too low. ${'x'.repeat(168)}`,
+          atMs: 300,
+        },
+      },
     ])
     expect(readFileSync(eventsFilePath(stateDir, PID), 'utf8')).not.toContain('SECRET')
+    // The Stop hook never refuses a failure.
+    writeOpenRequests(stateDir, PID, ['7'])
+    expect(stopRefusal(stateDir, PID, { hook_event_name: 'StopFailure', error: 'billing_error' })).toBeUndefined()
     // A StopFailure is not a Stop: `.stop` holds the first one still.
     expect(readTurnStop(source)).toEqual({ sessionId: SESSION, background: false, atMs: 100 })
   })
@@ -310,6 +333,60 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     recordHookEvent(stateDir, PID, stop, 7000)
     expect(readTurnStop(source)?.finalText).toBeUndefined()
     expect(existsSync(nudgeFilePath(stateDir, PID))).toBe(false)
+  })
+
+  test('by prompt id: a short turn\'s Stop is refused for the prompt it took in, before any server poll; a queued prompt\'s is not', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const submit = (promptId: string, prompt: string, now: number) =>
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
+    // The server delivered '2' while a typed turn ran; its ledger names no owner.
+    writeOpenRequests(stateDir, PID, [], process.pid, 1000, { openIds: ['2'], sinceMs: 500 })
+    submit('pTyped', 'TYPED-L SLOW10', 900)
+    const typedStop = { ...idle, prompt_id: 'pTyped', last_assistant_message: 'the typed answer' }
+    expect(stopRefusal(stateDir, PID, typedStop)).toBeUndefined()
+    recordHookEvent(stateDir, PID, typedStop, 2000)
+    expect(readTurnStop(source)?.finalText).toBeUndefined()
+    // Claude Code takes '2' into a turn of its own, which stops 30 ms later
+    // without a reply: the server has not polled, the hook knows anyway.
+    submit('pNats', `<channel source="${CHANNEL}" request_id="2" session="s">NATS-M say OK`, 2030)
+    const natsStop = { ...idle, prompt_id: 'pNats', last_assistant_message: 'OK' }
+    expect(stopRefusal(stateDir, PID, natsStop)).toContain('"2"')
+    recordHookEvent(stateDir, PID, { ...natsStop, stop_hook_active: true }, 2060)
+    expect(readTurnStop(source)?.finalText).toBe('OK')
+    // Answered: no longer open, no refusal.
+    writeOpenRequests(stateDir, PID, [], process.pid, 2100, { openIds: [], sinceMs: 500 })
+    expect(stopRefusal(stateDir, PID, natsStop)).toBeUndefined()
+  })
+
+  test('by prompt id: a fold binds the prompt to the running turn; the latest submit of a request since the server started wins', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const submit = (promptId: string, prompt: string, now: number) =>
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
+    // A previous server's request '1', taken into pT, before this server started.
+    submit('pT', `<channel source="${CHANNEL}" request_id="1">old`, 100)
+    writeOpenRequests(stateDir, PID, [], process.pid, 600, { openIds: ['1'], sinceMs: 500 })
+    // This server's '1' waits: the stale line binds it to nothing.
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toBeUndefined()
+    // Folded into the running turn pT at its next tool result.
+    submit('pT', `<channel source="${CHANNEL}" request_id="1">new`, 700)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toContain('"1"')
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pOther' })).toBeUndefined()
+    // Another channel plugin's request "1" binds nothing of ours.
+    writeOpenRequests(stateDir, PID, [], process.pid, 800, { openIds: ['1'], sinceMs: 750 })
+    submit('pU', '<channel source="plugin:other:chat" request_id="1">x', 800)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pU' })).toBeUndefined()
+  })
+
+  test('without prompt ids, the server\'s owners decide, as before', () => {
+    // A submit without a prompt id, and a Stop without one: the owning set.
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt: 'x' }, 10)
+    writeOpenRequests(stateDir, PID, ['7'], process.pid, 20, { openIds: ['7', '8'] })
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'p1' })).toContain('"7"')
+    expect(stopRefusal(stateDir, PID, idle)).toContain('"7"')
+    expect(stopRefusal(stateDir, PID, idle)).not.toContain('"8"')
+    // The file as an older server wrote it, without open_ids: the owners are the open ones.
+    writeFileSync(openFilePath(stateDir, PID), JSON.stringify({ server_pid: process.pid, request_ids: ['9'], at_ms: 1 }))
+    expect(readOpenFile(stateDir, PID)).toEqual({ requestIds: ['9'], openIds: ['9'] })
   })
 
   test('the final text: last_assistant_message first, else the transcript\'s last assistant message', () => {

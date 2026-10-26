@@ -710,6 +710,40 @@ console.log('\n[case 7c] a turn that called reply is not refused, and its end ca
   if (ended?.outcome !== 'ok' || ended.reason !== null) fail(`promptEnded was ${JSON.stringify(ended)}`)
 }
 
+console.log('\n[case 7e] a turn that fails on an API error ends its prompt at once, naming the error')
+{
+  await turnStop()
+  let requestId = ''
+  let failedAt = 0
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      await toolCall('prompt-7e')
+      // Claude Code fires StopFailure instead of Stop; never refused.
+      failedAt = Date.now()
+      const printed = await runHook({
+        hook_event_name: 'StopFailure',
+        session_id: SESSION_ID,
+        prompt_id: 'prompt-7e',
+        error: 'billing_error',
+        error_details: 'Your credit balance is too low to access the Anthropic API.',
+        last_assistant_message: 'API Error: 400',
+      })
+      if (printed !== '') fail(`the StopFailure hook printed ${printed}`)
+    },
+  }
+  const chunks = await collectChunks('this turn fails')
+  assertAck(chunks[0])
+  const error = chunks.find(chunk => chunk.error)?.error
+  const named = 'the turn failed on a model API error: billing_error (Your credit balance is too low to access the Anthropic API.)'
+  if (error?.code !== '500' || error.description !== named) fail(`the failed turn's error frame was ${JSON.stringify(error)}`)
+  if (chunks.some(chunk => chunk.body.includes('"type":"response"'))) fail('the failed turn\'s prompt got a response chunk')
+  const endedAfter = (chunks.find(chunk => chunk.error)?.atMs ?? Infinity) - failedAt
+  if (endedAfter > 3000) fail(`the failed turn's prompt ended ${endedAfter} ms after the failure`)
+  const ended = await promptEndedEvent(requestId)
+  if (ended?.outcome !== 'error' || ended.reason !== 'no_reply') fail(`promptEnded was ${JSON.stringify(ended)}`)
+}
+
 console.log('\n[case 8] a prompt delivered during a turn survives its Stop and ends at the grace period')
 {
   await turnStop()

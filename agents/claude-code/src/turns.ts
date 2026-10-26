@@ -83,7 +83,13 @@ export interface Turn {
 /** How a turn ended. */
 export type TurnEnd =
   | { readonly kind: 'stop'; readonly stop: StopRecord }
-  | { readonly kind: 'failure'; readonly atMs: number }
+  | {
+      readonly kind: 'failure'
+      readonly atMs: number
+      /** The API error's type and details, as the hook recorded them. */
+      readonly error?: string
+      readonly errorDetails?: string
+    }
   /** Another turn began without a Stop of this one: an interrupt, or the next turn's record. */
   | { readonly kind: 'next'; readonly atMs: number }
   | { readonly kind: 'shutdown'; readonly atMs: number }
@@ -225,7 +231,12 @@ export class TurnTracker {
     if (current?.promptId !== failure.promptId) return
     if (!opened && failure.atMs <= current.startedAtMs) return
     this.#lastEndMs = failure.atMs
-    this.#end({ kind: 'failure', atMs: failure.atMs })
+    this.#end({
+      kind: 'failure',
+      atMs: failure.atMs,
+      ...(failure.error !== undefined ? { error: failure.error } : {}),
+      ...(failure.errorDetails !== undefined ? { errorDetails: failure.errorDetails } : {}),
+    })
   }
 
   /** Rule 5: the current turn ends now. */
