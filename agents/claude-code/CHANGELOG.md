@@ -98,9 +98,9 @@ All notable changes to the Claude Code NATS channel are documented here.
   grace period. `<pid>.open` adds `open_ids`, every open request delivered, and `since_ms`,
   and the `Stop` hook works out by itself which of them the stopping turn took in, never
   waiting for the server.
-- An agent-tool call without `request_id` runs in the turn that made it, by its prompt id: a
-  channel message's turn in its request (the last one taken in that is still open), a local
-  turn as the local user's. A turn whose requests have all finished runs its calls outside any
+- An agent-tool call without `request_id` runs in the turn that made it, by its prompt id: in
+  the last channel request taken into that turn that is still open (the one that started it, or
+  one folded into it, a typed turn's too), else, for a local turn, as the local user's. A turn whose requests have all finished runs its calls outside any
   request, no longer in the last request delivered. Only a Claude Code that reports no prompt
   ids still gets the last active request.
 - The server's instructions name the channel tag as Claude Code writes it:

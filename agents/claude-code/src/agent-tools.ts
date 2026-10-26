@@ -13,9 +13,13 @@
  * gets one more optional parameter, `request_id`, the inbound channel
  * request the call is made for. When it is omitted, the turn that made the
  * call decides ({@link chooseRequest}): the call's prompt id, from the
- * PreToolUse hook, names its turn (`src/turns.ts`), and a turn a channel
- * message started runs its calls in that request, a local turn (typed at
- * the terminal, or begun by Claude Code itself) in the local turn. The
+ * PreToolUse hook, names its turn (`src/turns.ts`). A turn runs its calls
+ * in the last channel request taken into it that is still open: the one
+ * that started it, or one folded into it, a typed turn's too, so the
+ * agents prompted after a fold hang under the request whose window the
+ * turn's model calls are filed in from the fold. With none open, a local
+ * turn (typed at the terminal, or begun by Claude Code itself) runs them in
+ * the local turn. The
  * call runs re-entered into the request's context: the handler keeps a
  * snapshot of it (`AsyncLocalStorage.snapshot()`), taken after every
  * request interceptor ran, and stays open until `reply` completes the
@@ -125,9 +129,10 @@ export interface ToolCallTurn {
  *
  *   1. the one `request_id` names; one that names no active request is
  *      refused rather than guessed at, as `reply` refuses it;
- *   2. else the turn the call's own prompt id names: a local turn runs the
- *      call in itself; a served turn in the last request taken into it that
- *      is still open;
+ *   2. else the turn the call's own prompt id names: the last request taken
+ *      into it that is still open (the one that started it, or one folded
+ *      into it, a local turn's too); with none open, a local turn runs the
+ *      call in itself;
  *   3. else (no PreToolUse record: dropped after a minute, a permission
  *      dialog left waiting, or a hook that timed out) the turn running now,
  *      the same way;
@@ -136,7 +141,9 @@ export interface ToolCallTurn {
  *
  * A served turn whose requests have all finished gives none: the call runs
  * outside any served prompt, as the local user's own, never in a request
- * that waits for a later turn. So does step 4 with no active request.
+ * that waits for a later turn. So does step 4 with no active request. A
+ * local turn whose folded request has finished runs its calls in itself
+ * again.
  */
 export function chooseRequest(
   args: Readonly<Record<string, unknown>>,
@@ -152,10 +159,10 @@ export function chooseRequest(
   const turn =
     (call.promptId !== undefined ? call.turns?.turn(call.promptId) : undefined) ?? call.turns?.current()
   if (turn !== undefined) {
-    if (turn.local !== undefined) return { kind: 'local', turn: turn.local }
     const open = turn.requests.map((id) => active(id)).filter((r) => r !== undefined)
     const last = open.at(-1)
-    return last !== undefined ? { kind: 'request', request: last } : { kind: 'none' }
+    if (last !== undefined) return { kind: 'request', request: last }
+    return turn.local !== undefined ? { kind: 'local', turn: turn.local } : { kind: 'none' }
   }
   const fallback = lastActiveRequestId !== undefined ? active(lastActiveRequestId) : undefined
   return fallback ? { kind: 'request', request: fallback } : { kind: 'none' }

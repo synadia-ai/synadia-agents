@@ -207,11 +207,12 @@ The `agentTools` setting (`NATS_AGENT_TOOLS` wins over it) picks the set:
 Each agent tool takes one more optional argument, `request_id`: the inbound
 channel request the call is made for. When it is omitted, the turn that
 made the call decides, by the call's prompt id (see [Turns](#turns)): a
-turn a channel message started runs its calls in that request (with several
-taken into one turn, in the last one taken in that is still open), and a
-local turn, typed in the session, runs them as the local user's. A turn
-whose requests have all finished runs its calls outside any request, never
-in one that waits for a later turn. Only a Claude Code that reports no
+turn runs its calls in the last channel request taken into it that is
+still open — the one that started it, or one folded into it, a typed turn
+included, so the agents prompted after a fold belong to that request —
+and with none open, a local turn, typed in the session, runs them as the
+local user's. A served turn whose requests have all finished runs its
+calls outside any request, never in one that waits for a later turn. Only a Claude Code that reports no
 prompt ids falls back to the last active request. A call made for a
 request belongs to it: it runs in that request's context, and the calls it
 started that are still open end when the request completes (`reply` with

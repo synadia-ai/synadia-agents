@@ -122,6 +122,20 @@ describe('chooseRequest: without request_id, the turn that made the call', () =>
     expect(chooseRequest({}, active, '3', { promptId: 'pT', turns })).toEqual({ kind: 'local', turn: typedTurn })
   })
 
+  test('2: a local turn a NATS prompt was folded into: its calls go to that request while it is open, then the turn\'s again', () => {
+    const folded: Turn = { ...local, requests: ['1'] }
+    const turns = turnsOf({ pT: folded }, folded)
+    expect(chooseRequest({}, active, '3', { promptId: 'pT', turns })).toEqual({ kind: 'request', request: r1 })
+    // Step 3, the turn running now, the same way.
+    expect(chooseRequest({}, active, '3', { turns })).toEqual({ kind: 'request', request: r1 })
+    open.delete('1')
+    try {
+      expect(chooseRequest({}, active, '3', { promptId: 'pT', turns })).toEqual({ kind: 'local', turn: typedTurn })
+    } finally {
+      open.set('1', r1)
+    }
+  })
+
   test('2: it names a served turn: its request; with several folded in, the last started that is open', () => {
     expect(chooseRequest({}, active, '3', { promptId: 'pS', turns: turnsOf({ pS: served('pS', ['1']) }) })).toEqual({
       kind: 'request',
