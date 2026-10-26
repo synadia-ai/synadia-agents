@@ -76,8 +76,10 @@ All notable changes to the Claude Code NATS channel are documented here.
   carries the call's prompt id. Until the hook reports a prompt id, and for a Claude Code that
   reports none, a request starts when it is accepted, as before, and no local turn is reported.
   Channel messages Claude Code takes together (one submit each, its own prompt id, one turn under
-  the last) are one turn; a submit's channel tag `ts` keeps an earlier server's message, whose
-  request id may be handed out again, from binding this server's request.
+  the last) are one turn, joined because nothing of that turn came between their submits, not by
+  how fast the hooks ran; a submit's channel tag `ts` keeps an earlier server's message, whose
+  request id may be handed out again, from binding this server's request. The records are read
+  from before the channel can take a prompt, so one taken while it starts is followed too.
 - **An API error ends the request at once.** A turn that fails on a model API error ends with
   `StopFailure`, never `Stop`, so its request waited for its caller's limit. Now it ends at
   once, without final text: the caller's error frame names the error (`the turn failed on a

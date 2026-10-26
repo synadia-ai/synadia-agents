@@ -604,8 +604,11 @@ turn, whose id is `local-<prompt_id>`. A turn ends at its `Stop` or
 when the plugin shuts down. Channel messages that waited together are
 taken together: each fires its own `UserPromptSubmit` with a prompt id of
 its own, about 20 ms apart, and one turn runs them all under the last
-id, so a channel submit within a second of the one before, with nothing
-of that turn between, joins its turn. A message the channel sent before
+id, so a channel submit that follows another with nothing of that turn
+between (no tool call, Stop, failure or other submit) joins its turn,
+however long the hooks took; 30 seconds bound it, against a lost Stop.
+The channel's watcher reads the hooks' records from before the channel
+can take a prompt, so a prompt taken while it starts is followed too. A message the channel sent before
 it last started (a request id an earlier server handed out) belongs to
 none of its requests. Built-in commands (`/help`, `/model`,
 `/clear`) run no turn and fire no submit. Typed text sent while a channel
