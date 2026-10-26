@@ -798,6 +798,10 @@ console.log('\n[case 9] by prompt id: a turn that replies before the server look
   await runHook({ hook_event_name: 'UserPromptSubmit', session_id: SESSION_ID, prompt_id: 'prompt-9a', prompt: 'typed text' })
   await turnStop({ prompt_id: 'prompt-9a' })
   let requestId = ''
+  let stopped!: () => void
+  // The handler's Stop comes after the reply the caller sees: wait for it,
+  // so the next case's hooks run after it, as Claude Code runs them.
+  const turnOver = new Promise<void>(resolve => { stopped = resolve })
   currentCase = {
     replyHandler: async id => {
       requestId = id
@@ -811,9 +815,11 @@ console.log('\n[case 9] by prompt id: a turn that replies before the server look
       })
       await mcp.callTool({ name: 'reply', arguments: { request_id: id, text: 'answered' } })
       await turnStop({ prompt_id: 'prompt-9b' })
+      stopped()
     },
   }
   const chunks = await collectChunks('a short turn')
+  await turnOver
   if (chunks.some(chunk => chunk.error)) fail('the short turn\'s prompt got an error frame')
   await promptEndedEvent(requestId)
   const events = extensionEvents()
@@ -825,6 +831,46 @@ console.log('\n[case 9] by prompt id: a turn that replies before the server look
   for (let i = 0; i < 40 && !extensionEvents().some(e => e.event === 'localTurnEnded' && e.id === 'local-prompt-9a'); i++) await Bun.sleep(50)
   if (!extensionEvents().some(e => e.event === 'localTurnStarted' && e.id === 'local-prompt-9a')) fail('the typed turn was no local turn')
   if (!extensionEvents().some(e => e.event === 'localTurnEnded' && e.id === 'local-prompt-9a')) fail('the typed turn\'s local turn did not end')
+}
+
+console.log('\n[case 10] by prompt id: channel messages taken together are one turn, each answered with its final text')
+{
+  // Three prompts wait; Claude Code takes them together: a submit each,
+  // under a prompt id of its own, one after another, then one turn under
+  // the last id. No reply: the Stop is refused once for all three, and the
+  // turn's final text answers each.
+  const ids: string[] = []
+  let allDelivered!: () => void
+  const delivered = new Promise<void>(resolve => { allDelivered = resolve })
+  currentCase = {
+    replyHandler: async id => {
+      ids.push(id)
+      if (ids.length === 3) allDelivered()
+    },
+  }
+  const collecting = Promise.all(['batch one', 'batch two', 'batch three'].map(text => collectChunks(text)))
+  await delivered
+  for (const [i, id] of ids.entries()) {
+    await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: SESSION_ID,
+      prompt_id: `prompt-10${'abc'[i]}`,
+      prompt: `<channel source="plugin:nats-channel:nats" request_id="${id}" session="${NAME}" ts="${new Date().toISOString()}">batch`,
+    })
+  }
+  const refused = await turnStop({ prompt_id: 'prompt-10c', last_assistant_message: 'the batch answer' })
+  for (const id of ids) assertRefused(refused, id, 'the batch\'s first stop')
+  await turnStop({ prompt_id: 'prompt-10c', stop_hook_active: true, last_assistant_message: 'the batch answer' })
+  for (const [i, chunks] of (await collecting).entries()) {
+    const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+    if (chunks.some(chunk => chunk.error) || responses.length !== 1 || responses[0]!.data !== 'the batch answer') {
+      fail(`batch prompt ${i + 1} got ${JSON.stringify(chunks.map(chunk => chunk.error ?? chunk.body.slice(0, 60)))}`)
+    }
+  }
+  for (const id of ids) {
+    const ended = await promptEndedEvent(id)
+    if (ended?.outcome !== 'ok' || ended.reason !== 'final_text') fail(`promptEnded for batch request ${id} was ${JSON.stringify(ended)}`)
+  }
 }
 
 console.log('\n[case 6] shutdown settles an open deferred request')
