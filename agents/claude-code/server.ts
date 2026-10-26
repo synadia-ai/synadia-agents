@@ -942,12 +942,14 @@ async function run(): Promise<void> {
 
     mcp.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+      // The hooks' records up to this call: the turn that made it, and a
+      // prompt Claude Code took into that turn, are known before a request
+      // is chosen for it or settled by it. A short turn's submit, reply and
+      // Stop come within one of the watcher's polls.
+      sessionEvents?.poll();
 
       if (tools && agentToolNames.has(request.params.name)) {
         const name = request.params.name;
-        // The hooks' records up to this call, so the turn that made it is
-        // known.
-        sessionEvents?.poll();
         // The PreToolUse hook recorded the model's id for this call before
         // Claude Code sent it, and the call's prompt id: the id goes to the
         // helper only, the prompt id names the turn the call is for.

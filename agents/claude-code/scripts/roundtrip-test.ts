@@ -69,6 +69,9 @@ export default function (ctx) {
     started: () => log({ event: 'started' }),
     events: {
       promptAccepted: (r) => log({ event: 'promptAccepted', id: r.id, sessionId: r.sessionId ?? null, extras: r.extras, bound: als.getStore() ?? null }),
+      promptStarted: (r, atMs, sessionId) => log({ event: 'promptStarted', id: r.id, atMs, sessionId: sessionId ?? null }),
+      localTurnStarted: (t) => log({ event: 'localTurnStarted', id: t.id }),
+      localTurnEnded: (t, outcome) => log({ event: 'localTurnEnded', id: t.id, outcome }),
       promptEnded: (r, outcome, _at, reason) => log({ event: 'promptEnded', id: r.id, outcome, reason: reason ?? null }),
       aroundToolCall: (r, tool, run) => { log({ event: 'aroundToolCall', id: r?.id ?? null, tool, bound: als.getStore() ?? null }); return run() },
       sessionStarted: (id, source) => log({ event: 'sessionStarted', id, source }),
@@ -785,6 +788,43 @@ console.log('\n[case 8] a prompt delivered during a turn survives its Stop and e
   }
   const outcome = await promptEndedOutcome(secondId)
   if (outcome !== 'error') fail(`promptEnded for the mid-turn prompt was ${String(outcome)}`)
+}
+
+// From here on Claude Code reports prompt ids: the channel follows its
+// turns by them (src/turns.ts). The cases above pin the fallback.
+console.log('\n[case 9] by prompt id: a turn that replies before the server looks still starts its prompt first')
+{
+  // A typed turn: its submit carries a prompt id, so the turns are followed by id.
+  await runHook({ hook_event_name: 'UserPromptSubmit', session_id: SESSION_ID, prompt_id: 'prompt-9a', prompt: 'typed text' })
+  await turnStop({ prompt_id: 'prompt-9a' })
+  let requestId = ''
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      // Claude Code takes the prompt into a turn of its own and replies at
+      // once: the submit, then the reply, sooner than the server's poll.
+      await runHook({
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION_ID,
+        prompt_id: 'prompt-9b',
+        prompt: `<channel source="plugin:nats-channel:nats" request_id="${id}" session="${NAME}">a short turn`,
+      })
+      await mcp.callTool({ name: 'reply', arguments: { request_id: id, text: 'answered' } })
+      await turnStop({ prompt_id: 'prompt-9b' })
+    },
+  }
+  const chunks = await collectChunks('a short turn')
+  if (chunks.some(chunk => chunk.error)) fail('the short turn\'s prompt got an error frame')
+  await promptEndedEvent(requestId)
+  const events = extensionEvents()
+  const started = events.findIndex(e => e.event === 'promptStarted' && e.id === requestId)
+  const ended = events.findIndex(e => e.event === 'promptEnded' && e.id === requestId)
+  if (started < 0 || ended < started) fail(`promptStarted did not come before promptEnded: ${JSON.stringify(events.slice(-6))}`)
+  if (events[started]?.sessionId !== SESSION_ID) fail(`promptStarted named ${JSON.stringify(events[started]?.sessionId)}`)
+  // The typed turn was a local turn of its own.
+  for (let i = 0; i < 40 && !extensionEvents().some(e => e.event === 'localTurnEnded' && e.id === 'local-prompt-9a'); i++) await Bun.sleep(50)
+  if (!extensionEvents().some(e => e.event === 'localTurnStarted' && e.id === 'local-prompt-9a')) fail('the typed turn was no local turn')
+  if (!extensionEvents().some(e => e.event === 'localTurnEnded' && e.id === 'local-prompt-9a')) fail('the typed turn\'s local turn did not end')
 }
 
 console.log('\n[case 6] shutdown settles an open deferred request')
