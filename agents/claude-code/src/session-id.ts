@@ -37,9 +37,10 @@ import { join } from 'node:path'
  *                     at_ms }`
  *   - `<pid>.events`  an append-only log, one JSON line per event:
  *                     UserPromptSubmit `{ event: "submit", session_id,
- *                     prompt_id, request_id?, source?, at_ms }` (`request_id`
- *                     and `source` for this channel's own messages only,
- *                     never the prompt's text); a recorded Stop `{ event:
+ *                     prompt_id, request_id?, source?, ts?, at_ms }`
+ *                     (`request_id`, `source` and the tag's `ts`, when the
+ *                     server sent the message, for this channel's own
+ *                     messages only, never the prompt's text); a recorded Stop `{ event:
  *                     "stop", session_id, prompt_id, background?,
  *                     final_text?, at_ms }`, the same as `<pid>.stop`; and
  *                     StopFailure `{ event: "failure", session_id, prompt_id,
@@ -221,17 +222,22 @@ const CHANNEL_SOURCE_RE = /^plugin:[^"]+:nats$/
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 // How far into a prompt the opening tag is looked for.
 const CHANNEL_TAG_MAX = 1024
+// The server stamps each channel message with `new Date().toISOString()`.
+const CHANNEL_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/
 // A StopFailure's error type and details, as long as they are kept.
 const FAILURE_ERROR_MAX = 64
 export const FAILURE_DETAILS_MAX = 200
 
 /**
  * The request a submitted prompt carries when it is this channel's message:
- * the `request_id` and `source` of the `<channel …>` tag it begins with, or
- * `undefined` for anything else (typed text, a command, another channel's
- * message, a tag without both attributes). Only the tag is read.
+ * the `request_id` and `source` of the `<channel …>` tag it begins with, and
+ * its `ts`, when the server sent it, or `undefined` for anything else (typed
+ * text, a command, another channel's message, a tag without both
+ * attributes). Only the tag is read.
  */
-export function channelPrompt(prompt: unknown): { requestId: string; source: string } | undefined {
+export function channelPrompt(
+  prompt: unknown,
+): { requestId: string; source: string; ts?: string } | undefined {
   if (typeof prompt !== 'string' || !prompt.startsWith('<channel ')) return undefined
   const end = prompt.indexOf('>')
   if (end < 0 || end > CHANNEL_TAG_MAX) return undefined
@@ -240,7 +246,15 @@ export function channelPrompt(prompt: unknown): { requestId: string; source: str
   const requestId = /\srequest_id="([^"]*)"/.exec(tag)?.[1]
   if (source === undefined || requestId === undefined) return undefined
   if (!CHANNEL_SOURCE_RE.test(source) || !REQUEST_ID_RE.test(requestId)) return undefined
-  return { requestId, source }
+  const ts = /\sts="([^"]*)"/.exec(tag)?.[1]
+  return { requestId, source, ...(ts !== undefined && sentAtMs(ts) !== undefined ? { ts } : {}) }
+}
+
+/** The time a channel tag's `ts` names, in epoch ms, or `undefined` for anything else. */
+function sentAtMs(ts: unknown): number | undefined {
+  if (typeof ts !== 'string' || !CHANNEL_TS_RE.test(ts)) return undefined
+  const ms = Date.parse(ts)
+  return Number.isFinite(ms) ? ms : undefined
 }
 
 /**
@@ -285,6 +299,7 @@ export function recordHookEvent(
       ...(sessionId ? { session_id: sessionId } : {}),
       ...(promptId ? { prompt_id: promptId } : {}),
       ...(channel ? { request_id: channel.requestId, source: channel.source } : {}),
+      ...(channel?.ts !== undefined ? { ts: channel.ts } : {}),
       at_ms: now,
     })
     return 'submit'
@@ -548,8 +563,10 @@ function requestIdList(value: unknown): string[] | undefined {
  * Once the log holds a submit with a prompt id, and the Stop carries its
  * turn's prompt id P: the delivered prompts still open whose latest submit
  * since the server started carried P — the turn they began, or the one
- * they were folded into. A prompt not yet taken into a turn waits for none.
- * Otherwise, the prompts the server's ledger says own the turn.
+ * they were folded into. A message the server sent before it started (an
+ * earlier server's, whose request ids restart at 1 too) is not one of its
+ * prompts. A prompt not yet taken into a turn waits for none. Otherwise,
+ * the prompts the server's ledger says own the turn.
  */
 export function waitingRequests(
   stateDir: string,
@@ -568,7 +585,8 @@ export function waitingRequests(
   const takenIn = new Map<string, string | undefined>()
   for (const event of events) {
     if (event.kind !== 'submit' || event.submit.requestId === undefined) continue
-    if (open.sinceMs !== undefined && event.submit.atMs < open.sinceMs) continue
+    const since = open.sinceMs
+    if (since !== undefined && (event.submit.atMs < since || (event.submit.sentAtMs ?? since) < since)) continue
     takenIn.set(event.submit.requestId, event.submit.promptId)
   }
   return open.openIds.filter(id => takenIn.get(id) === promptId)
@@ -657,6 +675,8 @@ export type SubmitRecord = {
   readonly requestId?: string
   /** The channel tag's `source`, with `requestId`. */
   readonly source?: string
+  /** When the server sent the channel message (its tag's `ts`), in epoch ms. */
+  readonly sentAtMs?: number
   readonly atMs: number
 }
 
@@ -768,7 +788,11 @@ export function parseEventLine(line: string): SessionEvent | undefined {
         CHANNEL_SOURCE_RE.test(record.source)
           ? { requestId: record.request_id, source: record.source }
           : {}
-      return { kind: 'submit', submit: { ...ids, ...channel, atMs } }
+      const sent = channel.requestId !== undefined ? sentAtMs(record.ts) : undefined
+      return {
+        kind: 'submit',
+        submit: { ...ids, ...channel, ...(sent !== undefined ? { sentAtMs: sent } : {}), atMs },
+      }
     }
     case 'stop': {
       const stop = stopRecordOf(record)

@@ -1135,6 +1135,7 @@ async function run(): Promise<void> {
       {
         binding: promptIdsReported(stateDir, sessionSource.parentPid),
         lastStopMs: readTurnStop(sessionSource)?.atMs,
+        sinceMs: startedAtMs,
       },
     );
     if (tracker.binding()) turns.startBinding();

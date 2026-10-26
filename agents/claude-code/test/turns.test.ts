@@ -362,3 +362,28 @@ describe('the turns a call names', () => {
     expect(tracker.boundTo('1')).toBeUndefined()
   })
 })
+
+describe('a channel message of an earlier server', () => {
+  test('sent before this server started, it binds none of this server\'s requests of the same id', () => {
+    // The server restarted at 1000; Claude Code still had the old server's
+    // request "1" queued, and this server has handed out a "1" of its own.
+    const { tracker, calls } = tracked({ binding: true, sinceMs: 1_000 }, new Set(['1']))
+    tracker.submitted({ ...channel('pOld', '1', 1_200), sentAtMs: 900 })
+    tracker.stopped(stop('pOld', 1_300))
+    expect(calls).toEqual(['ended pOld (served) [] by stop at 1300'])
+    expect(tracker.boundTo('1')).toBeUndefined()
+    // This server's own message "1" binds it when Claude Code takes it.
+    tracker.submitted({ ...channel('pNew', '1', 1_400), sentAtMs: 1_100 })
+    expect(calls.slice(1)).toEqual([`started 1 in pNew (served) at 1400 ${SESSION}`])
+    expect(tracker.boundTo('1')).toBe('pNew')
+  })
+
+  test('without the start time or the message\'s, the request binds as before', () => {
+    const { tracker } = tracked({ binding: true }, new Set(['1']))
+    tracker.submitted({ ...channel('pA', '1', 1_200), sentAtMs: 900 })
+    expect(tracker.boundTo('1')).toBe('pA')
+    const other = tracked({ binding: true, sinceMs: 1_000 }, new Set(['1']))
+    other.tracker.submitted(channel('pB', '1', 1_200))
+    expect(other.tracker.boundTo('1')).toBe('pB')
+  })
+})

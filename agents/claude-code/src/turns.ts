@@ -43,10 +43,12 @@ import type { FailureRecord, StopRecord, SubmitRecord, TurnActivity } from './se
  * The rules, in binding mode:
  *
  *   1. a channel submit with prompt id P: when its request is no longer
- *      open (or already started), the turn is a served turn bound to no
- *      request; else, P being the current turn's, the request joins it (a
- *      fold), and otherwise a new served turn P begins, the current one
- *      ending first at the same time. Either way the request starts now;
+ *      open (or already started), or the message was sent before this
+ *      server started (an earlier server's request of the same id), the turn
+ *      is a served turn bound to no request; else, P being the current
+ *      turn's, the request joins it (a fold), and otherwise a new served
+ *      turn P begins, the current one ending first at the same time.
+ *      Either way the request starts now;
  *   2. a typed submit with prompt id P: nothing when P is the current
  *      turn's (the text joins it, or waits and surfaces by rule 3); else a
  *      new local turn P begins, the current one ending first at the same
@@ -112,6 +114,11 @@ export interface TurnTrackerHooks {
 
 /** What the files said when the server started. */
 export interface TurnTrackerStart {
+  /**
+   * When this server started: a channel message sent before it (an earlier
+   * server's, whose request ids restart at 1 too) binds none of its requests.
+   */
+  readonly sinceMs?: number | undefined
   /** The log already holds a submit with a prompt id. */
   readonly binding?: boolean
   /** The last Stop recorded before start. */
@@ -135,6 +142,7 @@ type OpenTurn = {
 
 export class TurnTracker {
   #binding: boolean
+  readonly #sinceMs: number | undefined
   #current: OpenTurn | undefined
   // When the latest turn began, and the latest Stop or failure that ended one.
   #lastStartMs: number | undefined
@@ -148,6 +156,7 @@ export class TurnTracker {
     start: TurnTrackerStart = {},
   ) {
     this.#binding = start.binding === true
+    this.#sinceMs = start.sinceMs
     this.#lastEndMs = start.lastStopMs
   }
 
@@ -189,7 +198,11 @@ export class TurnTracker {
     const sessionId = submit.sessionId ?? this.hooks.currentSession?.()
     const requestId = submit.requestId
     if (requestId !== undefined) {
-      const open = !this.#bound.has(requestId) && this.hooks.isOpen(requestId)
+      // An earlier server's message, still queued in Claude Code, names a
+      // request id this server may have handed out again: it binds none.
+      const stale =
+        this.#sinceMs !== undefined && submit.sentAtMs !== undefined && submit.sentAtMs < this.#sinceMs
+      const open = !stale && !this.#bound.has(requestId) && this.hooks.isOpen(requestId)
       if (this.#current?.promptId !== promptId) {
         this.#end({ kind: 'next', atMs: submit.atMs })
         this.#begin({ promptId, kind: 'served', startedAtMs: submit.atMs, sessionId, requests: [] })

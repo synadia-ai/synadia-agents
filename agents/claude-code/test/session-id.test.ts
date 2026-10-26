@@ -227,6 +227,16 @@ describe('recordHookEvent: what each hook writes', () => {
       requestId: '12',
       source: 'plugin:p:nats',
     })
+    // With the time the server sent it; a ts of another shape is left out.
+    expect(channelPrompt('<channel source="plugin:p:nats" request_id="12" session="s" ts="2026-10-26T12:03:34.511Z">hi')).toEqual({
+      requestId: '12',
+      source: 'plugin:p:nats',
+      ts: '2026-10-26T12:03:34.511Z',
+    })
+    expect(channelPrompt('<channel source="plugin:p:nats" request_id="12" ts="yesterday">hi')).toEqual({
+      requestId: '12',
+      source: 'plugin:p:nats',
+    })
     for (const prompt of [
       'hi <channel source="plugin:p:nats" request_id="1">',
       '<channel source="nats" request_id="1">',
@@ -375,6 +385,26 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     writeOpenRequests(stateDir, PID, [], process.pid, 800, { openIds: ['1'], sinceMs: 750 })
     submit('pU', '<channel source="plugin:other:chat" request_id="1">x', 800)
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pU' })).toBeUndefined()
+  })
+
+  test('by prompt id: an earlier server\'s message of the same request id, taken after the restart, binds nothing', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const tag = (ts: string) => `<channel source="${CHANNEL}" request_id="1" session="s" ts="${ts}">`
+    const submit = (promptId: string, prompt: string, now: number) =>
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
+    const started = Date.parse('2026-10-26T12:00:00.000Z')
+    // This server started at 12:00 and delivered its own "1"; Claude Code
+    // takes the old server's queued "1" first, sent at 11:59.
+    writeOpenRequests(stateDir, PID, [], process.pid, started + 10, { openIds: ['1'], sinceMs: started })
+    submit('pOld', `${tag('2026-10-26T11:59:59.000Z')}old`, started + 20)
+    expect(readEvents(stateDir, PID).at(-1)).toMatchObject({
+      kind: 'submit',
+      submit: { requestId: '1', sentAtMs: Date.parse('2026-10-26T11:59:59.000Z') },
+    })
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pOld' })).toBeUndefined()
+    // This server's "1" is taken next: its turn's Stop is refused for it.
+    submit('pNew', `${tag('2026-10-26T12:00:00.005Z')}new`, started + 40)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pNew' })).toContain('"1"')
   })
 
   test('without prompt ids, the server\'s owners decide, as before', () => {
