@@ -205,12 +205,19 @@ The `agentTools` setting (`NATS_AGENT_TOOLS` wins over it) picks the set:
 | `off` | none |
 
 Each agent tool takes one more optional argument, `request_id`: the inbound
-channel request the call is made for, the last active request when it is
-omitted. A call made for a request belongs to it: it runs in that request's
-context, and the calls it started that are still open end when the request
-completes (`reply` with `done=true`). A call made while no request is active
-is the local user's and lives as long as the session. A `request_id` that
-names no active request is refused.
+channel request the call is made for. When it is omitted, the turn that
+made the call decides, by the call's prompt id (see [Turns](#turns)): a
+turn a channel message started runs its calls in that request (with several
+taken into one turn, in the last one taken in that is still open), and a
+local turn, typed in the session, runs them as the local user's. A turn
+whose requests have all finished runs its calls outside any request, never
+in one that waits for a later turn. Only a Claude Code that reports no
+prompt ids falls back to the last active request. A call made for a
+request belongs to it: it runs in that request's context, and the calls it
+started that are still open end when the request completes (`reply` with
+`done=true`). A call made outside any request is the local user's and
+lives as long as the session. A `request_id` that names no active request
+is refused.
 
 When a prompted agent asks a question, it comes back as the tool's result
 for the model to answer with `answer_agent`. The channel's own address is
@@ -257,9 +264,28 @@ Nats-Service-Error: the Claude Code turn ended without a reply to this prompt
 ```
 
 A caller using the SDK's agent tools sees its `prompt_agent` call fail with
-that description. When the request ends depends on whether the plugin
-knows which turn was the request's (see [Which caller is
-asked](#which-caller-is-asked)); both rest on the [hooks](#hooks):
+that description. When the request ends depends on which turn was the
+request's (see [Turns](#turns)); it rests on the [hooks](#hooks).
+
+**By prompt id**, once Claude Code's `UserPromptSubmit` hook has reported
+a prompt id, a request belongs to the turn Claude Code took it into, and
+ends with that turn:
+
+- at the turn's `Stop` with no background tasks or session crons left:
+  nudged first, then answered with the final text, else the error above;
+- at a `Stop` with background work left: by the grace period below;
+- at a `StopFailure` (an API error, below): at once, with an error that
+  names it;
+- when the next turn began without a `Stop` (an interrupt): at once, with
+  the error above.
+
+A request Claude Code has not taken into a turn yet waits behind the
+running one: that turn's `Stop` neither refuses nor answers it, and its
+own turn comes after. A request never taken into a turn is ended by the
+grace period below.
+
+**Without prompt ids** (a Claude Code that does not report them), the
+plugin guesses:
 
 - **The request owned its turn** (delivered while Claude Code was quiet):
   it is ended at that turn's `Stop`, when the `Stop` says no background
@@ -274,6 +300,21 @@ asked](#which-caller-is-asked)); both rest on the [hooks](#hooks):
   to outlast the model's first reply; a turn that starts in time keeps the
   request open, and the grace period runs again from that turn's `Stop`.
 
+**An API error.** Claude Code ends a turn that fails on a model API error
+(`billing_error`, `rate_limit`, `overloaded`, …) with `StopFailure`, never
+`Stop`. Its request ends at once, with no final text, and its error frame
+names the error and, when Claude Code gave them, its details:
+
+```
+Nats-Service-Error-Code: 500
+Nats-Service-Error: the turn failed on a model API error: billing_error (Your credit balance is too low to access the Anthropic API.)
+```
+
+The plugin logs the same line, and the extensions hear `promptEnded` with
+the outcome `error` and the reason `no_reply`. Without prompt ids, a
+failure ends the request that owned the turn at once, and counts as a
+`Stop` for any other request's grace period.
+
 A request answered with the final text is logged as `request answered
 with the turn's final text`, and the [extensions](#extensions) hear
 `promptEnded` with the outcome `ok` and the reason `final_text`. A request
@@ -284,8 +325,14 @@ refused as not active.
 
 The hook learns that a request is open from a file the server writes,
 `<state dir>/sessions/<pid>.open` (`{ "server_pid", "request_ids",
-"at_ms" }`), the requests that own the running turn, rewritten whenever
-that set changes and removed at shutdown. The hook fails open: without the
+"open_ids", "since_ms", "at_ms" }`): the requests the server says own the
+running turn, every open request it delivered, and when it started;
+rewritten whenever either set changes and removed at shutdown. By prompt
+id the hook works out by itself which open requests the stopping turn
+took in: those whose latest `UserPromptSubmit` in `<pid>.events` since the
+server started carried the `Stop`'s prompt id. It never waits for the
+server, whose next look at the files can come after a short turn's `Stop`.
+The hook fails open: without the
 file, with a malformed one, or when the server that wrote it is no longer
 running, it lets the turn end; and it gives up after 5 seconds, well inside
 its 10-second timeout. The request TTL stays the last guard: without the hooks, or in
@@ -330,9 +377,15 @@ request.
 
 A question goes to the caller of the turn that asked it, never to a
 newer prompt. Claude Code's permission request does not name its turn,
-so the plugin works it out from its [hooks](#hooks): the `Stop` hook
-marks the end of each turn, and the `PreToolUse` hook records the prompt
-id of every tool call, which Claude Code runs before it asks. A NATS
+so the plugin works it out from its [hooks](#hooks): the `PreToolUse` hook
+records the prompt id of every tool call, which Claude Code runs before it
+asks. By prompt id (see [Turns](#turns)), a NATS request owns the turn
+Claude Code took it into, and a question goes to the one open request of
+the asking call's turn: with none (a local turn) or several (requests
+folded into one turn), it is denied. A request queued behind the running
+turn owns nothing in it.
+
+Without prompt ids, the `Stop` hook marks the end of each turn, and a NATS
 request owns a turn when it was delivered while Claude Code was quiet —
 the last turn had stopped with no background tasks or session crons left,
 no tool call since, and no other request that might still be waiting to
@@ -365,10 +418,11 @@ chooses deny:
   `Stop`), or runs without the plugin's hooks, gets every question denied.
 - A turn interrupted from the terminal may end without a `Stop`; until
   the next one, new requests own nothing.
-- One race stays open the other way: a turn the local user starts in the
-  terminal, before its first tool call, looks quiet to the plugin, so a
-  request arriving in that moment is taken to start the next turn. The
-  terminal shows that user the same permission dialog.
+- Without prompt ids, one race stays open the other way: a turn the local
+  user starts in the terminal, before its first tool call, looks quiet to
+  the plugin, so a request arriving in that moment is taken to start the
+  next turn. By prompt id the typed turn is known from its submit, and the
+  race is gone.
 
 A caller that cancels its prompt but keeps its NATS connection open
 still looks present: the protocol has no cancel message (§6.7), and the
@@ -514,21 +568,53 @@ The channel can load extension modules that add behaviour around it:
 interceptors for its client and service, keys for its registration
 metadata, extensions for its agent tools, and handlers for the session's
 events. The plugin's hooks
-(`hooks/hooks.json`) record the session id at `SessionStart`, the turn's
-end at `Stop` and the tool-call id at `PreToolUse` under
+(`hooks/hooks.json`) record the session id at `SessionStart`, each prompt
+Claude Code takes at `UserPromptSubmit`, the turn's end at `Stop` and
+`StopFailure`, and the tool call at `PreToolUse`, under
 `<state dir>/sessions/`, keyed by the Claude Code process; the server
-reads them to follow `/clear`, to close a turn when Claude Code is done,
-and to pass the model's tool-call id to its agent tools. Name extensions
+reads them to follow `/clear`, to follow the turns (see [Turns](#turns)),
+to close a turn when Claude Code is done, and to pass the model's
+tool-call id to its agent tools. The extensions hear `promptStarted` when
+Claude Code takes a request into a turn, and `localTurnStarted` and
+`localTurnEnded` for a turn no request started. Name extensions
 in `SYNADIA_CLAUDE_CODE_EXTENSIONS` or `SYNADIA_AGENT_EXTENSIONS`, or as
 the `extensions` array in `config.json`; `request_info` lists the modules
 loaded. The contract is [`../EXTENSIONS.md`](../EXTENSIONS.md).
+
+## Turns
+
+Claude Code keeps typed text and channel messages in one queue: a waiting
+input is folded into the running turn at its next tool result, and with no
+further tool result it starts the next turn after the `Stop`. A turn is
+one `prompt_id`, the same through a fold, and the `UserPromptSubmit` hook
+reports it for each prompt Claude Code takes: for a channel message (its
+`<channel source="plugin:nats-channel:nats" request_id="…">` tag) when
+Claude Code takes it, at the fold or at the start of its own turn. So the
+plugin follows the turns by their prompt ids. A turn a channel message
+started is that request's; any other turn — typed when idle, typed text
+that waited and ran as its own turn, a turn Claude Code began itself (a
+background task's report, a session cron), a custom command — is a
+**local turn**. A request belongs to the prompt id its channel submit
+carried: its own turn, or, folded, the running one. It starts there, not
+when the channel handed it over: the extensions hear `promptStarted` with
+the hook's time, and `localTurnStarted` and `localTurnEnded` for a local
+turn, whose id is `local-<prompt_id>`. A turn ends at its `Stop` or
+`StopFailure`, when the next turn begins without one (an interrupt), or
+when the plugin shuts down. Built-in commands (`/help`, `/model`,
+`/clear`) run no turn and fire no submit. Typed text sent while a channel
+message's turn runs joins that turn, and a channel message folded into a
+typed turn takes the rest of it. Until the hook has reported a prompt id,
+and for a Claude Code that reports none, no turn is followed: a request
+starts when the channel accepts it, and the plugin keeps its older guess
+of which turn is a request's.
 
 ## Hooks
 
 The plugin ships Claude Code hooks (`hooks/hooks.json`), all running
 `hooks/session-event.ts` with `bun`. They record what the MCP server cannot
 see itself, under `<state dir>/sessions/`, keyed by the Claude Code process
-(`CLAUDE_PID`), each file written atomically:
+(`CLAUDE_PID`), each file written atomically, but for the log, which is
+appended to:
 
 | Hook | File | Records | Why |
 | --- | --- | --- | --- |
@@ -536,7 +622,13 @@ see itself, under `<state dir>/sessions/`, keyed by the Claude Code process
 | `Stop` (refused) | `<pid>.nudge` | `{ "final_text", "at_ms" }` | the text of a stop the hook refused, kept for the stop that follows in the same turn, which takes it and removes the file; not a stop (see [When the model stops without replying](#when-the-model-stops-without-replying)) |
 | `Stop` | `<pid>.stop` | `{ "session_id", "background", "final_text", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call; `background` says whether background tasks or session crons could start another turn by themselves; `final_text`, the turn's last assistant text, is kept only while a request may still be waiting for it; a request the turn left without its reply is answered with that text or ended (see [When the model stops without replying](#when-the-model-stops-without-replying)). A stop the hook refuses records no stop |
 | `PreToolUse` (every tool) | `<pid>.turn` | `{ "prompt_id", "first_ms", "at_ms" }` | the turn the latest tool call belongs to and when its first call was made, so a permission question goes to the request that owns the turn (see [Which caller is asked](#which-caller-is-asked)) |
-| `PreToolUse` (agent tools) | `<pid>.tools/<tool_use_id>` | `{ "tool_use_id", "tool_name", "tool_input", "at_ms" }` | the model's id for the tool call, which the server hands to the agent tools; the server removes the file when the call arrives |
+| `PreToolUse` (agent tools) | `<pid>.tools/<tool_use_id>` | `{ "tool_use_id", "tool_name", "tool_input", "prompt_id", "at_ms" }` | the model's id for the tool call, which the server hands to the agent tools, and the turn that made it, which picks the request the call is for; the server removes the file when the call arrives |
+| `UserPromptSubmit` | `<pid>.events`, a line | `{ "event": "submit", "session_id", "prompt_id", "request_id", "source", "at_ms" }` | each prompt Claude Code takes, with the turn it runs in; `request_id` and `source` only for this channel's own message (`source` `plugin:<plugin>:nats`), never the prompt's text (see [Turns](#turns)) |
+| `Stop` | `<pid>.events`, a line | `{ "event": "stop", "session_id", "prompt_id", "background", "final_text", "at_ms" }` | the same as `<pid>.stop`, with the turn's prompt id: `.stop` and `.turn` hold the latest record only, and a turn's submit and `Stop`, or two `Stop`s, can come tens of milliseconds apart, faster than the server looks |
+| `StopFailure` | `<pid>.events`, a line | `{ "event": "failure", "session_id", "prompt_id", "error", "error_details", "at_ms" }` | a turn an API error ended: the error's type and its details cut to 200 characters, never the turn's text; it ends the turn's request at once (see [When the model stops without replying](#when-the-model-stops-without-replying)). Never refused |
+
+The server reads `<pid>.events` from where it left off, whole lines only;
+it is never rotated (about two lines and 300 bytes per turn).
 
 The hooks write whether or not an extension is loaded, print nothing but
 the refusal of a stop (see [When the model stops without

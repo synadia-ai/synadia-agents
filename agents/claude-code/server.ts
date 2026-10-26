@@ -676,7 +676,7 @@ async function run(): Promise<void> {
           "",
           "The sender communicates via NATS, not this session. Anything they should see must be sent with the reply tool.",
           "",
-          'Messages arrive as <channel source="nats" request_id="..." session="..." ts="...">. Attachment paths, when present, are listed at the start of the message.',
+          'Messages arrive as <channel source="plugin:nats-channel:nats" request_id="..." session="..." ts="...">. Attachment paths, when present, are listed at the start of the message.',
           "",
           "Use request_info only when sender identity is relevant; identity is never inserted into the incoming message automatically.",
           "",

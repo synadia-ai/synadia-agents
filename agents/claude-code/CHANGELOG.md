@@ -19,9 +19,9 @@ All notable changes to the Claude Code NATS channel are documented here.
   `request_info`, through one persistent `Agents` client with the service's signer.
   `agentTools` in `config.json` and `NATS_AGENT_TOOLS` pick `blocking` (the default:
   `discover_agents`, `prompt_agent`, `answer_agent`), `all` or `off`. Each agent tool takes an
-  optional `request_id`, the channel request it is made for (the last active request when
-  omitted); the call runs in that request's context, so the calls it starts end with the
-  request.
+  optional `request_id`, the channel request it is made for (when omitted, the turn that made
+  the call decides, below); the call runs in that request's context, so the calls it starts
+  end with the request.
 - The extension point of `agents/EXTENSIONS.md`: modules named in
   `SYNADIA_CLAUDE_CODE_EXTENSIONS`, `SYNADIA_AGENT_EXTENSIONS` or `extensions` in
   `config.json`, loaded once at start. Their interceptors go to the client and the service,
@@ -63,8 +63,45 @@ All notable changes to the Claude Code NATS channel are documented here.
   did not end it with its own reply: `final_text` (outcome `ok`), `no_reply`, `shutdown`,
   `delivery` (outcome `error`) or `expired` (outcome `timeout`). It is left out when the model
   replied, so existing handlers see what they always saw.
+- **Turns by prompt id.** Two more hooks, `UserPromptSubmit` and `StopFailure`, and a log,
+  `<state dir>/sessions/<pid>.events`: one JSON line per prompt Claude Code takes (the prompt
+  id of the turn it runs in, and, for this channel's own message, its `request_id` and
+  `source`; never the prompt's text), per recorded `Stop`, and per `StopFailure` (the API
+  error's type and its details cut to 200 characters). The server reads it from where it left
+  off and follows Claude Code's turns by their prompt ids: a request belongs to the turn
+  Claude Code took it into, its own or, folded at a tool result, the running one. The
+  extensions hear `promptStarted(request, atMs, sessionId?)` when that happens, and
+  `localTurnStarted` and `localTurnEnded` for every turn no request started (typed in the
+  session, or begun by Claude Code itself), its id `local-<prompt_id>`. Each `.tools` record
+  carries the call's prompt id. Until the hook reports a prompt id, and for a Claude Code that
+  reports none, a request starts when it is accepted, as before, and no local turn is reported.
+- **An API error ends the request at once.** A turn that fails on a model API error ends with
+  `StopFailure`, never `Stop`, so its request waited for its caller's limit. Now it ends at
+  once, without final text: the caller's error frame names the error (`the turn failed on a
+  model API error: billing_error (…)`), the channel logs the same line, and the extensions
+  hear `promptEnded` with `error` and `no_reply`. Without prompt ids, the failure ends the
+  request that owned the turn at once and counts as a `Stop` for the others' grace period.
 
 ### Changed
+
+- A request owns the turn Claude Code took it into, once the hooks report prompt ids, and no
+  longer the turn it was delivered in while Claude Code looked quiet. A request delivered
+  during a typed turn's first model call looked quiet: the typed turn's `Stop` was refused for
+  it, its caller got the typed turn's final text, and its own reply then met `request is not
+  active`. Now a request queued behind the running turn owns nothing in it; a permission
+  question goes to the one open request of the asking call's turn; and a request still open
+  when its turn ends ends then: at its `Stop` (nudged, then the final text, else the error), at
+  a `StopFailure` or an interrupt with an error, at a `Stop` with background work left by the
+  grace period. `<pid>.open` adds `open_ids`, every open request delivered, and `since_ms`,
+  and the `Stop` hook works out by itself which of them the stopping turn took in, never
+  waiting for the server.
+- An agent-tool call without `request_id` runs in the turn that made it, by its prompt id: a
+  channel message's turn in its request (the last one taken in that is still open), a local
+  turn as the local user's. A turn whose requests have all finished runs its calls outside any
+  request, no longer in the last request delivered. Only a Claude Code that reports no prompt
+  ids still gets the last active request.
+- The server's instructions name the channel tag as Claude Code writes it:
+  `<channel source="plugin:nats-channel:nats" …>`, not `source="nats"`.
 
 - **An explicit server in the environment beats a remembered context.** The `context` in
   `config.json` now counts only when the environment names no server: with `NATS_URL`,
