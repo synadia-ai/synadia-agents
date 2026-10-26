@@ -589,8 +589,11 @@ export function waitingRequests(
   // between (no Stop, no failure, no other submit) takes that one's
   // requests to its id. CHANNEL_BATCH_MS only bounds it, should a Stop line
   // be lost.
-  const takenIn = new Map<string, string | undefined>()
-  let batch: { promptId: string | undefined; atMs: number; requestIds: string[] } | undefined
+  // Each request maps to the prompt ids of its batch, shared: a Stop under
+  // any of them is that turn's (the turns resolve every id of a batch to
+  // the one turn too).
+  const takenIn = new Map<string, Set<string | undefined>>()
+  let batch: { atMs: number; promptIds: Set<string | undefined> } | undefined
   for (const event of events) {
     // Any line but a channel submit breaks a batch: a Stop, a failure, a
     // typed submit, a submit without a prompt id (as the turns read it).
@@ -600,16 +603,15 @@ export function waitingRequests(
     }
     const { requestId, promptId: takenId, atMs, sentAtMs } = event.submit
     const together = batch !== undefined && atMs - batch.atMs <= CHANNEL_BATCH_MS
-    const requestIds = together ? batch!.requestIds : []
-    if (together) for (const id of requestIds) takenIn.set(id, takenId)
+    const promptIds = together ? batch!.promptIds : new Set<string | undefined>()
+    promptIds.add(takenId)
     const since = open.sinceMs
     if (since === undefined || (atMs >= since && (sentAtMs ?? since) >= since)) {
-      takenIn.set(requestId, takenId)
-      requestIds.push(requestId)
+      takenIn.set(requestId, promptIds)
     }
-    batch = { promptId: takenId, atMs, requestIds }
+    batch = { atMs, promptIds }
   }
-  return open.openIds.filter(id => takenIn.get(id) === promptId)
+  return open.openIds.filter(id => takenIn.get(id)?.has(promptId) === true)
 }
 
 /**

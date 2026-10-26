@@ -421,7 +421,9 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     submit('pB', '2', 1_020)
     submit('pC', '3', 1_040)
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pC' })).toContain('"1", "2", "3"')
-    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pA' })).toBeUndefined()
+    // A Stop under any id of the batch is that turn's.
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pA' })).toContain('"1", "2", "3"')
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pB' })).toContain('"1", "2", "3"')
     // A Stop line between two channel submits keeps them apart, however close.
     recordHookEvent(stateDir, PID, { ...idle, prompt_id: 'pC', stop_hook_active: true }, 1_100)
     submit('pD', '4', 1_110)
