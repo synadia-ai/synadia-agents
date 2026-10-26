@@ -823,11 +823,49 @@ describe("composeExtensions: Claude Code's events, fail-open", () => {
     expect(logger.lines).toEqual(['warn extension "b" localTurnStarted failed: b fails']);
   });
 
+  it("promptStarted reaches every extension with the request, the time and the session; a throw is logged once", () => {
+    const logger = recordingLogger();
+    const calls: string[] = [];
+    const composed = composeExtensions(
+      [
+        loaded("a", {
+          events: {
+            promptStarted: (r, at, ...rest) =>
+              calls.push(`a.started ${r.id} ${at} ${rest.length > 0 ? String(rest[0]) : "-"}`),
+          },
+        }),
+        loaded("b", {
+          events: {
+            promptStarted: () => {
+              throw new Error("b fails");
+            },
+          },
+        }),
+        loaded("c", { events: { promptStarted: (r) => calls.push(`c.started ${r.id}`) } }),
+      ],
+      logger,
+    );
+    composed.events.promptStarted(request, 300, "s-1");
+    // No session known: the handler sees two arguments.
+    composed.events.promptStarted(request, 301);
+    composed.events.promptStarted(request, 302, "s-2");
+    expect(calls).toEqual([
+      "a.started 7 300 s-1",
+      "c.started 7",
+      "a.started 7 301 -",
+      "c.started 7",
+      "a.started 7 302 s-2",
+      "c.started 7",
+    ]);
+    expect(logger.lines).toEqual(['warn extension "b" promptStarted failed: b fails']);
+  });
+
   it("with no extension, every event is a no-op and every wrapper just runs its step", async () => {
     const composed = composeExtensions([], recordingLogger());
     expect(composed.names).toEqual([]);
     expect(composed.heartbeatExtras).toBeUndefined();
     composed.events.promptAccepted(request);
+    composed.events.promptStarted(request, 1, "s");
     composed.events.promptEnded(request, "error", 1);
     composed.events.localTurnStarted(turn, 1);
     composed.events.localTurnEnded(turn, "ok", 2);

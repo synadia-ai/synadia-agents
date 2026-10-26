@@ -77,7 +77,13 @@ also runs the hand-over of a prompt to its loop inside `aroundInject`,
 and asks `providerHeaders` for headers to add to each provider request of
 its active turn, a served prompt or a local turn. OpenClaw runs the
 turn's dispatch inside `aroundDispatch`. Claude Code reports `sessionStarted`
-and `turnStopped` from its hooks, and passes `promptEnded` a fourth
+and `turnStopped` from its hooks, and `promptStarted`, with the hook's
+time and the session, when Claude Code takes a served prompt into a turn:
+the turn the prompt starts, or, folded into a running turn, the fold. A
+prompt accepted while a turn runs waits until then; one that ends while
+it waits is never started. Until its hooks have reported a submitted
+prompt with its id, the plugin starts a served prompt as it accepts it.
+Claude Code also passes `promptEnded` a fourth
 argument, the reason, when the model did not end the prompt with its own
 reply: `final_text` (outcome `ok`: the turn ended without a reply, and the
 plugin sent the turn's final text as the reply), `no_reply` (the turn

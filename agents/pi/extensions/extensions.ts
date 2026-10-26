@@ -109,6 +109,24 @@ export interface LocalTurn {
 export type Outcome = "ok" | "error" | "timeout";
 
 /**
+ * Claude Code: how a prompt ended when the model did not end it with its
+ * own reply; absent when it did. PI passes none.
+ *
+ * - `final_text`: the turn ended without a reply, and the plugin sent the
+ *   turn's final text as the reply (outcome `ok`);
+ * - `no_reply`: the turn ended with no reply and no final text (`error`);
+ * - `shutdown`: the plugin stopped with the prompt open (`error`);
+ * - `delivery`: the prompt could not be handed to the harness (`error`);
+ * - `expired`: the prompt outlived the plugin's limit (`timeout`).
+ */
+export type EndReason =
+  | "final_text"
+  | "no_reply"
+  | "shutdown"
+  | "delivery"
+  | "expired";
+
+/**
  * The harness's events. Two kinds: a notification, called and forgotten,
  * and a wrapper, which the plugin calls around one of its own steps. A
  * wrapper must call `run` once, synchronously, and return its value — a
@@ -125,8 +143,16 @@ export interface HarnessEvents {
   // Every harness.
   /** Inside the prompt handler, after every interceptor ran. */
   promptAccepted?(request: ServedRequest): void;
-  /** When the plugin settles the request. */
-  promptEnded?(request: ServedRequest, outcome: Outcome, atMs: number): void;
+  /**
+   * When the plugin settles the request. Claude Code passes `reason` when
+   * the model did not end the prompt with its own reply.
+   */
+  promptEnded?(
+    request: ServedRequest,
+    outcome: Outcome,
+    atMs: number,
+    reason?: EndReason,
+  ): void;
   /**
    * Around every agent-tool call, with the request or the local turn the
    * model works in, or `undefined` when the plugin knows neither.
@@ -162,6 +188,11 @@ export interface HarnessEvents {
   // OpenClaw.
   aroundDispatch?<T>(request: ServedRequest, run: () => Promise<T>): Promise<T>;
   // Claude Code.
+  /**
+   * Claude Code took the served prompt into a turn: the turn it started,
+   * or, folded into a running turn, at the fold.
+   */
+  promptStarted?(request: ServedRequest, atMs: number, sessionId?: string): void;
   sessionStarted?(sessionId: string, source: string): void;
   turnStopped?(sessionId: string | undefined, atMs: number): void;
 }

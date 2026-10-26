@@ -148,9 +148,10 @@ export type EndReason =
  * changes nothing of the step's timing. A wrapper may be an async
  * function; the plugin still takes `run`'s own value, and the wrapper must
  * call `run` once, before its first `await`, so the step keeps its timing.
- * Claude Code calls `promptAccepted`, `promptEnded`, `aroundToolCall`,
- * `sessionStarted` and `turnStopped`; the other harnesses' events are
- * listed so one shape serves all three.
+ * Claude Code calls `promptAccepted`, `promptStarted`, `promptEnded`,
+ * `aroundToolCall`, `localTurnStarted`, `localTurnEnded`, `sessionStarted`
+ * and `turnStopped`; the other harnesses' events are listed so one shape
+ * serves all three.
  */
 export interface HarnessEvents {
   // Every harness.
@@ -201,6 +202,15 @@ export interface HarnessEvents {
    */
   aroundDispatch?<T>(request: ServedRequest, run: () => Promise<T>): Promise<T>;
   // Claude Code.
+  /**
+   * Claude Code took the served prompt into a turn: the turn it started,
+   * or, folded into a running turn, at the fold. `atMs` is the hook's time
+   * (epoch ms); `sessionId` the session the turn runs in, when known. A
+   * prompt the plugin accepted may wait behind a running turn; it is not
+   * started until Claude Code takes it, and one that ends while it waits is
+   * never started.
+   */
+  promptStarted?(request: ServedRequest, atMs: number, sessionId?: string): void;
   /**
    * The plugin's `SessionStart` hook ran: `source` as Claude Code gave it
    * (`startup`, `resume`, `clear`, `compact`). Called once at start for the
@@ -509,6 +519,7 @@ export class ExtensionMetadataError extends Error {
 /** Claude Code's events as the plugin calls them, fail-open over every extension. */
 export interface ClaudeCodeHarnessEventDispatch {
   promptAccepted(request: ServedRequest): void;
+  promptStarted(request: ServedRequest, atMs: number, sessionId?: string): void;
   promptEnded(
     request: ServedRequest,
     outcome: Outcome,
@@ -637,6 +648,7 @@ export function composeExtensions(
   const notify = <
     K extends
       | "promptAccepted"
+      | "promptStarted"
       | "promptEnded"
       | "localTurnStarted"
       | "localTurnEnded"
@@ -872,6 +884,14 @@ export function composeExtensions(
     events: {
       promptAccepted(request) {
         notify("promptAccepted", (handler) => handler(request));
+      },
+      promptStarted(request, atMs, sessionId) {
+        // The session only when there is one, as the reason below.
+        notify("promptStarted", (handler) =>
+          sessionId === undefined
+            ? handler(request, atMs)
+            : handler(request, atMs, sessionId),
+        );
       },
       promptEnded(request, outcome, atMs, reason) {
         // The reason only when there is one, so a handler sees the three
