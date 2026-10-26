@@ -55,6 +55,7 @@ import {
   claudePid,
   clearOpenRequests,
   hooksActive,
+  promptIdsReported,
   readTurnActivity,
   readTurnStop,
   resolveClaudeSessionId,
@@ -64,6 +65,7 @@ import {
   type SessionIdSource,
 } from "./src/session-id.js";
 import { TurnLedger, type TurnView } from "./src/permission-routing.js";
+import { TurnTracker } from "./src/turns.js";
 import {
   watchSessionEvents,
   type SessionEventWatcher,
@@ -130,6 +132,8 @@ type PendingRequest = {
   };
   /** Set while the turn's final text is being sent as the reply. */
   answeringWithFinalText?: boolean;
+  /** Set once the extensions heard that Claude Code took it into a turn. */
+  started?: boolean;
 };
 
 type StagedAttachment = { readonly filename: string; readonly path: string };
@@ -424,6 +428,9 @@ async function run(): Promise<void> {
   let service: AgentService | undefined;
   let mcp: Server | undefined;
   let sessionEvents: SessionEventWatcher | undefined;
+  // Claude Code's turns by their prompt ids (src/turns.ts), from the hooks'
+  // records; made with the watcher, once the extensions have started.
+  let tracker: TurnTracker | undefined;
 
   try {
     // Before the bundle: a context that cannot be read fails there, and the
@@ -521,6 +528,7 @@ async function run(): Promise<void> {
       if (pending.attachmentDir) cleanupAttachments(attachmentRoot, requestId);
       pendingRequests.delete(requestId);
       turns.forget(requestId);
+      tracker?.forget(requestId);
       if (lastActiveRequestId === requestId) {
         lastActiveRequestId = Array.from(pendingRequests.keys()).at(-1);
       }
@@ -614,6 +622,17 @@ async function run(): Promise<void> {
       return pending && !pending.completion.settled() ? pending : undefined;
     };
 
+    // The extensions hear once that Claude Code took a prompt into a turn.
+    const startPrompt = (
+      pending: PendingRequest,
+      atMs: number,
+      sessionId: string | undefined,
+    ): void => {
+      if (pending.started) return;
+      pending.started = true;
+      extensions.events.promptStarted(pending.served, atMs, sessionId);
+    };
+
     mcp = new Server(
       { name: "nats-channel", version: pluginVersion },
       {
@@ -671,6 +690,9 @@ async function run(): Promise<void> {
 
     service.onPrompt(async (envelope, response) => {
       if (shuttingDown) throw new Error("channel shutting down");
+      // The hooks' records up to now, so a turn already begun is known
+      // before this prompt is counted.
+      sessionEvents?.poll();
       const requestId = String(++requestCounter);
       const staged = stageAttachments(
         attachmentRoot,
@@ -710,6 +732,9 @@ async function run(): Promise<void> {
       // Synchronous, in the handler's context, so an extension reads here
       // what its own request interceptor bound.
       extensions.events.promptAccepted(served);
+      // Until the hooks report the turns' prompt ids, a prompt starts as it
+      // is accepted; after, when Claude Code takes it into a turn.
+      if (!tracker?.binding()) startPrompt(pending, pending.createdAt, sessionId);
 
       logEvent("prompt admitted", { requestId, sender: pending.sender });
       const content =
@@ -1012,12 +1037,48 @@ async function run(): Promise<void> {
       extensions: extensions.names,
     });
     await extensions.started({ agents, service });
-    // The hooks' SessionStart and Stop, as the extensions' events.
+    tracker = new TurnTracker(
+      {
+        isOpen: (requestId) => activeRequest(requestId) !== undefined,
+        currentSession: () => resolveClaudeSessionId(sessionSource),
+        promptStarted: (requestId, turn, atMs, sessionId) => {
+          const pending = pendingRequests.get(requestId);
+          if (!pending) return;
+          logEvent("prompt started", {
+            requestId,
+            promptId: turn.promptId,
+            turn: turn.kind,
+            atMs,
+          });
+          startPrompt(pending, atMs, sessionId);
+        },
+        localTurnStarted: (turn, atMs) => {
+          logEvent("local turn started", { turn: turn.id, atMs });
+          extensions.events.localTurnStarted(turn, atMs);
+        },
+        localTurnEnded: (turn, outcome, atMs) => {
+          logEvent("local turn ended", { turn: turn.id, outcome, atMs });
+          extensions.events.localTurnEnded(turn, outcome, atMs);
+        },
+      },
+      {
+        binding: promptIdsReported(stateDir, sessionSource.parentPid),
+        lastStopMs: readTurnStop(sessionSource)?.atMs,
+      },
+    );
+    // The hooks' records: the session, the turns, as the extensions' events.
     sessionEvents = watchSessionEvents(sessionSource, {
       sessionStarted: (sessionId, source) =>
         extensions.events.sessionStarted(sessionId, source),
+      promptSubmitted: (submit) => tracker?.submitted(submit),
+      turnActivity: (activity) => tracker?.activity(activity),
+      turnFailed: (failure) => {
+        tracker?.failed(failure);
+        endUnanswered();
+      },
       turnStopped: (sessionId, stop) => {
         turns.observeStop(stop);
+        tracker?.stopped(stop);
         extensions.events.turnStopped(sessionId, stop.atMs);
         endUnanswered();
       },
@@ -1034,7 +1095,9 @@ async function run(): Promise<void> {
         sessionEvents?.stop();
         clearOpenRequests(stateDir, sessionSource.parentPid);
         logEvent("shutting down");
-        // The extensions hear of the stop before the service leaves the bus.
+        // A local turn still open ends first, then the extensions hear of
+        // the stop, before the service leaves the bus.
+        if (firstAttempt) tracker?.shutdown(Date.now());
         if (firstAttempt) await extensions.stopping();
         await service!.stop().catch(() => undefined);
 

@@ -679,6 +679,17 @@ export function parseEventLine(line: string): SessionEvent | undefined {
   }
 }
 
+/**
+ * `true` iff the events log holds a submit with a prompt id: this Claude
+ * Code reports which turn takes each prompt, and the channel follows its
+ * turns by their ids (`src/turns.ts`).
+ */
+export function promptIdsReported(stateDir: string, pid: number | string): boolean {
+  return readEvents(stateDir, pid).some(
+    (event) => event.kind === 'submit' && event.submit.promptId !== undefined,
+  )
+}
+
 /** Every well-formed line of the events log, in the order written; none without a file. */
 export function readEvents(stateDir: string, pid: number | string): SessionEvent[] {
   let text: string
