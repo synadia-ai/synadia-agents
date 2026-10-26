@@ -20,6 +20,11 @@ export default function createExtension(ctx) {
     acceptedIn: null,
     lastAccepted: null,
     promptEnded: [],
+    localTurnStarted: [],
+    localTurnEnded: [],
+    // The order of the turn events and the hand-overs, for the smoke's
+    // "before the drain" checks.
+    log: [],
     aroundInject: 0,
     injectedRequests: [],
     providerHeaders: 0,
@@ -66,9 +71,19 @@ export default function createExtension(ctx) {
       },
       promptEnded(request, outcome, atMs) {
         state.promptEnded.push({ id: request.id, outcome, atMs });
+        state.log.push(`promptEnded ${request.id}`);
+      },
+      localTurnStarted(turn, atMs) {
+        state.localTurnStarted.push({ id: turn.id, local: turn.local, atMs });
+        state.log.push(`localTurnStarted ${turn.id}`);
+      },
+      localTurnEnded(turn, outcome, atMs) {
+        state.localTurnEnded.push({ id: turn.id, outcome, atMs });
+        state.log.push(`localTurnEnded ${turn.id}`);
       },
       aroundInject(request, run) {
         state.aroundInject++;
+        state.log.push(`aroundInject ${request.id}`);
         state.injectedRequests.push(request.id);
         return als.run(`inject:${request.id}`, run);
       },

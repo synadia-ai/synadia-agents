@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -32,18 +33,52 @@ import { join } from 'node:path'
  *                     at_ms }`, the turn the latest call belongs to and when
  *                     that turn's first call was made
  *   - `<pid>.tools/`  PreToolUse, one file per agent-tool call:
- *                     `{ tool_use_id, tool_name, tool_input, at_ms }`
+ *                     `{ tool_use_id, tool_name, tool_input, prompt_id,
+ *                     at_ms }`
+ *   - `<pid>.events`  an append-only log, one JSON line per event:
+ *                     UserPromptSubmit `{ event: "submit", session_id,
+ *                     prompt_id, request_id?, source?, ts?, at_ms }`
+ *                     (`request_id`, `source` and the tag's `ts`, when the
+ *                     server sent the message, for this channel's own
+ *                     messages only, never the prompt's text); a recorded Stop `{ event:
+ *                     "stop", session_id, prompt_id, background?,
+ *                     final_text?, at_ms }`, the same as `<pid>.stop`; and
+ *                     StopFailure `{ event: "failure", session_id, prompt_id,
+ *                     error, error_details?, at_ms }`, a turn ended by an
+ *                     API error: its type (`billing_error`, `rate_limit`, …)
+ *                     and its details cut to 200 characters, never the
+ *                     turn's text
+ *
+ * `.stop` and `.turn` hold one record each: the latest. Claude Code's hooks
+ * run faster than the server polls (a short turn's submit and Stop are tens
+ * of milliseconds apart, and two Stops can follow each other as closely),
+ * so the server follows turns by `.events`, which loses none of them. About
+ * two lines and 300 bytes per turn; it is never rotated, since the server
+ * reads it from where it left off, and a whole read stays in milliseconds
+ * for a session of thousands of turns.
  *
  * One file goes the other way, written by the server for the Stop hook:
  *
- *   - `<pid>.open`    `{ server_pid, request_ids, at_ms }`, the served
- *                     prompts that own the running turn and are still open.
- *                     At a Stop that would end one of them, the hook refuses
- *                     the stop once and tells the model to reply.
+ *   - `<pid>.open`    `{ server_pid, request_ids, open_ids, since_ms,
+ *                     at_ms }`: `request_ids` the open served prompts the
+ *                     server's ledger says own the running turn, `open_ids`
+ *                     every open served prompt the server has delivered,
+ *                     `since_ms` when the server started. At a Stop that
+ *                     would end one of the prompts waiting for that turn,
+ *                     the hook refuses the stop once and tells the model to
+ *                     reply. Which prompts wait for a turn, the hook works
+ *                     out by itself, never waiting for the server: a short
+ *                     turn's Stop comes before the server's next poll. For
+ *                     a Stop with a prompt id P, once the log holds a
+ *                     submit with a prompt id, they are the `open_ids` whose
+ *                     latest submit in the log since `since_ms` carried P:
+ *                     the UserPromptSubmit hook wrote it before that turn
+ *                     ran. Otherwise `request_ids`.
  *
- * Every file is written atomically (a rename), so a reader sees a whole
- * record or the previous one. The hooks write whether or not an extension
- * is loaded; nothing here depends on one.
+ * Every file but `.events` is written atomically (a rename), so a reader
+ * sees a whole record or the previous one; `.events` is appended to, and a
+ * reader takes whole lines only. The hooks write whether or not an
+ * extension is loaded; nothing here depends on one.
  */
 
 // Header-safe by construction: an extension may put the id in a header or
@@ -115,6 +150,11 @@ export function toolUsesDir(stateDir: string, pid: number | string): string {
   return join(sessionsDir(stateDir), `${pid}.tools`)
 }
 
+/** The log the hooks append a line to per submitted prompt, recorded Stop and StopFailure. */
+export function eventsFilePath(stateDir: string, pid: number | string): string {
+  return join(sessionsDir(stateDir), `${pid}.events`)
+}
+
 export type SessionIdSource = {
   /** The MCP server's environment. */
   env: NodeJS.ProcessEnv
@@ -174,12 +214,72 @@ function nonEmpty(value: unknown): boolean {
   return true
 }
 
+// This plugin's MCP server is `nats` in its `.mcp.json`, so Claude Code tags
+// its channel messages `<channel source="plugin:<plugin>:nats" …>`. Another
+// channel plugin's `request_id="1"` has another source and is never ours.
+const CHANNEL_SOURCE_RE = /^plugin:[^"]+:nats$/
+// The request ids the server hands out; the same rule as the server's file.
+const REQUEST_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
+// How far into a prompt the opening tag is looked for.
+const CHANNEL_TAG_MAX = 1024
+// The server stamps each channel message with `new Date().toISOString()`.
+const CHANNEL_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/
+// A StopFailure's error type and details, as long as they are kept.
+const FAILURE_ERROR_MAX = 64
+export const FAILURE_DETAILS_MAX = 200
+
+/**
+ * The request a submitted prompt carries when it is this channel's message:
+ * the `request_id` and `source` of the `<channel …>` tag it begins with, and
+ * its `ts`, when the server sent it, or `undefined` for anything else (typed
+ * text, a command, another channel's message, a tag without both
+ * attributes). Only the tag is read.
+ */
+export function channelPrompt(
+  prompt: unknown,
+): { requestId: string; source: string; ts?: string } | undefined {
+  if (typeof prompt !== 'string' || !prompt.startsWith('<channel ')) return undefined
+  const end = prompt.indexOf('>')
+  if (end < 0 || end > CHANNEL_TAG_MAX) return undefined
+  const tag = prompt.slice(0, end)
+  const source = /\ssource="([^"]*)"/.exec(tag)?.[1]
+  const requestId = /\srequest_id="([^"]*)"/.exec(tag)?.[1]
+  if (source === undefined || requestId === undefined) return undefined
+  if (!CHANNEL_SOURCE_RE.test(source) || !REQUEST_ID_RE.test(requestId)) return undefined
+  const ts = /\sts="([^"]*)"/.exec(tag)?.[1]
+  return { requestId, source, ...(ts !== undefined && sentAtMs(ts) !== undefined ? { ts } : {}) }
+}
+
+/** The time a channel tag's `ts` names, in epoch ms, or `undefined` for anything else. */
+function sentAtMs(ts: unknown): number | undefined {
+  if (typeof ts !== 'string' || !CHANNEL_TS_RE.test(ts)) return undefined
+  const ms = Date.parse(ts)
+  return Number.isFinite(ms) ? ms : undefined
+}
+
+/**
+ * A StopFailure field as kept: one line, no control characters, at most
+ * `max` characters; `undefined` for anything that is not a non-empty string.
+ */
+function failureText(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = Array.from(value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()).slice(0, max).join('')
+  return text.length > 0 ? text : undefined
+}
+
+/** Append one line to the events log; never through a rename, so no line is lost. */
+function appendEvent(stateDir: string, pid: number | string, line: Readonly<Record<string, unknown>>): void {
+  mkdirSync(sessionsDir(stateDir), { recursive: true })
+  appendFileSync(eventsFilePath(stateDir, pid), `${JSON.stringify(line)}\n`)
+}
+
 /**
  * Record one hook event for Claude Code process `pid`, from the hook's
  * input as Claude Code gave it. Returns what was written, or `undefined`
  * for an event this plugin does not record or a malformed input:
  * `'tool'` for an agent-tool call (its id file and the turn file),
- * `'turn'` for any other tool call (the turn file only).
+ * `'turn'` for any other tool call (the turn file only), `'submit'` and
+ * `'failure'` for a line in the events log.
  * `now` is the hook's clock, epoch milliseconds.
  */
 export function recordHookEvent(
@@ -187,9 +287,38 @@ export function recordHookEvent(
   pid: number | string,
   input: Readonly<Record<string, unknown>>,
   now: number = Date.now(),
-): 'session' | 'stop' | 'tool' | 'turn' | undefined {
+): 'session' | 'stop' | 'tool' | 'turn' | 'submit' | 'failure' | undefined {
   const event = input.hook_event_name
   const sessionId = isClaudeSessionId(input.session_id) ? input.session_id : undefined
+  const promptId = isClaudeSessionId(input.prompt_id) ? input.prompt_id : undefined
+  if (event === 'UserPromptSubmit') {
+    // The ids only: never the prompt's text.
+    const channel = channelPrompt(input.prompt)
+    appendEvent(stateDir, pid, {
+      event: 'submit',
+      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(promptId ? { prompt_id: promptId } : {}),
+      ...(channel ? { request_id: channel.requestId, source: channel.source } : {}),
+      ...(channel?.ts !== undefined ? { ts: channel.ts } : {}),
+      at_ms: now,
+    })
+    return 'submit'
+  }
+  if (event === 'StopFailure') {
+    // The error's type and details; never the turn's text
+    // (`last_assistant_message`).
+    const error = failureText(input.error, FAILURE_ERROR_MAX)
+    const details = failureText(input.error_details, FAILURE_DETAILS_MAX)
+    appendEvent(stateDir, pid, {
+      event: 'failure',
+      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(promptId ? { prompt_id: promptId } : {}),
+      ...(error !== undefined ? { error } : {}),
+      ...(details !== undefined ? { error_details: details } : {}),
+      at_ms: now,
+    })
+    return 'failure'
+  }
   if (event === 'SessionStart') {
     if (sessionId === undefined) return undefined
     const source = typeof input.source === 'string' ? input.source : 'unknown'
@@ -203,25 +332,26 @@ export function recordHookEvent(
   if (event === 'Stop') {
     const background = backgroundWork(input)
     // The final text is kept only when a served prompt may still be waiting
-    // for it: the server's file lists one, or cannot be read.
+    // for it: one waits for this turn, or the server's file cannot be read.
     // The text of a stop the hook refused in this turn comes first: a model
     // writes its answer before it is told to reply, and what it writes after
     // that is a reaction to being told.
-    const open = readOpenRequests(stateDir, pid)
+    const waiting = waitingRequests(stateDir, pid, input)
     const text =
-      open === undefined || open.length > 0
+      waiting === undefined || waiting.length > 0
         ? (refusedStopText(stateDir, pid) ?? finalText(input))
         : undefined
+    const record = {
+      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(background !== undefined ? { background } : {}),
+      ...(text !== undefined ? { final_text: text } : {}),
+      at_ms: now,
+    }
     mkdirSync(sessionsDir(stateDir), { recursive: true })
-    writeAtomically(
-      stopFilePath(stateDir, pid),
-      `${JSON.stringify({
-        ...(sessionId ? { session_id: sessionId } : {}),
-        ...(background !== undefined ? { background } : {}),
-        ...(text !== undefined ? { final_text: text } : {}),
-        at_ms: now,
-      })}\n`,
-    )
+    writeAtomically(stopFilePath(stateDir, pid), `${JSON.stringify(record)}\n`)
+    // The same Stop, whole, in the log: `.stop` keeps only the latest, and
+    // the next turn's Stop can follow within one of the server's polls.
+    appendEvent(stateDir, pid, { event: 'stop', ...(promptId ? { prompt_id: promptId } : {}), ...record })
     removeQuietly(nudgeFilePath(stateDir, pid))
     return 'stop'
   }
@@ -240,6 +370,7 @@ export function recordHookEvent(
         tool_use_id: id,
         tool_name: name,
         tool_input: input.tool_input ?? null,
+        ...(promptId ? { prompt_id: promptId } : {}),
         at_ms: now,
       })}\n`,
     )
@@ -292,9 +423,9 @@ function recordTurnActivity(
  *   - Claude Code is not already continuing after a refused stop
  *     (`stop_hook_active`), so the model is told once per turn;
  *   - the stop says no background work is left, the only stop at which the
- *     server ends the prompt that owned the turn;
- *   - the server's file names open prompts that own the turn, and the
- *     server that wrote it is still running.
+ *     server ends the prompts waiting for the turn;
+ *   - open prompts wait for this turn ({@link waitingRequests}), and the
+ *     server that wrote its file is still running.
  *
  * Anything it cannot tell lets the turn end (fail open): no file, a
  * malformed one, a server gone.
@@ -306,7 +437,7 @@ export function stopRefusal(
 ): string | undefined {
   if (input.hook_event_name !== 'Stop' || input.stop_hook_active === true) return undefined
   if (backgroundWork(input) !== false) return undefined
-  const open = readOpenRequests(stateDir, pid)
+  const open = waitingRequests(stateDir, pid, input)
   if (open === undefined || open.length === 0) return undefined
   const ids = open.map(id => `"${id}"`).join(', ')
   return (
@@ -352,8 +483,10 @@ function refusedStopText(stateDir: string, pid: number | string): string | undef
 }
 
 /**
- * Write the open prompts that own the running turn, for the Stop hook. The
- * server calls this whenever the set changes, and with none at start.
+ * Write the open prompts for the Stop hook: `requestIds` those the ledger
+ * says own the running turn, `open.openIds` every open prompt delivered
+ * (`requestIds` when not given), `open.sinceMs` when the server started.
+ * The server calls this whenever the sets change, and with none at start.
  */
 export function writeOpenRequests(
   stateDir: string,
@@ -361,12 +494,29 @@ export function writeOpenRequests(
   requestIds: readonly string[],
   serverPid: number = process.pid,
   now: number = Date.now(),
+  open: { readonly openIds?: readonly string[]; readonly sinceMs?: number } = {},
 ): void {
   mkdirSync(sessionsDir(stateDir), { recursive: true })
   writeAtomically(
     openFilePath(stateDir, pid),
-    `${JSON.stringify({ server_pid: serverPid, request_ids: requestIds, at_ms: now })}\n`,
+    `${JSON.stringify({
+      server_pid: serverPid,
+      request_ids: requestIds,
+      open_ids: open.openIds ?? requestIds,
+      ...(open.sinceMs !== undefined ? { since_ms: open.sinceMs } : {}),
+      at_ms: now,
+    })}\n`,
   )
+}
+
+/** The server's file for the Stop hook, as read. */
+export type OpenRequests = {
+  /** The open prompts the server's ledger says own the running turn. */
+  readonly requestIds: string[]
+  /** Every open prompt the server has delivered. */
+  readonly openIds: string[]
+  /** When the server started: request ids restart with each server. */
+  readonly sinceMs?: number
 }
 
 /** Remove the server's file, at shutdown. Best effort. */
@@ -375,23 +525,104 @@ export function clearOpenRequests(stateDir: string, pid: number | string): void 
 }
 
 /**
- * The open prompts the server's file names, or `undefined` when it cannot
- * be told: no file, a malformed one, or a server no longer running.
+ * The open prompts the server's file says own the running turn, or
+ * `undefined` when it cannot be told: no file, a malformed one, or a
+ * server no longer running.
  */
 export function readOpenRequests(stateDir: string, pid: number | string): string[] | undefined {
+  return readOpenFile(stateDir, pid)?.requestIds
+}
+
+/** The server's whole file, or `undefined` as {@link readOpenRequests}. */
+export function readOpenFile(stateDir: string, pid: number | string): OpenRequests | undefined {
   const value = readJson(openFilePath(stateDir, pid))
   if (!value) return undefined
   const serverPid = value.server_pid
-  const ids = value.request_ids
+  const ids = requestIdList(value.request_ids)
+  const openIds = value.open_ids === undefined ? ids : requestIdList(value.open_ids)
   if (typeof serverPid !== 'number' || !Number.isSafeInteger(serverPid) || serverPid <= 0) {
     return undefined
   }
-  if (!Array.isArray(ids) || !ids.every(id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id))) {
-    return undefined
-  }
+  if (ids === undefined || openIds === undefined) return undefined
   if (!processAlive(serverPid)) return undefined
-  return ids as string[]
+  const sinceMs = epochMs(value.since_ms)
+  return { requestIds: ids, openIds, ...(sinceMs !== undefined ? { sinceMs } : {}) }
 }
+
+function requestIdList(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every(id => typeof id === 'string' && REQUEST_ID_RE.test(id))
+    ? (value as string[])
+    : undefined
+}
+
+/**
+ * The open prompts the turn a Stop ends leaves without their reply, for the
+ * Stop hook, or `undefined` when the server's file cannot be read (fail
+ * safe: the final text is kept, the stop not refused).
+ *
+ * Once the log holds a submit with a prompt id, and the Stop carries its
+ * turn's prompt id P: the delivered prompts still open whose latest submit
+ * since the server started carried P — the turn they began, or the one
+ * they were folded into; channel messages taken together count for the
+ * last one's prompt id, the turn they ran in. A message the server sent before it started (an
+ * earlier server's, whose request ids restart at 1 too) is not one of its
+ * prompts. A prompt not yet taken into a turn waits for none. Otherwise,
+ * the prompts the server's ledger says own the turn.
+ */
+export function waitingRequests(
+  stateDir: string,
+  pid: number | string,
+  input: Readonly<Record<string, unknown>>,
+): string[] | undefined {
+  const open = readOpenFile(stateDir, pid)
+  if (open === undefined) return undefined
+  const promptId = isClaudeSessionId(input.prompt_id) ? input.prompt_id : undefined
+  if (promptId === undefined) return open.requestIds
+  const events = readEvents(stateDir, pid)
+  if (!events.some(event => event.kind === 'submit' && event.submit.promptId !== undefined)) {
+    return open.requestIds
+  }
+  // Request ids restart with each server: the latest submit of each wins.
+  // Channel messages Claude Code takes together each fire a submit under a
+  // prompt id of their own, one after another, and run as one turn under
+  // the last: a channel submit that follows another with no other line
+  // between (no Stop, no failure, no other submit) takes that one's
+  // requests to its id. CHANNEL_BATCH_MS only bounds it, should a Stop line
+  // be lost.
+  // Each request maps to the prompt ids of its batch, shared: a Stop under
+  // any of them is that turn's (the turns resolve every id of a batch to
+  // the one turn too).
+  const takenIn = new Map<string, Set<string | undefined>>()
+  let batch: { atMs: number; promptIds: Set<string | undefined> } | undefined
+  for (const event of events) {
+    // Any line but a channel submit breaks a batch: a Stop, a failure, a
+    // typed submit, a submit without a prompt id (as the turns read it).
+    if (event.kind !== 'submit' || event.submit.requestId === undefined) {
+      batch = undefined
+      continue
+    }
+    const { requestId, promptId: takenId, atMs, sentAtMs } = event.submit
+    const together = batch !== undefined && atMs - batch.atMs <= CHANNEL_BATCH_MS
+    const promptIds = together ? batch!.promptIds : new Set<string | undefined>()
+    promptIds.add(takenId)
+    const since = open.sinceMs
+    if (since === undefined || (atMs >= since && (sentAtMs ?? since) >= since)) {
+      takenIn.set(requestId, promptIds)
+    }
+    batch = { atMs, promptIds }
+  }
+  return open.openIds.filter(id => takenIn.get(id)?.has(promptId) === true)
+}
+
+/**
+ * The longest gap between two channel submits taken together into one turn
+ * (`src/turns.ts` rule 6). Not the signal: the gap is Claude Code's time
+ * for each message's UserPromptSubmit hooks, measured 20 ms apart, longer
+ * with a slow hook of the user's own or a loaded machine. What joins two
+ * submits is that nothing of the turn came between; this only bounds it
+ * against a Stop line that was lost.
+ */
+export const CHANNEL_BATCH_MS = 30_000
 
 /**
  * The text of the turn's last assistant message, trimmed, or `undefined`
@@ -455,15 +686,48 @@ export type SessionRecord = {
   readonly atMs: number
 }
 
-/** The turn end the Stop hook recorded last. */
+/** A turn end the Stop hook recorded: the latest in `.stop`, each one in `.events`. */
 export type StopRecord = {
   readonly sessionId?: string
+  /** Claude Code's id for the turn's prompt, when it gave one. */
+  readonly promptId?: string
   /** Background work could start another turn; absent when Claude Code did not say. */
   readonly background?: boolean
   /** The turn's final text, kept when a served prompt may still be waiting for it. */
   readonly finalText?: string
   readonly atMs: number
 }
+
+/** A prompt Claude Code took into a turn, as the UserPromptSubmit hook recorded it. */
+export type SubmitRecord = {
+  readonly sessionId?: string
+  /** Claude Code's id for the turn the prompt runs in. */
+  readonly promptId?: string
+  /** This channel's request, when the prompt was its message. */
+  readonly requestId?: string
+  /** The channel tag's `source`, with `requestId`. */
+  readonly source?: string
+  /** When the server sent the channel message (its tag's `ts`), in epoch ms. */
+  readonly sentAtMs?: number
+  readonly atMs: number
+}
+
+/** A turn an API error ended, as the StopFailure hook recorded it. */
+export type FailureRecord = {
+  readonly sessionId?: string
+  readonly promptId?: string
+  /** The API error's type, as Claude Code named it: `billing_error`, `rate_limit`, … */
+  readonly error?: string
+  /** Its details, cut to {@link FAILURE_DETAILS_MAX} characters. */
+  readonly errorDetails?: string
+  readonly atMs: number
+}
+
+/** One line of the events log. */
+export type SessionEvent =
+  | { readonly kind: 'submit'; readonly submit: SubmitRecord }
+  | { readonly kind: 'stop'; readonly stop: StopRecord }
+  | { readonly kind: 'failure'; readonly failure: FailureRecord }
 
 /** The latest tool call the PreToolUse hook recorded: the turn it belongs to. */
 export type TurnActivity = {
@@ -513,18 +777,105 @@ export function readSessionRecord(source: SessionIdSource): SessionRecord | unde
 
 /** The last Stop record for the Claude Code process, or `undefined` without a well-formed file. */
 export function readTurnStop(source: SessionIdSource): StopRecord | undefined {
-  const value = readJson(stopFilePath(source.stateDir, source.parentPid))
+  return stopRecordOf(readJson(stopFilePath(source.stateDir, source.parentPid)))
+}
+
+function stopRecordOf(value: Record<string, unknown> | undefined): StopRecord | undefined {
   if (!value) return undefined
   const atMs = epochMs(value.at_ms)
   if (atMs === undefined) return undefined
   return {
     ...(isClaudeSessionId(value.session_id) ? { sessionId: value.session_id } : {}),
+    ...(isClaudeSessionId(value.prompt_id) ? { promptId: value.prompt_id } : {}),
     ...(typeof value.background === 'boolean' ? { background: value.background } : {}),
     ...(typeof value.final_text === 'string' && value.final_text.length > 0
       ? { finalText: value.final_text }
       : {}),
     atMs,
   }
+}
+
+/** One line of the events log, or `undefined` for a malformed one or another event. */
+export function parseEventLine(line: string): SessionEvent | undefined {
+  let value: unknown
+  try {
+    value = JSON.parse(line)
+  } catch {
+    return undefined
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const atMs = epochMs(record.at_ms)
+  if (atMs === undefined) return undefined
+  const ids = {
+    ...(isClaudeSessionId(record.session_id) ? { sessionId: record.session_id } : {}),
+    ...(isClaudeSessionId(record.prompt_id) ? { promptId: record.prompt_id } : {}),
+  }
+  switch (record.event) {
+    case 'submit': {
+      const channel =
+        typeof record.request_id === 'string' &&
+        REQUEST_ID_RE.test(record.request_id) &&
+        typeof record.source === 'string' &&
+        CHANNEL_SOURCE_RE.test(record.source)
+          ? { requestId: record.request_id, source: record.source }
+          : {}
+      const sent = channel.requestId !== undefined ? sentAtMs(record.ts) : undefined
+      return {
+        kind: 'submit',
+        submit: { ...ids, ...channel, ...(sent !== undefined ? { sentAtMs: sent } : {}), atMs },
+      }
+    }
+    case 'stop': {
+      const stop = stopRecordOf(record)
+      return stop ? { kind: 'stop', stop } : undefined
+    }
+    case 'failure': {
+      const error = failureText(record.error, FAILURE_ERROR_MAX)
+      const details = failureText(record.error_details, FAILURE_DETAILS_MAX)
+      return {
+        kind: 'failure',
+        failure: {
+          ...ids,
+          ...(error !== undefined ? { error } : {}),
+          ...(details !== undefined ? { errorDetails: details } : {}),
+          atMs,
+        },
+      }
+    }
+    default:
+      return undefined
+  }
+}
+
+/**
+ * `true` iff the events log holds a submit with a prompt id: this Claude
+ * Code reports which turn takes each prompt, and the channel follows its
+ * turns by their ids (`src/turns.ts`).
+ */
+export function promptIdsReported(stateDir: string, pid: number | string): boolean {
+  return readEvents(stateDir, pid).some(
+    (event) => event.kind === 'submit' && event.submit.promptId !== undefined,
+  )
+}
+
+/** Every well-formed line of the events log, in the order written; none without a file. */
+export function readEvents(stateDir: string, pid: number | string): SessionEvent[] {
+  let text: string
+  try {
+    text = readFileSync(eventsFilePath(stateDir, pid), 'utf8')
+  } catch {
+    return []
+  }
+  const events: SessionEvent[] = []
+  // A last line without its newline is still being written.
+  const end = text.lastIndexOf('\n')
+  for (const line of text.slice(0, end + 1).split('\n')) {
+    if (line.length === 0) continue
+    const event = parseEventLine(line)
+    if (event) events.push(event)
+  }
+  return events
 }
 
 /** The latest tool call's turn record, or `undefined` without a well-formed file. */
@@ -574,14 +925,15 @@ export function hooksActive(source: SessionIdSource): boolean {
  * calls of the same tool each get their own id; otherwise the oldest.
  * Records older than {@link TOOL_USE_MAX_AGE_MS} belong to calls that
  * never reached this server and are removed on the way. Best effort:
- * `undefined` when nothing matches.
+ * `undefined` when nothing matches. With the id comes the call's prompt id,
+ * the turn that made it, when Claude Code gave one.
  */
 export function takeToolUse(
   source: SessionIdSource,
   toolName: string,
   args: unknown,
   now: number = Date.now(),
-): string | undefined {
+): ToolUse | undefined {
   const dir = toolUsesDir(source.stateDir, source.parentPid)
   let names: string[]
   try {
@@ -590,8 +942,9 @@ export function takeToolUse(
     return undefined
   }
   const wanted = canonicalJson(args ?? {})
-  let exact: { id: string; atMs: number } | undefined
-  let oldest: { id: string; atMs: number } | undefined
+  type Candidate = { id: string; atMs: number; promptId?: string }
+  let exact: Candidate | undefined
+  let oldest: Candidate | undefined
   for (const name of names) {
     if (!isToolUseId(name)) continue
     const path = join(dir, name)
@@ -609,15 +962,28 @@ export function takeToolUse(
     ) {
       continue
     }
-    const candidate = { id: name, atMs }
+    const candidate: Candidate = {
+      id: name,
+      atMs,
+      ...(isClaudeSessionId(record.prompt_id) ? { promptId: record.prompt_id } : {}),
+    }
     if (!oldest || atMs < oldest.atMs) oldest = candidate
     if (canonicalJson(record.tool_input ?? {}) === wanted && (!exact || atMs < exact.atMs)) {
       exact = candidate
     }
   }
   const chosen = exact ?? oldest
-  if (chosen) removeQuietly(join(dir, chosen.id))
-  return chosen?.id
+  if (!chosen) return undefined
+  removeQuietly(join(dir, chosen.id))
+  return { toolUseId: chosen.id, ...(chosen.promptId !== undefined ? { promptId: chosen.promptId } : {}) }
+}
+
+/** A tool call's PreToolUse record, as {@link takeToolUse} hands it to the server. */
+export type ToolUse = {
+  /** The model's id for the call. */
+  readonly toolUseId: string
+  /** Claude Code's id for the turn that made the call, when it gave one. */
+  readonly promptId?: string
 }
 
 /** JSON with object keys sorted, so two equal values give the same text. */
@@ -656,7 +1022,7 @@ export function sweepDeadSessions(stateDir: string): void {
     return
   }
   for (const name of names) {
-    const match = /^(\d+)(\.stop|\.turn|\.tools|\.open|\.nudge)?$/.exec(name)
+    const match = /^(\d+)(\.stop|\.turn|\.tools|\.open|\.nudge|\.events)?$/.exec(name)
     if (!match || processAlive(Number(match[1]))) continue
     removeQuietly(join(sessionsDir(stateDir), name))
   }

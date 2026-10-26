@@ -21,6 +21,9 @@
 //      loaded, gets the live handles, adds a heartbeat field and a
 //      registration metadata key, and hears every PI event with the served
 //      request; an extension with an invalid metadata key fails the start.
+//  12. A run no NATS prompt started is a local turn: the extension hears it
+//      begin and end, its provider headers and tool calls are given it, and
+//      a prompt that arrives meanwhile is handed to PI only after its end.
 //
 // Run with:
 //   bun test/smoke.mjs
@@ -510,6 +513,48 @@ await step("extension: no provider headers while no NATS prompt is active", asyn
   assert.deepEqual(event.headers, {});
 })();
 
+await step(
+  "a run no NATS prompt started is a local turn: the extension hears it begin and end, and its headers and tool calls name it",
+  async () => {
+    const state = extensionState();
+    const startedBefore = state.localTurnStarted.length;
+    const endedBefore = state.localTurnEnded.length;
+    // Typed at PI's terminal: no NATS prompt is active. PI continuing the
+    // same run fires agent_start again, which opens nothing.
+    await emit("agent_start", { type: "agent_start" });
+    await emit("agent_start", { type: "agent_start" });
+    assert.equal(state.localTurnStarted.length, startedBefore + 1);
+    const turn = state.localTurnStarted.at(-1);
+    assert.match(turn.id, /^local-\d+$/);
+    assert.equal(turn.local, true);
+    assert.equal(typeof turn.atMs, "number");
+
+    const headersEvent = { type: "before_provider_headers", headers: {} };
+    await emit("before_provider_headers", headersEvent);
+    assert.equal(headersEvent.headers["x-smoke-request"], turn.id);
+
+    const toolsBefore = state.aroundToolCall.length;
+    await registeredTools
+      .get("prompt_agent")
+      .execute("call-local", { address: expectedSubject, prompt: "hi" }, undefined, undefined, mockCtx);
+    assert.deepEqual(state.aroundToolCall.slice(toolsBefore), [
+      { id: turn.id, toolName: "prompt_agent" },
+    ]);
+
+    await emit("agent_settled", { type: "agent_settled" });
+    assert.equal(state.localTurnEnded.length, endedBefore + 1);
+    const ended = state.localTurnEnded.at(-1);
+    assert.equal(ended.id, turn.id);
+    assert.equal(ended.outcome, "ok");
+    assert.ok(ended.atMs >= turn.atMs);
+
+    // Closed: the next provider request gets nothing.
+    const after = { type: "before_provider_headers", headers: {} };
+    await emit("before_provider_headers", after);
+    assert.deepEqual(after.headers, {});
+  },
+)();
+
 // Helper — consume a stream until terminator, capturing chunks + error.
 async function collectStream(requestSubject, payload) {
   const inbox = createInbox();
@@ -904,8 +949,53 @@ if (STRICT) {
   )();
 
   await step(
-    "session_shutdown settles a queued AgentService response",
+    "a prompt that arrives during a local turn waits for its end, and its own run opens none",
     async () => {
+      const state = extensionState();
+      await emit("agent_start", { type: "agent_start" });
+      const turn = state.localTurnStarted.at(-1);
+      // PI reads as idle once a run has settled, before the channel hears
+      // of it: the open local turn alone keeps the prompt waiting.
+      mockIdle = true;
+      pendingSendUserMessage = null;
+      const stream = collectStream(expectedSubject, "Wait for the local turn.");
+      await delay(200);
+      assert.equal(pendingSendUserMessage, null, "the prompt was handed to PI inside the local turn");
+
+      const logFrom = state.log.length;
+      await emit("agent_settled", { type: "agent_settled" });
+      for (let i = 0; i < 50 && pendingSendUserMessage === null; i++)
+        await delay(20);
+      assert.equal(pendingSendUserMessage, "Wait for the local turn.");
+      const requestId = state.injectedRequests.at(-1);
+      assert.deepEqual(state.log.slice(logFrom), [
+        `localTurnEnded ${turn.id}`,
+        `aroundInject ${requestId}`,
+      ]);
+
+      // The prompt's own run: no local turn, the headers name the request.
+      const startedBefore = state.localTurnStarted.length;
+      await emit("agent_start", { type: "agent_start" });
+      assert.equal(state.localTurnStarted.length, startedBefore);
+      const headersEvent = { type: "before_provider_headers", headers: {} };
+      await emit("before_provider_headers", headersEvent);
+      assert.equal(headersEvent.headers["x-smoke-request"], requestId);
+      await emit("message_update", {
+        assistantMessageEvent: { type: "text_delta", delta: "waited" },
+      });
+      await emit("agent_settled", { type: "agent_settled" });
+      const answered = await stream;
+      assert.ok(answered.terminator, "terminator not observed after settle");
+      assert.equal(state.promptEnded.at(-1)?.id, requestId);
+    },
+  )();
+
+  await step(
+    "session_shutdown ends an open local turn, then settles a queued AgentService response",
+    async () => {
+      const state = extensionState();
+      await emit("agent_start", { type: "agent_start" });
+      const turn = state.localTurnStarted.at(-1);
       mockIdle = false;
       pendingSendUserMessage = null;
       const collecting = collectStream(
@@ -913,7 +1003,10 @@ if (STRICT) {
         "queued during shutdown",
       );
       await delay(100);
+      const logFrom = state.log.length;
       await emit("session_shutdown", {});
+      assert.equal(state.localTurnEnded.at(-1)?.id, turn.id);
+      assert.equal(state.log[logFrom], `localTurnEnded ${turn.id}`);
       const { chunks, error, terminator } = await collecting;
       assert.deepEqual(JSON.parse(chunks[0]), { type: "status", data: "ack" });
       assert.equal(error?.code, 500);
@@ -923,7 +1016,6 @@ if (STRICT) {
         null,
         "queued shutdown prompt reached PI",
       );
-      const state = extensionState();
       assert.equal(state.promptEnded.at(-1)?.outcome, "error");
       assert.equal(state.stopping, 1, "stopping() not awaited on shutdown");
     },

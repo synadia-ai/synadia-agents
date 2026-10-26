@@ -69,6 +69,9 @@ export default function (ctx) {
     started: () => log({ event: 'started' }),
     events: {
       promptAccepted: (r) => log({ event: 'promptAccepted', id: r.id, sessionId: r.sessionId ?? null, extras: r.extras, bound: als.getStore() ?? null }),
+      promptStarted: (r, atMs, sessionId) => log({ event: 'promptStarted', id: r.id, atMs, sessionId: sessionId ?? null }),
+      localTurnStarted: (t) => log({ event: 'localTurnStarted', id: t.id }),
+      localTurnEnded: (t, outcome) => log({ event: 'localTurnEnded', id: t.id, outcome }),
       promptEnded: (r, outcome, _at, reason) => log({ event: 'promptEnded', id: r.id, outcome, reason: reason ?? null }),
       aroundToolCall: (r, tool, run) => { log({ event: 'aroundToolCall', id: r?.id ?? null, tool, bound: als.getStore() ?? null }); return run() },
       sessionStarted: (id, source) => log({ event: 'sessionStarted', id, source }),
@@ -87,11 +90,11 @@ function extensionEvents(): ExtensionEvent[] {
 // stands in for Claude Code, so its pid keys the files and the sweep keeps them.
 const SESSION_ID = '5c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f'
 // Returns what the hook printed: nothing, or a refused stop's decision.
-async function runHook(input: Record<string, unknown>): Promise<string> {
+async function runHook(input: Record<string, unknown>, dir: string = stateDir): Promise<string> {
   const child = Bun.spawn([process.execPath, join(sourceRoot, 'hooks', 'session-event.ts')], {
     stdin: new TextEncoder().encode(JSON.stringify(input)),
     stdout: 'pipe',
-    env: { ...process.env, CLAUDE_PID: String(process.pid), NATS_STATE_DIR: stateDir },
+    env: { ...process.env, CLAUDE_PID: String(process.pid), NATS_STATE_DIR: dir },
   })
   const stdout = await new Response(child.stdout).text()
   if ((await child.exited) !== 0) throw new Error('hook exited non-zero')
@@ -195,6 +198,7 @@ type Collected = {
 async function collectChunks(
   requestBody: string | Uint8Array,
   onChunk?: (chunk: Collected) => Promise<void> | void,
+  subject: string = SUBJECT,
 ): Promise<Collected[]> {
   const inbox = `_INBOX.rt.${Math.random().toString(36).slice(2, 10)}`
   const sub = nc.subscribe(inbox)
@@ -215,7 +219,7 @@ async function collectChunks(
       if (bytes === 0 && !message.headers) break
     }
   })()
-  nc.publish(SUBJECT, requestBody, { reply: inbox })
+  nc.publish(subject, requestBody, { reply: inbox })
   await nc.flush()
   const timer = setTimeout(() => sub.unsubscribe(), 15_000)
   await collect.catch(() => undefined)
@@ -710,6 +714,40 @@ console.log('\n[case 7c] a turn that called reply is not refused, and its end ca
   if (ended?.outcome !== 'ok' || ended.reason !== null) fail(`promptEnded was ${JSON.stringify(ended)}`)
 }
 
+console.log('\n[case 7e] a turn that fails on an API error ends its prompt at once, naming the error')
+{
+  await turnStop()
+  let requestId = ''
+  let failedAt = 0
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      await toolCall('prompt-7e')
+      // Claude Code fires StopFailure instead of Stop; never refused.
+      failedAt = Date.now()
+      const printed = await runHook({
+        hook_event_name: 'StopFailure',
+        session_id: SESSION_ID,
+        prompt_id: 'prompt-7e',
+        error: 'billing_error',
+        error_details: 'Your credit balance is too low to access the Anthropic API.',
+        last_assistant_message: 'API Error: 400',
+      })
+      if (printed !== '') fail(`the StopFailure hook printed ${printed}`)
+    },
+  }
+  const chunks = await collectChunks('this turn fails')
+  assertAck(chunks[0])
+  const error = chunks.find(chunk => chunk.error)?.error
+  const named = 'the turn failed on a model API error: billing_error (Your credit balance is too low to access the Anthropic API.)'
+  if (error?.code !== '500' || error.description !== named) fail(`the failed turn's error frame was ${JSON.stringify(error)}`)
+  if (chunks.some(chunk => chunk.body.includes('"type":"response"'))) fail('the failed turn\'s prompt got a response chunk')
+  const endedAfter = (chunks.find(chunk => chunk.error)?.atMs ?? Infinity) - failedAt
+  if (endedAfter > 3000) fail(`the failed turn's prompt ended ${endedAfter} ms after the failure`)
+  const ended = await promptEndedEvent(requestId)
+  if (ended?.outcome !== 'error' || ended.reason !== 'no_reply') fail(`promptEnded was ${JSON.stringify(ended)}`)
+}
+
 console.log('\n[case 8] a prompt delivered during a turn survives its Stop and ends at the grace period')
 {
   await turnStop()
@@ -751,6 +789,159 @@ console.log('\n[case 8] a prompt delivered during a turn survives its Stop and e
   }
   const outcome = await promptEndedOutcome(secondId)
   if (outcome !== 'error') fail(`promptEnded for the mid-turn prompt was ${String(outcome)}`)
+}
+
+// From here on Claude Code reports prompt ids: the channel follows its
+// turns by them (src/turns.ts). The cases above pin the fallback.
+console.log('\n[case 9] by prompt id: a turn that replies before the server looks still starts its prompt first')
+{
+  // A typed turn: its submit carries a prompt id, so the turns are followed by id.
+  await runHook({ hook_event_name: 'UserPromptSubmit', session_id: SESSION_ID, prompt_id: 'prompt-9a', prompt: 'typed text' })
+  await turnStop({ prompt_id: 'prompt-9a' })
+  let requestId = ''
+  let stopped!: () => void
+  // The handler's Stop comes after the reply the caller sees: wait for it,
+  // so the next case's hooks run after it, as Claude Code runs them.
+  const turnOver = new Promise<void>(resolve => { stopped = resolve })
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      // Claude Code takes the prompt into a turn of its own and replies at
+      // once: the submit, then the reply, sooner than the server's poll.
+      await runHook({
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION_ID,
+        prompt_id: 'prompt-9b',
+        prompt: `<channel source="plugin:nats-channel:nats" request_id="${id}" session="${NAME}">a short turn`,
+      })
+      await mcp.callTool({ name: 'reply', arguments: { request_id: id, text: 'answered' } })
+      await turnStop({ prompt_id: 'prompt-9b' })
+      stopped()
+    },
+  }
+  const chunks = await collectChunks('a short turn')
+  await turnOver
+  if (chunks.some(chunk => chunk.error)) fail('the short turn\'s prompt got an error frame')
+  await promptEndedEvent(requestId)
+  const events = extensionEvents()
+  const started = events.findIndex(e => e.event === 'promptStarted' && e.id === requestId)
+  const ended = events.findIndex(e => e.event === 'promptEnded' && e.id === requestId)
+  if (started < 0 || ended < started) fail(`promptStarted did not come before promptEnded: ${JSON.stringify(events.slice(-6))}`)
+  if (events[started]?.sessionId !== SESSION_ID) fail(`promptStarted named ${JSON.stringify(events[started]?.sessionId)}`)
+  // The typed turn was a local turn of its own.
+  for (let i = 0; i < 40 && !extensionEvents().some(e => e.event === 'localTurnEnded' && e.id === 'local-prompt-9a'); i++) await Bun.sleep(50)
+  if (!extensionEvents().some(e => e.event === 'localTurnStarted' && e.id === 'local-prompt-9a')) fail('the typed turn was no local turn')
+  if (!extensionEvents().some(e => e.event === 'localTurnEnded' && e.id === 'local-prompt-9a')) fail('the typed turn\'s local turn did not end')
+}
+
+console.log('\n[case 10] by prompt id: channel messages taken together are one turn, each answered with its final text')
+{
+  // Three prompts wait; Claude Code takes them together: a submit each,
+  // under a prompt id of its own, one after another, then one turn under
+  // the last id. No reply: the Stop is refused once for all three, and the
+  // turn's final text answers each.
+  const ids: string[] = []
+  let allDelivered!: () => void
+  const delivered = new Promise<void>(resolve => { allDelivered = resolve })
+  currentCase = {
+    replyHandler: async id => {
+      ids.push(id)
+      if (ids.length === 3) allDelivered()
+    },
+  }
+  const collecting = Promise.all(['batch one', 'batch two', 'batch three'].map(text => collectChunks(text)))
+  await delivered
+  for (const [i, id] of ids.entries()) {
+    await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: SESSION_ID,
+      prompt_id: `prompt-10${'abc'[i]}`,
+      prompt: `<channel source="plugin:nats-channel:nats" request_id="${id}" session="${NAME}" ts="${new Date().toISOString()}">batch`,
+    })
+  }
+  const refused = await turnStop({ prompt_id: 'prompt-10c', last_assistant_message: 'the batch answer' })
+  for (const id of ids) assertRefused(refused, id, 'the batch\'s first stop')
+  await turnStop({ prompt_id: 'prompt-10c', stop_hook_active: true, last_assistant_message: 'the batch answer' })
+  for (const [i, chunks] of (await collecting).entries()) {
+    const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+    if (chunks.some(chunk => chunk.error) || responses.length !== 1 || responses[0]!.data !== 'the batch answer') {
+      fail(`batch prompt ${i + 1} got ${JSON.stringify(chunks.map(chunk => chunk.error ?? chunk.body.slice(0, 60)))}`)
+    }
+  }
+  for (const id of ids) {
+    const ended = await promptEndedEvent(id)
+    if (ended?.outcome !== 'ok' || ended.reason !== 'final_text') fail(`promptEnded for batch request ${id} was ${JSON.stringify(ended)}`)
+  }
+}
+
+console.log('\n[case 11] a prompt Claude Code takes while the extensions start is still read')
+{
+  // A second channel whose extension takes 2.5 s to start: its service is
+  // on the bus, its hooks' watcher not yet polling. Claude Code takes the
+  // prompt and stops without a reply meanwhile; the watcher, once it
+  // polls, reads both from the mark taken before the service started.
+  const gapState = mkdtempSync(join(tmpdir(), 'claude-channel-gap-'))
+  const slowPath = join(gapState, 'rt-slow.mjs')
+  writeFileSync(slowPath, `export default () => ({ name: 'rt-slow', started: () => new Promise(r => setTimeout(r, 2500)) })\n`)
+  await runHook({ hook_event_name: 'SessionStart', session_id: SESSION_ID, source: 'startup' }, gapState)
+  // A turn this Claude Code ran before the channel started: the log holds
+  // its prompt id, so the channel follows the turns by id from its start.
+  await runHook({ hook_event_name: 'UserPromptSubmit', session_id: SESSION_ID, prompt_id: 'prompt-11a', prompt: 'typed' }, gapState)
+  await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID, prompt_id: 'prompt-11a', background_tasks: [], session_crons: [] }, gapState)
+  const gapName = 'rt-gap'
+  const gap = Bun.spawn(['bun', join(cacheRoot, 'runtime', 'server.js')], {
+    env: { ...childEnv, NATS_STATE_DIR: gapState, NATS_SESSION_NAME: gapName, SYNADIA_CLAUDE_CODE_EXTENSIONS: slowPath },
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  void new Response(gap.stdout).text()
+  // Its stderr, read as it comes: a chatty channel never blocks on a full
+  // pipe, and a failure below shows what the channel said.
+  let gapStderr = ''
+  void (async () => {
+    const decoder = new TextDecoder()
+    for await (const chunk of gap.stderr) gapStderr += decoder.decode(chunk, { stream: true })
+  })()
+  let up = false
+  for (let attempt = 0; attempt < 40 && !up; attempt++) {
+    up = (await discovery.discover({ timeoutMs: 100, filter: { agent: 'claude-code', owner: OWNER, name: gapName } })).length > 0
+  }
+  if (!up) fail(`the second channel did not register; its stderr:\n${gapStderr}`)
+  let took = false
+  const chunks = await collectChunks('taken while the extensions start', async chunk => {
+    if (took || !chunk.body.includes('"ack"')) return
+    took = true
+    await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: SESSION_ID,
+      prompt_id: 'prompt-11',
+      prompt: `<channel source="plugin:nats-channel:nats" request_id="1" session="${gapName}" ts="${new Date().toISOString()}">x`,
+    }, gapState)
+    await runHook({
+      hook_event_name: 'Stop',
+      session_id: SESSION_ID,
+      prompt_id: 'prompt-11',
+      background_tasks: [],
+      session_crons: [],
+      stop_hook_active: true,
+      last_assistant_message: 'the answer taken early',
+    }, gapState)
+  }, `agents.prompt.cc.${OWNER}.${gapName}`)
+  const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+  if (chunks.some(chunk => chunk.error) || responses.length !== 1 || responses[0]!.data !== 'the answer taken early') {
+    fail(
+      `the prompt taken while the extensions started got ${JSON.stringify(chunks.map(chunk => chunk.error ?? chunk.body.slice(0, 60)))}; ` +
+        `the second channel's stderr:\n${gapStderr}`,
+    )
+  }
+  // SIGTERM, which the channel handles as a shutdown; then gone for sure.
+  gap.kill()
+  if ((await Promise.race([gap.exited, Bun.sleep(10_000).then(() => 'timeout' as const)])) === 'timeout') {
+    fail('the second channel did not stop')
+    gap.kill(9)
+  }
+  rmSync(gapState, { recursive: true, force: true })
 }
 
 console.log('\n[case 6] shutdown settles an open deferred request')

@@ -13,8 +13,9 @@
  * validates a `parameters` object that is not a TypeBox type as JSON
  * Schema and forwards it to the provider unchanged. `execute` runs
  * `tools.execute(name, params, { toolCallId, signal })` inside the
- * extensions' `aroundToolCall` wrapper, with the request PI is serving,
- * and hands the result back to the model as JSON text.
+ * extensions' `aroundToolCall` wrapper, with the NATS prompt or the local
+ * turn PI is working on, and hands the result back to the model as JSON
+ * text.
  */
 
 import {
@@ -25,7 +26,7 @@ import {
 } from "@synadia-ai/agents";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import type { ServedRequest } from "./extensions.ts";
+import type { LocalTurn, ServedRequest } from "./extensions.ts";
 
 export type AgentToolsMode = "blocking" | "all" | "off";
 
@@ -76,11 +77,14 @@ type PiToolDefinition = Parameters<ExtensionAPI["registerTool"]>[0];
 
 /** What the registration needs from the channel. */
 export interface AgentToolHooks {
-  /** The request PI is serving now, if any: the one the model works in. */
-  readonly activeRequest: () => ServedRequest | undefined;
+  /**
+   * The NATS prompt PI is serving now, else the local turn it runs, if
+   * any: the one the model works in.
+   */
+  readonly activeRequest: () => ServedRequest | LocalTurn | undefined;
   /** The extensions' wrapper around every tool call. */
   readonly aroundToolCall: <T>(
-    request: ServedRequest | undefined,
+    request: ServedRequest | LocalTurn | undefined,
     toolName: string,
     run: () => T,
   ) => T;

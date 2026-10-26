@@ -6,18 +6,22 @@
 // the turn, which make the hook refuse the turn's first stop.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   TOOL_USE_MAX_AGE_MS,
+  channelPrompt,
   claudePid,
   clearOpenRequests,
+  eventsFilePath,
   finalText,
   hooksActive,
   nudgeFilePath,
   openFilePath,
+  readEvents,
+  readOpenFile,
   readOpenRequests,
   readSessionRecord,
   readTurnActivity,
@@ -35,7 +39,7 @@ import {
   writeOpenRequests,
   type SessionIdSource,
 } from '../src/session-id.js'
-import { watchSessionEvents } from '../src/session-events.js'
+import { markSessionEvents, watchSessionEvents } from '../src/session-events.js'
 
 const PID = 4242
 const SESSION = '0b7e1c9a-2f4d-4e1b-9c3a-5d6e7f8a9b0c'
@@ -128,6 +132,121 @@ describe('recordHookEvent: what each hook writes', () => {
       tool_input: { address: 'a', prompt: 'p' },
     }, 3000)).toBe('tool')
     expect(readdirSync(toolUsesDir(stateDir, PID))).toEqual(['toolu_01ABC'])
+  })
+
+  test('the events log: a channel message\'s submit carries its request, typed text none, and no text is written', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const submit = (prompt: string, promptId: string | undefined, now: number) =>
+      recordHookEvent(stateDir, PID, {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION,
+        ...(promptId !== undefined ? { prompt_id: promptId } : {}),
+        prompt,
+      }, now)
+    expect(submit('TYPED-SECRET say OK', 'p1', 10)).toBe('submit')
+    expect(submit(`<channel source="${CHANNEL}" request_id="3" session="s" ts="t">CHANNEL-SECRET`, 'p1', 20)).toBe('submit')
+    // Another channel plugin's message: its request is never ours.
+    submit('<channel source="plugin:other:telegram" request_id="1">OTHER-SECRET', 'p2', 30)
+    // A tag without both attributes, or a request id that is a path: none either.
+    submit(`<channel source="${CHANNEL}">x`, 'p2', 40)
+    submit(`<channel source="${CHANNEL}" request_id="../x">x`, 'p2', 41)
+    // No prompt id: the line still goes in, without one.
+    submit('/mhello', undefined, 50)
+    const text = readFileSync(eventsFilePath(stateDir, PID), 'utf8')
+    expect(text).not.toContain('SECRET')
+    expect(text).not.toContain('mhello')
+    expect(text.trim().split('\n')).toHaveLength(6)
+    expect(readEvents(stateDir, PID)).toEqual([
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p1', atMs: 10 } },
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p1', requestId: '3', source: CHANNEL, atMs: 20 } },
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p2', atMs: 30 } },
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p2', atMs: 40 } },
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p2', atMs: 41 } },
+      { kind: 'submit', submit: { sessionId: SESSION, atMs: 50 } },
+    ])
+  })
+
+  test('the events log: a recorded Stop, whole, and a StopFailure; a refused Stop is no line', () => {
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'Stop',
+      session_id: SESSION,
+      prompt_id: 'p1',
+      background_tasks: [],
+      session_crons: [],
+    }, 100)
+    // A refused stop records its text for the next one, and nothing else.
+    recordRefusedStop(stateDir, PID, { hook_event_name: 'Stop', session_id: SESSION, prompt_id: 'p2' }, 150)
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'StopFailure',
+      session_id: SESSION,
+      prompt_id: 'p2',
+      error: 'rate_limit',
+      last_assistant_message: 'FAILED-SECRET',
+    }, 200)
+    // The error's details, cut to 200 characters on one line.
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'StopFailure',
+      session_id: SESSION,
+      prompt_id: 'p3',
+      error: 'billing_error',
+      error_details: `Your credit balance is too low.\n${'x'.repeat(300)}`,
+      last_assistant_message: 'FAILED-SECRET',
+    }, 300)
+    expect(readEvents(stateDir, PID)).toEqual([
+      { kind: 'stop', stop: { sessionId: SESSION, promptId: 'p1', background: false, atMs: 100 } },
+      { kind: 'failure', failure: { sessionId: SESSION, promptId: 'p2', error: 'rate_limit', atMs: 200 } },
+      {
+        kind: 'failure',
+        failure: {
+          sessionId: SESSION,
+          promptId: 'p3',
+          error: 'billing_error',
+          errorDetails: `Your credit balance is too low. ${'x'.repeat(168)}`,
+          atMs: 300,
+        },
+      },
+    ])
+    expect(readFileSync(eventsFilePath(stateDir, PID), 'utf8')).not.toContain('SECRET')
+    // The Stop hook never refuses a failure.
+    writeOpenRequests(stateDir, PID, ['7'])
+    expect(stopRefusal(stateDir, PID, { hook_event_name: 'StopFailure', error: 'billing_error' })).toBeUndefined()
+    // A StopFailure is not a Stop: `.stop` holds the first one still.
+    expect(readTurnStop(source)).toEqual({ sessionId: SESSION, background: false, atMs: 100 })
+  })
+
+  test('the events log: a line still being written, or a malformed one, is not read', () => {
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: 'p1', prompt: 'x' }, 10)
+    appendFileSync(eventsFilePath(stateDir, PID), 'not json\n{"event":"stop","at_ms":"soon"}\n{"event":"submit","at_ms":20')
+    expect(readEvents(stateDir, PID)).toEqual([
+      { kind: 'submit', submit: { sessionId: SESSION, promptId: 'p1', atMs: 10 } },
+    ])
+  })
+
+  test('channelPrompt reads the tag only', () => {
+    expect(channelPrompt('<channel source="plugin:p:nats" request_id="12">hi')).toEqual({
+      requestId: '12',
+      source: 'plugin:p:nats',
+    })
+    // With the time the server sent it; a ts of another shape is left out.
+    expect(channelPrompt('<channel source="plugin:p:nats" request_id="12" session="s" ts="2026-10-26T12:03:34.511Z">hi')).toEqual({
+      requestId: '12',
+      source: 'plugin:p:nats',
+      ts: '2026-10-26T12:03:34.511Z',
+    })
+    expect(channelPrompt('<channel source="plugin:p:nats" request_id="12" ts="yesterday">hi')).toEqual({
+      requestId: '12',
+      source: 'plugin:p:nats',
+    })
+    for (const prompt of [
+      'hi <channel source="plugin:p:nats" request_id="1">',
+      '<channel source="nats" request_id="1">',
+      '<channel request_id="1" source="plugin:p:natsx">',
+      `<channel source="plugin:p:nats" ${'x'.repeat(2000)} request_id="1">`,
+      '<channel source="plugin:p:nats" request_id="1"',
+      42,
+    ]) {
+      expect(channelPrompt(prompt)).toBeUndefined()
+    }
   })
 
   test('malformed input writes nothing: a bad session id, a tool-use id that is a path, another event', () => {
@@ -226,6 +345,129 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     expect(existsSync(nudgeFilePath(stateDir, PID))).toBe(false)
   })
 
+  test('by prompt id: a short turn\'s Stop is refused for the prompt it took in, before any server poll; a queued prompt\'s is not', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const submit = (promptId: string, prompt: string, now: number) =>
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
+    // The server delivered '2' while a typed turn ran; its ledger names no owner.
+    writeOpenRequests(stateDir, PID, [], process.pid, 1000, { openIds: ['2'], sinceMs: 500 })
+    submit('pTyped', 'TYPED-L SLOW10', 900)
+    const typedStop = { ...idle, prompt_id: 'pTyped', last_assistant_message: 'the typed answer' }
+    expect(stopRefusal(stateDir, PID, typedStop)).toBeUndefined()
+    recordHookEvent(stateDir, PID, typedStop, 2000)
+    expect(readTurnStop(source)?.finalText).toBeUndefined()
+    // Claude Code takes '2' into a turn of its own, which stops 30 ms later
+    // without a reply: the server has not polled, the hook knows anyway.
+    submit('pNats', `<channel source="${CHANNEL}" request_id="2" session="s">NATS-M say OK`, 2030)
+    const natsStop = { ...idle, prompt_id: 'pNats', last_assistant_message: 'OK' }
+    expect(stopRefusal(stateDir, PID, natsStop)).toContain('"2"')
+    recordHookEvent(stateDir, PID, { ...natsStop, stop_hook_active: true }, 2060)
+    expect(readTurnStop(source)?.finalText).toBe('OK')
+    // Answered: no longer open, no refusal.
+    writeOpenRequests(stateDir, PID, [], process.pid, 2100, { openIds: [], sinceMs: 500 })
+    expect(stopRefusal(stateDir, PID, natsStop)).toBeUndefined()
+  })
+
+  test('by prompt id: a fold binds the prompt to the running turn; the latest submit of a request since the server started wins', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const submit = (promptId: string, prompt: string, now: number) =>
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
+    // A previous server's request '1', taken into pT, before this server started.
+    submit('pT', `<channel source="${CHANNEL}" request_id="1">old`, 100)
+    writeOpenRequests(stateDir, PID, [], process.pid, 600, { openIds: ['1'], sinceMs: 500 })
+    // This server's '1' waits: the stale line binds it to nothing.
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toBeUndefined()
+    // Folded into the running turn pT at its next tool result.
+    submit('pT', `<channel source="${CHANNEL}" request_id="1">new`, 700)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toContain('"1"')
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pOther' })).toBeUndefined()
+    // Another channel plugin's request "1" binds nothing of ours.
+    writeOpenRequests(stateDir, PID, [], process.pid, 800, { openIds: ['1'], sinceMs: 750 })
+    submit('pU', '<channel source="plugin:other:chat" request_id="1">x', 800)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pU' })).toBeUndefined()
+  })
+
+  test('by prompt id: an earlier server\'s message of the same request id, taken after the restart, binds nothing', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const tag = (ts: string) => `<channel source="${CHANNEL}" request_id="1" session="s" ts="${ts}">`
+    const submit = (promptId: string, prompt: string, now: number) =>
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
+    const started = Date.parse('2026-10-26T12:00:00.000Z')
+    // This server started at 12:00 and delivered its own "1"; Claude Code
+    // takes the old server's queued "1" first, sent at 11:59.
+    writeOpenRequests(stateDir, PID, [], process.pid, started + 10, { openIds: ['1'], sinceMs: started })
+    submit('pOld', `${tag('2026-10-26T11:59:59.000Z')}old`, started + 20)
+    expect(readEvents(stateDir, PID).at(-1)).toMatchObject({
+      kind: 'submit',
+      submit: { requestId: '1', sentAtMs: Date.parse('2026-10-26T11:59:59.000Z') },
+    })
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pOld' })).toBeUndefined()
+    // This server's "1" is taken next: its turn's Stop is refused for it.
+    submit('pNew', `${tag('2026-10-26T12:00:00.005Z')}new`, started + 40)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pNew' })).toContain('"1"')
+  })
+
+  test('by prompt id: channel messages taken together count for the turn they ran in, the last one\'s id', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const submit = (promptId: string, requestId: string, now: number) =>
+      recordHookEvent(stateDir, PID, {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION,
+        prompt_id: promptId,
+        prompt: `<channel source="${CHANNEL}" request_id="${requestId}">x`,
+      }, now)
+    writeOpenRequests(stateDir, PID, [], process.pid, 100, { openIds: ['1', '2', '3', '4', '5', '6'] })
+    submit('pA', '1', 1_000)
+    submit('pB', '2', 1_020)
+    submit('pC', '3', 1_040)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pC' })).toContain('"1", "2", "3"')
+    // A Stop under any id of the batch is that turn's.
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pA' })).toContain('"1", "2", "3"')
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pB' })).toContain('"1", "2", "3"')
+    // A Stop line between two channel submits keeps them apart, however close.
+    recordHookEvent(stateDir, PID, { ...idle, prompt_id: 'pC', stop_hook_active: true }, 1_100)
+    submit('pD', '4', 1_110)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pD' })).toContain('"4" is')
+    // 1.2 s apart (a slow hook of the user's) with nothing between: one turn.
+    submit('pE', '5', 2_310)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pE' })).toContain('"4", "5"')
+    // Past the bound, which stands in for a lost Stop line: apart.
+    submit('pF', '6', 40_000)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pF' })).toContain('"6" is')
+  })
+
+  test('by prompt id: typed text, or a submit without a prompt id, between two channel submits keeps them apart', () => {
+    const CHANNEL = 'plugin:nats-channel:nats'
+    const channelSubmit = (promptId: string, requestId: string, now: number) =>
+      recordHookEvent(stateDir, PID, {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION,
+        prompt_id: promptId,
+        prompt: `<channel source="${CHANNEL}" request_id="${requestId}">x`,
+      }, now)
+    writeOpenRequests(stateDir, PID, [], process.pid, 100, { openIds: ['1', '2', '3', '4'] })
+    channelSubmit('pA', '1', 1_000)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: 'pA', prompt: 'typed' }, 1_010)
+    channelSubmit('pB', '2', 1_020)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pB' })).toContain('"2" is')
+    channelSubmit('pC', '3', 1_030)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt: 'no id' }, 1_040)
+    channelSubmit('pD', '4', 1_050)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pD' })).toContain('"4" is')
+  })
+
+  test('without prompt ids, the server\'s owners decide, as before', () => {
+    // A submit without a prompt id, and a Stop without one: the owning set.
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt: 'x' }, 10)
+    writeOpenRequests(stateDir, PID, ['7'], process.pid, 20, { openIds: ['7', '8'] })
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'p1' })).toContain('"7"')
+    expect(stopRefusal(stateDir, PID, idle)).toContain('"7"')
+    expect(stopRefusal(stateDir, PID, idle)).not.toContain('"8"')
+    // The file as an older server wrote it, without open_ids: the owners are the open ones.
+    writeFileSync(openFilePath(stateDir, PID), JSON.stringify({ server_pid: process.pid, request_ids: ['9'], at_ms: 1 }))
+    expect(readOpenFile(stateDir, PID)).toEqual({ requestIds: ['9'], openIds: ['9'] })
+  })
+
   test('the final text: last_assistant_message first, else the transcript\'s last assistant message', () => {
     expect(finalText({ last_assistant_message: 'given' })).toBe('given')
     expect(finalText({ last_assistant_message: '   ' })).toBeUndefined()
@@ -284,21 +526,21 @@ describe('takeToolUse: the PreToolUse id reaches the call it was recorded for', 
   test('matches the MCP tool name by its last segment and removes the record', () => {
     record('toolu_1', 'mcp__plugin_nats-channel_nats__discover_agents', {}, 1000)
     expect(takeToolUse(source, 'prompt_agent', {}, 1001)).toBeUndefined()
-    expect(takeToolUse(source, 'discover_agents', {}, 1001)).toBe('toolu_1')
+    expect(takeToolUse(source, 'discover_agents', {}, 1001)?.toolUseId).toBe('toolu_1')
     expect(takeToolUse(source, 'discover_agents', {}, 1002)).toBeUndefined()
   })
 
   test('parallel calls of one tool each get the id whose input matches their arguments', () => {
     record('toolu_a', 'mcp__nats__prompt_agent', { address: 'x', prompt: 'one' }, 1000)
     record('toolu_b', 'mcp__nats__prompt_agent', { prompt: 'two', address: 'y' }, 1001)
-    expect(takeToolUse(source, 'prompt_agent', { address: 'y', prompt: 'two' }, 1002)).toBe('toolu_b')
-    expect(takeToolUse(source, 'prompt_agent', { address: 'x', prompt: 'one' }, 1002)).toBe('toolu_a')
+    expect(takeToolUse(source, 'prompt_agent', { address: 'y', prompt: 'two' }, 1002)?.toolUseId).toBe('toolu_b')
+    expect(takeToolUse(source, 'prompt_agent', { address: 'x', prompt: 'one' }, 1002)?.toolUseId).toBe('toolu_a')
   })
 
   test('without an input match the oldest record of the tool wins', () => {
     record('toolu_new', 'mcp__nats__prompt_agent', { prompt: 'n' }, 2000)
     record('toolu_old', 'mcp__nats__prompt_agent', { prompt: 'o' }, 1000)
-    expect(takeToolUse(source, 'prompt_agent', { prompt: 'other' }, 2001)).toBe('toolu_old')
+    expect(takeToolUse(source, 'prompt_agent', { prompt: 'other' }, 2001)?.toolUseId).toBe('toolu_old')
   })
 
   test('stale records are dropped, not handed to a later call', () => {
@@ -309,6 +551,19 @@ describe('takeToolUse: the PreToolUse id reaches the call it was recorded for', 
 
   test('no directory means no id', () => {
     expect(takeToolUse(source, 'prompt_agent', {})).toBeUndefined()
+  })
+
+  test('the record names the turn that made the call, when Claude Code gave its prompt id', () => {
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'PreToolUse',
+      tool_use_id: 'toolu_p',
+      tool_name: 'mcp__nats__prompt_agent',
+      tool_input: {},
+      prompt_id: 'p7',
+    }, 1000)
+    record('toolu_none', 'mcp__nats__discover_agents', {}, 1000)
+    expect(takeToolUse(source, 'prompt_agent', {}, 1001)).toEqual({ toolUseId: 'toolu_p', promptId: 'p7' })
+    expect(takeToolUse(source, 'discover_agents', {}, 1001)).toEqual({ toolUseId: 'toolu_none' })
   })
 })
 
@@ -322,7 +577,7 @@ describe('sweepDeadSessions', () => {
     }
     sweepDeadSessions(stateDir)
     expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual(
-      [`${process.pid}`, `${process.pid}.stop`, `${process.pid}.turn`, `${process.pid}.tools`].sort(),
+      [`${process.pid}`, `${process.pid}.stop`, `${process.pid}.events`, `${process.pid}.turn`, `${process.pid}.tools`].sort(),
     )
   })
 })
@@ -353,6 +608,99 @@ describe('watchSessionEvents: the hooks as the extensions\' events', () => {
         // A Stop without a session id is the current session's.
         'stopped next 50',
       ])
+    } finally {
+      watcher.stop()
+    }
+  })
+
+  test('the events log and the latest tool call: each line once, whole lines only, in the order of their times', () => {
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }, 5)
+    // Before start: not reported.
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: 'p0', prompt: 'x' }, 6)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'PreToolUse', session_id: SESSION, prompt_id: 'p0', tool_name: 'Bash' }, 7)
+    const calls: string[] = []
+    const watcher = watchSessionEvents(source, {
+      sessionStarted: (id) => calls.push(`started ${id}`),
+      turnStopped: (id, stop) => calls.push(`stopped ${id ?? '-'} ${stop.promptId ?? '-'} ${stop.atMs}`),
+      promptSubmitted: (submit) => calls.push(`submitted ${submit.promptId ?? '-'} ${submit.requestId ?? '-'} ${submit.atMs}`),
+      turnFailed: (failure) => calls.push(`failed ${failure.promptId ?? '-'} ${failure.atMs}`),
+      turnActivity: (activity) => calls.push(`activity ${activity.promptId ?? '-'} ${activity.atMs}`),
+    }, 60_000)
+    try {
+      expect(calls).toEqual([`started ${SESSION}`])
+      calls.length = 0
+      // Within one poll: a submit, a tool call, a Stop, the next turn's
+      // tool call and its failure. `.turn` keeps only the latest call.
+      recordHookEvent(stateDir, PID, {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION,
+        prompt_id: 'p1',
+        prompt: '<channel source="plugin:nats-channel:nats" request_id="4">hi',
+      }, 10)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'PreToolUse', session_id: SESSION, prompt_id: 'p1', tool_name: 'Bash' }, 11)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', session_id: SESSION, prompt_id: 'p1' }, 20)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'PreToolUse', session_id: SESSION, prompt_id: 'p2', tool_name: 'Bash' }, 30)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'StopFailure', session_id: SESSION, prompt_id: 'p2' }, 40)
+      // A line still being written waits for the next poll.
+      appendFileSync(eventsFilePath(stateDir, PID), '{"event":"submit","prompt_id":"p3","at_ms":50')
+      watcher.poll()
+      expect(calls).toEqual([
+        'submitted p1 4 10',
+        `stopped ${SESSION} p1 20`,
+        'activity p2 30',
+        'failed p2 40',
+      ])
+      appendFileSync(eventsFilePath(stateDir, PID), '}\n')
+      watcher.poll()
+      watcher.poll()
+      expect(calls.slice(4)).toEqual(['submitted p3 - 50'])
+    } finally {
+      watcher.stop()
+    }
+  })
+
+  test('made from an earlier mark, it reports what the hooks wrote after the mark and before it was made', () => {
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', prompt_id: 'pOld', prompt: 'x' }, 10)
+    // The server marks the files before it can take a prompt...
+    const mark = markSessionEvents(source)
+    // ...and Claude Code takes one while the extensions start.
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'UserPromptSubmit',
+      prompt_id: 'pGap',
+      prompt: '<channel source="plugin:nats-channel:nats" request_id="1">x',
+    }, 20)
+    const seen = (from?: ReturnType<typeof markSessionEvents>): string[] => {
+      const calls: string[] = []
+      const watcher = watchSessionEvents(source, {
+        sessionStarted: () => undefined,
+        turnStopped: () => undefined,
+        promptSubmitted: (submit) => calls.push(`${submit.promptId} ${submit.requestId ?? '-'}`),
+      }, 60_000, from)
+      watcher.stop()
+      return calls
+    }
+    expect(seen(mark)).toEqual(['pGap 1'])
+    // Marked only when it is made, it would miss the prompt.
+    expect(seen()).toEqual([])
+  })
+
+  test('a poll a handler starts reports nothing twice', () => {
+    const calls: string[] = []
+    let watcher: ReturnType<typeof watchSessionEvents> | undefined
+    watcher = watchSessionEvents(source, {
+      sessionStarted: () => undefined,
+      turnStopped: () => undefined,
+      promptSubmitted: (submit) => {
+        calls.push(`submitted ${submit.atMs}`)
+        watcher?.poll()
+      },
+    }, 60_000)
+    try {
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p1', prompt: 'x' }, 10)
+      recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', prompt_id: 'p1', prompt: 'y' }, 11)
+      watcher.poll()
+      watcher.poll()
+      expect(calls).toEqual(['submitted 10', 'submitted 11'])
     } finally {
       watcher.stop()
     }
@@ -401,7 +749,7 @@ describe('hooks/session-event.ts: the script Claude Code runs', () => {
       tool_input: { address: 'a', prompt: 'p' },
     }), env)).toEqual({ code: 0, stdout: '' })
     expect(readSessionRecord(source)).toMatchObject({ sessionId: SESSION, source: 'resume' })
-    expect(takeToolUse(source, 'prompt_agent', { address: 'a', prompt: 'p' })).toBe('toolu_hook')
+    expect(takeToolUse(source, 'prompt_agent', { address: 'a', prompt: 'p' })?.toolUseId).toBe('toolu_hook')
   })
 
   test('a stop with an open prompt prints the refusal and records no stop; the stop after it records the refused one\'s text', async () => {

@@ -55,6 +55,7 @@ import {
   claudePid,
   clearOpenRequests,
   hooksActive,
+  promptIdsReported,
   readTurnActivity,
   readTurnStop,
   resolveClaudeSessionId,
@@ -63,8 +64,15 @@ import {
   writeOpenRequests,
   type SessionIdSource,
 } from "./src/session-id.js";
-import { TurnLedger, type TurnView } from "./src/permission-routing.js";
 import {
+  TurnLedger,
+  turnFailedDescription,
+  type TurnView,
+} from "./src/permission-routing.js";
+import { TurnTracker } from "./src/turns.js";
+import {
+  markSessionEvents,
+  SESSION_POLL_MS,
   watchSessionEvents,
   type SessionEventWatcher,
 } from "./src/session-events.js";
@@ -97,6 +105,9 @@ const TURN_END_CODE = 500;
 const TURN_END_DESCRIPTION =
   "the Claude Code turn ended without a reply to this prompt";
 const DEFAULT_MAX_PAYLOAD_BYTES = parseHumanBytes(DEFAULT_MAX_PAYLOAD);
+/** The state directory under the home directory when `NATS_STATE_DIR` is not set. */
+const STATE_DIR_IN_HOME = join(".claude", "channels", "nats");
+const CONFIG_FILE_NAME = "config.json";
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT =
   basename(MODULE_DIR) === "runtime" ? dirname(MODULE_DIR) : MODULE_DIR;
@@ -130,6 +141,8 @@ type PendingRequest = {
   };
   /** Set while the turn's final text is being sent as the reply. */
   answeringWithFinalText?: boolean;
+  /** Set once the extensions heard that Claude Code took it into a turn. */
+  started?: boolean;
 };
 
 type StagedAttachment = { readonly filename: string; readonly path: string };
@@ -382,12 +395,14 @@ async function loadChannelExtensions(
 }
 
 async function run(): Promise<void> {
+  // Request ids restart with each server; the Stop hook reads only the
+  // submits made since this one started.
+  const startedAtMs = Date.now();
   const pluginVersion = loadPluginVersion(
     join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"),
   );
   const stateDir =
-    process.env.NATS_STATE_DIR ??
-    join(homedir(), ".claude", "channels", "nats");
+    process.env.NATS_STATE_DIR ?? join(homedir(), STATE_DIR_IN_HOME);
   const attachmentRoot = join(stateDir, "attachments");
   mkdirSync(attachmentRoot, { recursive: true });
   // The hooks' files for this Claude Code process (`hooks/session-event.ts`).
@@ -398,14 +413,14 @@ async function run(): Promise<void> {
     parentPid: claudePid(process.env, process.ppid),
   };
 
-  const configFile = join(stateDir, "config.json");
+  const configFile = join(stateDir, CONFIG_FILE_NAME);
   const config = loadConfig(configFile);
   // The label prints NATS_STATE_DIR's path as given, `~` for the default.
   const settings = resolveRuntimeSettings(
     config,
     process.env,
     process.env.NATS_STATE_DIR === undefined
-      ? join("~", ".claude", "channels", "nats", "config.json")
+      ? join("~", STATE_DIR_IN_HOME, CONFIG_FILE_NAME)
       : configFile,
   );
   const owner = resolveOwner(config);
@@ -424,6 +439,9 @@ async function run(): Promise<void> {
   let service: AgentService | undefined;
   let mcp: Server | undefined;
   let sessionEvents: SessionEventWatcher | undefined;
+  // Claude Code's turns by their prompt ids (src/turns.ts), from the hooks'
+  // records; made with the watcher, once the extensions have started.
+  let tracker: TurnTracker | undefined;
 
   try {
     // Before the bundle: a context that cannot be read fails there, and the
@@ -499,16 +517,25 @@ async function run(): Promise<void> {
       hooksActive: hooksActive(sessionSource),
     });
 
-    // The open prompts that own the running turn, for the Stop hook
-    // (src/session-id.ts): written when the set changes, and at start.
+    // The open prompts, for the Stop hook (src/session-id.ts): those that
+    // own the running turn and every one delivered, written when either
+    // set changes, and at start.
     let openWritten: string | undefined;
     const syncOpenRequests = (): void => {
       if (shuttingDown) return;
       const owning = turns.owning();
-      const key = owning.join(",");
+      const open = turns.open();
+      const key = `${owning.join(",")}|${open.join(",")}`;
       if (key === openWritten) return;
       try {
-        writeOpenRequests(stateDir, sessionSource.parentPid, owning);
+        writeOpenRequests(
+          stateDir,
+          sessionSource.parentPid,
+          owning,
+          process.pid,
+          Date.now(),
+          { openIds: open, sinceMs: startedAtMs },
+        );
         openWritten = key;
       } catch {
         // The hook fails open without the file; the next change retries.
@@ -521,6 +548,7 @@ async function run(): Promise<void> {
       if (pending.attachmentDir) cleanupAttachments(attachmentRoot, requestId);
       pendingRequests.delete(requestId);
       turns.forget(requestId);
+      tracker?.forget(requestId);
       if (lastActiveRequestId === requestId) {
         lastActiveRequestId = Array.from(pendingRequests.keys()).at(-1);
       }
@@ -575,7 +603,7 @@ async function run(): Promise<void> {
     const endUnanswered = (): void => {
       if (pendingRequests.size === 0) return;
       const now = Date.now();
-      for (const { requestId, reason, finalText } of turns.unanswered(
+      for (const { requestId, reason, finalText, failure } of turns.unanswered(
         turnView(),
         now,
         settings.turnStartGraceMs,
@@ -587,6 +615,16 @@ async function run(): Promise<void> {
           pending.answeringWithFinalText
         )
           continue;
+        if (failure !== undefined) {
+          // An API error ended the turn: the caller's error frame names it.
+          const description = turnFailedDescription(failure);
+          logEvent(description, { requestId, sender: pending.sender });
+          pending.ended ??= { outcome: "error", atMs: now, reason: "no_reply" };
+          pending.completion.reject(
+            new RequestRejectedError(TURN_END_CODE, description),
+          );
+          continue;
+        }
         if (finalText !== undefined) {
           logEvent("request answered with the turn's final text", {
             requestId,
@@ -614,6 +652,17 @@ async function run(): Promise<void> {
       return pending && !pending.completion.settled() ? pending : undefined;
     };
 
+    // The extensions hear once that Claude Code took a prompt into a turn.
+    const startPrompt = (
+      pending: PendingRequest,
+      atMs: number,
+      sessionId: string | undefined,
+    ): void => {
+      if (pending.started) return;
+      pending.started = true;
+      extensions.events.promptStarted(pending.served, atMs, sessionId);
+    };
+
     mcp = new Server(
       { name: "nats-channel", version: pluginVersion },
       {
@@ -629,7 +678,7 @@ async function run(): Promise<void> {
           "",
           "The sender communicates via NATS, not this session. Anything they should see must be sent with the reply tool.",
           "",
-          'Messages arrive as <channel source="nats" request_id="..." session="..." ts="...">. Attachment paths, when present, are listed at the start of the message.',
+          'Messages arrive as <channel source="plugin:nats-channel:nats" request_id="..." session="..." ts="...">. Attachment paths, when present, are listed at the start of the message.',
           "",
           "Use request_info only when sender identity is relevant; identity is never inserted into the incoming message automatically.",
           "",
@@ -671,6 +720,9 @@ async function run(): Promise<void> {
 
     service.onPrompt(async (envelope, response) => {
       if (shuttingDown) throw new Error("channel shutting down");
+      // The hooks' records up to now, so a turn already begun is known
+      // before this prompt is counted.
+      sessionEvents?.poll();
       const requestId = String(++requestCounter);
       const staged = stageAttachments(
         attachmentRoot,
@@ -710,6 +762,12 @@ async function run(): Promise<void> {
       // Synchronous, in the handler's context, so an extension reads here
       // what its own request interceptor bound.
       extensions.events.promptAccepted(served);
+      // Until the hooks report the turns' prompt ids, a prompt starts as it
+      // is accepted; after, when Claude Code takes it into a turn. Before the
+      // turns are made, the start state read with the mark says which.
+      if (!(tracker?.binding() ?? trackerStart.binding)) {
+        startPrompt(pending, pending.createdAt, sessionId);
+      }
 
       logEvent("prompt admitted", { requestId, sender: pending.sender });
       const content =
@@ -767,6 +825,9 @@ async function run(): Promise<void> {
       readonly input_preview: string;
     }): Promise<"allow" | "deny"> => {
       const tool = params.tool_name;
+      // The hooks' records up to the asking call, so a prompt folded into
+      // the turn just before it is known.
+      sessionEvents?.poll();
       const owner = turns.ownerOf(turnView());
       if (owner.kind === "none") {
         logEvent("permission denied without an owning request", {
@@ -886,13 +947,24 @@ async function run(): Promise<void> {
 
     mcp.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const args = (request.params.arguments ?? {}) as Record<string, unknown>;
+      // The hooks' records up to this call: the turn that made it, and a
+      // prompt Claude Code took into that turn, are known before a request
+      // is chosen for it or settled by it. A short turn's submit, reply and
+      // Stop come within one of the watcher's polls.
+      sessionEvents?.poll();
 
       if (tools && agentToolNames.has(request.params.name)) {
         const name = request.params.name;
         // The PreToolUse hook recorded the model's id for this call before
-        // Claude Code sent it; it goes to the helper only.
-        const toolCallId = takeToolUse(sessionSource, name, args);
-        const choice = chooseRequest(args, activeRequest, lastActiveRequestId);
+        // Claude Code sent it, and the call's prompt id: the id goes to the
+        // helper only, the prompt id names the turn the call is for.
+        const toolUse = takeToolUse(sessionSource, name, args);
+        const choice = chooseRequest(args, activeRequest, lastActiveRequestId, {
+          ...(toolUse?.promptId !== undefined
+            ? { promptId: toolUse.promptId }
+            : {}),
+          ...(tracker !== undefined ? { turns: tracker } : {}),
+        });
         if (choice.kind === "inactive") {
           return {
             content: [
@@ -909,8 +981,13 @@ async function run(): Promise<void> {
             tools,
             name,
             args,
-            request: choice.kind === "request" ? choice.request : undefined,
-            toolCallId,
+            request:
+              choice.kind === "request"
+                ? choice.request
+                : choice.kind === "local"
+                  ? choice.turn
+                  : undefined,
+            toolCallId: toolUse?.toolUseId,
             signal: extra.signal,
             aroundToolCall: extensions.events.aroundToolCall,
           });
@@ -999,6 +1076,20 @@ async function run(): Promise<void> {
     turnEndTimer.unref();
     syncOpenRequests();
 
+    // Where the hooks' records begin for this server, taken before it can
+    // take a prompt: a prompt Claude Code takes while the extensions start,
+    // before the watcher polls, is still read. The turns start from the
+    // same moment.
+    const eventsMark = markSessionEvents(sessionSource);
+    const trackerStart = {
+      binding: promptIdsReported(stateDir, sessionSource.parentPid),
+      lastStopMs: readTurnStop(sessionSource)?.atMs,
+      sinceMs: startedAtMs,
+    };
+    // A log that already holds prompt ids binds from here, not from when the
+    // turns are made: no guess for a prompt the channel takes meanwhile.
+    if (trackerStart.binding) turns.startBinding();
+
     // Claude must be ready to receive channel notifications before NATS advertises
     // the prompt endpoint; otherwise a just-discovered caller can lose a prompt.
     await mcp.connect(new StdioServerTransport());
@@ -1012,16 +1103,89 @@ async function run(): Promise<void> {
       extensions: extensions.names,
     });
     await extensions.started({ agents, service });
-    // The hooks' SessionStart and Stop, as the extensions' events.
+    tracker = new TurnTracker(
+      {
+        isOpen: (requestId) => activeRequest(requestId) !== undefined,
+        currentSession: () => resolveClaudeSessionId(sessionSource),
+        bindingStarted: () => {
+          logEvent("turns followed by prompt id");
+          turns.startBinding();
+        },
+        promptStarted: (requestId, turn, atMs, sessionId) => {
+          const pending = pendingRequests.get(requestId);
+          if (!pending) return;
+          logEvent("prompt started", {
+            requestId,
+            promptId: turn.promptId,
+            turn: turn.kind,
+            atMs,
+          });
+          turns.bind(requestId, turn.promptId);
+          syncOpenRequests();
+          startPrompt(pending, atMs, sessionId);
+        },
+        promptRebound: (requestId, promptId) => {
+          logEvent("prompt taken with the next channel message", {
+            requestId,
+            promptId,
+          });
+          turns.bind(requestId, promptId);
+          syncOpenRequests();
+        },
+        turnEnded: (turn, end) => {
+          turns.turnEnded(
+            turn.promptId,
+            end.kind === "stop"
+              ? { kind: "stop", stop: end.stop }
+              : end.kind === "failure"
+                ? {
+                    kind: "failure",
+                    failure: {
+                      ...(end.error !== undefined ? { error: end.error } : {}),
+                      ...(end.errorDetails !== undefined
+                        ? { errorDetails: end.errorDetails }
+                        : {}),
+                    },
+                  }
+                : { kind: end.kind },
+          );
+        },
+        localTurnStarted: (turn, atMs) => {
+          logEvent("local turn started", { turn: turn.id, atMs });
+          extensions.events.localTurnStarted(turn, atMs);
+        },
+        localTurnEnded: (turn, outcome, atMs) => {
+          logEvent("local turn ended", { turn: turn.id, outcome, atMs });
+          extensions.events.localTurnEnded(turn, outcome, atMs);
+        },
+      },
+      trackerStart,
+    );
+    // The hooks' records: the session, the turns, as the extensions' events.
     sessionEvents = watchSessionEvents(sessionSource, {
       sessionStarted: (sessionId, source) =>
         extensions.events.sessionStarted(sessionId, source),
+      promptSubmitted: (submit) => {
+        tracker?.submitted(submit);
+        endUnanswered();
+      },
+      turnActivity: (activity) => {
+        tracker?.activity(activity);
+        endUnanswered();
+      },
+      turnFailed: (failure) => {
+        // An API error ends the turn as a Stop would, without final text.
+        turns.observeFailure(failure);
+        tracker?.failed(failure);
+        endUnanswered();
+      },
       turnStopped: (sessionId, stop) => {
         turns.observeStop(stop);
+        tracker?.stopped(stop);
         extensions.events.turnStopped(sessionId, stop.atMs);
         endUnanswered();
       },
-    });
+    }, SESSION_POLL_MS, eventsMark);
 
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = (): Promise<void> => {
@@ -1034,7 +1198,9 @@ async function run(): Promise<void> {
         sessionEvents?.stop();
         clearOpenRequests(stateDir, sessionSource.parentPid);
         logEvent("shutting down");
-        // The extensions hear of the stop before the service leaves the bus.
+        // A local turn still open ends first, then the extensions hear of
+        // the stop, before the service leaves the bus.
+        if (firstAttempt) tracker?.shutdown(Date.now());
         if (firstAttempt) await extensions.stopping();
         await service!.stop().catch(() => undefined);
 

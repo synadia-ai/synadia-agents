@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * The plugin's Claude Code hook. Three events, one script:
+ * The plugin's Claude Code hook. Five events, one script:
  *
  * - SessionStart: record the session id Claude Code is now using, so the
  *   channel's MCP server, which keeps running across `/clear`, knows the
@@ -16,6 +16,12 @@
  *   it never refuses, and it records the turn's final text — the refused
  *   stop's, else its own — which the server sends as the reply when the
  *   model still did not.
+ * - UserPromptSubmit: record that Claude Code took a prompt, with the
+ *   prompt id of the turn it runs in (a new turn, or the running one), and,
+ *   for this channel's own message, its request id, so the server knows
+ *   which turn serves which request. Never the prompt's text.
+ * - StopFailure: record that an API error ended the turn. Not a Stop: no
+ *   refusal, no final text.
  * - PreToolUse, every tool call: record the turn the call belongs to (its
  *   prompt id, and when the turn's first call was made), so the server can
  *   tell which served prompt a permission question comes from. For the
@@ -25,13 +31,14 @@
  *   permission.
  *
  * Reads the hook input from stdin, writes under `<state dir>/sessions/`
- * keyed by `CLAUDE_PID` (atomically, through a rename; see
- * `src/session-id.ts`), and exits 0 whatever happens — a hook must never
- * interrupt a session, and anything printed to stdout could land in the
- * model's context, so stdout stays empty except for a refused stop. It
- * fails open: whatever it cannot tell in time, it lets the turn end. It
- * writes whether or not an extension is loaded. It depends on nothing
- * outside the plugin directory, so it runs from source with `bun`.
+ * keyed by `CLAUDE_PID` (atomically, through a rename, or as one line
+ * appended to a log; see `src/session-id.ts`), and exits 0 whatever
+ * happens — a hook must never interrupt a session, and anything printed to
+ * stdout could land in the model's context, so stdout stays empty except
+ * for a refused stop. It fails open: whatever it cannot tell in time, it
+ * lets the turn end. It writes whether or not an extension is loaded. It
+ * depends on nothing outside the plugin directory, so it runs from source
+ * with `bun`.
  */
 
 import { writeSync } from 'node:fs'

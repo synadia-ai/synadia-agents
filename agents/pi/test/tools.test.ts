@@ -16,7 +16,7 @@ import {
 	type AgentToolResult,
 } from "@synadia-ai/agents";
 import type { NatsConnection } from "@nats-io/transport-node";
-import type { ServedRequest } from "../extensions/extensions.ts";
+import type { LocalTurn, ServedRequest } from "../extensions/extensions.ts";
 import {
 	AGENT_TOOLS_VAR,
 	registerAgentTools,
@@ -75,7 +75,7 @@ describe("toolNamesFor and toolLabel", () => {
 describe("registerAgentTools", () => {
 	const hooks = {
 		activeRequest: () => undefined,
-		aroundToolCall: <T>(_r: ServedRequest | undefined, _n: string, run: () => T) => run(),
+		aroundToolCall: <T>(_r: ServedRequest | LocalTurn | undefined, _n: string, run: () => T) => run(),
 	};
 
 	test("blocking registers the three by name, with the helper's words and schema as they are", () => {
@@ -161,5 +161,32 @@ describe("registerAgentTools", () => {
 		// No signal: none is passed.
 		await pi.registered.get("answer_agent")!.execute("call-10", {}, undefined, undefined, {} as never);
 		expect(calls[1]!.options).toEqual({ toolCallId: "call-10" });
+	});
+
+	test("a call in a local turn runs inside aroundToolCall with that turn, read at the call", async () => {
+		const pi = fakePi();
+		const fakeTools = {
+			definitions: new AgentTools({ agents: offlineAgents, tools: BLOCKING_AGENT_TOOLS }).definitions,
+			async execute(): Promise<AgentToolResult> {
+				return { call_id: "c2", state: "done", reply: "ok" };
+			},
+		};
+		const turn: LocalTurn = { id: "local-3", local: true };
+		let current: ServedRequest | LocalTurn | undefined = turn;
+		const wrapped: Array<[string | undefined, boolean, string]> = [];
+		registerAgentTools(pi, fakeTools, {
+			activeRequest: () => current,
+			aroundToolCall: (r, name, run) => {
+				wrapped.push([r?.id, r !== undefined && "local" in r, name]);
+				return run();
+			},
+		});
+		await pi.registered.get("prompt_agent")!.execute("call-11", {}, undefined, undefined, {} as never);
+		current = undefined;
+		await pi.registered.get("prompt_agent")!.execute("call-12", {}, undefined, undefined, {} as never);
+		expect(wrapped).toEqual([
+			["local-3", true, "prompt_agent"],
+			[undefined, false, "prompt_agent"],
+		]);
 	});
 });
