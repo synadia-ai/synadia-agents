@@ -53,6 +53,10 @@ describe("PI connection settings", () => {
 	test("credentials without NATS_URL fail rather than go to the public default", () => {
 		expect(() => resolveConnectionSettings({}, { NATS_CREDS: "/c.creds" })).toThrow(/without NATS_URL/);
 		expect(() => resolveConnectionSettings({}, { NATS_CREDENTIALS: "/c.creds", NATS_URL: "" })).toThrow(/without NATS_URL/);
+		// Word for word the Claude Code channel's message.
+		expect(() => resolveConnectionSettings({}, { NATS_CREDS: "/c.creds" })).toThrow(
+			/^invalid NATS_CREDS\/NATS_CREDENTIALS: set without NATS_URL; set NATS_URL to the server the credentials are for$/,
+		);
 	});
 
 	test("a context wins over NATS_URL and NATS_CREDS", () => {

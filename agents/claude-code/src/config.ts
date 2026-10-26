@@ -118,7 +118,7 @@ export function resolveRuntimeSettings(
       : config.context || undefined
   if (!context && creds && !url) {
     throw new Error(
-      'NATS_CREDS/NATS_CREDENTIALS is set without NATS_URL: set NATS_URL to the server the credentials are for',
+      'invalid NATS_CREDS/NATS_CREDENTIALS: set without NATS_URL; set NATS_URL to the server the credentials are for',
     )
   }
   const senderIdentity = enumSetting(

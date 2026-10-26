@@ -225,7 +225,7 @@ export function resolveConnectionSettings(
   const contextFrom = fromEnv ? "NATS_CONTEXT" : CONFIG_FILE_LABEL;
   if (!context && creds && !url) {
     throw new Error(
-      "NATS_CREDS/NATS_CREDENTIALS is set without NATS_URL: set NATS_URL to the server the credentials are for",
+      "invalid NATS_CREDS/NATS_CREDENTIALS: set without NATS_URL; set NATS_URL to the server the credentials are for",
     );
   }
   const source: NatsConnectionSource = context

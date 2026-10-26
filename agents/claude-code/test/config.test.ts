@@ -76,6 +76,13 @@ describe('resolveRuntimeSettings', () => {
     expect(() => resolveRuntimeSettings({}, { NATS_CREDENTIALS: '/c.creds', NATS_URL: '' })).toThrow(/without NATS_URL/)
   })
 
+  test('the credentials-without-URL error starts with "invalid ", so the startup line on stderr shows it', () => {
+    // server.ts's startupDescription passes a message through only when it starts with "invalid ".
+    expect(() => resolveRuntimeSettings({ context: 'configured' }, { NATS_CREDS: '/c.creds' })).toThrow(
+      /^invalid NATS_CREDS\/NATS_CREDENTIALS: set without NATS_URL; set NATS_URL to the server the credentials are for$/,
+    )
+  })
+
   test('a context wins over NATS_URL and NATS_CREDS', () => {
     expect(resolveRuntimeSettings({}, { NATS_CONTEXT: 'prod', NATS_URL: 'nats://a:4222', NATS_CREDS: '/c.creds' }).connectionSource)
       .toEqual({ context: 'prod' })

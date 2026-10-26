@@ -72,8 +72,10 @@ All notable changes to the Claude Code NATS channel are documented here.
   connects to that server and does not read the file's context. Before, the file's context won,
   so a stale context could connect the session to another server than the one its environment
   named. `NATS_CONTEXT` still wins over everything, and set but empty it still selects no
-  context at all. Credentials without `NATS_URL` now fail even when the file names a context.
-  An empty `NATS_URL` now means unset (`demo.nats.io`), not the URL `""`.
+  context at all. Credentials without `NATS_URL` now fail even when the file names a context,
+  and the error, `invalid NATS_CREDS/NATS_CREDENTIALS: set without NATS_URL; …`, now shows on
+  stderr, where it read `startup failed (Error)`. An empty `NATS_URL` now means unset
+  (`demo.nats.io`), not the URL `""`.
 - The `connecting` line on stderr names where the connection came from:
   `context <name> from NATS_CONTEXT` (with `, NATS_URL unused` when `NATS_URL` or the
   credentials are set too), `context <name> from <config.json's path>` (`~` for the default
