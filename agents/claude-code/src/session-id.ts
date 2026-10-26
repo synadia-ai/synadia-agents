@@ -563,7 +563,8 @@ function requestIdList(value: unknown): string[] | undefined {
  * Once the log holds a submit with a prompt id, and the Stop carries its
  * turn's prompt id P: the delivered prompts still open whose latest submit
  * since the server started carried P — the turn they began, or the one
- * they were folded into. A message the server sent before it started (an
+ * they were folded into; channel messages taken together count for the
+ * last one's prompt id, the turn they ran in. A message the server sent before it started (an
  * earlier server's, whose request ids restart at 1 too) is not one of its
  * prompts. A prompt not yet taken into a turn waits for none. Otherwise,
  * the prompts the server's ledger says own the turn.
@@ -582,15 +583,36 @@ export function waitingRequests(
     return open.requestIds
   }
   // Request ids restart with each server: the latest submit of each wins.
+  // Channel messages Claude Code takes together each fire a submit under a
+  // prompt id of their own, one after another, and run as one turn under
+  // the last: a channel submit within CHANNEL_BATCH_MS of the one before,
+  // with no other event between, takes that one's requests to its id.
   const takenIn = new Map<string, string | undefined>()
+  let batch: { promptId: string | undefined; atMs: number; requestIds: string[] } | undefined
   for (const event of events) {
-    if (event.kind !== 'submit' || event.submit.requestId === undefined) continue
+    if (event.kind !== 'submit' || event.submit.requestId === undefined) {
+      batch = undefined
+      continue
+    }
+    const { requestId, promptId: takenId, atMs, sentAtMs } = event.submit
+    const together = batch !== undefined && atMs - batch.atMs <= CHANNEL_BATCH_MS
+    const requestIds = together ? batch!.requestIds : []
+    if (together) for (const id of requestIds) takenIn.set(id, takenId)
     const since = open.sinceMs
-    if (since !== undefined && (event.submit.atMs < since || (event.submit.sentAtMs ?? since) < since)) continue
-    takenIn.set(event.submit.requestId, event.submit.promptId)
+    if (since === undefined || (atMs >= since && (sentAtMs ?? since) >= since)) {
+      takenIn.set(requestId, takenId)
+      requestIds.push(requestId)
+    }
+    batch = { promptId: takenId, atMs, requestIds }
   }
   return open.openIds.filter(id => takenIn.get(id) === promptId)
 }
+
+/**
+ * How close one channel submit follows another for the two to be one turn
+ * (`src/turns.ts` rule 6). Measured 20 ms apart.
+ */
+export const CHANNEL_BATCH_MS = 1_000
 
 /**
  * The text of the turn's last assistant message, trimmed, or `undefined`

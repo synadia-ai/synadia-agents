@@ -1,5 +1,11 @@
 import type { LocalTurn, Outcome } from './extensions.js'
-import type { FailureRecord, StopRecord, SubmitRecord, TurnActivity } from './session-id.js'
+import {
+  CHANNEL_BATCH_MS,
+  type FailureRecord,
+  type StopRecord,
+  type SubmitRecord,
+  type TurnActivity,
+} from './session-id.js'
 
 /**
  * Claude Code's turns, followed by their prompt ids.
@@ -18,7 +24,11 @@ import type { FailureRecord, StopRecord, SubmitRecord, TurnActivity } from './se
  *     running turn's id when Claude Code is busy, and when that text later
  *     becomes a turn of its own nothing announces it: its id first shows on
  *     PreToolUse and Stop;
- *   - an interrupt (Esc) gives no Stop; the next turn has a new id.
+ *   - an interrupt (Esc) gives no Stop; the next turn has a new id;
+ *   - channel messages that wait together are taken together: each fires
+ *     its UserPromptSubmit with a prompt id of its own, about 20 ms apart,
+ *     and one turn runs them all under the last of those ids (measured with
+ *     three messages queued behind a typed turn, 2026-10-26).
  *
  * So a turn is a prompt id, and one of two kinds: **served**, the turn a
  * channel message started (its submit carried a new id); or **local**, any
@@ -62,7 +72,13 @@ import type { FailureRecord, StopRecord, SubmitRecord, TurnActivity } from './se
  *      records of a turn already ended are ignored, and a record no later
  *      than the current turn's start never ends it, unless rule 3 began the
  *      turn for that very record;
- *   5. at shutdown the current turn ends now.
+ *   5. at shutdown the current turn ends now;
+ *   6. channel messages taken together: a channel submit under a new id
+ *      within {@link CHANNEL_BATCH_MS} of the one before, while the served
+ *      turn that one began has no other record yet, renames that turn
+ *      instead of ending it. Its requests keep their start and are bound to
+ *      the new id (`promptRebound`), the new request joins, and the earlier
+ *      ids name the same turn from then on.
  *
  * Records without a prompt id do nothing.
  */
@@ -110,6 +126,11 @@ export interface TurnTrackerHooks {
   localTurnEnded?(turn: LocalTurn, outcome: Outcome, atMs: number): void
   /** Any turn ended, local or served, with its requests. */
   turnEnded?(turn: Turn, end: TurnEnd): void
+  /**
+   * A started request runs in the turn of the channel message taken with it
+   * (rule 6): its turn goes by `promptId` from now on.
+   */
+  promptRebound?(requestId: string, promptId: string): void
 }
 
 /** What the files said when the server started. */
@@ -131,6 +152,9 @@ const ENDED_KEPT = 256
 /** The prefix of a local turn's id: request ids are numbers, so the two never meet. */
 export const LOCAL_TURN_PREFIX = 'local-'
 
+// Rule 6's window, CHANNEL_BATCH_MS, is the Stop hook's too (src/session-id.ts):
+// measured 20 ms apart; a turn interrupted and replaced by hand takes seconds.
+
 type OpenTurn = {
   promptId: string
   kind: 'served' | 'local'
@@ -138,6 +162,8 @@ type OpenTurn = {
   sessionId: string | undefined
   requests: string[]
   local?: LocalTurn
+  /** Rule 6: until when a channel submit under a new id is taken with this turn. */
+  batchUntilMs?: number | undefined
 }
 
 export class TurnTracker {
@@ -150,6 +176,8 @@ export class TurnTracker {
   readonly #ended = new Map<string, Turn>()
   // Each started request's prompt id.
   readonly #bound = new Map<string, string>()
+  // Rule 6: the prompt ids of channel messages taken with a later one, to it.
+  readonly #alias = new Map<string, string>()
 
   constructor(
     private readonly hooks: TurnTrackerHooks,
@@ -172,8 +200,9 @@ export class TurnTracker {
 
   /** The turn prompt id `promptId` names: the current one, or one that ended lately. */
   turn(promptId: string): Turn | undefined {
-    if (this.#current?.promptId === promptId) return snapshot(this.#current)
-    return this.#ended.get(promptId)
+    const id = this.#resolve(promptId)
+    if (this.#current?.promptId === id) return snapshot(this.#current)
+    return this.#ended.get(id)
   }
 
   /** The prompt id of the turn a request started in, once it started. */
@@ -188,8 +217,8 @@ export class TurnTracker {
 
   /** UserPromptSubmit: rules 1 and 2. */
   submitted(submit: SubmitRecord): void {
-    const promptId = submit.promptId
-    if (promptId === undefined) return
+    if (submit.promptId === undefined) return
+    const promptId = this.#resolve(submit.promptId)
     if (!this.#binding) {
       this.#binding = true
       this.hooks.bindingStarted?.()
@@ -203,18 +232,36 @@ export class TurnTracker {
       const stale =
         this.#sinceMs !== undefined && submit.sentAtMs !== undefined && submit.sentAtMs < this.#sinceMs
       const open = !stale && !this.#bound.has(requestId) && this.hooks.isOpen(requestId)
-      if (this.#current?.promptId !== promptId) {
-        this.#end({ kind: 'next', atMs: submit.atMs })
-        this.#begin({ promptId, kind: 'served', startedAtMs: submit.atMs, sessionId, requests: [] })
+      const before = this.#current
+      if (before?.promptId !== promptId) {
+        if (before?.batchUntilMs !== undefined && submit.atMs <= before.batchUntilMs) {
+          // Rule 6: delivered together with the message before; one turn.
+          this.#rename(before, promptId)
+        } else {
+          this.#end({ kind: 'next', atMs: submit.atMs })
+          this.#begin({
+            promptId,
+            kind: 'served',
+            startedAtMs: submit.atMs,
+            sessionId,
+            requests: [],
+            batchUntilMs: submit.atMs + CHANNEL_BATCH_MS,
+          })
+        }
       }
-      if (!open) return
       const current = this.#current!
+      if (current.batchUntilMs !== undefined) current.batchUntilMs = submit.atMs + CHANNEL_BATCH_MS
+      if (!open) return
       current.requests.push(requestId)
       this.#bound.set(requestId, promptId)
       this.hooks.promptStarted?.(requestId, snapshot(current), submit.atMs, sessionId)
       return
     }
-    if (this.#current?.promptId === promptId) return
+    if (this.#current?.promptId === promptId) {
+      // Typed text while the turn runs: no channel message joins it later by rule 6.
+      this.#current.batchUntilMs = undefined
+      return
+    }
     this.#end({ kind: 'next', atMs: submit.atMs })
     this.#beginLocal(promptId, submit.atMs, sessionId)
   }
@@ -222,15 +269,19 @@ export class TurnTracker {
   /** A tool call: rule 3. */
   activity(activity: TurnActivity): void {
     if (!this.#binding || activity.promptId === undefined) return
-    this.#surface(activity.promptId, activity.atMs, undefined)
+    const promptId = this.#resolve(activity.promptId)
+    this.#surface(promptId, activity.atMs, undefined)
+    // The turn runs: a channel message taken from here on is folded in.
+    if (this.#current?.promptId === promptId) this.#current.batchUntilMs = undefined
   }
 
   /** A recorded Stop: rules 3 and 4. */
   stopped(stop: StopRecord): void {
     if (!this.#binding || stop.promptId === undefined) return
-    const opened = this.#surface(stop.promptId, stop.atMs, stop.sessionId)
+    const promptId = this.#resolve(stop.promptId)
+    const opened = this.#surface(promptId, stop.atMs, stop.sessionId)
     const current = this.#current
-    if (current?.promptId !== stop.promptId) return
+    if (current?.promptId !== promptId) return
     if (!opened && stop.atMs <= current.startedAtMs) return
     this.#lastEndMs = stop.atMs
     this.#end({ kind: 'stop', stop })
@@ -239,9 +290,10 @@ export class TurnTracker {
   /** A StopFailure: rules 3 and 4. */
   failed(failure: FailureRecord): void {
     if (!this.#binding || failure.promptId === undefined) return
-    const opened = this.#surface(failure.promptId, failure.atMs, failure.sessionId)
+    const promptId = this.#resolve(failure.promptId)
+    const opened = this.#surface(promptId, failure.atMs, failure.sessionId)
     const current = this.#current
-    if (current?.promptId !== failure.promptId) return
+    if (current?.promptId !== promptId) return
     if (!opened && failure.atMs <= current.startedAtMs) return
     this.#lastEndMs = failure.atMs
     this.#end({
@@ -271,6 +323,24 @@ export class TurnTracker {
     this.#end({ kind: 'next', atMs: since })
     this.#beginLocal(promptId, since, sessionId ?? this.hooks.currentSession?.())
     return true
+  }
+
+  /** The prompt id a record's id names: itself, or the one its message was taken with. */
+  #resolve(promptId: string): string {
+    return this.#alias.get(promptId) ?? promptId
+  }
+
+  /** Rule 6: the open turn goes by `promptId` from now on, its requests with it. */
+  #rename(turn: OpenTurn, promptId: string): void {
+    const from = turn.promptId
+    for (const [id, to] of this.#alias) if (to === from) this.#alias.set(id, promptId)
+    this.#alias.set(from, promptId)
+    if (this.#alias.size > ENDED_KEPT) this.#alias.delete(this.#alias.keys().next().value!)
+    turn.promptId = promptId
+    for (const requestId of turn.requests) {
+      this.#bound.set(requestId, promptId)
+      this.hooks.promptRebound?.(requestId, promptId)
+    }
   }
 
   #beginLocal(promptId: string, atMs: number, sessionId: string | undefined): void {

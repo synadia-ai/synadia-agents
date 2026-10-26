@@ -600,7 +600,13 @@ when the channel handed it over: the extensions hear `promptStarted` with
 the hook's time, and `localTurnStarted` and `localTurnEnded` for a local
 turn, whose id is `local-<prompt_id>`. A turn ends at its `Stop` or
 `StopFailure`, when the next turn begins without one (an interrupt), or
-when the plugin shuts down. Built-in commands (`/help`, `/model`,
+when the plugin shuts down. Channel messages that waited together are
+taken together: each fires its own `UserPromptSubmit` with a prompt id of
+its own, about 20 ms apart, and one turn runs them all under the last
+id, so a channel submit within a second of the one before, with nothing
+of that turn between, joins its turn. A message the channel sent before
+it last started (a request id an earlier server handed out) belongs to
+none of its requests. Built-in commands (`/help`, `/model`,
 `/clear`) run no turn and fire no submit. Typed text sent while a channel
 message's turn runs joins that turn, and a channel message folded into a
 typed turn takes the rest of it. Until the hook has reported a prompt id,

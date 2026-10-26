@@ -1105,6 +1105,14 @@ async function run(): Promise<void> {
           syncOpenRequests();
           startPrompt(pending, atMs, sessionId);
         },
+        promptRebound: (requestId, promptId) => {
+          logEvent("prompt taken with the next channel message", {
+            requestId,
+            promptId,
+          });
+          turns.bind(requestId, promptId);
+          syncOpenRequests();
+        },
         turnEnded: (turn, end) => {
           turns.turnEnded(
             turn.promptId,

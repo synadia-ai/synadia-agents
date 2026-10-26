@@ -46,6 +46,7 @@ function tracked(start: TurnTrackerStart = {}, open: Set<string> = new Set()) {
         calls.push(`started ${id} in ${turn.promptId} (${turn.kind}) at ${at} ${session ?? '-'}`),
       localTurnStarted: (turn, at) => calls.push(`local ${turn.id} at ${at} ${turn.sessionId ?? '-'}`),
       localTurnEnded: (turn, outcome, at) => calls.push(`local ${turn.id} ended ${outcome} at ${at}`),
+      promptRebound: (id, promptId) => calls.push(`rebound ${id} to ${promptId}`),
       turnEnded: (turn, end) =>
         calls.push(
           `ended ${turn.promptId} (${turn.kind}) [${turn.requests.join(',')}] by ${end.kind} at ${end.kind === 'stop' ? end.stop.atMs : end.atMs}`,
@@ -385,5 +386,55 @@ describe('a channel message of an earlier server', () => {
     const other = tracked({ binding: true, sinceMs: 1_000 }, new Set(['1']))
     other.tracker.submitted(channel('pB', '1', 1_200))
     expect(other.tracker.boundTo('1')).toBe('pB')
+  })
+})
+
+describe('rule 6: channel messages taken together', () => {
+  test('the measured sequence: three messages queued behind a typed turn run as one turn under the last id', () => {
+    // 2026-10-26: three submits 20 ms apart, each its own prompt id; every
+    // reply and the Stop carry the last one, 4686cac0.
+    const { tracker, calls } = tracked({ binding: true }, new Set(['1', '2', '3']))
+    tracker.submitted(typed('e2bb8c16', 0))
+    tracker.stopped(stop('e2bb8c16', 10_088))
+    calls.length = 0
+    tracker.submitted(channel('6da547e5', '1', 10_128))
+    tracker.submitted(channel('d6014bb9', '2', 10_149))
+    tracker.submitted(channel('4686cac0', '3', 10_168))
+    tracker.activity(call('4686cac0', 10_205))
+    tracker.stopped(stop('4686cac0', 10_332))
+    expect(calls).toEqual([
+      `started 1 in 6da547e5 (served) at 10128 ${SESSION}`,
+      'rebound 1 to d6014bb9',
+      `started 2 in d6014bb9 (served) at 10149 ${SESSION}`,
+      'rebound 1 to 4686cac0',
+      'rebound 2 to 4686cac0',
+      `started 3 in 4686cac0 (served) at 10168 ${SESSION}`,
+      'ended 4686cac0 (served) [1,2,3] by stop at 10332',
+    ])
+    expect(tracker.boundTo('1')).toBe('4686cac0')
+    // The earlier ids name the same turn.
+    expect(tracker.turn('6da547e5')?.promptId).toBe('4686cac0')
+    expect(tracker.turn('d6014bb9')?.requests).toEqual(['1', '2', '3'])
+  })
+
+  test('not after the turn ran a tool, not past the window, not after typed text: the next turn, as before', () => {
+    const ran = tracked({ binding: true }, new Set(['1', '2']))
+    ran.tracker.submitted(channel('pA', '1', 100))
+    ran.tracker.activity(call('pA', 130))
+    ran.tracker.submitted(channel('pB', '2', 150))
+    expect(ran.calls).toContain('ended pA (served) [1] by next at 150')
+    const late = tracked({ binding: true }, new Set(['1', '2']))
+    late.tracker.submitted(channel('pA', '1', 100))
+    late.tracker.submitted(channel('pB', '2', 1_101))
+    expect(late.calls).toContain('ended pA (served) [1] by next at 1101')
+    const typedFirst = tracked({ binding: true }, new Set(['1']))
+    typedFirst.tracker.submitted(channel('pA', '1', 100))
+    typedFirst.tracker.submitted(typed('pT', 120))
+    expect(typedFirst.calls).toContain('ended pA (served) [1] by next at 120')
+    // A local turn takes no channel message by rule 6: a new id is a new turn.
+    const local = tracked({ binding: true }, new Set(['1']))
+    local.tracker.submitted(typed('pT', 100))
+    local.tracker.submitted(channel('pC', '1', 110))
+    expect(local.calls).toContain('ended pT (local) [] by next at 110')
   })
 })
