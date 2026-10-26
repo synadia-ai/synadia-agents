@@ -100,6 +100,21 @@ export interface ServedRequest {
   readonly sessionId?: string;
 }
 
+/**
+ * A turn the harness runs that no served prompt started: typed at its
+ * terminal, or begun by the harness itself. OpenClaw is prompted over NATS
+ * only, so it reports none; the type is listed so one shape serves all
+ * three.
+ */
+export interface LocalTurn {
+  /** The plugin's id for the turn, unique in the process, never equal to a served request's id. */
+  readonly id: string;
+  /** Tells a local turn from a served request, which has no such field. */
+  readonly local: true;
+  /** Claude Code only: the session the turn runs in, when known. */
+  readonly sessionId?: string;
+}
+
 export type Outcome = "ok" | "error" | "timeout";
 
 /**
@@ -120,16 +135,33 @@ export interface HarnessEvents {
   promptAccepted?(request: ServedRequest): void;
   /** When the plugin settles the request. */
   promptEnded?(request: ServedRequest, outcome: Outcome, atMs: number): void;
-  /** Around every agent-tool call, with the request the model works in. */
+  /**
+   * Around every agent-tool call, with the request or the local turn the
+   * model works in, or `undefined` when the plugin knows neither. OpenClaw
+   * passes a served request or `undefined`.
+   */
   aroundToolCall?<T>(
-    request: ServedRequest | undefined,
+    request: ServedRequest | LocalTurn | undefined,
     toolName: string,
     run: () => T,
   ): T;
+  // PI and Claude Code.
+  /**
+   * A local turn began. PI: at the run's `agent_start`, when no served
+   * prompt is active. Claude Code: when its channel sees the turn begin.
+   */
+  localTurnStarted?(turn: LocalTurn, atMs: number): void;
+  /**
+   * A local turn ended. PI: at the run's `agent_settled`, before the next
+   * queued prompt is handed to PI, or when the session shuts down. Claude
+   * Code: when its channel sees the turn end. `outcome` is `error` when
+   * the harness reports the turn failed, else `ok`.
+   */
+  localTurnEnded?(turn: LocalTurn, outcome: Outcome, atMs: number): void;
   // PI.
   aroundInject?<T>(request: ServedRequest, run: () => T): T;
   providerHeaders?(
-    request: ServedRequest,
+    request: ServedRequest | LocalTurn,
   ): Readonly<Record<string, string>> | undefined;
   // OpenClaw.
   /**

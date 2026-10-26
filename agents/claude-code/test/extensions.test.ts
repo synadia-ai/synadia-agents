@@ -20,6 +20,7 @@ import {
   type AgentExtension,
   type AgentExtensionContext,
   type LoadedExtension,
+  type LocalTurn,
   type ServedRequest,
 } from "../src/extensions.js";
 
@@ -49,6 +50,7 @@ const base: Omit<AgentExtensionContext, "options"> = {
 };
 
 const request: ServedRequest = Object.freeze({ id: "7", extras: { trace: "t" } });
+const turn: LocalTurn = Object.freeze({ id: "local-1", local: true, sessionId: "s-1" });
 
 function loaded(name: string, extension: Omit<AgentExtension, "name">): LoadedExtension {
   return { module: name, name, extension: { name, ...extension } };
@@ -665,14 +667,14 @@ describe("composeExtensions: Claude Code's events, fail-open", () => {
     ]);
   });
 
-  it("aroundToolCall gets the request or undefined, the tool's name, and returns run's promise as is", async () => {
-    const seen: Array<[string | undefined, string]> = [];
+  it("aroundToolCall gets the request, the local turn or undefined, the tool's name, and returns run's promise as is", async () => {
+    const seen: Array<[string | undefined, boolean, string]> = [];
     const composed = composeExtensions(
       [
         loaded("tools", {
           events: {
             aroundToolCall(r, name, run) {
-              seen.push([r?.id, name]);
+              seen.push([r?.id, r !== undefined && "local" in r, name]);
               return run();
             },
           },
@@ -682,10 +684,12 @@ describe("composeExtensions: Claude Code's events, fail-open", () => {
     );
     const promise = Promise.resolve({ ok: true });
     expect(composed.events.aroundToolCall(request, "prompt_agent", () => promise)).toBe(promise);
+    expect(composed.events.aroundToolCall(turn, "prompt_agent", () => promise)).toBe(promise);
     expect(composed.events.aroundToolCall(undefined, "discover_agents", () => promise)).toBe(promise);
     expect(seen).toEqual([
-      ["7", "prompt_agent"],
-      [undefined, "discover_agents"],
+      ["7", false, "prompt_agent"],
+      ["local-1", true, "prompt_agent"],
+      [undefined, false, "discover_agents"],
     ]);
   });
 
@@ -784,12 +788,49 @@ describe("composeExtensions: Claude Code's events, fail-open", () => {
     expect(logger.lines).toEqual(['warn extension "b" sessionStarted failed: b fails']);
   });
 
+  it("localTurnStarted and localTurnEnded reach every extension with the turn; a throw is logged once per event name", () => {
+    const logger = recordingLogger();
+    const calls: string[] = [];
+    const composed = composeExtensions(
+      [
+        loaded("a", {
+          events: {
+            localTurnStarted: (t, at) =>
+              calls.push(`a.started ${t.id} ${t.local} ${t.sessionId ?? "-"} ${at}`),
+            localTurnEnded: (t, outcome, at) => calls.push(`a.ended ${t.id} ${outcome} ${at}`),
+          },
+        }),
+        loaded("b", {
+          events: {
+            localTurnStarted: () => {
+              throw new Error("b fails");
+            },
+            localTurnEnded: (t, outcome) => calls.push(`b.ended ${t.id} ${outcome}`),
+          },
+        }),
+      ],
+      logger,
+    );
+    composed.events.localTurnStarted(turn, 100);
+    composed.events.localTurnStarted(turn, 101);
+    composed.events.localTurnEnded(turn, "error", 200);
+    expect(calls).toEqual([
+      "a.started local-1 true s-1 100",
+      "a.started local-1 true s-1 101",
+      "a.ended local-1 error 200",
+      "b.ended local-1 error",
+    ]);
+    expect(logger.lines).toEqual(['warn extension "b" localTurnStarted failed: b fails']);
+  });
+
   it("with no extension, every event is a no-op and every wrapper just runs its step", async () => {
     const composed = composeExtensions([], recordingLogger());
     expect(composed.names).toEqual([]);
     expect(composed.heartbeatExtras).toBeUndefined();
     composed.events.promptAccepted(request);
     composed.events.promptEnded(request, "error", 1);
+    composed.events.localTurnStarted(turn, 1);
+    composed.events.localTurnEnded(turn, "ok", 2);
     composed.events.sessionStarted("s", "startup");
     composed.events.turnStopped(undefined, 1);
     expect(await composed.events.aroundToolCall(undefined, "x", async () => "ran")).toBe("ran");

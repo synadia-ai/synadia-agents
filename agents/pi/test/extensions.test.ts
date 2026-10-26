@@ -22,6 +22,7 @@ import {
 	type AgentExtension,
 	type AgentExtensionContext,
 	type LoadedExtension,
+	type LocalTurn,
 	type ServedRequest,
 } from "../extensions/extensions.ts";
 
@@ -50,6 +51,7 @@ const base: Omit<AgentExtensionContext, "options"> = {
 };
 
 const request: ServedRequest = Object.freeze({ id: "7", extras: { trace: "t" } });
+const turn: LocalTurn = Object.freeze({ id: "local-1", local: true });
 
 function loaded(name: string, extension: Omit<AgentExtension, "name">): LoadedExtension {
 	return { module: name, name, extension: { name, ...extension } };
@@ -456,6 +458,47 @@ describe("composeExtensions: PI's events, fail-open", () => {
 		expect(logger.lines).toEqual(['warn extension "b" promptAccepted failed: b fails']);
 	});
 
+	test("local turns: both notifications reach every extension with the turn; a throw is logged once per event name", () => {
+		const logger = recordingLogger();
+		const calls: string[] = [];
+		const composed = composeExtensions(
+			[
+				loaded("a", {
+					events: {
+						localTurnStarted: (t, at) => calls.push(`a.started ${t.id} ${t.local} ${at}`),
+						localTurnEnded: (t, outcome, at) => calls.push(`a.ended ${t.id} ${outcome} ${at}`),
+					},
+				}),
+				loaded("b", {
+					events: {
+						localTurnStarted: () => {
+							throw new Error("b fails");
+						},
+						localTurnEnded: () => {
+							throw new Error("b fails too");
+						},
+					},
+				}),
+				loaded("served-only", { events: { promptAccepted: () => calls.push("never") } }),
+			],
+			logger,
+		);
+		composed.events.localTurnStarted(turn, 10);
+		composed.events.localTurnStarted(turn, 11);
+		composed.events.localTurnEnded(turn, "ok", 20);
+		composed.events.localTurnEnded(turn, "ok", 21);
+		expect(calls).toEqual([
+			"a.started local-1 true 10",
+			"a.started local-1 true 11",
+			"a.ended local-1 ok 20",
+			"a.ended local-1 ok 21",
+		]);
+		expect(logger.lines).toEqual([
+			'warn extension "b" localTurnStarted failed: b fails',
+			'warn extension "b" localTurnEnded failed: b fails too',
+		]);
+	});
+
 	test("aroundInject: the wrapper's context is what run sees, and run's value comes back", () => {
 		const als = new AsyncLocalStorage<string>();
 		const composed = composeExtensions(
@@ -687,14 +730,14 @@ describe("composeExtensions: PI's events, fail-open", () => {
 		]);
 	});
 
-	test("aroundToolCall gets the request or undefined, the tool's name, and returns run's promise as is", async () => {
-		const seen: Array<[string | undefined, string]> = [];
+	test("aroundToolCall gets the request, the local turn or undefined, the tool's name, and returns run's promise as is", async () => {
+		const seen: Array<[string | undefined, boolean, string]> = [];
 		const composed = composeExtensions(
 			[
 				loaded("tools", {
 					events: {
 						aroundToolCall(r, name, run) {
-							seen.push([r?.id, name]);
+							seen.push([r?.id, r !== undefined && "local" in r, name]);
 							return run();
 						},
 					},
@@ -704,10 +747,12 @@ describe("composeExtensions: PI's events, fail-open", () => {
 		);
 		const promise = Promise.resolve({ ok: true });
 		expect(composed.events.aroundToolCall(request, "prompt_agent", () => promise)).toBe(promise);
+		expect(composed.events.aroundToolCall(turn, "prompt_agent", () => promise)).toBe(promise);
 		expect(composed.events.aroundToolCall(undefined, "discover_agents", () => promise)).toBe(promise);
 		expect(seen).toEqual([
-			["7", "prompt_agent"],
-			[undefined, "discover_agents"],
+			["7", false, "prompt_agent"],
+			["local-1", true, "prompt_agent"],
+			[undefined, false, "discover_agents"],
 		]);
 	});
 
@@ -731,6 +776,8 @@ describe("composeExtensions: PI's events, fail-open", () => {
 			logger,
 		);
 		expect(composed.events.providerHeaders(request)).toEqual({ "x-request": "7", "x-a": "2" });
+		// A local turn is asked the same way.
+		expect(composed.events.providerHeaders(turn)).toEqual({ "x-request": "local-1", "x-a": "2" });
 		composed.events.providerHeaders(request);
 		expect(logger.lines).toEqual(['warn extension "boom" providerHeaders failed: no headers']);
 	});
@@ -741,7 +788,10 @@ describe("composeExtensions: PI's events, fail-open", () => {
 		expect(composed.heartbeatExtras).toBeUndefined();
 		composed.events.promptAccepted(request);
 		composed.events.promptEnded(request, "timeout", 1);
+		composed.events.localTurnStarted(turn, 1);
+		composed.events.localTurnEnded(turn, "ok", 2);
 		expect(composed.events.providerHeaders(request)).toEqual({});
+		expect(composed.events.providerHeaders(turn)).toEqual({});
 		expect(composed.events.aroundInject(request, () => "ran")).toBe("ran");
 		expect(await composed.events.aroundToolCall(undefined, "x", async () => "ran")).toBe("ran");
 		await composed.started({} as never);

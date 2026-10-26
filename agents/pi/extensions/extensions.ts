@@ -93,6 +93,19 @@ export interface ServedRequest {
   readonly sessionId?: string;
 }
 
+/**
+ * A turn the harness runs that no served prompt started: typed at its
+ * terminal, or begun by the harness itself.
+ */
+export interface LocalTurn {
+  /** The plugin's id for the turn, unique in the process, never equal to a served request's id. */
+  readonly id: string;
+  /** Tells a local turn from a served request, which has no such field. */
+  readonly local: true;
+  /** Claude Code only: the session the turn runs in, when known. */
+  readonly sessionId?: string;
+}
+
 export type Outcome = "ok" | "error" | "timeout";
 
 /**
@@ -103,9 +116,10 @@ export type Outcome = "ok" | "error" | "timeout";
  * changes nothing of the step's timing. A wrapper may be an async
  * function; the plugin still takes `run`'s own value, and the wrapper must
  * call `run` once, before its first `await`, so the step keeps its timing.
- * PI calls `promptAccepted`,
- * `promptEnded`, `aroundToolCall`, `aroundInject` and `providerHeaders`;
- * the other harnesses' events are listed so one shape serves all three.
+ * PI calls `promptAccepted`, `promptEnded`, `localTurnStarted`,
+ * `localTurnEnded`, `aroundToolCall`, `aroundInject` and
+ * `providerHeaders`; the other harnesses' events are listed so one shape
+ * serves all three.
  */
 export interface HarnessEvents {
   // Every harness.
@@ -113,18 +127,37 @@ export interface HarnessEvents {
   promptAccepted?(request: ServedRequest): void;
   /** When the plugin settles the request. */
   promptEnded?(request: ServedRequest, outcome: Outcome, atMs: number): void;
-  /** Around every agent-tool call, with the request the model works in. */
+  /**
+   * Around every agent-tool call, with the request or the local turn the
+   * model works in, or `undefined` when the plugin knows neither.
+   */
   aroundToolCall?<T>(
-    request: ServedRequest | undefined,
+    request: ServedRequest | LocalTurn | undefined,
     toolName: string,
     run: () => T,
   ): T;
+  // PI and Claude Code.
+  /**
+   * A local turn began. PI: at the run's `agent_start`, when no served
+   * prompt is active. Claude Code: when its channel sees the turn begin.
+   */
+  localTurnStarted?(turn: LocalTurn, atMs: number): void;
+  /**
+   * A local turn ended. PI: at the run's `agent_settled`, before the next
+   * queued prompt is handed to PI, or when the session shuts down. Claude
+   * Code: when its channel sees the turn end. `outcome` is `error` when
+   * the harness reports the turn failed, else `ok`.
+   */
+  localTurnEnded?(turn: LocalTurn, outcome: Outcome, atMs: number): void;
   // PI.
   /** Around the hand-over of the prompt to PI's loop (`pi.sendUserMessage()`). */
   aroundInject?<T>(request: ServedRequest, run: () => T): T;
-  /** Headers to add to a provider request while `request` is PI's active turn. */
+  /**
+   * Headers to add to a provider request while `request` is PI's active
+   * turn: a served prompt, or a local turn.
+   */
   providerHeaders?(
-    request: ServedRequest,
+    request: ServedRequest | LocalTurn,
   ): Readonly<Record<string, string>> | undefined;
   // OpenClaw.
   aroundDispatch?<T>(request: ServedRequest, run: () => Promise<T>): Promise<T>;
@@ -432,11 +465,13 @@ export class ExtensionMetadataError extends Error {
 export interface PiHarnessEventDispatch {
   promptAccepted(request: ServedRequest): void;
   promptEnded(request: ServedRequest, outcome: Outcome, atMs: number): void;
+  localTurnStarted(turn: LocalTurn, atMs: number): void;
+  localTurnEnded(turn: LocalTurn, outcome: Outcome, atMs: number): void;
   aroundInject<T>(request: ServedRequest, run: () => T): T;
   /** The extensions' headers merged in load order; `{}` when none. */
-  providerHeaders(request: ServedRequest): Record<string, string>;
+  providerHeaders(request: ServedRequest | LocalTurn): Record<string, string>;
   aroundToolCall<T>(
-    request: ServedRequest | undefined,
+    request: ServedRequest | LocalTurn | undefined,
     toolName: string,
     run: () => T,
   ): T;
@@ -548,7 +583,13 @@ export function composeExtensions(
   ): LoadedExtension[] =>
     loaded.filter((l) => typeof l.extension.events?.[event] === "function");
 
-  const notify = <K extends "promptAccepted" | "promptEnded">(
+  const notify = <
+    K extends
+      | "promptAccepted"
+      | "promptEnded"
+      | "localTurnStarted"
+      | "localTurnEnded",
+  >(
     event: K,
     call: (handler: NonNullable<HarnessEvents[K]>) => void,
   ): void => {
@@ -739,6 +780,12 @@ export function composeExtensions(
       },
       promptEnded(request, outcome, atMs) {
         notify("promptEnded", (handler) => handler(request, outcome, atMs));
+      },
+      localTurnStarted(turn, atMs) {
+        notify("localTurnStarted", (handler) => handler(turn, atMs));
+      },
+      localTurnEnded(turn, outcome, atMs) {
+        notify("localTurnEnded", (handler) => handler(turn, outcome, atMs));
       },
       aroundInject(request, run) {
         return wrapAll(

@@ -62,10 +62,21 @@ A caller reads the key where it reads the others, in the agent's
 synchronously inside the prompt handler after the interceptors ran, and a
 prompt ended with its outcome; every plugin runs each agent-tool call
 inside the extension's `aroundToolCall` wrapper, naming the served prompt
-the model works in. PI also runs the hand-over of a prompt to its loop
-inside `aroundInject`, and asks `providerHeaders` for headers to add to
-the provider request of an active prompt. OpenClaw runs the turn's
-dispatch inside `aroundDispatch`. Claude Code reports `sessionStarted`
+or the local turn the model works in, or none when it knows neither.
+**A local turn** is a turn the harness runs that no served prompt
+started: typed at its terminal, or begun by the harness itself. PI and
+Claude Code report one with `localTurnStarted` when it begins and
+`localTurnEnded`, with its outcome, when it ends: PI at the run's start
+when no served prompt is active, and when the run has settled, before the
+next queued prompt is handed to PI, or at the session's end; Claude Code
+when its channel sees the turn begin and end. The turn the events name
+carries the plugin's id for it, never a served request's, and
+`local: true`; Claude Code adds the session when it knows it. PI cannot
+tell text typed while a turn runs from that turn: it joins the turn. PI
+also runs the hand-over of a prompt to its loop inside `aroundInject`,
+and asks `providerHeaders` for headers to add to each provider request of
+its active turn, a served prompt or a local turn. OpenClaw runs the
+turn's dispatch inside `aroundDispatch`. Claude Code reports `sessionStarted`
 and `turnStopped` from its hooks, and passes `promptEnded` a fourth
 argument, the reason, when the model did not end the prompt with its own
 reply: `final_text` (outcome `ok`: the turn ended without a reply, and the

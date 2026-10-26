@@ -107,6 +107,19 @@ export interface ServedRequest {
   readonly sessionId?: string;
 }
 
+/**
+ * A turn the harness runs that no served prompt started: typed at its
+ * terminal, or begun by the harness itself.
+ */
+export interface LocalTurn {
+  /** The plugin's id for the turn, unique in the process, never equal to a served request's id. */
+  readonly id: string;
+  /** Tells a local turn from a served request, which has no such field. */
+  readonly local: true;
+  /** Claude Code only: the session the turn runs in, when known. */
+  readonly sessionId?: string;
+}
+
 export type Outcome = "ok" | "error" | "timeout";
 
 /**
@@ -153,16 +166,32 @@ export interface HarnessEvents {
     atMs: number,
     reason?: EndReason,
   ): void;
-  /** Around every agent-tool call, with the request the model works in. */
+  /**
+   * Around every agent-tool call, with the request or the local turn the
+   * model works in, or `undefined` when the plugin knows neither.
+   */
   aroundToolCall?<T>(
-    request: ServedRequest | undefined,
+    request: ServedRequest | LocalTurn | undefined,
     toolName: string,
     run: () => T,
   ): T;
+  // PI and Claude Code.
+  /**
+   * A local turn began. PI: at the run's `agent_start`, when no served
+   * prompt is active. Claude Code: when its channel sees the turn begin.
+   */
+  localTurnStarted?(turn: LocalTurn, atMs: number): void;
+  /**
+   * A local turn ended. PI: at the run's `agent_settled`, before the next
+   * queued prompt is handed to PI, or when the session shuts down. Claude
+   * Code: when its channel sees the turn end. `outcome` is `error` when
+   * the harness reports the turn failed, else `ok`.
+   */
+  localTurnEnded?(turn: LocalTurn, outcome: Outcome, atMs: number): void;
   // PI.
   aroundInject?<T>(request: ServedRequest, run: () => T): T;
   providerHeaders?(
-    request: ServedRequest,
+    request: ServedRequest | LocalTurn,
   ): Readonly<Record<string, string>> | undefined;
   // OpenClaw.
   /**
@@ -487,10 +516,12 @@ export interface ClaudeCodeHarnessEventDispatch {
     reason?: EndReason,
   ): void;
   aroundToolCall<T>(
-    request: ServedRequest | undefined,
+    request: ServedRequest | LocalTurn | undefined,
     toolName: string,
     run: () => T,
   ): T;
+  localTurnStarted(turn: LocalTurn, atMs: number): void;
+  localTurnEnded(turn: LocalTurn, outcome: Outcome, atMs: number): void;
   sessionStarted(sessionId: string, source: string): void;
   turnStopped(sessionId: string | undefined, atMs: number): void;
 }
@@ -604,7 +635,13 @@ export function composeExtensions(
     loaded.filter((l) => typeof l.extension.events?.[event] === "function");
 
   const notify = <
-    K extends "promptAccepted" | "promptEnded" | "sessionStarted" | "turnStopped",
+    K extends
+      | "promptAccepted"
+      | "promptEnded"
+      | "localTurnStarted"
+      | "localTurnEnded"
+      | "sessionStarted"
+      | "turnStopped",
   >(
     event: K,
     call: (handler: NonNullable<HarnessEvents[K]>) => void,
@@ -852,6 +889,12 @@ export function composeExtensions(
             l.extension.events!.aroundToolCall!(request, toolName, inner),
           run,
         );
+      },
+      localTurnStarted(turn, atMs) {
+        notify("localTurnStarted", (handler) => handler(turn, atMs));
+      },
+      localTurnEnded(turn, outcome, atMs) {
+        notify("localTurnEnded", (handler) => handler(turn, outcome, atMs));
       },
       sessionStarted(sessionId, source) {
         notify("sessionStarted", (handler) => handler(sessionId, source));
