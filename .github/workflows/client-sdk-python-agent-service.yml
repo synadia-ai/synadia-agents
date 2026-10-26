@@ -49,7 +49,7 @@ jobs:
     env:
       NATS_SERVER_VERSION: "2.12.7"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install nats-server
         # Override the default working-directory so the tarball extracts into

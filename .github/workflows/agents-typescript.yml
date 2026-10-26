@@ -50,7 +50,7 @@ jobs:
     name: agents/pi (unit + spec smoke)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
@@ -104,7 +104,7 @@ jobs:
         # range remains bounded; testing arbitrary latest could move outside it.
         openclaw-version: ["2026.5.4", "2026.8.1"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -147,7 +147,7 @@ jobs:
     name: agents/opencode (typecheck + package-safe smokes)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
@@ -203,7 +203,7 @@ jobs:
     name: agents/codex (typecheck + package-safe smokes)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
@@ -266,7 +266,7 @@ jobs:
     name: agents/eve (typecheck + package-safe smokes)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
@@ -324,7 +324,7 @@ jobs:
     name: agents/acp + agents/grok (typecheck + package-safe smokes)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
@@ -390,7 +390,7 @@ jobs:
     name: agents/flue (typecheck + tests + protocol smoke)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
@@ -444,7 +444,7 @@ jobs:
     name: agents/claude-code (bundle + identity modes + package shape)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
@@ -514,7 +514,7 @@ jobs:
     name: agents/open-agent (typecheck + tests)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
