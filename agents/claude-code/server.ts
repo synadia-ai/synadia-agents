@@ -71,6 +71,8 @@ import {
 } from "./src/permission-routing.js";
 import { TurnTracker } from "./src/turns.js";
 import {
+  markSessionEvents,
+  SESSION_POLL_MS,
   watchSessionEvents,
   type SessionEventWatcher,
 } from "./src/session-events.js";
@@ -761,8 +763,11 @@ async function run(): Promise<void> {
       // what its own request interceptor bound.
       extensions.events.promptAccepted(served);
       // Until the hooks report the turns' prompt ids, a prompt starts as it
-      // is accepted; after, when Claude Code takes it into a turn.
-      if (!tracker?.binding()) startPrompt(pending, pending.createdAt, sessionId);
+      // is accepted; after, when Claude Code takes it into a turn. Before the
+      // turns are made, the start state read with the mark says which.
+      if (!(tracker?.binding() ?? trackerStart.binding)) {
+        startPrompt(pending, pending.createdAt, sessionId);
+      }
 
       logEvent("prompt admitted", { requestId, sender: pending.sender });
       const content =
@@ -1071,6 +1076,20 @@ async function run(): Promise<void> {
     turnEndTimer.unref();
     syncOpenRequests();
 
+    // Where the hooks' records begin for this server, taken before it can
+    // take a prompt: a prompt Claude Code takes while the extensions start,
+    // before the watcher polls, is still read. The turns start from the
+    // same moment.
+    const eventsMark = markSessionEvents(sessionSource);
+    const trackerStart = {
+      binding: promptIdsReported(stateDir, sessionSource.parentPid),
+      lastStopMs: readTurnStop(sessionSource)?.atMs,
+      sinceMs: startedAtMs,
+    };
+    // A log that already holds prompt ids binds from here, not from when the
+    // turns are made: no guess for a prompt the channel takes meanwhile.
+    if (trackerStart.binding) turns.startBinding();
+
     // Claude must be ready to receive channel notifications before NATS advertises
     // the prompt endpoint; otherwise a just-discovered caller can lose a prompt.
     await mcp.connect(new StdioServerTransport());
@@ -1140,13 +1159,8 @@ async function run(): Promise<void> {
           extensions.events.localTurnEnded(turn, outcome, atMs);
         },
       },
-      {
-        binding: promptIdsReported(stateDir, sessionSource.parentPid),
-        lastStopMs: readTurnStop(sessionSource)?.atMs,
-        sinceMs: startedAtMs,
-      },
+      trackerStart,
     );
-    if (tracker.binding()) turns.startBinding();
     // The hooks' records: the session, the turns, as the extensions' events.
     sessionEvents = watchSessionEvents(sessionSource, {
       sessionStarted: (sessionId, source) =>
@@ -1171,7 +1185,7 @@ async function run(): Promise<void> {
         extensions.events.turnStopped(sessionId, stop.atMs);
         endUnanswered();
       },
-    });
+    }, SESSION_POLL_MS, eventsMark);
 
     let shutdownPromise: Promise<void> | undefined;
     const shutdown = (): Promise<void> => {

@@ -32,8 +32,11 @@ import {
  *
  * At start, a session already recorded is reported once (the hook ran
  * before the server came up, as it does at `startup`), and what the log and
- * `.turn` already hold is not: it belongs to turns that ran before this
- * server.
+ * `.turn` already held at the mark is not: it belongs to turns that ran
+ * before this server. The mark ({@link markSessionEvents}) is taken when
+ * the watcher is made, or earlier by the server, before it can take a
+ * prompt, so a prompt Claude Code takes before the watcher polls is still
+ * reported.
  */
 
 export const SESSION_POLL_MS = 250
@@ -47,6 +50,14 @@ export interface SessionEventHandlers {
   turnFailed?(failure: FailureRecord): void
   /** A tool call: the latest one since the last poll. */
   turnActivity?(activity: TurnActivity): void
+}
+
+/** Where a watcher starts reading: what the files held then is not reported. */
+export interface SessionEventsMark {
+  /** Where the complete lines of the events log ended. */
+  readonly offset: number
+  /** The tool call `.turn` held. */
+  readonly activity: TurnActivity | undefined
 }
 
 export interface SessionEventWatcher {
@@ -87,16 +98,25 @@ function readCompleteLines(path: string, offset: number): { lines: string[]; nex
   }
 }
 
+/** The files as they stand now: a watcher made `from` this reports what comes after. */
+export function markSessionEvents(source: SessionIdSource): SessionEventsMark {
+  return {
+    offset: readCompleteLines(eventsFilePath(source.stateDir, source.parentPid), 0).next,
+    activity: readTurnActivity(source),
+  }
+}
+
 export function watchSessionEvents(
   source: SessionIdSource,
   handlers: SessionEventHandlers,
   intervalMs: number = SESSION_POLL_MS,
+  from: SessionEventsMark = markSessionEvents(source),
 ): SessionEventWatcher {
   const eventsPath = eventsFilePath(source.stateDir, source.parentPid)
   let session: SessionRecord | undefined
-  // What the log and `.turn` hold at start is not reported.
-  let offset = readCompleteLines(eventsPath, 0).next
-  let activity: TurnActivity | undefined = readTurnActivity(source)
+  // What the log and `.turn` held at the mark is not reported.
+  let offset = from.offset
+  let activity: TurnActivity | undefined = from.activity
 
   let polling = false
   const poll = (): void => {

@@ -90,11 +90,11 @@ function extensionEvents(): ExtensionEvent[] {
 // stands in for Claude Code, so its pid keys the files and the sweep keeps them.
 const SESSION_ID = '5c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f'
 // Returns what the hook printed: nothing, or a refused stop's decision.
-async function runHook(input: Record<string, unknown>): Promise<string> {
+async function runHook(input: Record<string, unknown>, dir: string = stateDir): Promise<string> {
   const child = Bun.spawn([process.execPath, join(sourceRoot, 'hooks', 'session-event.ts')], {
     stdin: new TextEncoder().encode(JSON.stringify(input)),
     stdout: 'pipe',
-    env: { ...process.env, CLAUDE_PID: String(process.pid), NATS_STATE_DIR: stateDir },
+    env: { ...process.env, CLAUDE_PID: String(process.pid), NATS_STATE_DIR: dir },
   })
   const stdout = await new Response(child.stdout).text()
   if ((await child.exited) !== 0) throw new Error('hook exited non-zero')
@@ -198,6 +198,7 @@ type Collected = {
 async function collectChunks(
   requestBody: string | Uint8Array,
   onChunk?: (chunk: Collected) => Promise<void> | void,
+  subject: string = SUBJECT,
 ): Promise<Collected[]> {
   const inbox = `_INBOX.rt.${Math.random().toString(36).slice(2, 10)}`
   const sub = nc.subscribe(inbox)
@@ -218,7 +219,7 @@ async function collectChunks(
       if (bytes === 0 && !message.headers) break
     }
   })()
-  nc.publish(SUBJECT, requestBody, { reply: inbox })
+  nc.publish(subject, requestBody, { reply: inbox })
   await nc.flush()
   const timer = setTimeout(() => sub.unsubscribe(), 15_000)
   await collect.catch(() => undefined)
@@ -871,6 +872,66 @@ console.log('\n[case 10] by prompt id: channel messages taken together are one t
     const ended = await promptEndedEvent(id)
     if (ended?.outcome !== 'ok' || ended.reason !== 'final_text') fail(`promptEnded for batch request ${id} was ${JSON.stringify(ended)}`)
   }
+}
+
+console.log('\n[case 11] a prompt Claude Code takes while the extensions start is still read')
+{
+  // A second channel whose extension takes 2.5 s to start: its service is
+  // on the bus, its hooks' watcher not yet polling. Claude Code takes the
+  // prompt and stops without a reply meanwhile; the watcher, once it
+  // polls, reads both from the mark taken before the service started.
+  const gapState = mkdtempSync(join(tmpdir(), 'claude-channel-gap-'))
+  const slowPath = join(gapState, 'rt-slow.mjs')
+  writeFileSync(slowPath, `export default () => ({ name: 'rt-slow', started: () => new Promise(r => setTimeout(r, 2500)) })\n`)
+  await runHook({ hook_event_name: 'SessionStart', session_id: SESSION_ID, source: 'startup' }, gapState)
+  // A turn this Claude Code ran before the channel started: the log holds
+  // its prompt id, so the channel follows the turns by id from its start.
+  await runHook({ hook_event_name: 'UserPromptSubmit', session_id: SESSION_ID, prompt_id: 'prompt-11a', prompt: 'typed' }, gapState)
+  await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID, prompt_id: 'prompt-11a', background_tasks: [], session_crons: [] }, gapState)
+  const gapName = 'rt-gap'
+  const gap = Bun.spawn(['bun', join(cacheRoot, 'runtime', 'server.js')], {
+    env: { ...childEnv, NATS_STATE_DIR: gapState, NATS_SESSION_NAME: gapName, SYNADIA_CLAUDE_CODE_EXTENSIONS: slowPath },
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  void new Response(gap.stdout).text()
+  let up = false
+  for (let attempt = 0; attempt < 40 && !up; attempt++) {
+    up = (await discovery.discover({ timeoutMs: 100, filter: { agent: 'claude-code', owner: OWNER, name: gapName } })).length > 0
+  }
+  if (!up) fail('the second channel did not register')
+  let took = false
+  const chunks = await collectChunks('taken while the extensions start', async chunk => {
+    if (took || !chunk.body.includes('"ack"')) return
+    took = true
+    await runHook({
+      hook_event_name: 'UserPromptSubmit',
+      session_id: SESSION_ID,
+      prompt_id: 'prompt-11',
+      prompt: `<channel source="plugin:nats-channel:nats" request_id="1" session="${gapName}" ts="${new Date().toISOString()}">x`,
+    }, gapState)
+    await runHook({
+      hook_event_name: 'Stop',
+      session_id: SESSION_ID,
+      prompt_id: 'prompt-11',
+      background_tasks: [],
+      session_crons: [],
+      stop_hook_active: true,
+      last_assistant_message: 'the answer taken early',
+    }, gapState)
+  }, `agents.prompt.cc.${OWNER}.${gapName}`)
+  const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+  if (chunks.some(chunk => chunk.error) || responses.length !== 1 || responses[0]!.data !== 'the answer taken early') {
+    fail(`the prompt taken while the extensions started got ${JSON.stringify(chunks.map(chunk => chunk.error ?? chunk.body.slice(0, 60)))}`)
+  }
+  // SIGTERM, which the channel handles as a shutdown; then gone for sure.
+  gap.kill()
+  if ((await Promise.race([gap.exited, Bun.sleep(10_000).then(() => 'timeout' as const)])) === 'timeout') {
+    fail('the second channel did not stop')
+    gap.kill(9)
+  }
+  rmSync(gapState, { recursive: true, force: true })
 }
 
 console.log('\n[case 6] shutdown settles an open deferred request')

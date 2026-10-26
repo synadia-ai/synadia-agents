@@ -39,7 +39,7 @@ import {
   writeOpenRequests,
   type SessionIdSource,
 } from '../src/session-id.js'
-import { watchSessionEvents } from '../src/session-events.js'
+import { markSessionEvents, watchSessionEvents } from '../src/session-events.js'
 
 const PID = 4242
 const SESSION = '0b7e1c9a-2f4d-4e1b-9c3a-5d6e7f8a9b0c'
@@ -657,6 +657,31 @@ describe('watchSessionEvents: the hooks as the extensions\' events', () => {
     } finally {
       watcher.stop()
     }
+  })
+
+  test('made from an earlier mark, it reports what the hooks wrote after the mark and before it was made', () => {
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', prompt_id: 'pOld', prompt: 'x' }, 10)
+    // The server marks the files before it can take a prompt...
+    const mark = markSessionEvents(source)
+    // ...and Claude Code takes one while the extensions start.
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'UserPromptSubmit',
+      prompt_id: 'pGap',
+      prompt: '<channel source="plugin:nats-channel:nats" request_id="1">x',
+    }, 20)
+    const seen = (from?: ReturnType<typeof markSessionEvents>): string[] => {
+      const calls: string[] = []
+      const watcher = watchSessionEvents(source, {
+        sessionStarted: () => undefined,
+        turnStopped: () => undefined,
+        promptSubmitted: (submit) => calls.push(`${submit.promptId} ${submit.requestId ?? '-'}`),
+      }, 60_000, from)
+      watcher.stop()
+      return calls
+    }
+    expect(seen(mark)).toEqual(['pGap 1'])
+    // Marked only when it is made, it would miss the prompt.
+    expect(seen()).toEqual([])
   })
 
   test('a poll a handler starts reports nothing twice', () => {
