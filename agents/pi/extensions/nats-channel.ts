@@ -24,7 +24,10 @@
  * `SYNADIA_AGENT_EXTENSIONS` or the config's `extensions` add interceptors,
  * heartbeat extras, agent-tools extensions and handlers for PI's events
  * (see `extensions.ts` and `agents/EXTENSIONS.md`). Without one the channel
- * behaves exactly as before.
+ * behaves exactly as before. A run no NATS prompt started, typed at PI's
+ * terminal, is a local turn: the extensions hear it begin and end, and are
+ * given it for its provider requests' headers and its agent-tool calls as
+ * they are given a NATS prompt (see `local-turns.ts`).
  *
  * Attachments: inline per spec §5.1/§5.2. Each `{filename, content}` is
  * base64-decoded (strict RFC 4648 §4 — standard alphabet, padded, no
@@ -78,6 +81,7 @@ import {
   type ComposedExtensions,
   type ExtensionConfigEntry,
 } from "./extensions.ts";
+import { PiLocalTurns } from "./local-turns.ts";
 import { PiPromptQueue, type QueuedPiPrompt } from "./prompt-queue.ts";
 import { resolveOwner, sanitizeSubjectToken } from "./subject.ts";
 import {
@@ -376,6 +380,8 @@ export default function (pi: ExtensionAPI) {
   let shuttingDown = false;
 
   const promptQueue = new PiPromptQueue();
+  // The runs no NATS prompt started, one open at a time (`local-turns.ts`).
+  const localTurns = new PiLocalTurns(() => promptQueue.active?.served);
 
   // Expiration rejects the deferred handler. AgentService then emits the
   // error and mandatory terminator; a request is never silently forgotten.
@@ -405,6 +411,10 @@ export default function (pi: ExtensionAPI) {
 
   function drainQueue(): void {
     if (promptQueue.active) return;
+    // PI is idle once a run has settled, before the extensions hear of it:
+    // a prompt arriving then waits until the channel has closed the run's
+    // local turn, at its own `agent_settled`, and drains from there.
+    if (localTurns.open) return;
     if (!piCtx || !piCtx.isIdle()) return;
 
     while (promptQueue.queuedCount > 0) {
@@ -841,7 +851,7 @@ export default function (pi: ExtensionAPI) {
       if (agentTools) {
         const tools = agentTools;
         registeredTools = registerAgentTools(pi, tools, {
-          activeRequest: () => promptQueue.active?.served,
+          activeRequest: () => localTurns.current(),
           aroundToolCall: extensions.events.aroundToolCall,
         });
       }
@@ -997,6 +1007,10 @@ export default function (pi: ExtensionAPI) {
   // caller's request, and PI is idle here, so the next queued prompt can be
   // injected.
   pi.on("agent_settled", async () => {
+    // A local turn closes first, so the next queued prompt never starts
+    // inside it.
+    const local = localTurns.end();
+    if (local) extensions.events.localTurnEnded(local, "ok", Date.now());
     const done = promptQueue.completeActive();
     if (done) extensions.events.promptEnded(done.served, "ok", Date.now());
     // AgentService resumes from the deferred handler and emits the
@@ -1010,18 +1024,27 @@ export default function (pi: ExtensionAPI) {
     drainQueue();
   });
 
-  // While a NATS prompt is PI's active turn, the extensions may add
-  // headers to each provider request PI sends for it.
+  // A run no NATS prompt started is a local turn. PI awaits this event
+  // before the run's first provider request, so the turn is open for it.
+  pi.on("agent_start", () => {
+    const local = localTurns.start();
+    if (local) extensions.events.localTurnStarted(local, Date.now());
+  });
+
+  // While PI works on a NATS prompt or a local turn, the extensions may
+  // add headers to each provider request PI sends for it.
   pi.on("before_provider_headers", (event) => {
-    const active = promptQueue.active;
-    if (!active) return;
-    const headers = extensions.events.providerHeaders(active.served);
+    const current = localTurns.current();
+    if (!current) return;
+    const headers = extensions.events.providerHeaders(current);
     for (const [key, value] of Object.entries(headers)) {
       event.headers[key] = value;
     }
   });
 
   pi.on("session_shutdown", async () => {
+    const local = localTurns.end();
+    if (local) extensions.events.localTurnEnded(local, "ok", Date.now());
     await cleanup();
   });
 

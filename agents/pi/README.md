@@ -161,7 +161,12 @@ The extension can load extension modules that add behaviour around it:
 interceptors for its client and service, keys for its registration
 metadata (`cwd` stays the plugin's), extensions for its agent tools, and
 handlers for PI's events, among them the headers PI sends on its
-provider requests while a NATS prompt is its active turn. Name them in
+provider requests while a NATS prompt or a local turn is its active turn.
+A **local turn** is a run no NATS prompt started, typed at PI's terminal:
+the extensions hear it begin at the run's `agent_start` and end at its
+`agent_settled`, and are given it for its provider requests and agent-tool
+calls as they are given a NATS prompt for its own. A NATS prompt that
+arrives during a local turn waits for its end. Name them in
 `SYNADIA_PI_EXTENSIONS` or `SYNADIA_AGENT_EXTENSIONS`, or as the
 `extensions` array in `nats-channel.json`. `/nats-status` lists the
 modules loaded. The contract is [`../EXTENSIONS.md`](../EXTENSIONS.md).

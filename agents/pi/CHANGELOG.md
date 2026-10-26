@@ -39,6 +39,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value stops the start with an error notice naming the extension.
 - `/nats-status` names the agent tools registered and the extensions
   loaded; `/nats-configure` prints both settings.
+- **Local turns.** A run no NATS prompt started, typed at PI's terminal or
+  begun by PI itself, is a local turn for the extensions:
+  `localTurnStarted` at the run's `agent_start`, `localTurnEnded` at its
+  `agent_settled` or the session's end, its provider requests' headers
+  from `providerHeaders` and its agent-tool calls inside `aroundToolCall`,
+  each given the turn as a NATS prompt's are given the request. A run PI
+  continues stays one turn. A NATS prompt that arrives during a local turn
+  is handed to PI once the turn has ended. The contract gains the
+  `LocalTurn` type, and `providerHeaders` and `aroundToolCall` take a
+  served request or a local turn.
 
 ### Fixed
 
