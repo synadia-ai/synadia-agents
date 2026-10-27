@@ -1131,6 +1131,36 @@ describe("the stop", () => {
     expect(mocks.serviceStops[0]).toHaveBeenCalledOnce();
   });
 
+  it("a stale start whose drain and close both fail logs it, wipes its creds and settles", async () => {
+    // Nothing retries a stale start's connection and nothing awaits the
+    // start, so its failure must neither keep the creds nor be thrown.
+    const first = natsCoreLike();
+    first.drain.mockRejectedValueOnce(new Error("drain failed"));
+    first.close.mockRejectedValueOnce(new Error("close failed"));
+    const firstWipe = vi.fn();
+    const connecting = deferred<void>();
+    mocks.connectToNats.mockImplementationOnce(async () => {
+      await connecting.promise;
+      return { nc: first, bundle: { connectionOptions: {}, wipe: firstWipe } };
+    });
+    const stale = new AbortController();
+    const staleCtx = gatewayContext(account(), stale.signal);
+    const staleRun = startNatsGateway(staleCtx as never);
+    await vi.waitFor(() => expect(mocks.connectToNats).toHaveBeenCalledOnce());
+    stale.abort();
+    expect(await settleWithin([stopNatsGateway(staleCtx as never)], 1_000)).toBe(true);
+
+    connecting.resolve();
+    await expect(staleRun).resolves.toBeUndefined();
+    expect(first.drain).toHaveBeenCalledOnce();
+    expect(first.close).toHaveBeenCalledOnce();
+    expect(firstWipe).toHaveBeenCalledOnce();
+    expect(staleCtx.log.error).toHaveBeenCalledWith(
+      "nats: stale start shutdown error: Error: close failed",
+    );
+    expect(mocks.services).toHaveLength(0);
+  });
+
   it("a start during a cleanup waits for it, and the cleanup leaves the new gateway alone", async () => {
     const first = natsCoreLike("on-call");
     const firstWipe = connectedTo(first);

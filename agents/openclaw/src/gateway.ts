@@ -332,8 +332,16 @@ export async function startNatsGateway(
   });
   if (!mine()) {
     // Stopped or replaced while it connected: the connection is all it owns.
-    await drainConnection(connected.nc, LEAVE_TIMEOUT_MS);
-    connected.bundle.wipe();
+    // Unlike the tracked connection, nothing retries this one, so a close
+    // that fails is logged, never thrown (nothing awaits a stale start), and
+    // the creds are wiped anyway: a reconnect it may still try fails on them.
+    try {
+      await drainConnection(connected.nc, LEAVE_TIMEOUT_MS);
+    } catch (err) {
+      ctx.log?.error?.(`nats: stale start shutdown error: ${String(err)}`);
+    } finally {
+      connected.bundle.wipe();
+    }
     return;
   }
   activeNc = connected.nc;
