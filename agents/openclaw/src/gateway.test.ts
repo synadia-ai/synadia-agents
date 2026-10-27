@@ -29,6 +29,10 @@ const mocks = vi.hoisted(() => ({
   setActiveAgentTools: vi.fn(),
   setActiveExtensions: vi.fn(),
   cleanupAgentStaging: vi.fn(),
+  // The real one, for the tests of the stop.
+  realDrainConnection: undefined as
+    | undefined
+    | ((nc: unknown, timeoutMs: number) => Promise<void>),
 }));
 
 type PromptHandler = (envelope: unknown, response: unknown) => Promise<void>;
@@ -86,10 +90,14 @@ vi.mock("@synadia-ai/agents", async (importOriginal) => {
   }
   return { ...actual, Agents: RecordingAgents };
 });
-vi.mock("./nats/connection.js", () => ({
-  connectToNats: mocks.connectToNats,
-  drainConnection: mocks.drainConnection,
-}));
+vi.mock("./nats/connection.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./nats/connection.js")>();
+  mocks.realDrainConnection = actual.drainConnection as never;
+  return {
+    connectToNats: mocks.connectToNats,
+    drainConnection: mocks.drainConnection,
+  };
+});
 vi.mock("./runtime.js", () => ({
   getNatsRuntime: () => ({ channel: {} }),
   setActiveConnection: mocks.setActiveConnection,
@@ -172,6 +180,12 @@ beforeAll(() => {
      }`,
   );
   writeFileSync(join(fixtures, "broken.mjs"), `export default function () { throw new Error("no"); }`);
+  writeFileSync(
+    join(fixtures, "stuck.mjs"),
+    `export default function () {
+       return { name: "stuck", stopping: () => new Promise(() => undefined) };
+     }`,
+  );
 });
 
 afterAll(() => {
@@ -803,5 +817,203 @@ describe("a reply OpenClaw marked as an error, a failed run's among them", () =>
     });
     controller.abort();
     await running;
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────
+// The stop: OpenClaw aborts the account, then calls stopAccount, and waits
+// 5 s for it. The connection below stops as nats-core 3.4.0's does.
+// ───────────────────────────────────────────────────────────────────────
+
+/**
+ * A connection that stops as nats-core 3.4.0's does. `drain()` waits for
+ * the server's reply to its PING: `"soon"` answers on the next timer turn,
+ * `"on-call"` when the test calls `answer()`, `"never"` never (the server
+ * is gone). A second drain while one runs rejects with
+ * `DrainingConnectionError`, and `close()` resolves without settling a
+ * drain that still waits.
+ */
+function natsCoreLike(reply: "soon" | "on-call" | "never" = "soon") {
+  let draining = false;
+  let closed = false;
+  let answer: () => void = () => undefined;
+  const failure = (name: string, message: string) =>
+    Promise.reject(Object.assign(new Error(message), { name }));
+  return {
+    info: { max_payload: 1_048_576 },
+    drain: vi.fn((): Promise<void> => {
+      if (closed) return failure("ClosedConnectionError", "closed connection");
+      if (draining) return failure("DrainingConnectionError", "connection draining");
+      draining = true;
+      return new Promise<void>((resolve) => {
+        answer = () => {
+          // Closed before the reply came: the drain stays pending for good.
+          if (closed) return;
+          closed = true;
+          resolve();
+        };
+        if (reply === "soon") setTimeout(answer, 0);
+      });
+    }),
+    close: vi.fn(async () => {
+      closed = true;
+    }),
+    answer: () => answer(),
+  };
+}
+
+function connectedTo(nc: ReturnType<typeof natsCoreLike>) {
+  const wipe = vi.fn();
+  mocks.connectToNats.mockResolvedValue({ nc, bundle: { connectionOptions: {}, wipe } });
+  return wipe;
+}
+
+/** True when every promise settles within `ms`, false when time runs out first. */
+async function settleWithin(promises: Array<Promise<unknown>>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.allSettled(promises).then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+describe("the stop", () => {
+  beforeEach(() => {
+    resetMocks();
+    mocks.drainConnection.mockImplementation(mocks.realDrainConnection!);
+  });
+
+  afterEach(async () => {
+    // A stop still running on fake timers ends before the real ones return.
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(10_000);
+    vi.useRealTimers();
+    await stopNatsGateway({} as never);
+  });
+
+  it("the abort and stopAccount in the same tick: one stopping(), one service stop, one drain, one wipe, and both settle", async () => {
+    const nc = natsCoreLike();
+    const wipe = connectedTo(nc);
+    const { controller, running, ctx } = await started(withCounter());
+    controller.abort();
+    const stopped = stopNatsGateway(ctx as never);
+    expect(await settleWithin([running, stopped], 1_000)).toBe(true);
+    expect(counter().stopping).toBe(1);
+    expect(mocks.serviceStops[0]).toHaveBeenCalledOnce();
+    expect(nc.drain).toHaveBeenCalledOnce();
+    expect(nc.close).not.toHaveBeenCalled();
+    expect(wipe).toHaveBeenCalledOnce();
+  });
+
+  it("a stop whose every step hangs ends at its bound, about 3 s: the connection closed, then the creds wiped", async () => {
+    const nc = natsCoreLike("never");
+    const wipe = connectedTo(nc);
+    const { controller, running, ctx } = await started(
+      account({
+        extensions: { source: "config", entries: [{ module: join(fixtures, "stuck.mjs"), options: {} }] },
+      }),
+    );
+    // The service's endpoint drains wait for the server too.
+    mocks.serviceStops[0]!.mockImplementation(() => new Promise<void>(() => undefined));
+    const order: string[] = [];
+    nc.close.mockImplementation(async () => {
+      order.push("close");
+    });
+    wipe.mockImplementation(() => order.push("wipe"));
+    vi.useFakeTimers();
+    controller.abort();
+    const stopped = stopNatsGateway(ctx as never);
+    let settled = false;
+    void Promise.all([running, stopped]).then(() => {
+      settled = true;
+    });
+    // 1 s for the extension's stopping(), then 2 s to leave the bus.
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(settled).toBe(false);
+    expect(nc.close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(settled).toBe(true);
+    expect(nc.drain).toHaveBeenCalledOnce();
+    expect(order).toEqual(["close", "wipe"]);
+  });
+
+  it("a close that fails keeps the connection and its creds, and the next stop tries again", async () => {
+    const nc = natsCoreLike();
+    const wipe = connectedTo(nc);
+    const { controller, running, ctx } = await started(account());
+    nc.drain.mockRejectedValueOnce(new Error("drain failed"));
+    nc.close.mockRejectedValueOnce(new Error("close failed"));
+    controller.abort();
+    await expect(stopNatsGateway(ctx as never)).rejects.toThrow("close failed");
+    await running;
+    expect(ctx.log.error).toHaveBeenCalledWith("nats: shutdown error: Error: close failed");
+    expect(nc.drain).toHaveBeenCalledOnce();
+    expect(wipe).not.toHaveBeenCalled();
+
+    await stopNatsGateway({} as never);
+    expect(nc.drain).toHaveBeenCalledTimes(2);
+    expect(wipe).toHaveBeenCalledOnce();
+  });
+
+  it("restart: stop, start, stop again drains the new connection once", async () => {
+    const first = natsCoreLike();
+    const firstWipe = connectedTo(first);
+    const a = await started(account());
+    a.controller.abort();
+    expect(await settleWithin([a.running, stopNatsGateway(a.ctx as never)], 1_000)).toBe(true);
+
+    const second = natsCoreLike();
+    const secondWipe = connectedTo(second);
+    mocks.setActiveConnection.mockClear();
+    const b = await started(account());
+    b.controller.abort();
+    expect(await settleWithin([b.running, stopNatsGateway(b.ctx as never)], 1_000)).toBe(true);
+
+    expect(first.drain).toHaveBeenCalledOnce();
+    expect(second.drain).toHaveBeenCalledOnce();
+    expect(second.close).not.toHaveBeenCalled();
+    expect(firstWipe).toHaveBeenCalledOnce();
+    expect(secondWipe).toHaveBeenCalledOnce();
+    expect(mocks.serviceStops).toHaveLength(2);
+    expect(mocks.serviceStops[1]).toHaveBeenCalledOnce();
+  });
+
+  it("a start during a cleanup waits for it, and the cleanup leaves the new gateway alone", async () => {
+    const first = natsCoreLike("on-call");
+    const firstWipe = connectedTo(first);
+    const a = await started(account());
+    a.controller.abort();
+    await vi.waitFor(() => expect(first.drain).toHaveBeenCalledOnce());
+
+    const second = natsCoreLike();
+    const secondWipe = connectedTo(second);
+    mocks.setActiveConnection.mockClear();
+    const restart = new AbortController();
+    const restarted = startNatsGateway(gatewayContext(account(), restart.signal) as never);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The cleanup still waits for its drain: the start has not connected.
+    expect(mocks.connectToNats).toHaveBeenCalledOnce();
+    expect(first.drain).toHaveBeenCalledOnce();
+    expect(first.close).not.toHaveBeenCalled();
+    expect(firstWipe).not.toHaveBeenCalled();
+
+    first.answer();
+    expect(await settleWithin([a.running], 1_000)).toBe(true);
+    await vi.waitFor(() =>
+      expect(mocks.setActiveConnection.mock.calls.some((c) => c[0] !== null)).toBe(true),
+    );
+    expect(mocks.connectToNats).toHaveBeenCalledTimes(2);
+    expect(firstWipe).toHaveBeenCalledOnce();
+    expect(secondWipe).not.toHaveBeenCalled();
+
+    restart.abort();
+    expect(await settleWithin([restarted], 1_000)).toBe(true);
+    expect(second.drain).toHaveBeenCalledOnce();
+    expect(secondWipe).toHaveBeenCalledOnce();
   });
 });

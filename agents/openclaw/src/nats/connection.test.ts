@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
@@ -78,7 +78,7 @@ describe("connectToNats", () => {
       close: vi.fn().mockResolvedValue(undefined),
     };
 
-    await expect(drainConnection(nc as never)).resolves.toBeUndefined();
+    await expect(drainConnection(nc as never, 2_000)).resolves.toBeUndefined();
     expect(nc.close).toHaveBeenCalledOnce();
   });
 
@@ -88,6 +88,83 @@ describe("connectToNats", () => {
       close: vi.fn().mockRejectedValue(new Error("close failed")),
     };
 
-    await expect(drainConnection(nc as never)).rejects.toThrow("close failed");
+    await expect(drainConnection(nc as never, 2_000)).rejects.toThrow("close failed");
+  });
+});
+
+/**
+ * A connection whose drain waits for a server that never answers, as
+ * nats-core 3.4.0's does while the connection is down: `drain()` never
+ * settles, and `close()` resolves and leaves it pending.
+ */
+function unansweredDrain() {
+  let closed = false;
+  return {
+    drain: vi.fn(() => new Promise<void>(() => undefined)),
+    close: vi.fn(async () => {
+      closed = true;
+    }),
+    get closed() {
+      return closed;
+    },
+  };
+}
+
+describe("drainConnection: bounded", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a drain that settles in time is not followed by a close", async () => {
+    const nc = { drain: vi.fn().mockResolvedValue(undefined), close: vi.fn() };
+    await expect(drainConnection(nc as never, 2_000)).resolves.toBeUndefined();
+    expect(nc.drain).toHaveBeenCalledOnce();
+    expect(nc.close).not.toHaveBeenCalled();
+  });
+
+  it("a drain that never settles is force-closed at the bound", async () => {
+    vi.useFakeTimers();
+    const nc = unansweredDrain();
+    let done = false;
+    const draining = drainConnection(nc as never, 2_000).then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(nc.close).not.toHaveBeenCalled();
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(nc.close).toHaveBeenCalledOnce();
+    await draining;
+    expect(done).toBe(true);
+    expect(nc.closed).toBe(true);
+    expect(nc.drain).toHaveBeenCalledOnce();
+  });
+
+  it("a drain that rejects after the bound is observed, never unhandled", async () => {
+    vi.useFakeTimers();
+    let rejectDrain!: (error: Error) => void;
+    const nc = {
+      drain: vi.fn(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectDrain = reject;
+          }),
+      ),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const draining = drainConnection(nc as never, 100);
+    await vi.advanceTimersByTimeAsync(100);
+    await draining;
+    expect(nc.close).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      rejectDrain(new Error("closed while draining"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
+    expect(unhandled).not.toHaveBeenCalled();
   });
 });

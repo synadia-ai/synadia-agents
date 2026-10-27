@@ -5,6 +5,7 @@ import {
   withAgentReconnectDefaults,
   type NatsConnectionBundle,
 } from "@synadia-ai/agents";
+import { settlesWithin } from "../settle.js";
 import type { ConnectionConfig } from "./types.js";
 
 // Connections we initiated a drain on. The status loop checks membership
@@ -79,22 +80,41 @@ export async function connectToNats(
   return { nc, bundle };
 }
 
-export async function drainConnection(nc: NatsConnection): Promise<void> {
+/**
+ * Drain the connection for at most `timeoutMs`, then close it. A drain
+ * waits for the server's reply to a PING, which never comes while the
+ * connection is down. Called once per connection: a second drain of a
+ * draining connection fails, and the close that follows leaves the first
+ * drain pending for good (nats-core 3.4.0's `close()` never settles it).
+ */
+export async function drainConnection(
+  nc: NatsConnection,
+  timeoutMs: number,
+): Promise<void> {
   shuttingDownConnections.add(nc);
+  const drained = (async () => nc.drain())();
+  let why: string;
   try {
-    await nc.drain();
-    console.error("[nats] connection drained");
-  } catch (err) {
-    console.error("[nats] drain error:", err);
-    // The connection bundle may only wipe its retained auth snapshot after
-    // reconnect is impossible. Force a close when graceful drain fails so the
-    // caller can safely wipe immediately after this function returns.
-    try {
-      await nc.close();
-      console.error("[nats] connection closed after drain error");
-    } catch (closeErr) {
-      console.error("[nats] close after drain error:", closeErr);
-      throw closeErr;
+    if (await settlesWithin(drained, timeoutMs)) {
+      await drained;
+      console.error("[nats] connection drained");
+      return;
     }
+    why = `the drain did not finish within ${timeoutMs} ms`;
+    console.error(`[nats] ${why}`);
+  } catch (err) {
+    why = "drain error";
+    console.error("[nats] drain error:", err);
+  }
+  // The connection bundle may only wipe its retained auth snapshot after
+  // reconnect is impossible. Force a close when the graceful drain failed
+  // or ran out of time, so the caller can safely wipe immediately after
+  // this function returns. A drain still pending is left behind.
+  try {
+    await nc.close();
+    console.error(`[nats] connection closed after ${why}`);
+  } catch (closeErr) {
+    console.error(`[nats] close after ${why}:`, closeErr);
+    throw closeErr;
   }
 }

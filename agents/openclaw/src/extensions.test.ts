@@ -3,7 +3,7 @@
 // `extensions.ts` and `agents/EXTENSIONS.md`). Modules are written to a
 // temporary directory; no NATS is needed.
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -405,7 +405,7 @@ describe("composeExtensions: started and stopping are awaited and bounded", () =
         loaded("stuck", { started: () => new Promise<void>(() => undefined) }),
       ],
       logger,
-      { hookTimeoutMs: 50 },
+      { startedTimeoutMs: 50 },
     );
     const t0 = Date.now();
     await composed.started(handles);
@@ -441,6 +441,40 @@ describe("composeExtensions: started and stopping are awaited and bounded", () =
       'warn extension "rejects" stopping() failed: async',
       'warn extension "sync-throw" stopping() failed: sync',
     ]);
+  });
+
+  it("by default stopping() is awaited for at most 1 s, and started() for at most 5 s", async () => {
+    vi.useFakeTimers();
+    try {
+      const logger = recordingLogger();
+      const never = () => new Promise<void>(() => undefined);
+      const composed = composeExtensions([loaded("stuck", { started: never, stopping: never })], logger);
+
+      let stopped = false;
+      void composed.stopping().then(() => {
+        stopped = true;
+      });
+      await vi.advanceTimersByTimeAsync(999);
+      expect(stopped).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(stopped).toBe(true);
+
+      let started = false;
+      void composed.started({ agents: {}, service: {} } as never).then(() => {
+        started = true;
+      });
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(started).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(started).toBe(true);
+
+      expect(logger.lines).toEqual([
+        'warn extension "stuck" stopping() did not finish within 1000 ms; continuing without it',
+        'warn extension "stuck" started() did not finish within 5000 ms; continuing without it',
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

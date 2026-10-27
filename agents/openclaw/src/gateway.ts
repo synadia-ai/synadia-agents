@@ -30,6 +30,7 @@ import {
   SUBJECT_AGENT_TOKEN,
 } from "./nats/index.js";
 import { connectToNats, drainConnection } from "./nats/connection.js";
+import { settlesWithin } from "./settle.js";
 import type { ResolvedNatsAccount } from "./types.js";
 import {
   getNatsRuntime,
@@ -141,38 +142,78 @@ function servedRequest(envelope: RequestEnvelope, response: PromptResponse): Ser
   });
 }
 
-async function cleanupPrevious(): Promise<void> {
+/**
+ * How long the service, the agent tools and the connection have, together,
+ * to leave the bus gracefully; then the connection is closed. OpenClaw
+ * waits 5 s for a channel account's stop and goes on without it. The
+ * extensions' `stopping()` comes first, for at most
+ * `DEFAULT_STOPPING_TIMEOUT_MS` (1 s), so the stop ends within about 3 s.
+ */
+const LEAVE_TIMEOUT_MS = 2_000;
+
+// The cleanup in progress, if any. OpenClaw aborts the account and then
+// calls `stopAccount`, so two stops arrive in the same tick, and a restart's
+// start may come while a stop still runs. Every caller awaits the one run:
+// the connection is drained once, and a start begins after the cleanup
+// ended. Cleared when it settles, so the next call runs a new cleanup, the
+// retry after a failed one among them.
+let cleanupInFlight: Promise<void> | null = null;
+
+function cleanupPrevious(): Promise<void> {
+  cleanupInFlight ??= runCleanup().finally(() => {
+    cleanupInFlight = null;
+  });
+  return cleanupInFlight;
+}
+
+/**
+ * Wait for one step of the stop until `leaveBy` (a `Date.now()` time). A
+ * failure is ignored. A step still running at `leaveBy` is left behind: it
+ * waits on the server, and the close of the connection follows.
+ */
+async function leaveStep(
+  name: string,
+  step: () => Promise<unknown>,
+  leaveBy: number,
+): Promise<void> {
+  const running = (async () => step())();
+  if (!(await settlesWithin(running, leaveBy - Date.now()))) {
+    console.error(`[nats] ${name} did not finish in time; going on with the stop`);
+  }
+}
+
+async function runCleanup(): Promise<void> {
   // The extensions hear of the stop before the service leaves the bus.
   if (activeService && activeExtensions) {
     await activeExtensions.stopping();
   }
   activeExtensions = null;
   setActiveExtensions(null);
+  const leaveBy = Date.now() + LEAVE_TIMEOUT_MS;
   if (activeService) {
-    try {
-      await activeService.stop();
-    } catch {}
+    const service = activeService;
+    await leaveStep("service stop", () => service.stop(), leaveBy);
     activeService = null;
   }
   turnsInFlight = [];
   setActiveAgentTools(null);
   if (activeTools) {
-    try {
-      await activeTools.close();
-    } catch {}
+    const tools = activeTools;
+    await leaveStep("agent tools close", () => tools.close(), leaveBy);
     activeTools = null;
   }
   if (activeAgents) {
-    try {
-      await activeAgents.close();
-    } catch {}
+    const agents = activeAgents;
+    await leaveStep("agents client close", () => agents.close(), leaveBy);
     activeAgents = null;
   }
   if (activeNc) {
     // Do not wipe or replace this connection's credential snapshot unless the
-    // connection is definitely closed. drainConnection forces close on a
-    // graceful-drain failure and throws only when even that close failed.
-    await drainConnection(activeNc);
+    // connection is definitely closed. drainConnection closes the connection
+    // when the graceful drain fails or runs out of time, and throws only when
+    // even that close failed: the connection stays here, and the next
+    // cleanup tries again.
+    await drainConnection(activeNc, Math.max(0, leaveBy - Date.now()));
     activeNc = null;
   }
   // Reconnect authentication and the sender signer share this retained
