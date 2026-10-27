@@ -309,6 +309,9 @@ export function recordHookEvent(
     return 'failure'
   }
   if (event === 'SessionStart') {
+    // A new Claude Code process: whatever its pid's files hold is another,
+    // earlier process's ({@link clearProcessFiles}).
+    if (input.source === 'startup') clearProcessFiles(stateDir, pid)
     if (sessionId === undefined) return undefined
     const source = typeof input.source === 'string' ? input.source : 'unknown'
     mkdirSync(sessionsDir(stateDir), { recursive: true })
@@ -984,11 +987,39 @@ function removeQuietly(path: string): void {
 }
 
 /**
+ * Remove the files the hooks wrote for an earlier Claude Code process of
+ * the same pid: `<pid>`, `.stop`, `.turn`, `.events`, `.nudge` and the
+ * `.tools` directory. The SessionStart hook runs this at a `startup` only,
+ * before it records the session, so a process that reuses a dead one's
+ * pid before any server swept its files does not take that process's
+ * history for its own (binding mode from its submits, its last Stop).
+ * Never at `resume`, `clear` or `compact`: a running Claude Code's files
+ * are its own. Never `.open`, the server's only file: it guards itself
+ * ({@link readOpenFile} ignores it unless its `server_pid` is alive), and
+ * this process's server may already have written it. Best effort.
+ */
+export function clearProcessFiles(stateDir: string, pid: number | string): void {
+  for (const path of [
+    sessionFilePath(stateDir, pid),
+    stopFilePath(stateDir, pid),
+    turnFilePath(stateDir, pid),
+    eventsFilePath(stateDir, pid),
+    nudgeFilePath(stateDir, pid),
+    toolUsesDir(stateDir, pid),
+  ]) {
+    removeQuietly(path)
+  }
+}
+
+/**
  * Remove the files of Claude Code processes that no longer exist. Run when
  * a server starts: a live Claude Code keeps its files across a restart of
  * its MCP server, so the restarted server still follows `/clear`; a Claude
  * Code that died without a clean shutdown leaves files a reused pid must
- * not inherit. Best effort.
+ * not inherit. A process that reuses the pid before a server starts clears
+ * them itself, at its `startup` ({@link clearProcessFiles}); this sweep
+ * still covers one started with `--resume`, which reports `resume`. Best
+ * effort.
  */
 export function sweepDeadSessions(stateDir: string): void {
   let names: string[]

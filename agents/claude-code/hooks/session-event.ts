@@ -4,7 +4,20 @@
  *
  * - SessionStart: record the session id Claude Code is now using, so the
  *   channel's MCP server, which keeps running across `/clear`, knows the
- *   session a prompt is delivered to.
+ *   session a prompt is delivered to. At a `startup`, a new Claude Code
+ *   process, first remove the files an earlier process of the same pid
+ *   left, all but the server's `.open` (`clearProcessFiles` in
+ *   `src/session-id.ts`): a process that reuses a dead one's pid before a
+ *   server swept them would otherwise start on that process's history,
+ *   binding mode from its submits included. Never at `resume`, `clear` or
+ *   `compact`: a running Claude Code's files are its own. A server already
+ *   running is safe with it: it reads a removed or shorter `.events` from
+ *   its start (`src/session-events.ts`). The one gap: a new log that grows
+ *   past the old one's read offset between two of its polls (250 ms),
+ *   which needs the old log to have been only a few lines long. Stated
+ *   honestly: a new process started with `--resume` on a reused pid
+ *   reports `resume`, not `startup`, so its pid's old files stay; the sweep
+ *   at the next server start still removes a dead pid's files.
  * - Stop: record that a turn ended, so the server knows when Claude Code
  *   is done, not only when the reply tool was called — the turn's closing
  *   model call comes after that — and whether background work could start

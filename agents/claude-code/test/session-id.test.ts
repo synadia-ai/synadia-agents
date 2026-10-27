@@ -20,6 +20,7 @@ import {
   hooksActive,
   nudgeFilePath,
   openFilePath,
+  promptIdsReported,
   readEvents,
   readOpenFile,
   readOpenRequests,
@@ -569,6 +570,65 @@ describe('takeToolUse: the PreToolUse id reaches the call it was recorded for', 
   })
 })
 
+describe('SessionStart at startup: a new process clears its pid\'s earlier files', () => {
+  /** Every file an earlier Claude Code process of PID leaves, and the server's `.open`. */
+  function leaveEarlierFiles(): void {
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: 'earlier-session', source: 'resume' }, 1)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: 'earlier-session', prompt_id: 'pE', prompt: 'x' }, 2)
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'PreToolUse',
+      session_id: 'earlier-session',
+      prompt_id: 'pE',
+      tool_use_id: 'toolu_e',
+      tool_name: 'mcp__nats__prompt_agent',
+    }, 3)
+    recordRefusedStop(stateDir, PID, { hook_event_name: 'Stop', last_assistant_message: 'e' }, 4)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', session_id: 'earlier-session', prompt_id: 'pE' }, 5)
+    recordRefusedStop(stateDir, PID, { hook_event_name: 'Stop', last_assistant_message: 'e' }, 6)
+    writeOpenRequests(stateDir, PID, [], process.pid, 7)
+    expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual(
+      [`${PID}`, `${PID}.events`, `${PID}.nudge`, `${PID}.open`, `${PID}.stop`, `${PID}.tools`, `${PID}.turn`].sort(),
+    )
+  }
+
+  test('startup removes the hooks\' files of the pid, keeps the server\'s .open, then records the session', () => {
+    leaveEarlierFiles()
+    expect(promptIdsReported(stateDir, PID)).toBe(true)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }, 100)
+    expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual([`${PID}`, `${PID}.open`].sort())
+    expect(readSessionRecord(source)).toEqual({ sessionId: SESSION, source: 'startup', atMs: 100 })
+    // Nothing of the earlier process's history is read as this one's.
+    expect(promptIdsReported(stateDir, PID)).toBe(false)
+    expect(readTurnStop(source)).toBeUndefined()
+    expect(readTurnActivity(source)).toBeUndefined()
+    expect(readEvents(stateDir, PID)).toEqual([])
+    expect(readOpenFile(stateDir, PID)).toEqual({ requestIds: [], openIds: [] })
+  })
+
+  test('resume, clear and compact keep them: a running Claude Code\'s files are its own', () => {
+    for (const from of ['resume', 'clear', 'compact']) {
+      leaveEarlierFiles()
+      recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: from }, 100)
+      expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual(
+        [`${PID}`, `${PID}.events`, `${PID}.nudge`, `${PID}.open`, `${PID}.stop`, `${PID}.tools`, `${PID}.turn`].sort(),
+      )
+      expect(promptIdsReported(stateDir, PID)).toBe(true)
+      expect(readSessionRecord(source)).toEqual({ sessionId: SESSION, source: from, atMs: 100 })
+    }
+  })
+
+  test('a startup with no earlier files records the session; another pid\'s files stay', () => {
+    recordHookEvent(stateDir, PID + 1, { hook_event_name: 'Stop', session_id: 'other' }, 1)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }, 100)
+    expect(readSessionRecord(source)).toEqual({ sessionId: SESSION, source: 'startup', atMs: 100 })
+    expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual([`${PID}`, `${PID + 1}.events`, `${PID + 1}.stop`].sort())
+    // No sessions directory at all yet: the same.
+    rmSync(sessionsDir(stateDir), { recursive: true, force: true })
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }, 200)
+    expect(readSessionRecord(source)).toEqual({ sessionId: SESSION, source: 'startup', atMs: 200 })
+  })
+})
+
 describe('sweepDeadSessions', () => {
   test("removes a dead process's files and keeps a live one's", () => {
     const dead = 2 ** 22 + 12345 // above any pid the system hands out here
@@ -768,6 +828,21 @@ describe('hooks/session-event.ts: the script Claude Code runs', () => {
     expect(await runHook(JSON.stringify({ ...stop, stop_hook_active: true, last_assistant_message: 'noted' }), env))
       .toEqual({ code: 0, stdout: '' })
     expect(readTurnStop(source)).toMatchObject({ background: false, finalText: 'the answer' })
+  })
+
+  test('a startup clears the pid\'s earlier files before it records the session; a resume keeps them', async () => {
+    const env = { CLAUDE_PID: String(PID), NATS_STATE_DIR: stateDir }
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: 'earlier', prompt_id: 'pE', prompt: 'x' }, 1)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', session_id: 'earlier', prompt_id: 'pE' }, 2)
+    writeOpenRequests(stateDir, PID, [])
+    expect(await runHook(JSON.stringify({ hook_event_name: 'SessionStart', session_id: SESSION, source: 'resume' }), env))
+      .toEqual({ code: 0, stdout: '' })
+    expect(existsSync(eventsFilePath(stateDir, PID))).toBe(true)
+    expect(existsSync(stopFilePath(stateDir, PID))).toBe(true)
+    expect(await runHook(JSON.stringify({ hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }), env))
+      .toEqual({ code: 0, stdout: '' })
+    expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual([`${PID}`, `${PID}.open`].sort())
+    expect(readSessionRecord(source)).toMatchObject({ sessionId: SESSION, source: 'startup' })
   })
 
   test('garbage input or no CLAUDE_PID still exits 0 and writes nothing', async () => {
