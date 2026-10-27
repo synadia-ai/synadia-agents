@@ -143,13 +143,16 @@ function servedRequest(envelope: RequestEnvelope, response: PromptResponse): Ser
 }
 
 /**
- * How long the service, the agent tools and the connection have, together,
- * to leave the bus gracefully; then the connection is closed. OpenClaw
- * waits 5 s for a channel account's stop and goes on without it. The
- * extensions' `stopping()` comes first, for at most
- * `DEFAULT_STOPPING_TIMEOUT_MS` (1 s), so the stop ends within about 3 s.
+ * How long the service, the agent tools, the agents client and the
+ * connection's drain have, together, to leave the bus gracefully; then the
+ * connection is closed. The drain gets at least `DRAIN_FLOOR_MS`, so a
+ * service stop that took most of the time leaves it some. OpenClaw waits
+ * 5 s for a channel account's stop and goes on without it. The extensions'
+ * `stopping()` comes first, for at most `DEFAULT_STOPPING_TIMEOUT_MS` (1 s),
+ * so the stop ends within about 3 s, 3.5 s at most.
  */
 const LEAVE_TIMEOUT_MS = 2_000;
+const DRAIN_FLOOR_MS = 500;
 
 // The cleanup in progress, if any. OpenClaw aborts the account and then
 // calls `stopAccount`, so two stops arrive in the same tick, and a restart's
@@ -241,7 +244,7 @@ async function runCleanup(): Promise<void> {
     // when the graceful drain fails or runs out of time, and throws only when
     // even that close failed: the connection stays here, and the next
     // cleanup tries again.
-    await drainConnection(activeNc, Math.max(0, leaveBy - performance.now()));
+    await drainConnection(activeNc, Math.max(DRAIN_FLOOR_MS, leaveBy - performance.now()));
     activeNc = null;
   }
   // Reconnect authentication and the sender signer share this retained

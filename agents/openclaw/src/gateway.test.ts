@@ -914,7 +914,7 @@ describe("the stop", () => {
     expect(wipe).toHaveBeenCalledOnce();
   });
 
-  it("a stop whose every step hangs ends at its bound, about 3 s: the connection closed, then the creds wiped", async () => {
+  it("a stop whose every step hangs ends at its bound, 3.5 s: the connection closed, then the creds wiped", async () => {
     const nc = natsCoreLike("never");
     const wipe = connectedTo(nc);
     const { controller, running, ctx } = await started(
@@ -936,8 +936,9 @@ describe("the stop", () => {
     void Promise.all([running, stopped]).then(() => {
       settled = true;
     });
-    // 1 s for the extension's stopping(), then 2 s to leave the bus.
-    await vi.advanceTimersByTimeAsync(2_999);
+    // 1 s for the extension's stopping(), 2 s to leave the bus, all taken by
+    // the service's stop, then the drain's floor of 0.5 s.
+    await vi.advanceTimersByTimeAsync(3_499);
     expect(settled).toBe(false);
     expect(nc.close).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(50);
@@ -961,7 +962,10 @@ describe("the stop", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     // NTP steps the clock back a minute while the service's stop hangs.
     vi.setSystemTime(Date.now() - 60_000);
-    await vi.advanceTimersByTimeAsync(1_050);
+    // The service's stop until the 2 s bound, then the drain's floor of 0.5 s.
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(50);
     expect(settled).toBe(true);
     expect(nc.close).toHaveBeenCalledOnce();
     expect(wipe).toHaveBeenCalledOnce();
