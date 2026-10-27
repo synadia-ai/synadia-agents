@@ -39,9 +39,12 @@ vi.mock("openclaw/plugin-sdk/channel-inbound", () => ({
 vi.mock("openclaw/plugin-sdk/state-paths", () => ({
   resolveStateDir: () => "/tmp/openclaw-gateway-test",
 }));
-vi.mock("@synadia-ai/agent-service", () => ({
+vi.mock("@synadia-ai/agent-service", async (importOriginal) => ({
   DEFAULT_ATTACHMENTS_OK: true,
   splitResponseText: (text: string) => [text],
+  // The real class: the gateway rejects a failed run's prompt with it.
+  RequestRejectedError: (await importOriginal<typeof import("@synadia-ai/agent-service")>())
+    .RequestRejectedError,
   AgentService: class {
     readonly subject = { prompt: "agents.prompt.oc.acme.echo" };
     readonly instanceId = "instance-1";
@@ -99,6 +102,7 @@ vi.mock("./attachments.js", () => ({
 }));
 
 import { AGENT_TOOL_NAMES, Agents } from "@synadia-ai/agents";
+import { RequestRejectedError } from "@synadia-ai/agent-service";
 import { startNatsGateway, stopNatsGateway } from "./gateway.js";
 import type { ResolvedNatsAccount } from "./types.js";
 
@@ -110,7 +114,7 @@ interface CounterState {
   stopping: number;
   accepted: ServedRequest[];
   acceptedIn: Array<string | null>;
-  ended: Array<{ id: string; outcome: string; at: number }>;
+  ended: Array<{ id: string; outcome: string; at: number; reason?: string }>;
   dispatches: string[];
   toolCalls: Array<{ id: string | null; name: string; store: string | null }>;
   order: string[];
@@ -154,7 +158,10 @@ beforeAll(() => {
          async stopping() { state.stopping++; state.order.push("stopping"); },
          events: {
            promptAccepted(request) { state.accepted.push(request); state.acceptedIn.push(als.getStore() ?? null); },
-           promptEnded(request, outcome, at) { state.ended.push({ id: request.id, outcome, at }); },
+           promptEnded(request, outcome, at, ...rest) {
+             // The reason only when the plugin passed a fourth argument.
+             state.ended.push({ id: request.id, outcome, at, ...(rest.length > 0 ? { reason: rest[0] } : {}) });
+           },
            aroundDispatch(request, run) { state.dispatches.push(request.id); return als.run("dispatch:" + request.id, run); },
            aroundToolCall(request, name, run) {
              state.toolCalls.push({ id: request?.id ?? null, name, store: als.getStore() ?? null });
@@ -666,6 +673,134 @@ describe("the extensions", () => {
     expect(idTwo).not.toBe(idOne);
     first.resolve();
     await one;
+    controller.abort();
+    await running;
+  });
+});
+
+describe("a failed OpenClaw run", () => {
+  beforeEach(resetMocks);
+
+  afterEach(async () => {
+    await stopNatsGateway({} as never);
+  });
+
+  /** A payload as `deliver` gets it: the channel's transform marked a failed run. */
+  type Payload = { text?: string; channelData?: Record<string, unknown> };
+  const failure = (text: string): Payload => ({ text, channelData: { nats: { isError: true } } });
+  const reply = (text: string): Payload => ({ text });
+
+  /** OpenClaw's dispatch hands `deliver` these payloads in order, then resolves. */
+  function delivers(...payloads: Payload[]): void {
+    mocks.dispatch.mockImplementationOnce(
+      async (params: { deliver: (payload: Payload) => Promise<void> }) => {
+        for (const payload of payloads) await params.deliver(payload);
+      },
+    );
+  }
+
+  /** Serve one prompt; what the caller was sent, and what the handler ended with. */
+  async function serve(handler: PromptHandler) {
+    const response = { sender: undefined, send: vi.fn(async (_text: string) => undefined) };
+    const error = await handler(envelope, response).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    return { sent: response.send.mock.calls.map((c) => c[0] as string), error };
+  }
+
+  function expectRejected(error: unknown, text: string): void {
+    expect(error).toBeInstanceOf(RequestRejectedError);
+    expect((error as RequestRejectedError).code).toBe(500);
+    expect((error as RequestRejectedError).description).toBe(`the OpenClaw run failed: ${text}`);
+  }
+
+  it("a failed run's reply alone: nothing sent, the handler rejects with 500 and the text, error with no_reply", async () => {
+    connected();
+    const { controller, running, handler } = await started(withCounter());
+    const state = counter();
+    delivers(failure("⚠️ Agent run failed (model: m)."));
+    const { sent, error } = await serve(handler);
+    expect(sent).toEqual([]);
+    expectRejected(error, "⚠️ Agent run failed (model: m).");
+    expect(state.ended.at(-1)).toEqual({
+      id: state.accepted.at(-1)!.id,
+      outcome: "error",
+      at: expect.any(Number),
+      reason: "no_reply",
+    });
+    controller.abort();
+    await running;
+  });
+
+  it("text, then a failed run's reply: the text is sent, then the rejection", async () => {
+    connected();
+    const { controller, running, handler } = await started(withCounter());
+    const state = counter();
+    delivers(reply("partial"), failure("⚠️ Agent run failed."));
+    const { sent, error } = await serve(handler);
+    expect(sent).toEqual(["partial"]);
+    expectRejected(error, "⚠️ Agent run failed.");
+    expect(state.ended.at(-1)).toMatchObject({ outcome: "error", reason: "no_reply" });
+    controller.abort();
+    await running;
+  });
+
+  it("a failed run's reply, then text: held until OpenClaw went on, then both are sent in order, ok with no reason", async () => {
+    connected();
+    const { controller, running, handler } = await started(withCounter());
+    const state = counter();
+    const response = { sender: undefined, send: vi.fn(async (_text: string) => undefined) };
+    const sentNow = () => response.send.mock.calls.map((c) => c[0] as string);
+    let sentAfterFailure: string[] | undefined;
+    mocks.dispatch.mockImplementationOnce(
+      async (params: { deliver: (payload: Payload) => Promise<void> }) => {
+        await params.deliver(failure("⚠️ first attempt failed."));
+        sentAfterFailure = sentNow();
+        await params.deliver(reply("recovered"));
+      },
+    );
+    await handler(envelope, response);
+    // Held, not sent, while it could still be the run's end.
+    expect(sentAfterFailure).toEqual([]);
+    expect(sentNow()).toEqual(["⚠️ first attempt failed.", "recovered"]);
+    expect(state.ended.at(-1)).toEqual({
+      id: state.accepted.at(-1)!.id,
+      outcome: "ok",
+      at: expect.any(Number),
+    });
+    controller.abort();
+    await running;
+  });
+
+  it("two failed runs' replies: the last one's text", async () => {
+    connected();
+    const { controller, running, handler } = await started(withCounter());
+    const state = counter();
+    delivers(failure("⚠️ one."), failure("⚠️ two."));
+    const { sent, error } = await serve(handler);
+    expect(sent).toEqual([]);
+    expectRejected(error, "⚠️ two.");
+    expect(state.ended.at(-1)).toMatchObject({ outcome: "error", reason: "no_reply" });
+    controller.abort();
+    await running;
+  });
+
+  it("no failed run: the replies are sent as before, ok with no reason", async () => {
+    connected();
+    const { controller, running, handler } = await started(withCounter());
+    const state = counter();
+    // An `isError` the channel's transform did not mark never reaches
+    // `deliver` (OpenClaw drops it); a payload without the mark is a reply.
+    delivers(reply("one"), { text: "two", channelData: { other: true } });
+    const { sent, error } = await serve(handler);
+    expect(error).toBeUndefined();
+    expect(sent).toEqual(["one", "two"]);
+    expect(state.ended.at(-1)).toEqual({
+      id: state.accepted.at(-1)!.id,
+      outcome: "ok",
+      at: expect.any(Number),
+    });
     controller.abort();
     await running;
   });

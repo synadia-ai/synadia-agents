@@ -119,7 +119,8 @@ export type Outcome = "ok" | "error" | "timeout";
 
 /**
  * Claude Code: how a prompt ended when the model did not end it with its
- * own reply; absent when it did. OpenClaw passes none.
+ * own reply; absent when it did. OpenClaw passes `no_reply` when its run
+ * failed and its last reply said so; otherwise none.
  *
  * - `final_text`: the turn ended without a reply, and the plugin sent the
  *   turn's final text as the reply (outcome `ok`);
@@ -153,7 +154,8 @@ export interface HarnessEvents {
   promptAccepted?(request: ServedRequest): void;
   /**
    * When the plugin settles the request. Claude Code passes `reason` when
-   * the model did not end the prompt with its own reply.
+   * the model did not end the prompt with its own reply; OpenClaw passes
+   * `no_reply` when its run failed.
    */
   promptEnded?(
     request: ServedRequest,
@@ -504,7 +506,12 @@ export class ExtensionMetadataError extends Error {
 /** OpenClaw's events as the plugin calls them, fail-open over every extension. */
 export interface OpenClawHarnessEventDispatch {
   promptAccepted(request: ServedRequest): void;
-  promptEnded(request: ServedRequest, outcome: Outcome, atMs: number): void;
+  promptEnded(
+    request: ServedRequest,
+    outcome: Outcome,
+    atMs: number,
+    reason?: EndReason,
+  ): void;
   aroundDispatch<T>(request: ServedRequest, run: () => Promise<T>): Promise<T>;
   aroundToolCall<T>(
     request: ServedRequest | undefined,
@@ -853,8 +860,14 @@ export function composeExtensions(
       promptAccepted(request) {
         notify("promptAccepted", (handler) => handler(request));
       },
-      promptEnded(request, outcome, atMs) {
-        notify("promptEnded", (handler) => handler(request, outcome, atMs));
+      promptEnded(request, outcome, atMs, reason) {
+        // The reason only when there is one, so a handler sees the three
+        // arguments it always saw for a prompt that did not fail that way.
+        notify("promptEnded", (handler) =>
+          reason === undefined
+            ? handler(request, outcome, atMs)
+            : handler(request, outcome, atMs, reason),
+        );
       },
       aroundDispatch(request, run) {
         return wrapAll(
