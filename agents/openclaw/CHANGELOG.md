@@ -32,7 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waiting for good: OpenClaw logged "stopAccount exceeded 5000ms", "did not settle" and,
   5 s later, the plugin's forced retirement. The cleanup now runs once and every caller
   awaits it; a start that comes during a stop waits for it too, and a stop that comes while the
-  service starts takes that service down too. Every step of the stop is bounded. The
+  service starts takes that service down too. The service's start no longer outlives OpenClaw's
+  abort when the server stopped answering it, so the account can start again. Every step of the stop is bounded. The
   extensions' `stopping()` gets 1 s (it shared the 5 s of `started()`, which keeps them). Then
   the service, the agent tools, the agents client and the connection's drain have 2 s together,
   the drain at least 0.5 s of it, after which the connection is closed. The credentials are

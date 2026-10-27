@@ -418,19 +418,24 @@ export async function startNatsGateway(
     });
   });
 
+  // The service's start ends on a flush, which a server that stopped
+  // answering never settles, and a close does not either: OpenClaw's abort
+  // ends the wait. A start that ends after the stop would begin its
+  // heartbeats again, so the service is stopped once more then.
+  const starting = service.start();
+  let aborted: boolean;
   try {
-    await service.start();
+    aborted = await abortedFirst(starting, abortSignal);
   } catch (error) {
     // Not `activeService` yet: the extensions' `stopping()` is owed only
     // to a service that started.
-    try {
-      await service.stop();
-    } catch {}
+    await leaveStep("service stop", () => service.stop(), performance.now() + LEAVE_TIMEOUT_MS);
     await cleanupPrevious();
     throw error;
   }
+  if (aborted) void starting.then(() => service.stop(), () => undefined);
   activeService = service;
-  if (cleanupRuns !== runsBefore) {
+  if (aborted || cleanupRuns !== runsBefore) {
     // A stop came while the service started, and has taken down, or is
     // taking down, what was up then. The service is the cleanup's too. The
     // extensions heard no `started()`, so they hear no `stopping()`, and no
@@ -476,6 +481,28 @@ export async function startNatsGateway(
     };
     if (abortSignal.aborted) stop();
     else abortSignal.addEventListener("abort", stop, { once: true });
+  });
+}
+
+/**
+ * Whether `signal` aborted before `work` settled: `false` once `work`
+ * resolved, its rejection when it rejected first. `work` is not cancelled.
+ */
+function abortedFirst(work: Promise<void>, signal: AbortSignal): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
+    const onAbort = (): void => resolve(true);
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(false);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
   });
 }
 

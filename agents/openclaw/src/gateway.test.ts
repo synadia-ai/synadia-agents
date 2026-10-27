@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   startError: undefined as Error | undefined,
   // When set, the service's start waits for it.
   startGate: undefined as Promise<void> | undefined,
+  // When set, the service's stop waits for it.
+  stopGate: undefined as Promise<void> | undefined,
   agentsOptions: [] as Array<Record<string, unknown>>,
   agentsClosed: 0,
   order: [] as string[],
@@ -57,6 +59,7 @@ vi.mock("@synadia-ai/agent-service", async (importOriginal) => ({
     readonly identity: { user: string; account: string } | undefined;
     readonly stop = vi.fn(async () => {
       mocks.order.push("service.stop");
+      if (mocks.stopGate) await mocks.stopGate;
     });
     handler: PromptHandler | undefined;
 
@@ -302,6 +305,7 @@ function resetMocks(): void {
   mocks.order.length = 0;
   mocks.startError = undefined;
   mocks.startGate = undefined;
+  mocks.stopGate = undefined;
   delete (globalThis as { __ocGatewayTestExtension?: unknown }).__ocGatewayTestExtension;
 }
 
@@ -1031,7 +1035,8 @@ describe("the stop", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     nc.answer();
     expect(await settleWithin([running, stopped], 1_000)).toBe(true);
-    expect(mocks.serviceStops[0]).toHaveBeenCalledOnce();
+    // Stopped by the cleanup, and once more when its start ended after the abort.
+    expect(mocks.serviceStops[0]).toHaveBeenCalledTimes(2);
     expect(mocks.setActiveAgentTools).toHaveBeenLastCalledWith(null);
     expect(mocks.setActiveAgentTools.mock.calls.filter((c) => c[0] !== null)).toEqual([]);
     expect(nc.drain).toHaveBeenCalledOnce();
@@ -1039,6 +1044,53 @@ describe("the stop", () => {
     // Neither half of the extensions' pair: the service never counted as started.
     expect(counter().started).toBe(0);
     expect(counter().stopping).toBe(0);
+  });
+
+  it("a service start that never settles: OpenClaw's abort ends the start, and the stop ends in time", async () => {
+    const nc = natsCoreLike();
+    const wipe = connectedTo(nc);
+    // The server stopped answering the start's last flush.
+    mocks.startGate = new Promise<void>(() => undefined);
+    const controller = new AbortController();
+    const ctx = gatewayContext(account(), controller.signal);
+    const running = startNatsGateway(ctx as never);
+    await vi.waitFor(() => expect(mocks.services).toHaveLength(1));
+    controller.abort();
+    const stopped = stopNatsGateway(ctx as never);
+    expect(await settleWithin([running, stopped], 1_000)).toBe(true);
+    expect(mocks.serviceStops[0]).toHaveBeenCalledOnce();
+    expect(nc.drain).toHaveBeenCalledOnce();
+    expect(wipe).toHaveBeenCalledOnce();
+  });
+
+  it("a service start that ends after the stop: its service is stopped again, so it beats no more", async () => {
+    connectedTo(natsCoreLike());
+    const gate = deferred<void>();
+    mocks.startGate = gate.promise;
+    const controller = new AbortController();
+    const ctx = gatewayContext(account(), controller.signal);
+    const running = startNatsGateway(ctx as never);
+    await vi.waitFor(() => expect(mocks.services).toHaveLength(1));
+    controller.abort();
+    expect(await settleWithin([running, stopNatsGateway(ctx as never)], 1_000)).toBe(true);
+    expect(mocks.serviceStops[0]).toHaveBeenCalledOnce();
+    gate.resolve();
+    await vi.waitFor(() => expect(mocks.serviceStops[0]).toHaveBeenCalledTimes(2));
+  });
+
+  it("a service start that fails with a stop that hangs: the start fails at the bound", async () => {
+    connectedTo(natsCoreLike());
+    mocks.startError = new Error("bus refused");
+    mocks.stopGate = new Promise<void>(() => undefined);
+    vi.useFakeTimers();
+    let failed: unknown;
+    void startNatsGateway(gatewayContext(account(), new AbortController().signal) as never).catch((e: unknown) => {
+      failed = e;
+    });
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(failed).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(600);
+    expect(failed).toEqual(new Error("bus refused"));
   });
 
   it("a start during a cleanup waits for it, and the cleanup leaves the new gateway alone", async () => {
