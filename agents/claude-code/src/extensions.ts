@@ -159,7 +159,8 @@ export interface HarnessEvents {
   promptAccepted?(request: ServedRequest): void;
   /**
    * When the plugin settles the request. Claude Code passes `reason` when
-   * the model did not end the prompt with its own reply.
+   * the model did not end the prompt with its own reply; OpenClaw passes
+   * `no_reply` when the run ended on a reply it marked as an error.
    */
   promptEnded?(
     request: ServedRequest,
