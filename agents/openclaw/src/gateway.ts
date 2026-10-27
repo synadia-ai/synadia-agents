@@ -193,9 +193,10 @@ function gatewayUp(): boolean {
 }
 
 /**
- * Wait for one step of the stop until `leaveBy` (a `Date.now()` time). A
- * failure is ignored. A step still running at `leaveBy` is left behind: it
- * waits on the server, and the close of the connection follows.
+ * Wait for one step of the stop until `leaveBy`, a `performance.now()` time,
+ * which a step of the wall clock cannot move. A failure is ignored. A step
+ * still running at `leaveBy` is left behind: it waits on the server, and the
+ * close of the connection follows.
  */
 async function leaveStep(
   name: string,
@@ -203,7 +204,7 @@ async function leaveStep(
   leaveBy: number,
 ): Promise<void> {
   const running = (async () => step())();
-  if (!(await settlesWithin(running, leaveBy - Date.now()))) {
+  if (!(await settlesWithin(running, leaveBy - performance.now()))) {
     console.error(`[nats] ${name} did not finish in time; going on with the stop`);
   }
 }
@@ -216,7 +217,7 @@ async function runCleanup(): Promise<void> {
   }
   activeExtensions = null;
   setActiveExtensions(null);
-  const leaveBy = Date.now() + LEAVE_TIMEOUT_MS;
+  const leaveBy = performance.now() + LEAVE_TIMEOUT_MS;
   if (activeService) {
     const service = activeService;
     await leaveStep("service stop", () => service.stop(), leaveBy);
@@ -240,7 +241,7 @@ async function runCleanup(): Promise<void> {
     // when the graceful drain fails or runs out of time, and throws only when
     // even that close failed: the connection stays here, and the next
     // cleanup tries again.
-    await drainConnection(activeNc, Math.max(0, leaveBy - Date.now()));
+    await drainConnection(activeNc, Math.max(0, leaveBy - performance.now()));
     activeNc = null;
   }
   // Reconnect authentication and the sender signer share this retained

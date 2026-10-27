@@ -946,6 +946,27 @@ describe("the stop", () => {
     expect(order).toEqual(["close", "wipe"]);
   });
 
+  it("a step of the wall clock during the stop moves none of its bounds", async () => {
+    const nc = natsCoreLike("never");
+    const wipe = connectedTo(nc);
+    const { controller, running, ctx } = await started(account());
+    mocks.serviceStops[0]!.mockImplementation(() => new Promise<void>(() => undefined));
+    vi.useFakeTimers();
+    controller.abort();
+    const stopped = stopNatsGateway(ctx as never);
+    let settled = false;
+    void Promise.all([running, stopped]).then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    // NTP steps the clock back a minute while the service's stop hangs.
+    vi.setSystemTime(Date.now() - 60_000);
+    await vi.advanceTimersByTimeAsync(1_050);
+    expect(settled).toBe(true);
+    expect(nc.close).toHaveBeenCalledOnce();
+    expect(wipe).toHaveBeenCalledOnce();
+  });
+
   it("a close that fails keeps the connection and its creds, and the next stop tries again", async () => {
     const nc = natsCoreLike();
     const wipe = connectedTo(nc);
