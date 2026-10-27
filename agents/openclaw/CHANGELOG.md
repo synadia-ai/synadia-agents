@@ -36,9 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   abort when the server stopped answering it, so the account can start again. Every step of the stop is bounded. The
   extensions' `stopping()` gets 1 s (it shared the 5 s of `started()`, which keeps them). Then
   the service, the agent tools, the agents client and the connection's drain have 2 s together,
-  the drain at least 0.5 s of it, after which the connection is closed. The credentials are
-  still wiped only after the close. A stop whose NATS server is unreachable ends within about
-  3 s, 3.5 s at most.
+  and the drain at least 0.5 s even when the others used up the 2 s; then the connection is
+  closed. The credentials are still wiped only after the close. A stop whose NATS server is
+  unreachable ends within about 3 s, 3.5 s at most.
 
 ## [0.5.7] — 2026-10-12
 
