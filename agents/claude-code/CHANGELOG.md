@@ -89,6 +89,22 @@ All notable changes to the Claude Code NATS channel are documented here.
 
 ### Changed
 
+- **Request ids are unique per server start.** A request id is now `<instance>-<n>`: 8 hex
+  characters drawn at random when the server starts, then the count that was the whole id
+  before. A channel message an earlier server sent, still queued in Claude Code after a
+  restart, names an id no request of the new server has: the model's `reply` to it is refused
+  as not active, where before it reached the new server's request of the same number, and that
+  request's caller. Its submit binds no request, and no `Stop` takes it in. So nothing compares
+  times any more: a clock stepped back after a server start no longer makes the server's own
+  messages look stale. Gone: `since_ms` in `<pid>.open`, and the tag's `ts` in the
+  `UserPromptSubmit` line; the channel tag still carries `ts`, which nothing reads.
+- **A new Claude Code process clears its pid's earlier files.** At `SessionStart` with
+  `source` `startup`, the hook removes `<pid>`, `.stop`, `.turn`, `.events`, `.nudge` and
+  `.tools/` before it records the session, so a process that reuses a dead one's pid before
+  any server swept them no longer starts on that process's history, in binding mode from its
+  submits. Never at `resume`, `clear` or `compact`, and never `.open`, the server's own file.
+  A process started with `--resume` on a reused pid reports `resume`, so its pid's old files
+  stay until the next server start sweeps them.
 - A request owns the turn Claude Code took it into, once the hooks report prompt ids, and no
   longer the turn it was delivered in while Claude Code looked quiet. A request delivered
   during a typed turn's first model call looked quiet: the typed turn's `Stop` was refused for

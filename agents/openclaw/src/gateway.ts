@@ -17,6 +17,7 @@ import {
 import {
   AgentService,
   DEFAULT_ATTACHMENTS_OK,
+  RequestRejectedError,
   splitResponseText,
   type PromptResponse,
   type RequestInterceptor,
@@ -44,14 +45,23 @@ import {
   composeExtensions,
   loadExtensions,
   type ComposedExtensions,
+  type EndReason,
   type Outcome,
   type ServedRequest,
 } from "./extensions.js";
+import { isFailedRunReply } from "./failed-run.js";
 import { registerAgentTools, toolNamesFor, type ActiveTurn } from "./tools.js";
 
 // Stage attachments under OpenClaw's media-access allowlist.
 const ATTACHMENT_BASE_DIR = join(resolveStateDir(), "media", "nats-channel");
 const HEARTBEAT_INTERVAL_S = 5;
+/**
+ * The §9 status of a prompt that ended on a reply OpenClaw marked as an
+ * error, a failed run's among them: an error frame that carries OpenClaw's
+ * own text, never that text as the reply, so the caller can tell it from
+ * the model's words.
+ */
+const FAILED_RUN_CODE = 500;
 
 // What an extension's factory is told about the plugin that loads it.
 const PLUGIN_NAME = "@synadia-ai/nats-channel";
@@ -396,24 +406,35 @@ export async function stopNatsGateway(
  * The outcome is `ok` when the dispatch resolved and reported no error,
  * `error` when it threw — the handler rejects with that error, and the
  * service answers the caller — or when OpenClaw reported a dispatch error
- * and still resolved.
+ * and still resolved. A run that ended on a reply OpenClaw marked as an
+ * error (its reply to a failed run, among others) is `error` with the
+ * reason `no_reply`: the handler rejects with a §9 error that carries the
+ * reply's text, and text sent before it stands.
  */
 async function serveTurn(
   turn: Turn,
   extensions: ComposedExtensions,
-  dispatch: (onDispatchError: () => void) => Promise<void>,
+  dispatch: (onDispatchError: () => void) => Promise<DispatchResult>,
 ): Promise<void> {
   let outcome: Outcome = "ok";
+  let reason: EndReason | undefined;
   try {
-    await dispatch(() => {
+    const { failedRun } = await dispatch(() => {
       outcome = "error";
     });
+    if (failedRun !== undefined) {
+      reason = "no_reply";
+      throw new RequestRejectedError(
+        FAILED_RUN_CODE,
+        failedRun ? `OpenClaw replied with an error: ${failedRun}` : "OpenClaw replied with an error",
+      );
+    }
   } catch (error) {
     outcome = "error";
     throw error;
   } finally {
     turnsInFlight = turnsInFlight.filter((t) => t !== turn);
-    extensions.events.promptEnded(turn.served, outcome, Date.now());
+    extensions.events.promptEnded(turn.served, outcome, Date.now(), reason);
   }
 }
 
@@ -425,6 +446,16 @@ interface DispatchHooks {
   readonly onDispatchError: () => void;
 }
 
+/** How one prompt's dispatch ended, once it resolved. */
+interface DispatchResult {
+  /**
+   * The text of the reply OpenClaw marked as an error, when the run ended
+   * on one (the last such reply, `""` when it had no text); absent
+   * otherwise.
+   */
+  readonly failedRun?: string;
+}
+
 async function dispatchPromptToOpenClaw(
   ctx: ChannelGatewayContext<ResolvedNatsAccount>,
   account: ResolvedNatsAccount,
@@ -434,7 +465,7 @@ async function dispatchPromptToOpenClaw(
   response: PromptResponse,
   maxPayloadBytes: number,
   hooks: DispatchHooks,
-): Promise<void> {
+): Promise<DispatchResult> {
   // Sender identity stays structured metadata: it is visible in logs and on
   // PromptResponse, but is never interpolated into the model's prompt text.
   ctx.log?.info?.(
@@ -485,6 +516,15 @@ async function dispatchPromptToOpenClaw(
     channel: effectiveRuntime,
   };
 
+  const send = async (text: string): Promise<void> => {
+    for (const slice of splitResponseText(text, maxPayloadBytes)) {
+      await response.send(slice);
+    }
+  };
+  // A reply OpenClaw marked as an error (a failed run's, among others),
+  // held instead of sent: the last one while no other reply followed it.
+  const held: { failure?: string } = {};
+
   // The dispatch runs inside the extensions' `aroundDispatch`, so a context
   // an extension binds around it is what OpenClaw's turn runs in.
   await hooks.aroundDispatch(() =>
@@ -505,10 +545,20 @@ async function dispatchPromptToOpenClaw(
       commandAuthorized: true,
       deliver: async (payload) => {
         const text = payload.text ?? "";
-        if (!text) return;
-        for (const slice of splitResponseText(text, maxPayloadBytes)) {
-          await response.send(slice);
+        if (isFailedRunReply(payload)) {
+          // OpenClaw marked it as an error. Held: if the run ends here, the
+          // caller gets an error with this text, not the text as its reply.
+          held.failure = text;
+          return;
         }
+        const failure = held.failure;
+        if (failure !== undefined) {
+          // OpenClaw went on after the error: its text goes out first, as
+          // any reply would.
+          delete held.failure;
+          if (failure) await send(failure);
+        }
+        if (text) await send(text);
       },
       onRecordError: (err) => {
         ctx.log?.error?.(`nats: session record error: ${String(err)}`);
@@ -521,6 +571,7 @@ async function dispatchPromptToOpenClaw(
       },
     }),
   );
+  return held.failure === undefined ? {} : { failedRun: held.failure };
 }
 
 function gatewayLogger(

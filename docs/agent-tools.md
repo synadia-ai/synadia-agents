@@ -398,6 +398,9 @@ has a bug, not the prompted agent. A reply look that throws fails the call.
 - **Calls end with the served prompt.** A call cannot outlive the prompt it
   was started in; a model that answers before collecting its calls loses
   them.
+- **A result counts the calls open when it is built.** A host may run a
+  model's tool calls at once (pi does); a result can then count a call
+  started in the same response, still running.
 - **The calling model decides what the prompted agent asks**, permission
   prompts included. The prompted agent's own settings decide which actions
   ask at all.

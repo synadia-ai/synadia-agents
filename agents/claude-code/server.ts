@@ -70,6 +70,7 @@ import {
   type TurnView,
 } from "./src/permission-routing.js";
 import { TurnTracker } from "./src/turns.js";
+import { requestIdSequence } from "./src/request-ids.js";
 import {
   markSessionEvents,
   SESSION_POLL_MS,
@@ -395,9 +396,6 @@ async function loadChannelExtensions(
 }
 
 async function run(): Promise<void> {
-  // Request ids restart with each server; the Stop hook reads only the
-  // submits made since this one started.
-  const startedAtMs = Date.now();
   const pluginVersion = loadPluginVersion(
     join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"),
   );
@@ -503,7 +501,8 @@ async function run(): Promise<void> {
 
     const maxPayloadBytes = nc.info?.max_payload ?? DEFAULT_MAX_PAYLOAD_BYTES;
     const pendingRequests = new Map<string, PendingRequest>();
-    let requestCounter = 0;
+    // Unique per server start: an earlier server's message never names one.
+    const nextRequestId = requestIdSequence();
     let lastActiveRequestId: string | undefined;
     let shuttingDown = false;
     // Which served prompt owns the running turn, for permission questions.
@@ -534,7 +533,7 @@ async function run(): Promise<void> {
           owning,
           process.pid,
           Date.now(),
-          { openIds: open, sinceMs: startedAtMs },
+          { openIds: open },
         );
         openWritten = key;
       } catch {
@@ -723,7 +722,7 @@ async function run(): Promise<void> {
       // The hooks' records up to now, so a turn already begun is known
       // before this prompt is counted.
       sessionEvents?.poll();
-      const requestId = String(++requestCounter);
+      const requestId = nextRequestId();
       const staged = stageAttachments(
         attachmentRoot,
         requestId,
@@ -1084,7 +1083,6 @@ async function run(): Promise<void> {
     const trackerStart = {
       binding: promptIdsReported(stateDir, sessionSource.parentPid),
       lastStopMs: readTurnStop(sessionSource)?.atMs,
-      sinceMs: startedAtMs,
     };
     // A log that already holds prompt ids binds from here, not from when the
     // turns are made: no guess for a prompt the channel takes meanwhile.

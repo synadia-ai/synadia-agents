@@ -20,6 +20,7 @@ import {
   hooksActive,
   nudgeFilePath,
   openFilePath,
+  promptIdsReported,
   readEvents,
   readOpenFile,
   readOpenRequests,
@@ -40,6 +41,7 @@ import {
   type SessionIdSource,
 } from '../src/session-id.js'
 import { markSessionEvents, watchSessionEvents } from '../src/session-events.js'
+import { requestIdSequence } from '../src/request-ids.js'
 
 const PID = 4242
 const SESSION = '0b7e1c9a-2f4d-4e1b-9c3a-5d6e7f8a9b0c'
@@ -227,13 +229,8 @@ describe('recordHookEvent: what each hook writes', () => {
       requestId: '12',
       source: 'plugin:p:nats',
     })
-    // With the time the server sent it; a ts of another shape is left out.
+    // The tag's other attributes, the time it was sent among them, are not read.
     expect(channelPrompt('<channel source="plugin:p:nats" request_id="12" session="s" ts="2026-10-26T12:03:34.511Z">hi')).toEqual({
-      requestId: '12',
-      source: 'plugin:p:nats',
-      ts: '2026-10-26T12:03:34.511Z',
-    })
-    expect(channelPrompt('<channel source="plugin:p:nats" request_id="12" ts="yesterday">hi')).toEqual({
       requestId: '12',
       source: 'plugin:p:nats',
     })
@@ -350,7 +347,7 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     const submit = (promptId: string, prompt: string, now: number) =>
       recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
     // The server delivered '2' while a typed turn ran; its ledger names no owner.
-    writeOpenRequests(stateDir, PID, [], process.pid, 1000, { openIds: ['2'], sinceMs: 500 })
+    writeOpenRequests(stateDir, PID, [], process.pid, 1000, { openIds: ['2'] })
     submit('pTyped', 'TYPED-L SLOW10', 900)
     const typedStop = { ...idle, prompt_id: 'pTyped', last_assistant_message: 'the typed answer' }
     expect(stopRefusal(stateDir, PID, typedStop)).toBeUndefined()
@@ -364,47 +361,53 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     recordHookEvent(stateDir, PID, { ...natsStop, stop_hook_active: true }, 2060)
     expect(readTurnStop(source)?.finalText).toBe('OK')
     // Answered: no longer open, no refusal.
-    writeOpenRequests(stateDir, PID, [], process.pid, 2100, { openIds: [], sinceMs: 500 })
+    writeOpenRequests(stateDir, PID, [], process.pid, 2100, { openIds: [] })
     expect(stopRefusal(stateDir, PID, natsStop)).toBeUndefined()
   })
 
-  test('by prompt id: a fold binds the prompt to the running turn; the latest submit of a request since the server started wins', () => {
+  test('by prompt id: a fold binds the prompt to the running turn; the latest submit of a request wins', () => {
     const CHANNEL = 'plugin:nats-channel:nats'
     const submit = (promptId: string, prompt: string, now: number) =>
       recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
-    // A previous server's request '1', taken into pT, before this server started.
-    submit('pT', `<channel source="${CHANNEL}" request_id="1">old`, 100)
-    writeOpenRequests(stateDir, PID, [], process.pid, 600, { openIds: ['1'], sinceMs: 500 })
-    // This server's '1' waits: the stale line binds it to nothing.
+    // A previous server's request, taken into pT before this server started;
+    // its id is one this server never had.
+    const earlier = requestIdSequence()()
+    const own = requestIdSequence()()
+    submit('pT', `<channel source="${CHANNEL}" request_id="${earlier}">old`, 100)
+    writeOpenRequests(stateDir, PID, [], process.pid, 600, { openIds: [own] })
+    // This server's request waits: the old line binds it to nothing.
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toBeUndefined()
     // Folded into the running turn pT at its next tool result.
-    submit('pT', `<channel source="${CHANNEL}" request_id="1">new`, 700)
-    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toContain('"1"')
+    submit('pT', `<channel source="${CHANNEL}" request_id="${own}">new`, 700)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toContain(`"${own}"`)
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pOther' })).toBeUndefined()
-    // Another channel plugin's request "1" binds nothing of ours.
-    writeOpenRequests(stateDir, PID, [], process.pid, 800, { openIds: ['1'], sinceMs: 750 })
-    submit('pU', '<channel source="plugin:other:chat" request_id="1">x', 800)
+    // Another channel plugin's request of the same id binds nothing of ours.
+    submit('pU', `<channel source="plugin:other:chat" request_id="${own}">x`, 800)
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pU' })).toBeUndefined()
   })
 
-  test('by prompt id: an earlier server\'s message of the same request id, taken after the restart, binds nothing', () => {
+  test('by prompt id: an earlier server\'s message, taken after the restart, is not taken in, whatever the times say', () => {
     const CHANNEL = 'plugin:nats-channel:nats'
-    const tag = (ts: string) => `<channel source="${CHANNEL}" request_id="1" session="s" ts="${ts}">`
+    const tag = (requestId: string, ts: string) => `<channel source="${CHANNEL}" request_id="${requestId}" session="s" ts="${ts}">`
     const submit = (promptId: string, prompt: string, now: number) =>
       recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
+    const earlier = requestIdSequence()()
+    const own = requestIdSequence()()
     const started = Date.parse('2026-10-26T12:00:00.000Z')
-    // This server started at 12:00 and delivered its own "1"; Claude Code
-    // takes the old server's queued "1" first, sent at 11:59.
-    writeOpenRequests(stateDir, PID, [], process.pid, started + 10, { openIds: ['1'], sinceMs: started })
-    submit('pOld', `${tag('2026-10-26T11:59:59.000Z')}old`, started + 20)
-    expect(readEvents(stateDir, PID).at(-1)).toMatchObject({
+    // This server started at 12:00 and delivered its own first request.
+    // Then the clock stepped back an hour: Claude Code takes the old
+    // server's queued message, then this server's, both stamped before the
+    // start.
+    writeOpenRequests(stateDir, PID, [], process.pid, started + 10, { openIds: [own] })
+    submit('pOld', `${tag(earlier, '2026-10-26T11:59:59.000Z')}old`, started - 3_600_000)
+    expect(readEvents(stateDir, PID).at(-1)).toEqual({
       kind: 'submit',
-      submit: { requestId: '1', sentAtMs: Date.parse('2026-10-26T11:59:59.000Z') },
+      submit: { sessionId: SESSION, promptId: 'pOld', requestId: earlier, source: CHANNEL, atMs: started - 3_600_000 },
     })
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pOld' })).toBeUndefined()
-    // This server's "1" is taken next: its turn's Stop is refused for it.
-    submit('pNew', `${tag('2026-10-26T12:00:00.005Z')}new`, started + 40)
-    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pNew' })).toContain('"1"')
+    // This server's own request is taken next: its turn's Stop is refused for it.
+    submit('pNew', `${tag(own, '2026-10-26T11:00:00.005Z')}new`, started - 3_599_000)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pNew' })).toContain(`"${own}"`)
   })
 
   test('by prompt id: channel messages taken together count for the turn they ran in, the last one\'s id', () => {
@@ -564,6 +567,65 @@ describe('takeToolUse: the PreToolUse id reaches the call it was recorded for', 
     record('toolu_none', 'mcp__nats__discover_agents', {}, 1000)
     expect(takeToolUse(source, 'prompt_agent', {}, 1001)).toEqual({ toolUseId: 'toolu_p', promptId: 'p7' })
     expect(takeToolUse(source, 'discover_agents', {}, 1001)).toEqual({ toolUseId: 'toolu_none' })
+  })
+})
+
+describe('SessionStart at startup: a new process clears its pid\'s earlier files', () => {
+  /** Every file an earlier Claude Code process of PID leaves, and the server's `.open`. */
+  function leaveEarlierFiles(): void {
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: 'earlier-session', source: 'resume' }, 1)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: 'earlier-session', prompt_id: 'pE', prompt: 'x' }, 2)
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'PreToolUse',
+      session_id: 'earlier-session',
+      prompt_id: 'pE',
+      tool_use_id: 'toolu_e',
+      tool_name: 'mcp__nats__prompt_agent',
+    }, 3)
+    recordRefusedStop(stateDir, PID, { hook_event_name: 'Stop', last_assistant_message: 'e' }, 4)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', session_id: 'earlier-session', prompt_id: 'pE' }, 5)
+    recordRefusedStop(stateDir, PID, { hook_event_name: 'Stop', last_assistant_message: 'e' }, 6)
+    writeOpenRequests(stateDir, PID, [], process.pid, 7)
+    expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual(
+      [`${PID}`, `${PID}.events`, `${PID}.nudge`, `${PID}.open`, `${PID}.stop`, `${PID}.tools`, `${PID}.turn`].sort(),
+    )
+  }
+
+  test('startup removes the hooks\' files of the pid, keeps the server\'s .open, then records the session', () => {
+    leaveEarlierFiles()
+    expect(promptIdsReported(stateDir, PID)).toBe(true)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }, 100)
+    expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual([`${PID}`, `${PID}.open`].sort())
+    expect(readSessionRecord(source)).toEqual({ sessionId: SESSION, source: 'startup', atMs: 100 })
+    // Nothing of the earlier process's history is read as this one's.
+    expect(promptIdsReported(stateDir, PID)).toBe(false)
+    expect(readTurnStop(source)).toBeUndefined()
+    expect(readTurnActivity(source)).toBeUndefined()
+    expect(readEvents(stateDir, PID)).toEqual([])
+    expect(readOpenFile(stateDir, PID)).toEqual({ requestIds: [], openIds: [] })
+  })
+
+  test('resume, clear and compact keep them: a running Claude Code\'s files are its own', () => {
+    for (const from of ['resume', 'clear', 'compact']) {
+      leaveEarlierFiles()
+      recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: from }, 100)
+      expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual(
+        [`${PID}`, `${PID}.events`, `${PID}.nudge`, `${PID}.open`, `${PID}.stop`, `${PID}.tools`, `${PID}.turn`].sort(),
+      )
+      expect(promptIdsReported(stateDir, PID)).toBe(true)
+      expect(readSessionRecord(source)).toEqual({ sessionId: SESSION, source: from, atMs: 100 })
+    }
+  })
+
+  test('a startup with no earlier files records the session; another pid\'s files stay', () => {
+    recordHookEvent(stateDir, PID + 1, { hook_event_name: 'Stop', session_id: 'other' }, 1)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }, 100)
+    expect(readSessionRecord(source)).toEqual({ sessionId: SESSION, source: 'startup', atMs: 100 })
+    expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual([`${PID}`, `${PID + 1}.events`, `${PID + 1}.stop`].sort())
+    // No sessions directory at all yet: the same.
+    rmSync(sessionsDir(stateDir), { recursive: true, force: true })
+    recordHookEvent(stateDir, PID, { hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }, 200)
+    expect(readSessionRecord(source)).toEqual({ sessionId: SESSION, source: 'startup', atMs: 200 })
   })
 })
 
@@ -766,6 +828,21 @@ describe('hooks/session-event.ts: the script Claude Code runs', () => {
     expect(await runHook(JSON.stringify({ ...stop, stop_hook_active: true, last_assistant_message: 'noted' }), env))
       .toEqual({ code: 0, stdout: '' })
     expect(readTurnStop(source)).toMatchObject({ background: false, finalText: 'the answer' })
+  })
+
+  test('a startup clears the pid\'s earlier files before it records the session; a resume keeps them', async () => {
+    const env = { CLAUDE_PID: String(PID), NATS_STATE_DIR: stateDir }
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: 'earlier', prompt_id: 'pE', prompt: 'x' }, 1)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', session_id: 'earlier', prompt_id: 'pE' }, 2)
+    writeOpenRequests(stateDir, PID, [])
+    expect(await runHook(JSON.stringify({ hook_event_name: 'SessionStart', session_id: SESSION, source: 'resume' }), env))
+      .toEqual({ code: 0, stdout: '' })
+    expect(existsSync(eventsFilePath(stateDir, PID))).toBe(true)
+    expect(existsSync(stopFilePath(stateDir, PID))).toBe(true)
+    expect(await runHook(JSON.stringify({ hook_event_name: 'SessionStart', session_id: SESSION, source: 'startup' }), env))
+      .toEqual({ code: 0, stdout: '' })
+    expect(readdirSync(sessionsDir(stateDir)).sort()).toEqual([`${PID}`, `${PID}.open`].sort())
+    expect(readSessionRecord(source)).toMatchObject({ sessionId: SESSION, source: 'startup' })
   })
 
   test('garbage input or no CLAUDE_PID still exits 0 and writes nothing', async () => {

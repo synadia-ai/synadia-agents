@@ -184,7 +184,7 @@ nats micro info agents
 
 | Tool | Purpose |
 | --- | --- |
-| `reply` | Send a response over NATS. Takes `request_id` + `text`. The server wraps the text in a `{"type":"response","data":...}` chunk. Set `done=false` for intermediate replies; `done=true` (default) emits the empty-body terminator. |
+| `reply` | Send a response over NATS. Takes `request_id` + `text`. The server wraps the text in a `{"type":"response","data":...}` chunk. Set `done=false` for intermediate replies; `done=true` (default) emits the empty-body terminator. A request id is `<instance>-<n>`, the instance 8 hex characters drawn when the server starts, so a reply to a message an earlier server sent is refused as not active. |
 | `request_info` | Return the safely classified sender of an active request, and the [extensions](#extensions) loaded. Identity is available only on explicit inspection and is never inserted into the incoming model prompt or channel metadata. |
 | `discover_agents`, `prompt_agent`, `answer_agent` | The [agent tools](#agent-tools): find other agents on NATS, prompt one and wait for its reply, answer a question it asks back. Offered by default. |
 | `wait_agent`, `cancel_agent`, `list_agent_calls` | The rest of the agent tools, for calls that run while the model does other work. Offered with `agentTools: "all"`. |
@@ -326,12 +326,13 @@ refused as not active.
 
 The hook learns that a request is open from a file the server writes,
 `<state dir>/sessions/<pid>.open` (`{ "server_pid", "request_ids",
-"open_ids", "since_ms", "at_ms" }`): the requests the server says own the
-running turn, every open request it delivered, and when it started;
-rewritten whenever either set changes and removed at shutdown. By prompt
-id the hook works out by itself which open requests the stopping turn
-took in: those whose latest `UserPromptSubmit` in `<pid>.events` since the
-server started carried the `Stop`'s prompt id. It never waits for the
+"open_ids", "at_ms" }`): the requests the server says own the running
+turn, and every open request it delivered; rewritten whenever either set
+changes and removed at shutdown. By prompt id the hook works out by
+itself which open requests the stopping turn took in: those whose latest
+`UserPromptSubmit` in `<pid>.events` carried the `Stop`'s prompt id. An
+earlier server's message names a request id this server never handed
+out, so it is none of them. It never waits for the
 server, whose next look at the files can come after a short turn's `Stop`.
 The hook fails open: without the
 file, with a malformed one, or when the server that wrote it is no longer
@@ -502,7 +503,7 @@ State lives in `~/.claude/channels/nats/`:
 | --- | --- |
 | `config.json` | Selected NATS context, owner and session name overrides, identity, trust, permission, agent-tools and extension settings |
 | `attachments/<request_id>/` | Per-request staged attachments; auto-cleaned on reply completion |
-| `sessions/` | What the plugin's [hooks](#hooks) record, per Claude Code process; a dead process's files are removed when a server starts |
+| `sessions/` | What the plugin's [hooks](#hooks) record, per Claude Code process; a dead process's files are removed when a server starts, and by a new process of the same pid at its `startup` |
 
 NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 
@@ -608,9 +609,11 @@ id, so a channel submit that follows another with nothing of that turn
 between (no tool call, Stop, failure or other submit) joins its turn,
 however long the hooks took; 30 seconds bound it, against a lost Stop.
 The channel's watcher reads the hooks' records from before the channel
-can take a prompt, so a prompt taken while it starts is followed too. A message the channel sent before
-it last started (a request id an earlier server handed out) belongs to
-none of its requests. Built-in commands (`/help`, `/model`,
+can take a prompt, so a prompt taken while it starts is followed too.
+Request ids are unique per server start (`<instance>-<n>`, the instance
+drawn at random when the server starts): a message an earlier server sent,
+still queued in Claude Code, belongs to none of this server's requests,
+whatever the clock says. Built-in commands (`/help`, `/model`,
 `/clear`) run no turn and fire no submit. Typed text sent while a channel
 message's turn runs joins that turn, and a channel message folded into a
 typed turn takes the rest of it. Until the hook has reported a prompt id,
@@ -628,7 +631,7 @@ appended to:
 
 | Hook | File | Records | Why |
 | --- | --- | --- | --- |
-| `SessionStart` | `<pid>` | `{ "session_id", "source", "at_ms" }` | the session Claude Code uses now; `/clear` starts a new one under the same MCP server |
+| `SessionStart` | `<pid>` | `{ "session_id", "source", "at_ms" }` | the session Claude Code uses now; `/clear` starts a new one under the same MCP server. At `startup` (a new Claude Code process) the hook first removes the files an earlier process of the same pid left, all but `<pid>.open`, so a reused pid never starts on another process's history; never at `resume`, `clear` or `compact` |
 | `Stop` (refused) | `<pid>.nudge` | `{ "final_text", "at_ms" }` | the text of a stop the hook refused, kept for the stop that follows in the same turn, which takes it and removes the file; not a stop (see [When the model stops without replying](#when-the-model-stops-without-replying)) |
 | `Stop` | `<pid>.stop` | `{ "session_id", "background", "final_text", "at_ms" }` | when a turn really ends: Claude Code writes its closing text after the `reply` call; `background` says whether background tasks or session crons could start another turn by themselves; `final_text`, the turn's last assistant text, is kept only while a request may still be waiting for it; a request the turn left without its reply is answered with that text or ended (see [When the model stops without replying](#when-the-model-stops-without-replying)). A stop the hook refuses records no stop |
 | `PreToolUse` (every tool) | `<pid>.turn` | `{ "prompt_id", "first_ms", "at_ms" }` | the turn the latest tool call belongs to and when its first call was made, so a permission question goes to the request that owns the turn (see [Which caller is asked](#which-caller-is-asked)) |

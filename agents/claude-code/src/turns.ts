@@ -52,12 +52,12 @@ import {
  *
  * The rules, in binding mode:
  *
- *   1. a channel submit with prompt id P: when its request is no longer
- *      open (or already started), or the message was sent before this
- *      server started (an earlier server's request of the same id), the turn
- *      is a served turn bound to no request; else, P being the current
- *      turn's, the request joins it (a fold), and otherwise a new served
- *      turn P begins, the current one ending first at the same time.
+ *   1. a channel submit with prompt id P: when its request is not open
+ *      (an earlier server's message names an id this server never handed
+ *      out) or already started, the turn is a served turn bound to no
+ *      request; else, P being the current turn's, the request joins it (a
+ *      fold), and otherwise a new served turn P begins, the current one
+ *      ending first at the same time.
  *      Either way the request starts now;
  *   2. a typed submit with prompt id P: nothing when P is the current
  *      turn's (the text joins it, or waits and surfaces by rule 3); else a
@@ -136,11 +136,6 @@ export interface TurnTrackerHooks {
 
 /** What the files said when the server started. */
 export interface TurnTrackerStart {
-  /**
-   * When this server started: a channel message sent before it (an earlier
-   * server's, whose request ids restart at 1 too) binds none of its requests.
-   */
-  readonly sinceMs?: number | undefined
   /** The log already holds a submit with a prompt id. */
   readonly binding?: boolean
   /** The last Stop recorded before start. */
@@ -150,7 +145,10 @@ export interface TurnTrackerStart {
 /** How many ended turns are remembered, to ignore their late records and name late calls. */
 const ENDED_KEPT = 256
 
-/** The prefix of a local turn's id: request ids are numbers, so the two never meet. */
+/**
+ * The prefix of a local turn's id. A request id is `<instance>-<n>`, its
+ * instance 8 hex characters (`src/request-ids.ts`), so the two never meet.
+ */
 export const LOCAL_TURN_PREFIX = 'local-'
 
 // Rule 6's bound, CHANNEL_BATCH_MS, is the Stop hook's too (src/session-id.ts).
@@ -171,7 +169,6 @@ type OpenTurn = {
 
 export class TurnTracker {
   #binding: boolean
-  readonly #sinceMs: number | undefined
   #current: OpenTurn | undefined
   // When the latest turn began, and the latest Stop or failure that ended one.
   #lastStartMs: number | undefined
@@ -187,7 +184,6 @@ export class TurnTracker {
     start: TurnTrackerStart = {},
   ) {
     this.#binding = start.binding === true
-    this.#sinceMs = start.sinceMs
     this.#lastEndMs = start.lastStopMs
   }
 
@@ -236,11 +232,10 @@ export class TurnTracker {
     const sessionId = submit.sessionId ?? this.hooks.currentSession?.()
     const requestId = submit.requestId
     if (requestId !== undefined) {
-      // An earlier server's message, still queued in Claude Code, names a
-      // request id this server may have handed out again: it binds none.
-      const stale =
-        this.#sinceMs !== undefined && submit.sentAtMs !== undefined && submit.sentAtMs < this.#sinceMs
-      const open = !stale && !this.#bound.has(requestId) && this.hooks.isOpen(requestId)
+      // Only an open request of this server's binds. An earlier server's
+      // message, still queued in Claude Code, names an id this server never
+      // handed out (`src/request-ids.ts`): it binds none.
+      const open = !this.#bound.has(requestId) && this.hooks.isOpen(requestId)
       const before = this.#current
       if (before?.promptId !== promptId) {
         if (before?.batchUntilMs !== undefined && submit.atMs <= before.batchUntilMs) {

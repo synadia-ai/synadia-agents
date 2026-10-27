@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import type { FailureRecord, StopRecord, SubmitRecord, TurnActivity } from '../src/session-id.js'
+import { requestIdSequence } from '../src/request-ids.js'
 import { TurnTracker, type TurnTrackerStart } from '../src/turns.js'
 
 const SESSION = '0b7e1c9a-2f4d-4e1b-9c3a-5d6e7f8a9b0c'
@@ -365,27 +366,24 @@ describe('the turns a call names', () => {
 })
 
 describe('a channel message of an earlier server', () => {
-  test('sent before this server started, it binds none of this server\'s requests of the same id', () => {
-    // The server restarted at 1000; Claude Code still had the old server's
-    // request "1" queued, and this server has handed out a "1" of its own.
-    const { tracker, calls } = tracked({ binding: true, sinceMs: 1_000 }, new Set(['1']))
-    tracker.submitted({ ...channel('pOld', '1', 1_200), sentAtMs: 900 })
+  test('it names an id this server never handed out: it binds nothing, whatever the times say', () => {
+    // Each server start has its own ids. The old server's "<old>-1" is still
+    // queued in Claude Code; this server has handed out "<new>-1".
+    const earlier = requestIdSequence()()
+    const own = requestIdSequence()()
+    // The clock stepped back after the last Stop this server read at start:
+    // every record below is older by the clock than that Stop.
+    const { tracker, calls } = tracked({ binding: true, lastStopMs: 5_000 }, new Set([own]))
+    tracker.submitted(channel('pOld', earlier, 1_200))
     tracker.stopped(stop('pOld', 1_300))
     expect(calls).toEqual(['ended pOld (served) [] by stop at 1300'])
-    expect(tracker.boundTo('1')).toBeUndefined()
-    // This server's own message "1" binds it when Claude Code takes it.
-    tracker.submitted({ ...channel('pNew', '1', 1_400), sentAtMs: 1_100 })
-    expect(calls.slice(1)).toEqual([`started 1 in pNew (served) at 1400 ${SESSION}`])
-    expect(tracker.boundTo('1')).toBe('pNew')
-  })
-
-  test('without the start time or the message\'s, the request binds as before', () => {
-    const { tracker } = tracked({ binding: true }, new Set(['1']))
-    tracker.submitted({ ...channel('pA', '1', 1_200), sentAtMs: 900 })
-    expect(tracker.boundTo('1')).toBe('pA')
-    const other = tracked({ binding: true, sinceMs: 1_000 }, new Set(['1']))
-    other.tracker.submitted(channel('pB', '1', 1_200))
-    expect(other.tracker.boundTo('1')).toBe('pB')
+    expect(tracker.boundTo(earlier)).toBeUndefined()
+    expect(tracker.boundTo(own)).toBeUndefined()
+    // This server's own message binds its request when Claude Code takes it,
+    // even with a time before the server's start.
+    tracker.submitted(channel('pNew', own, 1_400))
+    expect(calls.slice(1)).toEqual([`started ${own} in pNew (served) at 1400 ${SESSION}`])
+    expect(tracker.boundTo(own)).toBe('pNew')
   })
 })
 

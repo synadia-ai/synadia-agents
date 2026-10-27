@@ -37,9 +37,8 @@ import { join } from 'node:path'
  *                     at_ms }`
  *   - `<pid>.events`  an append-only log, one JSON line per event:
  *                     UserPromptSubmit `{ event: "submit", session_id,
- *                     prompt_id, request_id?, source?, ts?, at_ms }`
- *                     (`request_id`, `source` and the tag's `ts`, when the
- *                     server sent the message, for this channel's own
+ *                     prompt_id, request_id?, source?, at_ms }`
+ *                     (`request_id` and `source` for this channel's own
  *                     messages only, never the prompt's text); a recorded Stop `{ event:
  *                     "stop", session_id, prompt_id, background?,
  *                     final_text?, at_ms }`, the same as `<pid>.stop`; and
@@ -59,21 +58,23 @@ import { join } from 'node:path'
  *
  * One file goes the other way, written by the server for the Stop hook:
  *
- *   - `<pid>.open`    `{ server_pid, request_ids, open_ids, since_ms,
- *                     at_ms }`: `request_ids` the open served prompts the
- *                     server's ledger says own the running turn, `open_ids`
- *                     every open served prompt the server has delivered,
- *                     `since_ms` when the server started. At a Stop that
- *                     would end one of the prompts waiting for that turn,
- *                     the hook refuses the stop once and tells the model to
- *                     reply. Which prompts wait for a turn, the hook works
- *                     out by itself, never waiting for the server: a short
- *                     turn's Stop comes before the server's next poll. For
- *                     a Stop with a prompt id P, once the log holds a
- *                     submit with a prompt id, they are the `open_ids` whose
- *                     latest submit in the log since `since_ms` carried P:
- *                     the UserPromptSubmit hook wrote it before that turn
- *                     ran. Otherwise `request_ids`.
+ *   - `<pid>.open`    `{ server_pid, request_ids, open_ids, at_ms }`:
+ *                     `request_ids` the open served prompts the server's
+ *                     ledger says own the running turn, `open_ids` every
+ *                     open served prompt the server has delivered. Request
+ *                     ids are unique per server start
+ *                     (`src/request-ids.ts`), so an earlier server's are
+ *                     never among them. At a Stop that would end one of the
+ *                     prompts waiting for that turn, the hook refuses the
+ *                     stop once and tells the model to reply. Which prompts
+ *                     wait for a turn, the hook works out by itself, never
+ *                     waiting for the server: a short turn's Stop comes
+ *                     before the server's next poll. For a Stop with a
+ *                     prompt id P, once the log holds a submit with a
+ *                     prompt id, they are the `open_ids` whose latest
+ *                     submit in the log carried P: the UserPromptSubmit
+ *                     hook wrote it before that turn ran. Otherwise
+ *                     `request_ids`.
  *
  * Every file but `.events` is written atomically (a rename), so a reader
  * sees a whole record or the previous one; `.events` is appended to, and a
@@ -222,22 +223,19 @@ const CHANNEL_SOURCE_RE = /^plugin:[^"]+:nats$/
 const REQUEST_ID_RE = /^[A-Za-z0-9_-]{1,64}$/
 // How far into a prompt the opening tag is looked for.
 const CHANNEL_TAG_MAX = 1024
-// The server stamps each channel message with `new Date().toISOString()`.
-const CHANNEL_TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/
 // A StopFailure's error type and details, as long as they are kept.
 const FAILURE_ERROR_MAX = 64
 export const FAILURE_DETAILS_MAX = 200
 
 /**
  * The request a submitted prompt carries when it is this channel's message:
- * the `request_id` and `source` of the `<channel …>` tag it begins with, and
- * its `ts`, when the server sent it, or `undefined` for anything else (typed
- * text, a command, another channel's message, a tag without both
- * attributes). Only the tag is read.
+ * the `request_id` and `source` of the `<channel …>` tag it begins with, or
+ * `undefined` for anything else (typed text, a command, another channel's
+ * message, a tag without both attributes). Only the tag is read.
  */
 export function channelPrompt(
   prompt: unknown,
-): { requestId: string; source: string; ts?: string } | undefined {
+): { requestId: string; source: string } | undefined {
   if (typeof prompt !== 'string' || !prompt.startsWith('<channel ')) return undefined
   const end = prompt.indexOf('>')
   if (end < 0 || end > CHANNEL_TAG_MAX) return undefined
@@ -246,15 +244,7 @@ export function channelPrompt(
   const requestId = /\srequest_id="([^"]*)"/.exec(tag)?.[1]
   if (source === undefined || requestId === undefined) return undefined
   if (!CHANNEL_SOURCE_RE.test(source) || !REQUEST_ID_RE.test(requestId)) return undefined
-  const ts = /\sts="([^"]*)"/.exec(tag)?.[1]
-  return { requestId, source, ...(ts !== undefined && sentAtMs(ts) !== undefined ? { ts } : {}) }
-}
-
-/** The time a channel tag's `ts` names, in epoch ms, or `undefined` for anything else. */
-function sentAtMs(ts: unknown): number | undefined {
-  if (typeof ts !== 'string' || !CHANNEL_TS_RE.test(ts)) return undefined
-  const ms = Date.parse(ts)
-  return Number.isFinite(ms) ? ms : undefined
+  return { requestId, source }
 }
 
 /**
@@ -299,7 +289,6 @@ export function recordHookEvent(
       ...(sessionId ? { session_id: sessionId } : {}),
       ...(promptId ? { prompt_id: promptId } : {}),
       ...(channel ? { request_id: channel.requestId, source: channel.source } : {}),
-      ...(channel?.ts !== undefined ? { ts: channel.ts } : {}),
       at_ms: now,
     })
     return 'submit'
@@ -320,6 +309,9 @@ export function recordHookEvent(
     return 'failure'
   }
   if (event === 'SessionStart') {
+    // A new Claude Code process: whatever its pid's files hold is another,
+    // earlier process's ({@link clearProcessFiles}).
+    if (input.source === 'startup') clearProcessFiles(stateDir, pid)
     if (sessionId === undefined) return undefined
     const source = typeof input.source === 'string' ? input.source : 'unknown'
     mkdirSync(sessionsDir(stateDir), { recursive: true })
@@ -485,8 +477,8 @@ function refusedStopText(stateDir: string, pid: number | string): string | undef
 /**
  * Write the open prompts for the Stop hook: `requestIds` those the ledger
  * says own the running turn, `open.openIds` every open prompt delivered
- * (`requestIds` when not given), `open.sinceMs` when the server started.
- * The server calls this whenever the sets change, and with none at start.
+ * (`requestIds` when not given). The server calls this whenever the sets
+ * change, and with none at start.
  */
 export function writeOpenRequests(
   stateDir: string,
@@ -494,7 +486,7 @@ export function writeOpenRequests(
   requestIds: readonly string[],
   serverPid: number = process.pid,
   now: number = Date.now(),
-  open: { readonly openIds?: readonly string[]; readonly sinceMs?: number } = {},
+  open: { readonly openIds?: readonly string[] } = {},
 ): void {
   mkdirSync(sessionsDir(stateDir), { recursive: true })
   writeAtomically(
@@ -503,7 +495,6 @@ export function writeOpenRequests(
       server_pid: serverPid,
       request_ids: requestIds,
       open_ids: open.openIds ?? requestIds,
-      ...(open.sinceMs !== undefined ? { since_ms: open.sinceMs } : {}),
       at_ms: now,
     })}\n`,
   )
@@ -515,8 +506,6 @@ export type OpenRequests = {
   readonly requestIds: string[]
   /** Every open prompt the server has delivered. */
   readonly openIds: string[]
-  /** When the server started: request ids restart with each server. */
-  readonly sinceMs?: number
 }
 
 /** Remove the server's file, at shutdown. Best effort. */
@@ -545,8 +534,7 @@ export function readOpenFile(stateDir: string, pid: number | string): OpenReques
   }
   if (ids === undefined || openIds === undefined) return undefined
   if (!processAlive(serverPid)) return undefined
-  const sinceMs = epochMs(value.since_ms)
-  return { requestIds: ids, openIds, ...(sinceMs !== undefined ? { sinceMs } : {}) }
+  return { requestIds: ids, openIds }
 }
 
 function requestIdList(value: unknown): string[] | undefined {
@@ -562,10 +550,10 @@ function requestIdList(value: unknown): string[] | undefined {
  *
  * Once the log holds a submit with a prompt id, and the Stop carries its
  * turn's prompt id P: the delivered prompts still open whose latest submit
- * since the server started carried P — the turn they began, or the one
- * they were folded into; channel messages taken together count for the
- * last one's prompt id, the turn they ran in. A message the server sent before it started (an
- * earlier server's, whose request ids restart at 1 too) is not one of its
+ * carried P — the turn they began, or the one they were folded into;
+ * channel messages taken together count for the last one's prompt id, the
+ * turn they ran in. An earlier server's message names an id this server
+ * never handed out (`src/request-ids.ts`), so it is none of the open
  * prompts. A prompt not yet taken into a turn waits for none. Otherwise,
  * the prompts the server's ledger says own the turn.
  */
@@ -582,7 +570,7 @@ export function waitingRequests(
   if (!events.some(event => event.kind === 'submit' && event.submit.promptId !== undefined)) {
     return open.requestIds
   }
-  // Request ids restart with each server: the latest submit of each wins.
+  // The latest submit of each request wins: a fold names it again.
   // Channel messages Claude Code takes together each fire a submit under a
   // prompt id of their own, one after another, and run as one turn under
   // the last: a channel submit that follows another with no other line
@@ -601,14 +589,11 @@ export function waitingRequests(
       batch = undefined
       continue
     }
-    const { requestId, promptId: takenId, atMs, sentAtMs } = event.submit
+    const { requestId, promptId: takenId, atMs } = event.submit
     const together = batch !== undefined && atMs - batch.atMs <= CHANNEL_BATCH_MS
     const promptIds = together ? batch!.promptIds : new Set<string | undefined>()
     promptIds.add(takenId)
-    const since = open.sinceMs
-    if (since === undefined || (atMs >= since && (sentAtMs ?? since) >= since)) {
-      takenIn.set(requestId, promptIds)
-    }
+    takenIn.set(requestId, promptIds)
     batch = { atMs, promptIds }
   }
   return open.openIds.filter(id => takenIn.get(id)?.has(promptId) === true)
@@ -707,8 +692,6 @@ export type SubmitRecord = {
   readonly requestId?: string
   /** The channel tag's `source`, with `requestId`. */
   readonly source?: string
-  /** When the server sent the channel message (its tag's `ts`), in epoch ms. */
-  readonly sentAtMs?: number
   readonly atMs: number
 }
 
@@ -820,11 +803,7 @@ export function parseEventLine(line: string): SessionEvent | undefined {
         CHANNEL_SOURCE_RE.test(record.source)
           ? { requestId: record.request_id, source: record.source }
           : {}
-      const sent = channel.requestId !== undefined ? sentAtMs(record.ts) : undefined
-      return {
-        kind: 'submit',
-        submit: { ...ids, ...channel, ...(sent !== undefined ? { sentAtMs: sent } : {}), atMs },
-      }
+      return { kind: 'submit', submit: { ...ids, ...channel, atMs } }
     }
     case 'stop': {
       const stop = stopRecordOf(record)
@@ -1008,11 +987,45 @@ function removeQuietly(path: string): void {
 }
 
 /**
+ * Remove the files the hooks wrote for an earlier Claude Code process of
+ * the same pid: `<pid>`, `.stop`, `.turn`, `.events`, `.nudge` and the
+ * `.tools` directory. The SessionStart hook runs this at a `startup` only,
+ * before it records the session, so a process that reuses a dead one's
+ * pid before any server swept its files does not take that process's
+ * history for its own (binding mode from its submits, its last Stop).
+ * Never at `resume`, `clear` or `compact`: a running Claude Code's files
+ * are its own. Never `.open`, the server's only file: it guards itself
+ * ({@link readOpenFile} ignores it unless its `server_pid` is alive), and
+ * this process's server may already have written it. Best effort. Stated
+ * honestly: Claude Code starts its MCP server and fires SessionStart
+ * together, so a server that read `.events` and `.stop` before this clear
+ * keeps binding mode and the earlier process's last stop until this
+ * process's own records arrive. That is bounded: binding mode is what
+ * these hooks produce after the first submit anyway, and the last stop
+ * feeds only the quiet heuristics.
+ */
+export function clearProcessFiles(stateDir: string, pid: number | string): void {
+  for (const path of [
+    sessionFilePath(stateDir, pid),
+    stopFilePath(stateDir, pid),
+    turnFilePath(stateDir, pid),
+    eventsFilePath(stateDir, pid),
+    nudgeFilePath(stateDir, pid),
+    toolUsesDir(stateDir, pid),
+  ]) {
+    removeQuietly(path)
+  }
+}
+
+/**
  * Remove the files of Claude Code processes that no longer exist. Run when
  * a server starts: a live Claude Code keeps its files across a restart of
  * its MCP server, so the restarted server still follows `/clear`; a Claude
  * Code that died without a clean shutdown leaves files a reused pid must
- * not inherit. Best effort.
+ * not inherit. A process that reuses the pid before a server starts clears
+ * them itself, at its `startup` ({@link clearProcessFiles}); this sweep
+ * still covers one started with `--resume`, which reports `resume`. Best
+ * effort.
  */
 export function sweepDeadSessions(stateDir: string): void {
   let names: string[]

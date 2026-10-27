@@ -482,6 +482,21 @@ describe("composeExtensions: OpenClaw's events, fail-open", () => {
     expect(logger.lines).toEqual(['warn extension "b" promptAccepted failed: b fails']);
   });
 
+  it("promptEnded passes the reason as a fourth argument, and only when there is one", () => {
+    const seen: unknown[][] = [];
+    const composed = composeExtensions(
+      [loaded("a", { events: { promptEnded: (...args: unknown[]) => seen.push(args) } })],
+      recordingLogger(),
+    );
+    composed.events.promptEnded(request, "error", 5, "no_reply");
+    composed.events.promptEnded(request, "ok", 6);
+    expect(seen).toEqual([
+      [request, "error", 5, "no_reply"],
+      [request, "ok", 6],
+    ]);
+    expect(seen[1]).toHaveLength(3);
+  });
+
   it("aroundDispatch: the wrapper's context is what the dispatch sees, and its promise comes back", async () => {
     const logger = recordingLogger();
     const als = new AsyncLocalStorage<string>();
