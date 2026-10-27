@@ -34,9 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   awaits it; a start that comes during a stop waits for it too, and a stop that comes while the
   service starts takes that service down too. Every step of the stop is
   bounded. The extensions' `stopping()` gets 1 s (it shared the 5 s of `started()`, which
-  keeps them). Then the service, the agent tools and the connection's drain have 2 s
-  together, after which the connection is closed. The credentials are still wiped only after
-  the close. A stop whose NATS server is unreachable ends in about 3 s.
+  keeps them). Then the service, the agent tools, the agents client and the connection's drain
+  have 2 s together, after which the connection is closed. The credentials are still wiped only
+  after the close. A stop whose NATS server is unreachable ends within about 3 s.
 
 ## [0.5.7] — 2026-10-12
 
