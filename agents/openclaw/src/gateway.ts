@@ -56,9 +56,10 @@ import { registerAgentTools, toolNamesFor, type ActiveTurn } from "./tools.js";
 const ATTACHMENT_BASE_DIR = join(resolveStateDir(), "media", "nats-channel");
 const HEARTBEAT_INTERVAL_S = 5;
 /**
- * The §9 status of a prompt whose OpenClaw run failed: an error frame that
- * carries OpenClaw's own text, never that text as the reply, so the caller
- * can tell it from the model's words.
+ * The §9 status of a prompt that ended on a reply OpenClaw marked as an
+ * error, a failed run's among them: an error frame that carries OpenClaw's
+ * own text, never that text as the reply, so the caller can tell it from
+ * the model's words.
  */
 const FAILED_RUN_CODE = 500;
 
@@ -405,9 +406,10 @@ export async function stopNatsGateway(
  * The outcome is `ok` when the dispatch resolved and reported no error,
  * `error` when it threw — the handler rejects with that error, and the
  * service answers the caller — or when OpenClaw reported a dispatch error
- * and still resolved. A run that ended on OpenClaw's reply to a failed run
- * is `error` with the reason `no_reply`: the handler rejects with a §9
- * error that carries the reply's text, and text sent before it stands.
+ * and still resolved. A run that ended on a reply OpenClaw marked as an
+ * error (its reply to a failed run, among others) is `error` with the
+ * reason `no_reply`: the handler rejects with a §9 error that carries the
+ * reply's text, and text sent before it stands.
  */
 async function serveTurn(
   turn: Turn,
@@ -424,7 +426,7 @@ async function serveTurn(
       reason = "no_reply";
       throw new RequestRejectedError(
         FAILED_RUN_CODE,
-        failedRun ? `the OpenClaw run failed: ${failedRun}` : "the OpenClaw run failed",
+        failedRun ? `OpenClaw replied with an error: ${failedRun}` : "OpenClaw replied with an error",
       );
     }
   } catch (error) {
@@ -447,8 +449,9 @@ interface DispatchHooks {
 /** How one prompt's dispatch ended, once it resolved. */
 interface DispatchResult {
   /**
-   * The text of OpenClaw's reply to a failed run, when the run ended on
-   * one (the last such reply, `""` when it had no text); absent otherwise.
+   * The text of the reply OpenClaw marked as an error, when the run ended
+   * on one (the last such reply, `""` when it had no text); absent
+   * otherwise.
    */
   readonly failedRun?: string;
 }
@@ -518,8 +521,8 @@ async function dispatchPromptToOpenClaw(
       await response.send(slice);
     }
   };
-  // OpenClaw's reply to a failed run, held instead of sent: the last one
-  // while no other reply followed it.
+  // A reply OpenClaw marked as an error (a failed run's, among others),
+  // held instead of sent: the last one while no other reply followed it.
   const held: { failure?: string } = {};
 
   // The dispatch runs inside the extensions' `aroundDispatch`, so a context
@@ -543,15 +546,15 @@ async function dispatchPromptToOpenClaw(
       deliver: async (payload) => {
         const text = payload.text ?? "";
         if (isFailedRunReply(payload)) {
-          // The run failed. Held: if the run ends here, the caller gets an
-          // error with this text, not the text as its reply.
+          // OpenClaw marked it as an error. Held: if the run ends here, the
+          // caller gets an error with this text, not the text as its reply.
           held.failure = text;
           return;
         }
         const failure = held.failure;
         if (failure !== undefined) {
-          // OpenClaw went on after the failure: its text goes out first,
-          // as any reply would.
+          // OpenClaw went on after the error: its text goes out first, as
+          // any reply would.
           delete held.failure;
           if (failure) await send(failure);
         }

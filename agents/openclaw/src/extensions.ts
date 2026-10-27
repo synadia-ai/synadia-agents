@@ -119,8 +119,9 @@ export type Outcome = "ok" | "error" | "timeout";
 
 /**
  * Claude Code: how a prompt ended when the model did not end it with its
- * own reply; absent when it did. OpenClaw passes `no_reply` when its run
- * failed and its last reply said so; otherwise none.
+ * own reply; absent when it did. OpenClaw passes `no_reply` when the run
+ * ended on a reply OpenClaw marked as an error, a failed run among them;
+ * otherwise none.
  *
  * - `final_text`: the turn ended without a reply, and the plugin sent the
  *   turn's final text as the reply (outcome `ok`);
@@ -155,7 +156,7 @@ export interface HarnessEvents {
   /**
    * When the plugin settles the request. Claude Code passes `reason` when
    * the model did not end the prompt with its own reply; OpenClaw passes
-   * `no_reply` when its run failed.
+   * `no_reply` when the run ended on a reply it marked as an error.
    */
   promptEnded?(
     request: ServedRequest,

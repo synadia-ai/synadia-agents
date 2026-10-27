@@ -92,8 +92,9 @@ the prompt open), `delivery` (the prompt could not be handed to Claude
 Code), all with outcome `error`, or `expired` (the prompt outlived the
 plugin's limit, outcome `timeout`). The argument is left out when the
 model replied, and a prompt that failed otherwise carries none. OpenClaw
-passes `no_reply` when its run failed and its last reply said so: the
-caller gets an error, not that reply. Its prompts carry no other reason. A wrapper must call its `run` argument
+passes `no_reply` when the run ended on a reply OpenClaw marked as an
+error, a failed run among them: the caller gets an error, not that reply.
+Its prompts carry no other reason. A wrapper must call its `run` argument
 once, synchronously, and return its value. A wrapper may be an async
 function: the plugin still takes `run`'s own value, and the wrapper must
 call `run` once, before its first `await`, so the step keeps its timing.

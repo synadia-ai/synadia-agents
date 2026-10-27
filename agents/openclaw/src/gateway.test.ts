@@ -42,7 +42,7 @@ vi.mock("openclaw/plugin-sdk/state-paths", () => ({
 vi.mock("@synadia-ai/agent-service", async (importOriginal) => ({
   DEFAULT_ATTACHMENTS_OK: true,
   splitResponseText: (text: string) => [text],
-  // The real class: the gateway rejects a failed run's prompt with it.
+  // The real class: the gateway rejects with it a prompt that ended on an error reply.
   RequestRejectedError: (await importOriginal<typeof import("@synadia-ai/agent-service")>())
     .RequestRejectedError,
   AgentService: class {
@@ -678,14 +678,14 @@ describe("the extensions", () => {
   });
 });
 
-describe("a failed OpenClaw run", () => {
+describe("a reply OpenClaw marked as an error, a failed run's among them", () => {
   beforeEach(resetMocks);
 
   afterEach(async () => {
     await stopNatsGateway({} as never);
   });
 
-  /** A payload as `deliver` gets it: the channel's transform marked a failed run. */
+  /** A payload as `deliver` gets it: the channel's transform marked an error reply. */
   type Payload = { text?: string; channelData?: Record<string, unknown> };
   const failure = (text: string): Payload => ({ text, channelData: { nats: { isError: true } } });
   const reply = (text: string): Payload => ({ text });
@@ -712,7 +712,7 @@ describe("a failed OpenClaw run", () => {
   function expectRejected(error: unknown, text: string): void {
     expect(error).toBeInstanceOf(RequestRejectedError);
     expect((error as RequestRejectedError).code).toBe(500);
-    expect((error as RequestRejectedError).description).toBe(`the OpenClaw run failed: ${text}`);
+    expect((error as RequestRejectedError).description).toBe(`OpenClaw replied with an error: ${text}`);
   }
 
   it("a failed run's reply alone: nothing sent, the handler rejects with 500 and the text, error with no_reply", async () => {

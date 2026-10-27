@@ -1,6 +1,9 @@
-// OpenClaw's reply to a failed run carries `isError: true`; its text says
-// the run failed and names no raw provider text. The inbound helper the
-// gateway dispatches through rebuilds every payload before it reaches the
+// OpenClaw marks a reply as an error with `isError: true`: its reply to a
+// failed run, whose text names no raw provider text, and others besides (a
+// rejected directive, a failed `/btw`, a persistence or model-lock
+// rejection, a fallback that produced no visible reply, a tool's failure
+// when the run has no other reply). The inbound helper the gateway
+// dispatches through rebuilds every payload before it reaches the
 // channel's `deliver`, and drops `isError` on the way; `channelData`
 // survives. OpenClaw still shows `isError` to the channel's own
 // `messaging.transformReplyPayload`, so the transform copies the mark into

@@ -321,9 +321,9 @@ export const natsPlugin = createChatChannelPlugin<ResolvedNatsAccount>({
           from: `nats:${(params.to as string) ?? "unknown"}`,
           to: `nats:${(params.to as string) ?? "unknown"}`,
         }),
-      // OpenClaw's reply to a failed run, marked where the gateway's
-      // `deliver` can read it (`./failed-run.ts`). Never `null`: that
-      // would suppress the reply.
+      // A reply OpenClaw marked as an error (a failed run's, among
+      // others), marked where the gateway's `deliver` can read it
+      // (`./failed-run.ts`). Never `null`: that would suppress the reply.
       transformReplyPayload: <P extends MarkablePayload>({
         payload,
       }: {

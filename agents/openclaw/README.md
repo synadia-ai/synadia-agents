@@ -344,14 +344,16 @@ await agents.close();
 await nc.close();
 ```
 
-**A failed run.** When OpenClaw's run fails (a model provider's error,
-say), OpenClaw's reply says so and is marked as an error. The plugin does
-not send that reply as the answer: the prompt ends with a `500` error frame
-whose description is `the OpenClaw run failed: <OpenClaw's text>`, so a
+**A reply OpenClaw marks as an error.** OpenClaw marks some replies as
+errors: its reply to a failed run (a model provider's error, say), and
+others besides, such as a rejected directive or a fallback that produced
+no visible reply. The plugin does not send such a reply as the answer:
+when the run ends on one, the prompt ends with a `500` error frame whose
+description is `OpenClaw replied with an error: <OpenClaw's text>`, so a
 caller can tell it from the model's words; the SDK's agent tools report
-the call `failed`. Text OpenClaw streamed before the failure stands
-(`partial_reply` in the agent tools). When OpenClaw goes on after a failed
-attempt and replies after all, the failure's text is sent first, then the
+the call `failed`. Text OpenClaw streamed before it stands
+(`partial_reply` in the agent tools). When OpenClaw goes on after an error
+reply and replies after all, the error's text is sent first, then the
 reply, as before.
 
 ## Attachments
