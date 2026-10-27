@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of the connection failed and closed it, and nats-core's `close()` left the first drain
   waiting for good: OpenClaw logged "stopAccount exceeded 5000ms", "did not settle" and,
   5 s later, the plugin's forced retirement. The cleanup now runs once and every caller
-  awaits it; a start that comes during a stop waits for it too. Every step of the stop is
+  awaits it; a start that comes during a stop waits for it too, and a stop that comes while the
+  service starts takes that service down too. Every step of the stop is
   bounded. The extensions' `stopping()` gets 1 s (it shared the 5 s of `started()`, which
   keeps them). Then the service, the agent tools and the connection's drain have 2 s
   together, after which the connection is closed. The credentials are still wiped only after

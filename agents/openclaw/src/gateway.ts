@@ -158,12 +158,38 @@ const LEAVE_TIMEOUT_MS = 2_000;
 // ended. Cleared when it settles, so the next call runs a new cleanup, the
 // retry after a failed one among them.
 let cleanupInFlight: Promise<void> | null = null;
+// The cleanups begun so far: a start that sees this change while its
+// service starts was stopped meanwhile.
+let cleanupRuns = 0;
 
-function cleanupPrevious(): Promise<void> {
+/**
+ * Take the gateway down. A caller that finds a cleanup running joins it, and
+ * runs one more only if something is still up when it ended: a run may have
+ * passed a step before a start set it, as the service a start sets when a
+ * stop came while it started.
+ */
+async function cleanupPrevious(): Promise<void> {
+  if (cleanupInFlight !== null) {
+    while (cleanupInFlight !== null) await cleanupInFlight;
+    if (!gatewayUp()) return;
+  }
   cleanupInFlight ??= runCleanup().finally(() => {
     cleanupInFlight = null;
   });
   return cleanupInFlight;
+}
+
+/** Whether anything a start sets is still set. */
+function gatewayUp(): boolean {
+  return (
+    activeService !== null ||
+    activeTools !== null ||
+    activeAgents !== null ||
+    activeNc !== null ||
+    activeBundle !== null ||
+    activeAgentName !== null ||
+    activeExtensions !== null
+  );
 }
 
 /**
@@ -183,6 +209,7 @@ async function leaveStep(
 }
 
 async function runCleanup(): Promise<void> {
+  cleanupRuns++;
   // The extensions hear of the stop before the service leaves the bus.
   if (activeService && activeExtensions) {
     await activeExtensions.stopping();
@@ -276,6 +303,7 @@ export async function startNatsGateway(
       : "configured URL";
 
   await cleanupPrevious();
+  const runsBefore = cleanupRuns;
 
   const logger = gatewayLogger(ctx);
   const extensions = await loadAccountExtensions(account, logger);
@@ -398,6 +426,17 @@ export async function startNatsGateway(
     throw error;
   }
   activeService = service;
+  if (cleanupRuns !== runsBefore) {
+    // A stop came while the service started, and has taken down, or is
+    // taking down, what was up then. The service is the cleanup's too. The
+    // extensions heard no `started()`, so they hear no `stopping()`, and no
+    // tool is registered.
+    activeExtensions = null;
+    setActiveExtensions(null);
+    await cleanupPrevious();
+    ctx.log?.info?.(`nats: "${agentName}" stopped while it started`);
+    return;
+  }
 
   setActiveConnection(connected.nc, agentName, account.owner);
   // The tools appear to the model once the agent is on the bus.

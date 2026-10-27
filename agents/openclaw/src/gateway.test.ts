@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   serviceStops: [] as Array<ReturnType<typeof vi.fn>>,
   services: [] as Array<{ handler: PromptHandler | undefined }>,
   startError: undefined as Error | undefined,
+  // When set, the service's start waits for it.
+  startGate: undefined as Promise<void> | undefined,
   agentsOptions: [] as Array<Record<string, unknown>>,
   agentsClosed: 0,
   order: [] as string[],
@@ -71,6 +73,7 @@ vi.mock("@synadia-ai/agent-service", async (importOriginal) => ({
       this.handler = handler;
     }
     async start(): Promise<void> {
+      if (mocks.startGate) await mocks.startGate;
       if (mocks.startError) throw mocks.startError;
     }
   },
@@ -298,6 +301,7 @@ function resetMocks(): void {
   mocks.agentsClosed = 0;
   mocks.order.length = 0;
   mocks.startError = undefined;
+  mocks.startGate = undefined;
   delete (globalThis as { __ocGatewayTestExtension?: unknown }).__ocGatewayTestExtension;
 }
 
@@ -981,6 +985,35 @@ describe("the stop", () => {
     expect(secondWipe).toHaveBeenCalledOnce();
     expect(mocks.serviceStops).toHaveLength(2);
     expect(mocks.serviceStops[1]).toHaveBeenCalledOnce();
+  });
+
+  it("a stop while the service starts: the started service is stopped too, no tool stays registered, one drain", async () => {
+    const nc = natsCoreLike("on-call");
+    const wipe = connectedTo(nc);
+    const gate = deferred<void>();
+    mocks.startGate = gate.promise;
+    const controller = new AbortController();
+    const ctx = gatewayContext(withCounter(), controller.signal);
+    const running = startNatsGateway(ctx as never);
+    await vi.waitFor(() => expect(mocks.services).toHaveLength(1));
+    // OpenClaw's stop while the service's start is pending: the cleanup
+    // finds no service yet, and waits on the drain.
+    controller.abort();
+    const stopped = stopNatsGateway(ctx as never);
+    await vi.waitFor(() => expect(nc.drain).toHaveBeenCalledOnce());
+    // The service's start ends while the cleanup still drains.
+    gate.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    nc.answer();
+    expect(await settleWithin([running, stopped], 1_000)).toBe(true);
+    expect(mocks.serviceStops[0]).toHaveBeenCalledOnce();
+    expect(mocks.setActiveAgentTools).toHaveBeenLastCalledWith(null);
+    expect(mocks.setActiveAgentTools.mock.calls.filter((c) => c[0] !== null)).toEqual([]);
+    expect(nc.drain).toHaveBeenCalledOnce();
+    expect(wipe).toHaveBeenCalledOnce();
+    // Neither half of the extensions' pair: the service never counted as started.
+    expect(counter().started).toBe(0);
+    expect(counter().stopping).toBe(0);
   });
 
   it("a start during a cleanup waits for it, and the cleanup leaves the new gateway alone", async () => {
