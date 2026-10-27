@@ -32,7 +32,8 @@
  *     map, one dispatcher for the gateway's events. Every event call fails
  *     open: a throw is logged once per extension and event and ignored; a
  *     wrapper that does not call `run` has it called by the channel; `started`
- *     and `stopping` are awaited for at most {@link DEFAULT_HOOK_TIMEOUT_MS}.
+ *     is awaited for at most {@link DEFAULT_STARTED_TIMEOUT_MS}, `stopping`
+ *     for at most {@link DEFAULT_STOPPING_TIMEOUT_MS}.
  *     The one exception is invalid registration metadata: it throws, and the
  *     plugin does not start.
  */
@@ -473,11 +474,20 @@ export async function loadExtensions(
 // Composition: one set of hooks, one fail-open dispatcher for the events
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** How long the plugin waits for one extension's `started()` or `stopping()`. */
-export const DEFAULT_HOOK_TIMEOUT_MS = 5_000;
+/** How long the plugin waits for one extension's `started()`. */
+export const DEFAULT_STARTED_TIMEOUT_MS = 5_000;
+/**
+ * How long the plugin waits for one extension's `stopping()`. Short, as it
+ * is the first step of a stop, and OpenClaw gives a channel account's
+ * whole stop 5 s.
+ */
+export const DEFAULT_STOPPING_TIMEOUT_MS = 1_000;
 
 export interface ComposeOptions {
-  readonly hookTimeoutMs?: number;
+  /** One extension's `started()` bound; {@link DEFAULT_STARTED_TIMEOUT_MS} when absent. */
+  readonly startedTimeoutMs?: number;
+  /** One extension's `stopping()` bound; {@link DEFAULT_STOPPING_TIMEOUT_MS} when absent. */
+  readonly stoppingTimeoutMs?: number;
   /**
    * The registration metadata keys the plugin sets itself; an extension's
    * entry of the same name is dropped, with a warning, so the plugin's wins.
@@ -616,7 +626,10 @@ export function composeExtensions(
   logger: Logger,
   options: ComposeOptions = {},
 ): ComposedExtensions {
-  const hookTimeoutMs = options.hookTimeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS;
+  const hookTimeoutMs = {
+    started: options.startedTimeoutMs ?? DEFAULT_STARTED_TIMEOUT_MS,
+    stopping: options.stoppingTimeoutMs ?? DEFAULT_STOPPING_TIMEOUT_MS,
+  };
   const reported = new Set<string>();
   const logOnce = (key: string, message: string): void => {
     if (reported.has(key)) return;
@@ -778,6 +791,7 @@ export function composeExtensions(
     hook: "started" | "stopping",
     fn: () => void | Promise<void>,
   ): Promise<void> => {
+    const timeoutMs = hookTimeoutMs[hook];
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -786,10 +800,10 @@ export function composeExtensions(
           timer = setTimeout(() => {
             logOnce(
               `${l.name}:${hook}:timeout`,
-              `extension "${l.name}" ${hook}() did not finish within ${hookTimeoutMs} ms; continuing without it`,
+              `extension "${l.name}" ${hook}() did not finish within ${timeoutMs} ms; continuing without it`,
             );
             resolve();
-          }, hookTimeoutMs);
+          }, timeoutMs);
           timer.unref?.();
         }),
       ]);

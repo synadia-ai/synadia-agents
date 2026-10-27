@@ -30,6 +30,7 @@ import {
   SUBJECT_AGENT_TOKEN,
 } from "./nats/index.js";
 import { connectToNats, drainConnection } from "./nats/connection.js";
+import { settlesWithin } from "./settle.js";
 import type { ResolvedNatsAccount } from "./types.js";
 import {
   getNatsRuntime,
@@ -141,38 +142,110 @@ function servedRequest(envelope: RequestEnvelope, response: PromptResponse): Ser
   });
 }
 
+/**
+ * How long the service, the agent tools, the agents client and the
+ * connection's drain have, together, to leave the bus gracefully; then the
+ * connection is closed. The drain gets at least `DRAIN_FLOOR_MS`, so a
+ * service stop that took most of the time leaves it some. OpenClaw waits
+ * 5 s for a channel account's stop and goes on without it. The extensions'
+ * `stopping()` comes first, for at most `DEFAULT_STOPPING_TIMEOUT_MS` (1 s),
+ * so the stop ends within about 3 s, 3.5 s at most.
+ */
+const LEAVE_TIMEOUT_MS = 2_000;
+const DRAIN_FLOOR_MS = 500;
+
+// The cleanup in progress, if any. OpenClaw aborts the account and then
+// calls `stopAccount`, so two stops arrive in the same tick, and a restart's
+// start may come while a stop still runs. Every caller awaits the one run:
+// the connection is drained once, and a start begins after the cleanup
+// ended. Cleared when it settles, so the next call runs a new cleanup, the
+// retry after a failed one among them.
+let cleanupInFlight: Promise<void> | null = null;
+// The start the module's state belongs to; a cleanup clears it. A start
+// that finds after an await that it is no longer this one was stopped or
+// replaced meanwhile, and touches nothing but what it made itself.
+let activeStart: symbol | null = null;
+
+/**
+ * Take the gateway down. A caller that finds a cleanup running joins it, and
+ * runs one more only if something is still up when it ended: a run may have
+ * passed a step before a start set it, as the service a start sets when a
+ * stop came while it started.
+ */
 async function cleanupPrevious(): Promise<void> {
+  if (cleanupInFlight !== null) {
+    while (cleanupInFlight !== null) await cleanupInFlight;
+    if (!gatewayUp()) return;
+  }
+  cleanupInFlight ??= runCleanup().finally(() => {
+    cleanupInFlight = null;
+  });
+  return cleanupInFlight;
+}
+
+/** Whether anything a start sets is still set. */
+function gatewayUp(): boolean {
+  return (
+    activeService !== null ||
+    activeTools !== null ||
+    activeAgents !== null ||
+    activeNc !== null ||
+    activeBundle !== null ||
+    activeAgentName !== null ||
+    activeExtensions !== null
+  );
+}
+
+/**
+ * Wait for one step of the stop until `leaveBy`, a `performance.now()` time,
+ * which a step of the wall clock cannot move. A failure is ignored. A step
+ * still running at `leaveBy` is left behind: it waits on the server, and the
+ * close of the connection follows.
+ */
+async function leaveStep(
+  name: string,
+  step: () => Promise<unknown>,
+  leaveBy: number,
+): Promise<void> {
+  const running = (async () => step())();
+  if (!(await settlesWithin(running, leaveBy - performance.now()))) {
+    console.error(`[nats] ${name} did not finish in time; going on with the stop`);
+  }
+}
+
+async function runCleanup(): Promise<void> {
+  activeStart = null;
   // The extensions hear of the stop before the service leaves the bus.
   if (activeService && activeExtensions) {
     await activeExtensions.stopping();
   }
   activeExtensions = null;
   setActiveExtensions(null);
+  const leaveBy = performance.now() + LEAVE_TIMEOUT_MS;
   if (activeService) {
-    try {
-      await activeService.stop();
-    } catch {}
+    const service = activeService;
+    await leaveStep("service stop", () => service.stop(), leaveBy);
     activeService = null;
   }
   turnsInFlight = [];
   setActiveAgentTools(null);
   if (activeTools) {
-    try {
-      await activeTools.close();
-    } catch {}
+    const tools = activeTools;
+    await leaveStep("agent tools close", () => tools.close(), leaveBy);
     activeTools = null;
   }
   if (activeAgents) {
-    try {
-      await activeAgents.close();
-    } catch {}
+    const agents = activeAgents;
+    await leaveStep("agents client close", () => agents.close(), leaveBy);
     activeAgents = null;
   }
   if (activeNc) {
     // Do not wipe or replace this connection's credential snapshot unless the
-    // connection is definitely closed. drainConnection forces close on a
-    // graceful-drain failure and throws only when even that close failed.
-    await drainConnection(activeNc);
+    // connection is definitely closed. drainConnection closes the connection
+    // when the graceful drain fails or runs out of time, and throws only when
+    // even that close failed: the connection stays here, and the next
+    // cleanup tries again.
+    await drainConnection(activeNc, Math.max(DRAIN_FLOOR_MS, leaveBy - performance.now()));
     activeNc = null;
   }
   // Reconnect authentication and the sender signer share this retained
@@ -235,9 +308,13 @@ export async function startNatsGateway(
       : "configured URL";
 
   await cleanupPrevious();
+  const self = Symbol(agentName);
+  activeStart = self;
+  const mine = (): boolean => activeStart === self;
 
   const logger = gatewayLogger(ctx);
   const extensions = await loadAccountExtensions(account, logger);
+  if (!mine()) return;
   activeExtensions = extensions;
   setActiveExtensions({ accountId: account.accountId, names: extensions.names });
 
@@ -253,6 +330,20 @@ export async function startNatsGateway(
     senderIdentity: account.senderIdentity,
     name: `openclaw-${agentName}`,
   });
+  if (!mine()) {
+    // Stopped or replaced while it connected: the connection is all it owns.
+    // Unlike the tracked connection, nothing retries this one, so a close
+    // that fails is logged, never thrown (nothing awaits a stale start), and
+    // the creds are wiped anyway: a reconnect it may still try fails on them.
+    try {
+      await drainConnection(connected.nc, LEAVE_TIMEOUT_MS);
+    } catch (err) {
+      ctx.log?.error?.(`nats: stale start shutdown error: ${String(err)}`);
+    } finally {
+      connected.bundle.wipe();
+    }
+    return;
+  }
   activeNc = connected.nc;
   activeBundle = connected.bundle;
   activeAgentName = agentName;
@@ -345,16 +436,38 @@ export async function startNatsGateway(
     });
   });
 
+  // The service's start ends on a flush, which a server that stopped
+  // answering never settles, and a close does not either: OpenClaw's abort
+  // ends the wait. A start that ends after the stop would begin its
+  // heartbeats again, so the service is stopped once more then.
+  const starting = service.start();
+  let aborted: boolean;
   try {
-    await service.start();
+    aborted = await abortedFirst(starting, abortSignal);
   } catch (error) {
     // Not `activeService` yet: the extensions' `stopping()` is owed only
     // to a service that started.
-    try {
-      await service.stop();
-    } catch {}
+    await leaveStep("service stop", () => service.stop(), performance.now() + LEAVE_TIMEOUT_MS);
     await cleanupPrevious();
     throw error;
+  }
+  if (aborted) void starting.then(() => service.stop(), () => undefined);
+  if (aborted || !mine()) {
+    // A stop came while the service started. The extensions heard no
+    // `started()`, so they hear no `stopping()`, and no tool is registered.
+    // While the state is still this start's, the service is the cleanup's
+    // too; once a cleanup took it down, or a newer start replaced it, the
+    // service is all this start may stop.
+    if (mine()) {
+      activeService = service;
+      activeExtensions = null;
+      setActiveExtensions(null);
+      await cleanupPrevious();
+    } else {
+      await leaveStep("service stop", () => service.stop(), performance.now() + LEAVE_TIMEOUT_MS);
+    }
+    ctx.log?.info?.(`nats: "${agentName}" stopped while it started`);
+    return;
   }
   activeService = service;
 
@@ -383,7 +496,8 @@ export async function startNatsGateway(
 
   return new Promise<void>((resolve) => {
     const stop = (): void => {
-      cleanupPrevious()
+      // A cleanup or a newer start may have taken the state already.
+      (mine() ? cleanupPrevious() : Promise.resolve())
         .then(
           () => ctx.log?.info?.(`nats: "${agentName}" stopped`),
           (err) => ctx.log?.error?.(`nats: shutdown error: ${String(err)}`),
@@ -392,6 +506,28 @@ export async function startNatsGateway(
     };
     if (abortSignal.aborted) stop();
     else abortSignal.addEventListener("abort", stop, { once: true });
+  });
+}
+
+/**
+ * Whether `signal` aborted before `work` settled: `false` once `work`
+ * resolved, its rejection when it rejected first. `work` is not cancelled.
+ */
+function abortedFirst(work: Promise<void>, signal: AbortSignal): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
+    const onAbort = (): void => resolve(true);
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(false);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
   });
 }
 

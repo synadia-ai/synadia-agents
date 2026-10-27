@@ -24,6 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   argument, the reason `no_reply`, for this case only; a dispatch that throws and a dispatch
   error OpenClaw reports keep no reason.
 
+### Fixed
+
+- **The channel's stop ends within the 5 s OpenClaw gives it.** OpenClaw aborts a stopping
+  account and then calls `stopAccount`, and both ran the plugin's cleanup. The second drain
+  of the connection failed and closed it, and nats-core's `close()` left the first drain
+  waiting for good: OpenClaw logged "stopAccount exceeded 5000ms", "did not settle" and,
+  5 s later, the plugin's forced retirement. The cleanup now runs once and every caller
+  awaits it; a start that comes during a stop waits for it too, and a stop that comes while the
+  service starts takes that service down too. The service's start no longer outlives OpenClaw's
+  abort when the server stopped answering it, so the account can start again. A start that
+  a stop or a newer start overtook stops only what it made itself, never the newer start's. Every step of the stop is bounded. The
+  extensions' `stopping()` gets 1 s (it shared the 5 s of `started()`, which keeps them). Then
+  the service, the agent tools, the agents client and the connection's drain have 2 s together,
+  and the drain at least 0.5 s even when the others used up the 2 s; then the connection is
+  closed. The credentials are still wiped only after the close. A stop whose NATS server is
+  unreachable ends within about 3 s, 3.5 s at most.
+
 ## [0.5.7] — 2026-10-12
 
 ### Fixed
