@@ -895,7 +895,26 @@ console.log('\n[case 11] a prompt Claude Code takes while the extensions start i
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  void new Response(gap.stdout).text()
+  // What Claude Code would read: the channel's messages on its stdout, one
+  // JSON-RPC message per line; the request ids it was handed, in order.
+  const gapIds: string[] = []
+  void (async () => {
+    const decoder = new TextDecoder()
+    let buffered = ''
+    for await (const chunk of gap.stdout) {
+      buffered += decoder.decode(chunk, { stream: true })
+      for (let nl = buffered.indexOf('\n'); nl >= 0; nl = buffered.indexOf('\n')) {
+        const line = buffered.slice(0, nl)
+        buffered = buffered.slice(nl + 1)
+        try {
+          const message = JSON.parse(line) as { method?: string; params?: { meta?: { request_id?: unknown } } }
+          if (message.method === 'notifications/claude/channel') gapIds.push(String(message.params?.meta?.request_id))
+        } catch {
+          // Not a message: nothing to read.
+        }
+      }
+    }
+  })()
   // Its stderr, read as it comes: a chatty channel never blocks on a full
   // pipe, and a failure below shows what the channel said.
   let gapStderr = ''
@@ -912,11 +931,14 @@ console.log('\n[case 11] a prompt Claude Code takes while the extensions start i
   const chunks = await collectChunks('taken while the extensions start', async chunk => {
     if (took || !chunk.body.includes('"ack"')) return
     took = true
+    // The request id the channel handed Claude Code: the ack can come first.
+    for (let i = 0; i < 100 && gapIds.length === 0; i++) await Bun.sleep(50)
+    if (gapIds.length === 0) fail('the second channel handed over no channel message')
     await runHook({
       hook_event_name: 'UserPromptSubmit',
       session_id: SESSION_ID,
       prompt_id: 'prompt-11',
-      prompt: `<channel source="plugin:nats-channel:nats" request_id="1" session="${gapName}" ts="${new Date().toISOString()}">x`,
+      prompt: `<channel source="plugin:nats-channel:nats" request_id="${gapIds[0]}" session="${gapName}" ts="${new Date().toISOString()}">x`,
     }, gapState)
     await runHook({
       hook_event_name: 'Stop',
@@ -944,6 +966,42 @@ console.log('\n[case 11] a prompt Claude Code takes while the extensions start i
   rmSync(gapState, { recursive: true, force: true })
 }
 
+console.log('\n[case 12] by prompt id: a message stamped before the server started, as after a clock stepped back, is still this server\'s')
+{
+  // The tag's `ts` reads an hour before this server started. Only the
+  // request id says whose message it is: its turn's Stop is refused for
+  // it, and the turn's final text answers it.
+  let requestId = ''
+  let deliveredOne!: () => void
+  const delivered = new Promise<void>(resolve => { deliveredOne = resolve })
+  currentCase = {
+    replyHandler: async id => {
+      requestId = id
+      deliveredOne()
+    },
+  }
+  const collecting = collectChunks('stamped before the start')
+  await delivered
+  const anHourAgo = new Date(Date.now() - 3_600_000).toISOString()
+  await runHook({
+    hook_event_name: 'UserPromptSubmit',
+    session_id: SESSION_ID,
+    prompt_id: 'prompt-12',
+    prompt: `<channel source="plugin:nats-channel:nats" request_id="${requestId}" session="${NAME}" ts="${anHourAgo}">stamped`,
+  })
+  const refused = await turnStop({ prompt_id: 'prompt-12', last_assistant_message: 'the stamped answer' })
+  assertRefused(refused, requestId, 'the stamped message\'s first stop')
+  await turnStop({ prompt_id: 'prompt-12', stop_hook_active: true, last_assistant_message: 'the stamped answer' })
+  const chunks = await collecting
+  const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+  if (chunks.some(chunk => chunk.error) || responses.length !== 1 || responses[0]!.data !== 'the stamped answer') {
+    fail(`the stamped prompt got ${JSON.stringify(chunks.map(chunk => chunk.error ?? chunk.body.slice(0, 60)))}`)
+  }
+  const ended = await promptEndedEvent(requestId)
+  if (ended?.outcome !== 'ok' || ended.reason !== 'final_text') fail(`promptEnded for the stamped request was ${JSON.stringify(ended)}`)
+  if (!extensionEvents().some(e => e.event === 'promptStarted' && e.id === requestId)) fail('the stamped request never started')
+}
+
 console.log('\n[case 6] shutdown settles an open deferred request')
 {
   currentCase = { replyHandler: async () => undefined }
@@ -959,6 +1017,85 @@ console.log('\n[case 6] shutdown settles an open deferred request')
   if (!chunks.some(chunk => chunk.hasHeaders)) fail('shutdown did not emit an error frame')
   const term = chunks.at(-1)!
   if (term.bytes !== 0 || term.hasHeaders) fail('shutdown stream lacks a clean terminator')
+}
+
+console.log('\n[case 13] a restarted channel refuses a reply to the earlier server\'s request, so it reaches no caller')
+{
+  // Claude Code keeps a channel message across a restart of the server:
+  // the model may reply to it after the next server has taken a prompt.
+  // Each server start has its own request ids, so the reply names no
+  // request of the new server's.
+  const restartName = 'rt-restart'
+  const restartState = mkdtempSync(join(tmpdir(), 'claude-channel-restart-'))
+  const restartSubject = `agents.prompt.cc.${OWNER}.${restartName}`
+  const startChannel = async () => {
+    const client = new Client({ name: 'fake-claude-restart', version: '0.0.1' })
+    const ids: string[] = []
+    const waiters: Array<() => void> = []
+    client.fallbackNotificationHandler = async notification => {
+      if (notification.method !== 'notifications/claude/channel') return
+      ids.push(String((notification.params as { meta: Record<string, unknown> }).meta.request_id))
+      waiters.splice(0).forEach(wake => wake())
+    }
+    await client.connect(new StdioClientTransport({
+      command: 'bun',
+      args: [join(cacheRoot, 'runtime', 'server.js')],
+      env: { ...childEnv, NATS_STATE_DIR: restartState, NATS_SESSION_NAME: restartName },
+    }))
+    let up = false
+    for (let attempt = 0; attempt < 40 && !up; attempt++) {
+      up = (await discovery.discover({ timeoutMs: 100, filter: { agent: 'claude-code', owner: OWNER, name: restartName } })).length > 0
+    }
+    if (!up) fail('the restarted channel did not register')
+    // The next request id handed to this fake Claude Code.
+    const nextId = async (): Promise<string> => {
+      const seen = ids.length
+      await Promise.race([
+        new Promise<void>(resolve => {
+          if (ids.length > seen) resolve()
+          else waiters.push(resolve)
+        }),
+        Bun.sleep(10_000),
+      ])
+      return ids[seen] ?? ''
+    }
+    return { client, nextId }
+  }
+
+  const first = await startChannel()
+  const firstNext = first.nextId()
+  const firstCollecting = collectChunks('for the first server', undefined, restartSubject)
+  const earlierId = await firstNext
+  // The server stops with the prompt open; its message stays with Claude Code.
+  await first.client.close()
+  await firstCollecting
+  for (let i = 0; i < 40; i++) {
+    const found = await discovery.discover({ timeoutMs: 100, filter: { agent: 'claude-code', owner: OWNER, name: restartName } })
+    if (found.length === 0) break
+  }
+
+  const second = await startChannel()
+  const secondNext = second.nextId()
+  const secondCollecting = collectChunks('for the second server', undefined, restartSubject)
+  const ownId = await secondNext
+  if (!earlierId || !ownId) fail(`the channels handed over ${JSON.stringify([earlierId, ownId])}`)
+  if (earlierId === ownId) fail(`the restarted server handed out the earlier server's request id ${ownId}`)
+  // The model replies to the message the earlier server sent.
+  const stale = await second.client.callTool({
+    name: 'reply',
+    arguments: { request_id: earlierId, text: 'meant for the earlier caller', done: true },
+  })
+  if (!stale.isError) fail('a reply to the earlier server\'s request was accepted')
+  const info = await second.client.callTool({ name: 'request_info', arguments: { request_id: ownId } })
+  if (info.isError) fail('the restarted server\'s own request is no longer open')
+  await second.client.callTool({ name: 'reply', arguments: { request_id: ownId, text: 'the second answer', done: true } })
+  const chunks = await secondCollecting
+  const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+  if (chunks.some(chunk => chunk.error) || responses.map(v => v.data).join('') !== 'the second answer') {
+    fail(`the second server's caller got ${JSON.stringify(chunks.map(chunk => chunk.error ?? chunk.body.slice(0, 60)))}`)
+  }
+  await second.client.close()
+  rmSync(restartState, { recursive: true, force: true })
 }
 
 await discovery.close()

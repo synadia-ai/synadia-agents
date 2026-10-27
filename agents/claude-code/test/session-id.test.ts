@@ -40,6 +40,7 @@ import {
   type SessionIdSource,
 } from '../src/session-id.js'
 import { markSessionEvents, watchSessionEvents } from '../src/session-events.js'
+import { requestIdSequence } from '../src/request-ids.js'
 
 const PID = 4242
 const SESSION = '0b7e1c9a-2f4d-4e1b-9c3a-5d6e7f8a9b0c'
@@ -227,13 +228,8 @@ describe('recordHookEvent: what each hook writes', () => {
       requestId: '12',
       source: 'plugin:p:nats',
     })
-    // With the time the server sent it; a ts of another shape is left out.
+    // The tag's other attributes, the time it was sent among them, are not read.
     expect(channelPrompt('<channel source="plugin:p:nats" request_id="12" session="s" ts="2026-10-26T12:03:34.511Z">hi')).toEqual({
-      requestId: '12',
-      source: 'plugin:p:nats',
-      ts: '2026-10-26T12:03:34.511Z',
-    })
-    expect(channelPrompt('<channel source="plugin:p:nats" request_id="12" ts="yesterday">hi')).toEqual({
       requestId: '12',
       source: 'plugin:p:nats',
     })
@@ -350,7 +346,7 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     const submit = (promptId: string, prompt: string, now: number) =>
       recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
     // The server delivered '2' while a typed turn ran; its ledger names no owner.
-    writeOpenRequests(stateDir, PID, [], process.pid, 1000, { openIds: ['2'], sinceMs: 500 })
+    writeOpenRequests(stateDir, PID, [], process.pid, 1000, { openIds: ['2'] })
     submit('pTyped', 'TYPED-L SLOW10', 900)
     const typedStop = { ...idle, prompt_id: 'pTyped', last_assistant_message: 'the typed answer' }
     expect(stopRefusal(stateDir, PID, typedStop)).toBeUndefined()
@@ -364,47 +360,53 @@ describe('the turn\'s end: the Stop hook\'s refusal and the final text', () => {
     recordHookEvent(stateDir, PID, { ...natsStop, stop_hook_active: true }, 2060)
     expect(readTurnStop(source)?.finalText).toBe('OK')
     // Answered: no longer open, no refusal.
-    writeOpenRequests(stateDir, PID, [], process.pid, 2100, { openIds: [], sinceMs: 500 })
+    writeOpenRequests(stateDir, PID, [], process.pid, 2100, { openIds: [] })
     expect(stopRefusal(stateDir, PID, natsStop)).toBeUndefined()
   })
 
-  test('by prompt id: a fold binds the prompt to the running turn; the latest submit of a request since the server started wins', () => {
+  test('by prompt id: a fold binds the prompt to the running turn; the latest submit of a request wins', () => {
     const CHANNEL = 'plugin:nats-channel:nats'
     const submit = (promptId: string, prompt: string, now: number) =>
       recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
-    // A previous server's request '1', taken into pT, before this server started.
-    submit('pT', `<channel source="${CHANNEL}" request_id="1">old`, 100)
-    writeOpenRequests(stateDir, PID, [], process.pid, 600, { openIds: ['1'], sinceMs: 500 })
-    // This server's '1' waits: the stale line binds it to nothing.
+    // A previous server's request, taken into pT before this server started;
+    // its id is one this server never had.
+    const earlier = requestIdSequence()()
+    const own = requestIdSequence()()
+    submit('pT', `<channel source="${CHANNEL}" request_id="${earlier}">old`, 100)
+    writeOpenRequests(stateDir, PID, [], process.pid, 600, { openIds: [own] })
+    // This server's request waits: the old line binds it to nothing.
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toBeUndefined()
     // Folded into the running turn pT at its next tool result.
-    submit('pT', `<channel source="${CHANNEL}" request_id="1">new`, 700)
-    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toContain('"1"')
+    submit('pT', `<channel source="${CHANNEL}" request_id="${own}">new`, 700)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pT' })).toContain(`"${own}"`)
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pOther' })).toBeUndefined()
-    // Another channel plugin's request "1" binds nothing of ours.
-    writeOpenRequests(stateDir, PID, [], process.pid, 800, { openIds: ['1'], sinceMs: 750 })
-    submit('pU', '<channel source="plugin:other:chat" request_id="1">x', 800)
+    // Another channel plugin's request of the same id binds nothing of ours.
+    submit('pU', `<channel source="plugin:other:chat" request_id="${own}">x`, 800)
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pU' })).toBeUndefined()
   })
 
-  test('by prompt id: an earlier server\'s message of the same request id, taken after the restart, binds nothing', () => {
+  test('by prompt id: an earlier server\'s message, taken after the restart, is not taken in, whatever the times say', () => {
     const CHANNEL = 'plugin:nats-channel:nats'
-    const tag = (ts: string) => `<channel source="${CHANNEL}" request_id="1" session="s" ts="${ts}">`
+    const tag = (requestId: string, ts: string) => `<channel source="${CHANNEL}" request_id="${requestId}" session="s" ts="${ts}">`
     const submit = (promptId: string, prompt: string, now: number) =>
       recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: promptId, prompt }, now)
+    const earlier = requestIdSequence()()
+    const own = requestIdSequence()()
     const started = Date.parse('2026-10-26T12:00:00.000Z')
-    // This server started at 12:00 and delivered its own "1"; Claude Code
-    // takes the old server's queued "1" first, sent at 11:59.
-    writeOpenRequests(stateDir, PID, [], process.pid, started + 10, { openIds: ['1'], sinceMs: started })
-    submit('pOld', `${tag('2026-10-26T11:59:59.000Z')}old`, started + 20)
-    expect(readEvents(stateDir, PID).at(-1)).toMatchObject({
+    // This server started at 12:00 and delivered its own first request.
+    // Then the clock stepped back an hour: Claude Code takes the old
+    // server's queued message, then this server's, both stamped before the
+    // start.
+    writeOpenRequests(stateDir, PID, [], process.pid, started + 10, { openIds: [own] })
+    submit('pOld', `${tag(earlier, '2026-10-26T11:59:59.000Z')}old`, started - 3_600_000)
+    expect(readEvents(stateDir, PID).at(-1)).toEqual({
       kind: 'submit',
-      submit: { requestId: '1', sentAtMs: Date.parse('2026-10-26T11:59:59.000Z') },
+      submit: { sessionId: SESSION, promptId: 'pOld', requestId: earlier, source: CHANNEL, atMs: started - 3_600_000 },
     })
     expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pOld' })).toBeUndefined()
-    // This server's "1" is taken next: its turn's Stop is refused for it.
-    submit('pNew', `${tag('2026-10-26T12:00:00.005Z')}new`, started + 40)
-    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pNew' })).toContain('"1"')
+    // This server's own request is taken next: its turn's Stop is refused for it.
+    submit('pNew', `${tag(own, '2026-10-26T11:00:00.005Z')}new`, started - 3_599_000)
+    expect(stopRefusal(stateDir, PID, { ...idle, prompt_id: 'pNew' })).toContain(`"${own}"`)
   })
 
   test('by prompt id: channel messages taken together count for the turn they ran in, the last one\'s id', () => {
