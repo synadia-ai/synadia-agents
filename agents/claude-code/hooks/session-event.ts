@@ -17,7 +17,13 @@
  *   which needs the old log to have been only a few lines long. Stated
  *   honestly: a new process started with `--resume` on a reused pid
  *   reports `resume`, not `startup`, so its pid's old files stay; the sweep
- *   at the next server start still removes a dead pid's files.
+ *   at the next server start still removes a dead pid's files. And Claude
+ *   Code starts its MCP server and fires SessionStart together, so a server
+ *   that read `.events` and `.stop` before this clear keeps binding mode
+ *   and the earlier process's last stop until this process's own records
+ *   arrive: bounded, since binding mode is what these hooks produce after
+ *   the first submit anyway, and the last stop feeds only the quiet
+ *   heuristics.
  * - Stop: record that a turn ended, so the server knows when Claude Code
  *   is done, not only when the reply tool was called — the turn's closing
  *   model call comes after that — and whether background work could start

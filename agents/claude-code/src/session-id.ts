@@ -996,7 +996,13 @@ function removeQuietly(path: string): void {
  * Never at `resume`, `clear` or `compact`: a running Claude Code's files
  * are its own. Never `.open`, the server's only file: it guards itself
  * ({@link readOpenFile} ignores it unless its `server_pid` is alive), and
- * this process's server may already have written it. Best effort.
+ * this process's server may already have written it. Best effort. Stated
+ * honestly: Claude Code starts its MCP server and fires SessionStart
+ * together, so a server that read `.events` and `.stop` before this clear
+ * keeps binding mode and the earlier process's last stop until this
+ * process's own records arrive. That is bounded: binding mode is what
+ * these hooks produce after the first submit anyway, and the last stop
+ * feeds only the quiet heuristics.
  */
 export function clearProcessFiles(stateDir: string, pid: number | string): void {
   for (const path of [
