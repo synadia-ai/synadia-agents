@@ -344,6 +344,16 @@ await agents.close();
 await nc.close();
 ```
 
+**A failed run.** When OpenClaw's run fails (a model provider's error,
+say), OpenClaw's reply says so and is marked as an error. The plugin does
+not send that reply as the answer: the prompt ends with a `500` error frame
+whose description is `the OpenClaw run failed: <OpenClaw's text>`, so a
+caller can tell it from the model's words; the SDK's agent tools report
+the call `failed`. Text OpenClaw streamed before the failure stands
+(`partial_reply` in the agent tools). When OpenClaw goes on after a failed
+attempt and replies after all, the failure's text is sent first, then the
+reply, as before.
+
 ## Attachments
 
 When a request envelope carries `attachments`, each file is decoded and staged at:

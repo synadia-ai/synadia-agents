@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A failed run ends the prompt with an error, not as a reply.** OpenClaw marks its reply to
+  a failed run (`⚠️ Agent run failed …`) with `isError`, but drops the mark before the
+  channel's `deliver`, so the caller got that text as the answer, `completed`. The channel's
+  `messaging.transformReplyPayload` now copies the mark to `channelData.nats.isError`, and
+  `deliver` holds such a reply instead of sending it. When the run ends on it, the prompt ends
+  with a `500` error frame, description `the OpenClaw run failed: <OpenClaw's text>` (the
+  last one, of several); text streamed before it stands. When a reply follows it (OpenClaw went
+  on), the held text is sent first, then the reply, as before. Extensions hear `promptEnded`
+  with `error` and a fourth argument, the reason `no_reply`, for this case only; a dispatch that
+  throws and a dispatch error OpenClaw reports keep no reason.
+
 ## [0.5.7] — 2026-10-12
 
 ### Fixed
