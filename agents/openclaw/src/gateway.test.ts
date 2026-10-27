@@ -1093,6 +1093,44 @@ describe("the stop", () => {
     expect(failed).toEqual(new Error("bus refused"));
   });
 
+  it("a stale start whose connect ends after a newer start came up touches nothing of the newer one", async () => {
+    // OpenClaw's recovery: the first start is stopped while it still
+    // connects, its task outlives the stop, and a second start comes up.
+    const first = natsCoreLike();
+    const firstWipe = vi.fn();
+    const connecting = deferred<void>();
+    mocks.connectToNats.mockImplementationOnce(async () => {
+      await connecting.promise;
+      return { nc: first, bundle: { connectionOptions: {}, wipe: firstWipe } };
+    });
+    const stale = new AbortController();
+    const staleCtx = gatewayContext(account(), stale.signal);
+    const staleRun = startNatsGateway(staleCtx as never);
+    await vi.waitFor(() => expect(mocks.connectToNats).toHaveBeenCalledOnce());
+    stale.abort();
+    expect(await settleWithin([stopNatsGateway(staleCtx as never)], 1_000)).toBe(true);
+
+    const second = natsCoreLike();
+    const secondWipe = connectedTo(second);
+    const b = await started(account());
+
+    // The first start's connect ends now.
+    connecting.resolve();
+    expect(await settleWithin([staleRun], 1_000)).toBe(true);
+    expect(first.drain).toHaveBeenCalledOnce();
+    expect(firstWipe).toHaveBeenCalledOnce();
+    expect(mocks.services).toHaveLength(1);
+    expect(second.drain).not.toHaveBeenCalled();
+    expect(secondWipe).not.toHaveBeenCalled();
+
+    // The second gateway is intact: its stop drains its connection once.
+    b.controller.abort();
+    expect(await settleWithin([b.running, stopNatsGateway(b.ctx as never)], 1_000)).toBe(true);
+    expect(second.drain).toHaveBeenCalledOnce();
+    expect(secondWipe).toHaveBeenCalledOnce();
+    expect(mocks.serviceStops[0]).toHaveBeenCalledOnce();
+  });
+
   it("a start during a cleanup waits for it, and the cleanup leaves the new gateway alone", async () => {
     const first = natsCoreLike("on-call");
     const firstWipe = connectedTo(first);

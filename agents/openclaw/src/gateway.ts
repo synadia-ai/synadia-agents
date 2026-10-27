@@ -161,9 +161,10 @@ const DRAIN_FLOOR_MS = 500;
 // ended. Cleared when it settles, so the next call runs a new cleanup, the
 // retry after a failed one among them.
 let cleanupInFlight: Promise<void> | null = null;
-// The cleanups begun so far: a start that sees this change while its
-// service starts was stopped meanwhile.
-let cleanupRuns = 0;
+// The start the module's state belongs to; a cleanup clears it. A start
+// that finds after an await that it is no longer this one was stopped or
+// replaced meanwhile, and touches nothing but what it made itself.
+let activeStart: symbol | null = null;
 
 /**
  * Take the gateway down. A caller that finds a cleanup running joins it, and
@@ -213,7 +214,7 @@ async function leaveStep(
 }
 
 async function runCleanup(): Promise<void> {
-  cleanupRuns++;
+  activeStart = null;
   // The extensions hear of the stop before the service leaves the bus.
   if (activeService && activeExtensions) {
     await activeExtensions.stopping();
@@ -307,10 +308,13 @@ export async function startNatsGateway(
       : "configured URL";
 
   await cleanupPrevious();
-  const runsBefore = cleanupRuns;
+  const self = Symbol(agentName);
+  activeStart = self;
+  const mine = (): boolean => activeStart === self;
 
   const logger = gatewayLogger(ctx);
   const extensions = await loadAccountExtensions(account, logger);
+  if (!mine()) return;
   activeExtensions = extensions;
   setActiveExtensions({ accountId: account.accountId, names: extensions.names });
 
@@ -326,6 +330,12 @@ export async function startNatsGateway(
     senderIdentity: account.senderIdentity,
     name: `openclaw-${agentName}`,
   });
+  if (!mine()) {
+    // Stopped or replaced while it connected: the connection is all it owns.
+    await drainConnection(connected.nc, LEAVE_TIMEOUT_MS);
+    connected.bundle.wipe();
+    return;
+  }
   activeNc = connected.nc;
   activeBundle = connected.bundle;
   activeAgentName = agentName;
@@ -434,18 +444,24 @@ export async function startNatsGateway(
     throw error;
   }
   if (aborted) void starting.then(() => service.stop(), () => undefined);
-  activeService = service;
-  if (aborted || cleanupRuns !== runsBefore) {
-    // A stop came while the service started, and has taken down, or is
-    // taking down, what was up then. The service is the cleanup's too. The
-    // extensions heard no `started()`, so they hear no `stopping()`, and no
-    // tool is registered.
-    activeExtensions = null;
-    setActiveExtensions(null);
-    await cleanupPrevious();
+  if (aborted || !mine()) {
+    // A stop came while the service started. The extensions heard no
+    // `started()`, so they hear no `stopping()`, and no tool is registered.
+    // While the state is still this start's, the service is the cleanup's
+    // too; once a cleanup took it down, or a newer start replaced it, the
+    // service is all this start may stop.
+    if (mine()) {
+      activeService = service;
+      activeExtensions = null;
+      setActiveExtensions(null);
+      await cleanupPrevious();
+    } else {
+      await leaveStep("service stop", () => service.stop(), performance.now() + LEAVE_TIMEOUT_MS);
+    }
     ctx.log?.info?.(`nats: "${agentName}" stopped while it started`);
     return;
   }
+  activeService = service;
 
   setActiveConnection(connected.nc, agentName, account.owner);
   // The tools appear to the model once the agent is on the bus.
@@ -472,7 +488,8 @@ export async function startNatsGateway(
 
   return new Promise<void>((resolve) => {
     const stop = (): void => {
-      cleanupPrevious()
+      // A cleanup or a newer start may have taken the state already.
+      (mine() ? cleanupPrevious() : Promise.resolve())
         .then(
           () => ctx.log?.info?.(`nats: "${agentName}" stopped`),
           (err) => ctx.log?.error?.(`nats: shutdown error: ${String(err)}`),
