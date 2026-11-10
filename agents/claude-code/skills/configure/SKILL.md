@@ -1,6 +1,6 @@
 ---
 name: configure
-description: Configure NATS channel - select context, set owner/session, sender identity, inbound trust, and permissions. Use when user asks to set up NATS, connect to NATS, change context, identity, trust, or permissions.
+description: Configure NATS channel - select context, set owner/session, description, sender identity, inbound trust, and permissions. Use when user asks to set up NATS, connect to NATS, change context, description, identity, trust, or permissions.
 user-invocable: true
 allowed-tools:
   - Read
@@ -15,8 +15,9 @@ effort: low
 
 # /nats-channel:configure - NATS Channel Configuration
 
-Configures the NATS channel plugin: connection context, session name, sender
-identity, inbound sender trust, and permission handling. State lives in
+Configures the NATS channel plugin: connection context, session name,
+description, sender identity, inbound sender trust, and permission handling.
+State lives in
 `~/.claude/channels/nats/config.json`.
 
 Arguments passed: `$ARGUMENTS`
@@ -33,6 +34,7 @@ Read state and give the user a complete picture, then ask:
    - Selected context name (or "none - using demo.nats.io")
    - Owner override (if set)
    - Session name override (if set)
+   - Description (if set; otherwise the default, `Claude Code — <session name>`)
    - Sender identity mode (`off` or `signed`; default `off`)
    - Minimum sender trust (`any` or `signed`; default `any`)
    - Connection URL and description from the context file
@@ -101,6 +103,28 @@ Remove the `sessionName` field from `config.json` so the default
 
 Remove the `owner` field from `config.json` so the default (sanitized
 `$USER`) is used.
+
+### `description <text>` - say what this session does
+
+1. The description is what other agents read when they discover this
+   session and choose whom to ask: it is the `description` of the
+   session's registration (`$SRV.INFO`). It says what the session does,
+   what to ask it, and what it can reach or never does, in one to three
+   sentences. It defaults to `Claude Code — <session name>`.
+2. Everything after the word `description` is the text. Make it one line
+   of plain text: turn line breaks and tabs into spaces, collapse repeated
+   spaces, and trim the ends. It may have at most 500 characters; if it
+   has more, say so and ask the user for a shorter one rather than cut it.
+3. Read existing `config.json` (or start fresh). Set the `description`
+   field. Write back.
+4. Confirm the description. Note: the `SYNADIA_CLAUDE_CODE_DESCRIPTION`
+   and `SYNADIA_DESCRIPTION` env vars take precedence over this config
+   field.
+
+### `description clear` - remove the description
+
+Remove the `description` field from `config.json` so the default
+(`Claude Code — <session name>`) is registered.
 
 ### `identity off` - disable host identity
 
@@ -182,6 +206,10 @@ Delete `~/.claude/channels/nats/config.json`.
   file contains `url`, `description`, `creds`, `nkey`, `user`, `password`,
   `token`, `cert`, `key`, `ca`, and other fields.
 - Do not modify NATS CLI context files - only read them.
+- The description is read by every agent that can discover the session.
+  Never put a key, a password or any other secret in it. The server cleans
+  it at boot (one line, at most 500 characters) and never fails to start
+  over it.
 - `senderIdentity` and `minSenderTrust` are independent. Do not enable strict
   inbound policy merely because signed host identity was enabled.
 - Legacy configs with `"mode": "nats"` are still accepted and treated as

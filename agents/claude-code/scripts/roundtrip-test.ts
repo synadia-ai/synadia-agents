@@ -105,8 +105,11 @@ await runHook({ hook_event_name: 'SessionStart', session_id: SESSION_ID, source:
 const nc = await connect({ servers: NATS_URL, name: 'claude-channel-roundtrip-probe' })
 const discovery = new Agents({ nc })
 const childEnv: Record<string, string> = {}
+// Not the invoking shell's context, nor its description: the channel starts
+// without one, and the description cases below set their own.
+const NOT_INHERITED = ['NATS_CONTEXT', 'SYNADIA_CLAUDE_CODE_DESCRIPTION', 'SYNADIA_DESCRIPTION']
 for (const [key, value] of Object.entries(process.env)) {
-  if (value !== undefined && key !== 'NATS_CONTEXT') childEnv[key] = value
+  if (value !== undefined && !NOT_INHERITED.includes(key)) childEnv[key] = value
 }
 Object.assign(childEnv, {
   CLAUDE_CWD: '/tmp/rt-test',
@@ -164,6 +167,10 @@ if (discovered.identity !== undefined) throw new Error('identity-off plugin regi
 if (discovered.minSenderTrust !== 'any') throw new Error('default min_sender_trust is not any')
 if (discovered.metadata.rt_feature !== 'on') throw new Error('the extension\'s metadata key was not registered')
 if (discovered.metadata.session !== NAME) throw new Error('the extension overrode a registration key')
+// No description is set: the default text, unchanged.
+if (discovered.description !== `Claude Code — ${NAME}`) {
+  throw new Error(`the default description changed: ${JSON.stringify(discovered.description)}`)
+}
 
 // An extension with an invalid metadata key: the server exits at start,
 // before it connects, and names the key.
@@ -186,6 +193,94 @@ if (discovered.metadata.session !== NAME) throw new Error('the extension overrod
   if (!stderr.includes('extension "rt-bad": metadata key "not a key" is invalid')) {
     throw new Error(`the server with an invalid metadata key did not name it: ${stderr}`)
   }
+}
+
+// The description: each channel below starts with its own setting, registers,
+// and is read back from discovery (`$SRV.INFO`) before it is stopped.
+{
+  const describedChannel = async (
+    name: string,
+    env: Record<string, string>,
+    config: Record<string, unknown>,
+  ): Promise<{ description: string | undefined; stderr: string }> => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-channel-described-'))
+    writeFileSync(join(dir, 'config.json'), JSON.stringify(config))
+    const child = Bun.spawn(['bun', join(cacheRoot, 'runtime', 'server.js')], {
+      env: {
+        ...childEnv,
+        NATS_STATE_DIR: dir,
+        NATS_SESSION_NAME: name,
+        SYNADIA_CLAUDE_CODE_EXTENSIONS: '',
+        ...env,
+      },
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    let description: string | undefined
+    for (let attempt = 0; attempt < 40 && description === undefined; attempt++) {
+      const found = await discovery.discover({
+        timeoutMs: 100,
+        filter: { agent: 'claude-code', owner: OWNER, name },
+      })
+      description = found[0]?.description
+    }
+    // SIGTERM, which the channel handles as a shutdown; then gone for sure.
+    child.kill()
+    if ((await Promise.race([child.exited, Bun.sleep(10_000).then(() => 'timeout' as const)])) === 'timeout') {
+      child.kill(9)
+    }
+    const stderr = await new Response(child.stderr).text()
+    rmSync(dir, { recursive: true, force: true })
+    return { description, stderr }
+  }
+  const warnings = (stderr: string): string[] =>
+    stderr.split('\n').filter(line => line.includes('warning: the description'))
+  const expectDescription = (
+    label: string,
+    got: { description: string | undefined; stderr: string },
+    description: string,
+    warned: string[],
+  ): void => {
+    if (got.description !== description) {
+      throw new Error(`${label}: registered ${JSON.stringify(got.description)}; its stderr:\n${got.stderr}`)
+    }
+    if (JSON.stringify(warnings(got.stderr)) !== JSON.stringify(warned)) {
+      throw new Error(`${label}: warned ${JSON.stringify(warnings(got.stderr))}`)
+    }
+  }
+
+  const [perAgent, shared, fromConfig, notText] = await Promise.all([
+    // The per-agent variable wins over the shared one and the config file;
+    // its line break and repeated spaces are cleaned, with one warning.
+    describedChannel(
+      'rt-described',
+      {
+        SYNADIA_CLAUDE_CODE_DESCRIPTION: 'Keeps the logs of the orders server.\n  Ask it what happened in a time range.',
+        SYNADIA_DESCRIPTION: 'the shared one',
+      },
+      { description: 'the config file\'s' },
+    ),
+    // The shared variable wins over the config file.
+    describedChannel('rt-described-shared', { SYNADIA_DESCRIPTION: 'the shared one' }, { description: 'the config file\'s' }),
+    // The config file's description counts when no variable is set.
+    describedChannel('rt-described-config', {}, { description: 'Answers questions about the orders. Reads only.' }),
+    // A description that is not text never stops the start: the default text.
+    describedChannel('rt-described-not-text', {}, { description: 42 }),
+  ])
+  expectDescription(
+    'SYNADIA_CLAUDE_CODE_DESCRIPTION',
+    perAgent!,
+    'Keeps the logs of the orders server. Ask it what happened in a time range.',
+    [
+      'nats channel: warning: the description was cleaned: it is registered as one line, with single spaces and without control or invisible characters {}',
+    ],
+  )
+  expectDescription('SYNADIA_DESCRIPTION', shared!, 'the shared one', [])
+  expectDescription('config.json description', fromConfig!, 'Answers questions about the orders. Reads only.', [])
+  expectDescription('a description that is not text', notText!, 'Claude Code — rt-described-not-text', [
+    'nats channel: warning: the description is not text; it is ignored and the default is registered {}',
+  ])
 }
 
 type Collected = {
