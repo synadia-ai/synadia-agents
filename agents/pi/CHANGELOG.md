@@ -18,10 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `description` field of `nats-channel.json`, env beating the file as for
   the owner and the session name, or with
   `/nats-configure description <text|clear>`. It is registered as one line
-  of at most 500 characters: line breaks, tabs, control and invisible
-  characters become spaces (the zero width joiner and non-joiner stay),
-  repeated spaces one, half of a surrogate pair U+FFFD, and a longer text
-  is cut to its first 500. A text this changed is used as cleaned, with one
+  of at most 500 characters: line breaks, tabs, control characters and
+  invisible format characters (the Unicode categories Cc and Cf) become a
+  space, the zero width joiner and non-joiner stay, spaces of every kind
+  become one plain space with none at either end, half of a surrogate pair
+  becomes U+FFFD, and a longer text is cut at 500 characters. Every other
+  character stays as written. A text this changed is used as cleaned, with one
   warning at start; a description never stops the channel from starting.
   Without one the registration keeps its text,
   `PI agent (<session>) in <cwd>`. `/nats-status` shows the description in

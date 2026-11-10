@@ -194,12 +194,14 @@ happened in a time range. Reads only; changes nothing on the server.` Set
 it in `SYNADIA_CLAUDE_CODE_DESCRIPTION` or `SYNADIA_DESCRIPTION`, as the
 `description` field of `config.json`, or with
 `/nats-channel:configure description <text>`. It is one line of plain text
-of at most 500 characters: line breaks, tabs, control and invisible
-characters become spaces (all but the zero width joiner and non-joiner,
-which some scripts and emoji sequences need), repeated spaces one, half of
-a surrogate pair, as a text cut inside an emoji leaves it, becomes U+FFFD,
-and a longer text is cut to its first 500 characters; a text this changed
-is registered as cleaned,
+of at most 500 characters. Line breaks, tabs, control characters and
+invisible format characters (the Unicode categories Cc and Cf) become a
+space; the zero width joiner and non-joiner stay, since some scripts and
+emoji sequences need them. Spaces of every kind, and several in a row,
+become one plain space, and none stays at either end. Half of a surrogate
+pair, as a text cut inside an emoji leaves it, becomes U+FFFD, and a longer
+text is cut at 500 characters. Every other character stays as written,
+whether it shows or not. A text this changed is registered as cleaned,
 with one `warning:` line on stderr at start, and a description never stops
 the channel from starting. It is the session's own claim about itself, and
 everyone who can discover the session can read it, so it holds no secret.
