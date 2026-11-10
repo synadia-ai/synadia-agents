@@ -623,6 +623,13 @@ console.log('\n[case 5] agent tools, the PreToolUse id, the snapshot re-entry an
 
   let toolReply: unknown
   let servedRequestId = ''
+  let stopRecorded!: () => void
+  // The handler's Stop comes after the reply, whose terminator is all the
+  // caller waits for. Wait for it, as case 9 does: the next case that sends
+  // a prompt must find it recorded. A Stop the hook records after a prompt
+  // was delivered is, to the server, a Stop since that prompt: the prompt
+  // then owns no turn, and its own turn's first Stop is not refused for it.
+  const turnOver = new Promise<void>(resolve => { stopRecorded = resolve })
   currentCase = {
     replyHandler: async requestId => {
       servedRequestId = requestId
@@ -639,9 +646,14 @@ console.log('\n[case 5] agent tools, the PreToolUse id, the snapshot re-entry an
       toolReply = result.content[0]?.type === 'text' ? JSON.parse(result.content[0].text) : undefined
       await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'asked' } })
       await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID })
+      stopRecorded()
     },
   }
   const chunks = await collectChunks(JSON.stringify({ prompt: 'ask the other agent', trace_hint: 'x' }))
+  // The hook gives itself 5 s; past 10 s the handler never reached its Stop.
+  if ((await Promise.race([turnOver, Bun.sleep(10_000).then(() => 'timeout' as const)])) === 'timeout') {
+    fail('the handler\'s Stop hook did not run')
+  }
   assertAck(chunks[0])
   if ((toolReply as { reply?: unknown } | undefined)?.reply !== 'echo: ping') {
     fail(`prompt_agent result was ${JSON.stringify(toolReply)}`)
