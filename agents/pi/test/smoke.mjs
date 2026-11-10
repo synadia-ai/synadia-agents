@@ -28,7 +28,8 @@
 //      directory are registered, as before; one set in
 //      SYNADIA_PI_DESCRIPTION is registered cleaned, with one warning, and
 //      SYNADIA_DESCRIPTION is the fallback; the config file's `description`
-//      counts when no variable is set (a session started in a throwaway
+//      counts when no variable is set, a variable wins over it, and an
+//      empty variable switches it off (sessions started in a throwaway
 //      home directory); `/nats-status` shows the one in use.
 //
 // Run with:
@@ -630,55 +631,84 @@ await step(
   },
 )();
 
+// Start one more session in a process of its own, its home a throwaway
+// directory holding `config` as nats-channel.json, connected straight to
+// the spawned server, with only the description variables `env` names.
+// Hands back the description it registered. The config file lives under
+// the home directory, so this is the only way to give a session one.
+async function describedFromHome(name, config, env = {}) {
+  const home = mkdtempSync(join(tmpdir(), "pi-smoke-home-"));
+  mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+  writeFileSync(
+    join(home, ".pi", "agent", "nats-channel.json"),
+    JSON.stringify(config),
+  );
+  const childEnv = {
+    ...process.env,
+    HOME: home,
+    NATS_URL: SERVER_URL,
+    SYNADIA_PI_NAME: name,
+    SYNADIA_PI_EXTENSIONS: "",
+    ...(AUTHENTICATED ? { NATS_CREDS: ALICE_CREDS } : {}),
+  };
+  delete childEnv.NATS_CONTEXT;
+  // No description variable but the ones asked for, not even the empty
+  // one this smoke runs under.
+  delete childEnv.SYNADIA_PI_DESCRIPTION;
+  delete childEnv.SYNADIA_DESCRIPTION;
+  Object.assign(childEnv, env);
+  const child = spawn(
+    process.execPath,
+    [join(__dirname, "fixtures", "session-from-home.mjs"), home],
+    { env: childEnv, stdio: ["pipe", "ignore", "inherit"] },
+  );
+  const exited = new Promise((resolve) => child.on("exit", resolve));
+  try {
+    const svcm = new Svcm(obs);
+    let info;
+    for (let attempt = 0; attempt < 20 && !info; attempt++) {
+      const client = svcm.client({ strategy: "stall", maxWait: 500, maxMessages: 20 });
+      for await (const si of await client.info("agents")) {
+        if (si.metadata?.agent === "pi" && si.metadata?.session === name) info = si;
+      }
+    }
+    assert.ok(info, `no registration for session=${name}`);
+    return info.description;
+  } finally {
+    child.kill("SIGTERM");
+    await Promise.race([exited, delay(5000).then(() => child.kill("SIGKILL"))]);
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 await step(
   "description: the config file's `description` is registered when no variable is set",
   async () => {
-    // The config file lives under the home directory: this session runs in
-    // a process of its own, its home a throwaway directory, and connects
-    // straight to the spawned server.
-    const home = mkdtempSync(join(tmpdir(), "pi-smoke-home-"));
-    const name = `configured-${process.pid}`;
     const text = "Answers from the config file. Ask it about the orders.";
-    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
-    writeFileSync(
-      join(home, ".pi", "agent", "nats-channel.json"),
-      JSON.stringify({ description: text }),
+    assert.equal(
+      await describedFromHome(`configured-${process.pid}`, { description: text }),
+      text,
     );
-    const env = {
-      ...process.env,
-      HOME: home,
-      NATS_URL: SERVER_URL,
-      SYNADIA_PI_NAME: name,
-      SYNADIA_PI_EXTENSIONS: "",
-      ...(AUTHENTICATED ? { NATS_CREDS: ALICE_CREDS } : {}),
-    };
-    delete env.NATS_CONTEXT;
-    // The config file's value is the point here: no description variable,
-    // not even the empty one this smoke runs under.
-    delete env.SYNADIA_PI_DESCRIPTION;
-    delete env.SYNADIA_DESCRIPTION;
-    const session = spawn(
-      process.execPath,
-      [join(__dirname, "fixtures", "session-from-home.mjs"), home],
-      { env, stdio: ["pipe", "ignore", "inherit"] },
-    );
-    const exited = new Promise((resolve) => session.on("exit", resolve));
-    try {
-      const svcm = new Svcm(obs);
-      let info;
-      for (let attempt = 0; attempt < 20 && !info; attempt++) {
-        const client = svcm.client({ strategy: "stall", maxWait: 500, maxMessages: 20 });
-        for await (const si of await client.info("agents")) {
-          if (si.metadata?.agent === "pi" && si.metadata?.session === name) info = si;
-        }
-      }
-      assert.ok(info, `no registration for session=${name}`);
-      assert.equal(info.description, text);
-    } finally {
-      session.kill("SIGTERM");
-      await Promise.race([exited, delay(5000).then(() => session.kill("SIGKILL"))]);
-      rmSync(home, { recursive: true, force: true });
-    }
+  },
+)();
+
+await step(
+  "description: a variable wins over the config file's `description`, and an empty one switches it off",
+  async () => {
+    // The order at the call site: the variables before the config field.
+    // The lowest variable against the config file pins it, with the step
+    // above that sets both variables.
+    const config = { description: "from the config file" };
+    const name = `precedence-${process.pid}`;
+    const [overConfig, switchedOff] = await Promise.all([
+      describedFromHome(name, config, {
+        SYNADIA_DESCRIPTION: "from the variable",
+      }),
+      // Set but empty: no description, and the config file's is not read.
+      describedFromHome(`${name}-empty`, config, { SYNADIA_PI_DESCRIPTION: "" }),
+    ]);
+    assert.equal(overConfig, "from the variable");
+    assert.equal(switchedOff, `PI agent (${name}-empty) in ${process.cwd()}`);
   },
 )();
 
