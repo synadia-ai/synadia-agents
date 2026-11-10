@@ -92,7 +92,8 @@ All notable changes to the Claude Code NATS channel are documented here.
   agent plugin) or as `description` in `config.json`, env beating the file as for the owner
   and the session name, or with `/nats-channel:configure description <text|clear>`. It is
   registered as one line of at most 500 characters: line breaks, tabs, control and invisible
-  characters become spaces, repeated spaces one, and a longer text is cut to its first 500. A
+  characters become spaces (the zero width joiner and non-joiner stay), repeated spaces one,
+  and a longer text is cut to its first 500. A
   text this changed is used as cleaned, with one `warning:` line on stderr; a description that
   is not text is ignored the same way, and none ever stops the channel from starting. Without
   one the registration keeps its text, `Claude Code — <name>`. The `service registered` log

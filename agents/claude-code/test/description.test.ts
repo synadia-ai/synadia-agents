@@ -44,6 +44,17 @@ describe('cleanDescription', () => {
     expect(cleaned).toBe(astral.repeat(DESCRIPTION_LIMIT))
   })
 
+  test('the zero width non-joiner and joiner stay, and are no reason for a warning', () => {
+    // Persian spells with U+200C; an emoji sequence is joined by U+200D.
+    const persian = '\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645'
+    const family = '\u{1F468}\u200d\u{1F469}\u200d\u{1F467}'
+    const text = `${persian} ${family}`
+    expect(cleanDescription(text)).toBe(text)
+    expect(resolveDescription(text)).toEqual({ text })
+    // Every other invisible format character still becomes a space.
+    expect(cleanDescription('a\u200bb\u200ec\u2060d\ufeffe')).toBe('a b c d e')
+  })
+
   test('one code point at a time: no space-like character hides behind the one before it', () => {
     // A global match over the whole string missed these on Bun 1.3.14,
     // whose engine paired a UTF-16 unit in U+F800..U+FBFF with the one
@@ -105,7 +116,7 @@ describe('resolveDescription', () => {
     expect(resolveDescription('line one\nline  two\t')).toEqual({
       text: 'line one line two',
       warning:
-        'the description was cleaned: it is registered as one line, with single spaces and without control or invisible characters',
+        'the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces',
     })
   })
 

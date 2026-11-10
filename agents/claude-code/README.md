@@ -195,8 +195,10 @@ it in `SYNADIA_CLAUDE_CODE_DESCRIPTION` or `SYNADIA_DESCRIPTION`, as the
 `description` field of `config.json`, or with
 `/nats-channel:configure description <text>`. It is one line of plain text
 of at most 500 characters: line breaks, tabs, control and invisible
-characters become spaces, repeated spaces one, and a longer text is cut to
-its first 500 characters; a text this changed is registered as cleaned,
+characters become spaces (all but the zero width joiner and non-joiner,
+which some scripts and emoji sequences need), repeated spaces one, and a
+longer text is cut to its first 500 characters; a text this changed is
+registered as cleaned,
 with one `warning:` line on stderr at start, and a description never stops
 the channel from starting. It is the session's own claim about itself, and
 everyone who can discover the session can read it, so it holds no secret.

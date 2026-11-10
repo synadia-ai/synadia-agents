@@ -250,34 +250,38 @@ if (discovered.description !== `Claude Code — ${NAME}`) {
     }
   }
 
+  const JOINED = 'Answers for the \u{1F468}\u200d\u{1F469}\u200d\u{1F467} team. Reads only.'
   const [perAgent, shared, fromConfig, notText] = await Promise.all([
     // The per-agent variable wins over the shared one and the config file;
-    // its line break and repeated spaces are cleaned, with one warning.
+    // its line break and repeated spaces are cleaned, with one warning, and
+    // so is a U+FEFF right after the ligature U+FB01, which a match over
+    // the whole string missed on Bun 1.3.14.
     describedChannel(
       'rt-described',
       {
-        SYNADIA_CLAUDE_CODE_DESCRIPTION: 'Keeps the logs of the orders server.\n  Ask it what happened in a time range.',
+        SYNADIA_CLAUDE_CODE_DESCRIPTION: 'Keeps the logs of the back of\ufb01\ufeffce.\n  Ask it what happened in a time range.',
         SYNADIA_DESCRIPTION: 'the shared one',
       },
       { description: 'the config file\'s' },
     ),
     // The shared variable wins over the config file.
     describedChannel('rt-described-shared', { SYNADIA_DESCRIPTION: 'the shared one' }, { description: 'the config file\'s' }),
-    // The config file's description counts when no variable is set.
-    describedChannel('rt-described-config', {}, { description: 'Answers questions about the orders. Reads only.' }),
+    // The config file's description counts when no variable is set; the
+    // zero width joiners (U+200D) of its emoji sequence stay.
+    describedChannel('rt-described-config', {}, { description: JOINED }),
     // A description that is not text never stops the start: the default text.
     describedChannel('rt-described-not-text', {}, { description: 42 }),
   ])
   expectDescription(
     'SYNADIA_CLAUDE_CODE_DESCRIPTION',
     perAgent!,
-    'Keeps the logs of the orders server. Ask it what happened in a time range.',
+    'Keeps the logs of the back of\ufb01 ce. Ask it what happened in a time range.',
     [
-      'nats channel: warning: the description was cleaned: it is registered as one line, with single spaces and without control or invisible characters {}',
+      'nats channel: warning: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces {}',
     ],
   )
   expectDescription('SYNADIA_DESCRIPTION', shared!, 'the shared one', [])
-  expectDescription('config.json description', fromConfig!, 'Answers questions about the orders. Reads only.', [])
+  expectDescription('config.json description', fromConfig!, JOINED, [])
   expectDescription('a description that is not text', notText!, 'Claude Code — rt-described-not-text', [
     'nats channel: warning: the description is not text; it is ignored and the default is registered {}',
   ])

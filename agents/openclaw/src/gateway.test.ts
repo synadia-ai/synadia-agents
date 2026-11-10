@@ -554,7 +554,7 @@ describe("the extensions", () => {
     expect(mocks.serviceOptions[0]!.description).toBe(cleaned);
     expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({ platform: "openclaw", description: cleaned });
     expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
-      "nats: the description was cleaned: it is registered as one line, with single spaces and without control or invisible characters",
+      "nats: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces",
     ]);
     controller.abort();
     await running;

@@ -15,6 +15,11 @@ export const DESCRIPTION_LIMIT = 500;
 // U+FB01 in place).
 const SPACE_LIKE = /^[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]$/u;
 
+// The two format characters that stay as they are: U+200C, the zero width
+// non-joiner, and U+200D, the zero width joiner. Persian and the Indic
+// scripts are spelled with them, and emoji sequences are joined by U+200D.
+const KEPT = new Set(["\u200c", "\u200d"]);
+
 /** One line: every space-like code point a space, runs of spaces one, none at either end. */
 function toOneLine(text: string): string {
   let line = "";
@@ -22,7 +27,7 @@ function toOneLine(text: string): string {
   // written with the next word, so none leads and none trails.
   let gap = false;
   for (const point of text) {
-    if (SPACE_LIKE.test(point)) {
+    if (!KEPT.has(point) && SPACE_LIKE.test(point)) {
       gap = line !== "";
       continue;
     }
@@ -45,7 +50,8 @@ function cut(line: string): string {
 /**
  * Clean a description for registration. It never refuses:
  *
- * 1. every code point of the categories Cc, Cf, Zl, Zp or Zs becomes U+0020;
+ * 1. every code point of the categories Cc, Cf, Zl, Zp or Zs becomes U+0020,
+ *    except U+200C and U+200D, which stay;
  * 2. runs of U+0020 collapse to one, and leading and trailing ones go;
  * 3. a result longer than 500 code points is cut to its first 500, and a
  *    trailing U+0020 goes again.
@@ -104,7 +110,7 @@ export function resolveDescription(
     return {
       text: line,
       warning:
-        "the description was cleaned: it is registered as one line, with single spaces and without control or invisible characters",
+        "the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces",
     };
   }
   return { text: line };

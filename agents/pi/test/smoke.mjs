@@ -571,20 +571,23 @@ await step(
   async () => {
     const name = `described-${process.pid}`;
     const described = await startDescribed(name, {
+      // A line break and repeated spaces, and a U+FEFF right after the
+      // ligature U+FB01, which a match over the whole string missed on
+      // Bun 1.3.14.
       SYNADIA_PI_DESCRIPTION:
-        "Keeps the logs of the orders server.\n  Ask it what happened in a time range.",
+        "Keeps the logs of the back of\ufb01\ufeffce.\n  Ask it what happened in a time range.",
       SYNADIA_DESCRIPTION: "the shared one",
     });
     try {
       assert.ok(described.info, `no registration for session=${name}`);
       const cleaned =
-        "Keeps the logs of the orders server. Ask it what happened in a time range.";
+        "Keeps the logs of the back of\ufb01 ce. Ask it what happened in a time range.";
       assert.equal(described.info.description, cleaned);
       assert.deepEqual(
         described.notified.filter((n) => n.line.includes("description")),
         [
           {
-            line: "NATS: the description was cleaned: it is registered as one line, with single spaces and without control or invisible characters",
+            line: "NATS: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces",
             level: "warning",
           },
         ],
@@ -607,7 +610,9 @@ await step(
   "description: SYNADIA_DESCRIPTION is registered when the per-agent variable is unset, as written and without a warning",
   async () => {
     const name = `shared-${process.pid}`;
-    const text = "Answers questions about the orders. Reads only; changes nothing.";
+    // An emoji sequence: its zero width joiners (U+200D) stay.
+    const text =
+      "Answers for the \u{1F468}\u200d\u{1F469}\u200d\u{1F467} team. Reads only; changes nothing.";
     const described = await startDescribed(name, { SYNADIA_DESCRIPTION: text });
     try {
       assert.ok(described.info, `no registration for session=${name}`);
