@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 
 const [args = "", expectedHome] = process.argv.slice(2);
 if (!expectedHome || homedir() !== expectedHome) {
-  console.error(`home directory not redirected: ${homedir()}`);
+  process.stderr.write(`home directory not redirected: ${homedir()}\n`);
   process.exit(3);
 }
 
@@ -34,5 +34,6 @@ await commands.get("nats-configure").handler(args, {
     setStatus() {},
   },
 });
-console.log(JSON.stringify(notified));
-process.exit(0);
+// The extension keeps nothing open before `session_start`: the process ends
+// by itself once the line is written.
+process.stdout.write(`${JSON.stringify(notified)}\n`);
