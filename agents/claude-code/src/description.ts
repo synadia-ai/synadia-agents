@@ -6,24 +6,39 @@
 /** The most code points a description holds. */
 export const DESCRIPTION_LIMIT = 500
 
-// Every code point of the Unicode categories Cc, Cf, Zl, Zp and Zs: control
-// characters, invisible format characters, line and paragraph separators,
-// and spaces of every kind.
-const SPACE_LIKE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]/gu
+// One code point of the Unicode categories Cc, Cf, Zl, Zp or Zs: a control
+// character, an invisible format character, a line or paragraph separator,
+// or a space of any kind. Anchored, and tested against one code point at a
+// time: a global match over a whole string misses characters on an engine
+// that pairs UTF-16 units wrongly (Bun 1.3.14 leaves a U+FEFF that follows
+// U+FB01 in place).
+const SPACE_LIKE = /^[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]$/u
 
 /** One line: every space-like code point a space, runs of spaces one, none at either end. */
 function toOneLine(text: string): string {
-  return text
-    .replace(SPACE_LIKE, ' ')
-    .replace(/ {2,}/g, ' ')
-    .replace(/^ | $/g, '')
+  let line = ''
+  // A space is owed once a space-like code point followed a word; it is
+  // written with the next word, so none leads and none trails.
+  let gap = false
+  for (const point of text) {
+    if (SPACE_LIKE.test(point)) {
+      gap = line !== ''
+      continue
+    }
+    if (gap) line += ' '
+    gap = false
+    line += point
+  }
+  return line
 }
 
 /** The first `DESCRIPTION_LIMIT` code points of a line, without a trailing space. */
 function cut(line: string): string {
   const points = Array.from(line)
   if (points.length <= DESCRIPTION_LIMIT) return line
-  return points.slice(0, DESCRIPTION_LIMIT).join('').replace(/ $/, '')
+  const kept = points.slice(0, DESCRIPTION_LIMIT)
+  if (kept[kept.length - 1] === ' ') kept.pop()
+  return kept.join('')
 }
 
 /**

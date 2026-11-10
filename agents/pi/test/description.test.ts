@@ -57,6 +57,24 @@ describe("cleanDescription", () => {
 		expect(codePoints(cleaned)).toBe(DESCRIPTION_LIMIT);
 		expect(cleaned).toBe(astral.repeat(DESCRIPTION_LIMIT));
 	});
+
+	test("one code point at a time: no space-like character hides behind the one before it", () => {
+		// A global match over the whole string missed these on Bun 1.3.14,
+		// whose engine paired a UTF-16 unit in U+F800..U+FBFF with the one
+		// after it: a U+FEFF after the ligature U+FB01 stayed in place.
+		expect(cleanDescription("of\ufb01\ufeffce")).toBe("of\ufb01 ce");
+		expect(cleanDescription("a\uf900\ufff9b")).toBe("a\uf900 b");
+		const missed: string[] = [];
+		for (let lead = 0xf800; lead <= 0xfbff; lead++) {
+			const before = String.fromCharCode(lead);
+			for (const hidden of ["\ufeff", "\ufff9", "\ufffa", "\ufffb"]) {
+				if (cleanDescription(`a${before}${hidden}b`) !== `a${before} b`) {
+					missed.push(`U+${lead.toString(16)} U+${hidden.charCodeAt(0).toString(16)}`);
+				}
+			}
+		}
+		expect(missed).toEqual([]);
+	});
 });
 
 describe("resolveDescription", () => {
