@@ -195,9 +195,13 @@ if (discovered.description !== `Claude Code — ${NAME}`) {
   }
 }
 
-// The description: each channel below starts with its own setting, registers,
-// and is read back from discovery (`$SRV.INFO`) before it is stopped.
+// The description: five channels, started together, each with a setting of
+// its own. Each has 15 s to register, is read back from discovery
+// (`$SRV.INFO`), and is then stopped; the five are compared once all are back.
 {
+  // Five more `bun` processes start at once, and on a busy machine a start
+  // takes seconds; a channel not found in time fails the whole script.
+  const REGISTER_WAIT_MS = 15_000
   const describedChannel = async (
     name: string,
     env: Record<string, string>,
@@ -218,7 +222,8 @@ if (discovered.description !== `Claude Code — ${NAME}`) {
       stderr: 'pipe',
     })
     let description: string | undefined
-    for (let attempt = 0; attempt < 40 && description === undefined; attempt++) {
+    const deadline = Date.now() + REGISTER_WAIT_MS
+    while (description === undefined && Date.now() < deadline) {
       const found = await discovery.discover({
         timeoutMs: 100,
         filter: { agent: 'claude-code', owner: OWNER, name },
