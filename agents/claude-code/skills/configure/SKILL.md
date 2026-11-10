@@ -111,17 +111,31 @@ Remove the `owner` field from `config.json` so the default (sanitized
    session's registration (`$SRV.INFO`). It says what the session does,
    what to ask it, and what it can reach or never does, in one to three
    sentences. It defaults to `Claude Code — <session name>`.
-2. Everything after the word `description` is the text. Make it one line
-   of plain text: turn line breaks and tabs into spaces, collapse repeated
-   spaces, and trim the ends. It may have at most 500 characters; if it
-   has more, say so and ask the user for a shorter one rather than cut it.
+2. Everything after the word `description` is the text, unless it is the
+   word `clear` alone (see `description clear` below). Make it one line
+   of plain text: turn line breaks, tabs and any other control characters
+   into spaces, collapse repeated spaces, and trim the ends. It may have
+   at most 500 characters; if it has more, say so and ask the user for a
+   shorter one rather than cut it.
 3. Read existing `config.json` (or start fresh). Set the `description`
-   field. Write back.
-4. Confirm the description. Note: the `SYNADIA_CLAUDE_CODE_DESCRIPTION`
+   field to the text as a JSON string: inside it, write `"` as `\"` and
+   `\` as `\\`, as JSON requires. Unlike the other fields this skill
+   writes, the description is free text, and it is written by hand. Write
+   back.
+4. Read `config.json` again and check that it is still valid JSON, with
+   every other field as it was and the description reading as the user
+   gave it. A `config.json` that does not parse stops the channel from
+   starting (`invalid config.json: expected valid JSON`). If it does not
+   parse, correct it and read it again before going on.
+5. Confirm the description. Note: the `SYNADIA_CLAUDE_CODE_DESCRIPTION`
    and `SYNADIA_DESCRIPTION` env vars take precedence over this config
    field.
 
 ### `description clear` - remove the description
+
+Only when the word `clear` is all that follows `description`. A text that
+only begins with it, such as `description clear the cache when asked`, is
+a description to set.
 
 Remove the `description` field from `config.json` so the default
 (`Claude Code — <session name>`) is registered.
@@ -208,8 +222,11 @@ Delete `~/.claude/channels/nats/config.json`.
 - Do not modify NATS CLI context files - only read them.
 - The description is read by every agent that can discover the session.
   Never put a key, a password or any other secret in it. The server cleans
-  it at boot (one line, at most 500 characters) and never fails to start
-  over it.
+  its value at boot (one line, at most 500 characters), and no value of
+  it stops the start: one that is not text is ignored, with a warning. A
+  `config.json` that is not valid JSON does stop the start, whichever
+  field broke it. That is why the description is written escaped and the
+  file is read back.
 - `senderIdentity` and `minSenderTrust` are independent. Do not enable strict
   inbound policy merely because signed host identity was enabled.
 - Legacy configs with `"mode": "nats"` are still accepted and treated as
