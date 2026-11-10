@@ -189,7 +189,11 @@ export function resolveNatsAccount(
   // Identity tokens (owner / agentName) follow the SYNADIA_* convention
   // shared across agents/*: per-agent var (SYNADIA_OPENCLAW_*) > fleet-wide
   // var (SYNADIA_*) > legacy alias (NATS_OWNER / NATS_ORG / NATS_AGENT_NAME)
-  // > account config. The legacy vars keep working indefinitely.
+  // > account config. The legacy vars keep working indefinitely. The
+  // description follows the same chain: SYNADIA_OPENCLAW_DESCRIPTION >
+  // SYNADIA_DESCRIPTION > NATS_DESCRIPTION (the plugin's first name for it)
+  // > account config. It is kept here as written; the gateway cleans it
+  // before it registers it (`description.ts`).
   const env = process.env;
 
   // ── Per-field env overrides (lower precedence than $NATS_CONTEXT) ──────
@@ -223,14 +227,21 @@ export function resolveNatsAccount(
       nameEnv.name,
     );
   }
-  applyEnvOverride(
-    resolved,
-    "description",
-    raw.description,
-    env.NATS_DESCRIPTION,
-    id,
+  const descriptionEnv = firstDefinedEnv(
+    "SYNADIA_OPENCLAW_DESCRIPTION",
+    "SYNADIA_DESCRIPTION",
     "NATS_DESCRIPTION",
   );
+  if (descriptionEnv) {
+    applyEnvOverride(
+      resolved,
+      "description",
+      raw.description,
+      descriptionEnv.value,
+      id,
+      descriptionEnv.name,
+    );
+  }
   const ownerEnv = firstDefinedEnv(
     "SYNADIA_OPENCLAW_OWNER",
     "SYNADIA_OWNER",

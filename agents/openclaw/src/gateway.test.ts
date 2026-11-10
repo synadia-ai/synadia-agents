@@ -524,6 +524,69 @@ describe("the extensions", () => {
     await running;
   });
 
+  it("registers the account's description as written, in the service and its metadata, without a warning", async () => {
+    connected();
+    const text = "Keeps the logs of the orders server. Ask it what happened in a time range.";
+    const { controller, running, ctx } = await started(account({ description: text }));
+    expect(mocks.serviceOptions[0]!.description).toBe(text);
+    expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({ platform: "openclaw", description: text });
+    expect(ctx.log.warn).not.toHaveBeenCalled();
+    controller.abort();
+    await running;
+  });
+
+  it("without a description, registers the default text and an empty metadata description", async () => {
+    connected();
+    const { controller, running, ctx } = await started(account({ description: "" }));
+    expect(mocks.serviceOptions[0]!.description).toBe("OpenClaw agent echo");
+    expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({ platform: "openclaw", description: "" });
+    expect(ctx.log.warn).not.toHaveBeenCalled();
+    controller.abort();
+    await running;
+  });
+
+  it("a description cleaning changed is registered cleaned in both places, with one warning", async () => {
+    connected();
+    const { controller, running, ctx } = await started(
+      account({ description: "Keeps the logs of the orders server.\n  Ask it what happened\tin a time range. " }),
+    );
+    const cleaned = "Keeps the logs of the orders server. Ask it what happened in a time range.";
+    expect(mocks.serviceOptions[0]!.description).toBe(cleaned);
+    expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({ platform: "openclaw", description: cleaned });
+    expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
+      "nats: the description was cleaned: it is registered as one line, with single spaces and without control or invisible characters",
+    ]);
+    controller.abort();
+    await running;
+  });
+
+  it("a description over 500 characters is cut to its first 500, with one warning", async () => {
+    connected();
+    const { controller, running, ctx } = await started(account({ description: "a".repeat(612) }));
+    expect(mocks.serviceOptions[0]!.description).toBe("a".repeat(500));
+    expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({
+      platform: "openclaw",
+      description: "a".repeat(500),
+    });
+    expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
+      "nats: the description was shortened: it had 612 characters and its first 500 are registered",
+    ]);
+    controller.abort();
+    await running;
+  });
+
+  it("a description that is not text never fails the start: the default text, with one warning", async () => {
+    connected();
+    const { controller, running, ctx } = await started(account({ description: 42 as never }));
+    expect(mocks.serviceOptions[0]!.description).toBe("OpenClaw agent echo");
+    expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({ platform: "openclaw", description: "" });
+    expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
+      "nats: the description is not text; it is ignored and the default is registered",
+    ]);
+    controller.abort();
+    await running;
+  });
+
   it("an invalid metadata key fails the start before the connection", async () => {
     connected();
     const entry = { module: counterModule, options: { metadata: { "not a key": "v" } } };

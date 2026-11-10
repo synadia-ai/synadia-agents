@@ -50,6 +50,7 @@ import {
   type Outcome,
   type ServedRequest,
 } from "./extensions.js";
+import { resolveDescription } from "./description.js";
 import { isFailedRunReply } from "./failed-run.js";
 import { registerAgentTools, toolNamesFor, type ActiveTurn } from "./tools.js";
 
@@ -266,6 +267,7 @@ async function runCleanup(): Promise<void> {
 async function loadAccountExtensions(
   account: ResolvedNatsAccount,
   logger: Logger,
+  pluginMetadataKeys: ReadonlyArray<string>,
 ): Promise<ComposedExtensions> {
   if (account.extensions.entries.length === 0) {
     return composeExtensions([], logger);
@@ -287,14 +289,16 @@ async function loadAccountExtensions(
     },
     logger,
   );
-  return composeExtensions(loaded, logger, {
-    pluginMetadataKeys: Object.keys(pluginMetadata(account)),
-  });
+  return composeExtensions(loaded, logger, { pluginMetadataKeys });
 }
 
-/** The gateway's own registration metadata keys; they win over an extension's. */
-function pluginMetadata(account: ResolvedNatsAccount): Record<string, string> {
-  return { platform: "openclaw", description: account.description };
+/**
+ * The gateway's own registration metadata; its keys win over an
+ * extension's. `description` is the account's, cleaned, and empty when
+ * none is set.
+ */
+function pluginMetadata(description: string): Record<string, string> {
+  return { platform: "openclaw", description };
 }
 
 export async function startNatsGateway(
@@ -313,7 +317,18 @@ export async function startNatsGateway(
   const mine = (): boolean => activeStart === self;
 
   const logger = gatewayLogger(ctx);
-  const extensions = await loadAccountExtensions(account, logger);
+  // The account's description as it is registered: one line of at most 500
+  // characters. Never a reason not to start: a text cleaning changed is
+  // used as cleaned, one that is not text is ignored, and either is logged
+  // once. Without one the default text is registered.
+  const described = resolveDescription(account.description);
+  if (described.warning) logger.warn(described.warning);
+  const ownMetadata = pluginMetadata(described.text ?? "");
+  const extensions = await loadAccountExtensions(
+    account,
+    logger,
+    Object.keys(ownMetadata),
+  );
   if (!mine()) return;
   activeExtensions = extensions;
   setActiveExtensions({ accountId: account.accountId, names: extensions.names });
@@ -389,14 +404,14 @@ export async function startNatsGateway(
     owner: account.owner,
     name: agentName,
     session: DEFAULT_SESSION,
-    description: account.description || `OpenClaw agent ${agentName}`,
+    description: described.text ?? `OpenClaw agent ${agentName}`,
     version: SERVICE_VERSION,
     attachmentsOk: DEFAULT_ATTACHMENTS_OK,
     heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
     keepaliveIntervalS: ACK_KEEPALIVE_MS / 1_000,
     extraMetadata: {
       ...extensions.metadata,
-      ...pluginMetadata(account),
+      ...ownMetadata,
     },
     ...(signer ? { identity: { signer } } : {}),
     minSenderTrust: account.minSenderTrust,
