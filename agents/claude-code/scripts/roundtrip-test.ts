@@ -251,7 +251,7 @@ if (discovered.description !== `Claude Code — ${NAME}`) {
   }
 
   const JOINED = 'Answers for the \u{1F468}\u200d\u{1F469}\u200d\u{1F467} team. Reads only.'
-  const [perAgent, shared, fromConfig, notText] = await Promise.all([
+  const [perAgent, shared, fromConfig, notText, halfPair] = await Promise.all([
     // The per-agent variable wins over the shared one and the config file;
     // its line break and repeated spaces are cleaned, with one warning, and
     // so is a U+FEFF right after the ligature U+FB01, which a match over
@@ -271,17 +271,22 @@ if (discovered.description !== `Claude Code — ${NAME}`) {
     describedChannel('rt-described-config', {}, { description: JOINED }),
     // A description that is not text never stops the start: the default text.
     describedChannel('rt-described-not-text', {}, { description: 42 }),
+    // A text cut inside an emoji ends on half of a surrogate pair: U+FFFD.
+    describedChannel('rt-described-half-pair', {}, { description: 'Cut inside an emoji \ud83d' }),
   ])
   expectDescription(
     'SYNADIA_CLAUDE_CODE_DESCRIPTION',
     perAgent!,
     'Keeps the logs of the back of\ufb01 ce. Ask it what happened in a time range.',
     [
-      'nats channel: warning: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces {}',
+      'nats channel: warning: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair {}',
     ],
   )
   expectDescription('SYNADIA_DESCRIPTION', shared!, 'the shared one', [])
   expectDescription('config.json description', fromConfig!, JOINED, [])
+  expectDescription('half of a surrogate pair', halfPair!, 'Cut inside an emoji \ufffd', [
+    'nats channel: warning: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair {}',
+  ])
   expectDescription('a description that is not text', notText!, 'Claude Code — rt-described-not-text', [
     'nats channel: warning: the description is not text; it is ignored and the default is registered {}',
   ])

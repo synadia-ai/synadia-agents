@@ -20,13 +20,32 @@ const SPACE_LIKE = /^[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]$/u;
 // scripts are spelled with them, and emoji sequences are joined by U+200D.
 const KEPT = new Set(["\u200c", "\u200d"]);
 
-/** One line: every space-like code point a space, runs of spaces one, none at either end. */
+// What a surrogate that is not part of a pair becomes: the replacement
+// character. A text cut inside an emoji holds one, and so can a value that
+// was not valid UTF-8; a reader that cannot encode it fails on the whole
+// description.
+const REPLACEMENT = "\ufffd";
+
+/** Whether `point`, one step of a loop over code points, is half of a surrogate pair. */
+function isLoneSurrogate(point: string): boolean {
+  if (point.length !== 1) return false;
+  const unit = point.charCodeAt(0);
+  return unit >= 0xd800 && unit <= 0xdfff;
+}
+
+/**
+ * One line: a lone surrogate the replacement character, every space-like
+ * code point a space, runs of spaces one, none at either end.
+ */
 function toOneLine(text: string): string {
   let line = "";
   // A space is owed once a space-like code point followed a word; it is
   // written with the next word, so none leads and none trails.
   let gap = false;
-  for (const point of text) {
+  for (const unit of text) {
+    // First, before anything else: the loop hands a lone surrogate over as
+    // a single UTF-16 unit.
+    const point = isLoneSurrogate(unit) ? REPLACEMENT : unit;
     if (!KEPT.has(point) && SPACE_LIKE.test(point)) {
       gap = line !== "";
       continue;
@@ -50,8 +69,9 @@ function cut(line: string): string {
 /**
  * Clean a description for registration. It never refuses:
  *
- * 1. every code point of the categories Cc, Cf, Zl, Zp or Zs becomes U+0020,
- *    except U+200C and U+200D, which stay;
+ * 1. a surrogate that is not part of a pair becomes U+FFFD; then every code
+ *    point of the categories Cc, Cf, Zl, Zp or Zs becomes U+0020, except
+ *    U+200C and U+200D, which stay;
  * 2. runs of U+0020 collapse to one, and leading and trailing ones go;
  * 3. a result longer than 500 code points is cut to its first 500, and a
  *    trailing U+0020 goes again.
@@ -118,7 +138,7 @@ export function resolveDescription(
     return {
       text: line,
       warning:
-        "the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces",
+        "the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
     };
   }
   return { text: line };

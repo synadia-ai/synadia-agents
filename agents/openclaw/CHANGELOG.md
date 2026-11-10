@@ -18,8 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `description`. The gateway registers it as one line of at most 500 characters, in the
   service's `description` and in `metadata.description`: line breaks, tabs, control and
   invisible characters become spaces (the zero width joiner and non-joiner stay), repeated
-  spaces one, and a longer text is cut to its first 500. A text this changed is used as
-  cleaned, with one warning in the gateway log; a
+  spaces one, half of a surrogate pair U+FFFD, and a longer text is cut to its first 500. A
+  text this changed is used as cleaned, with one warning in the gateway log; a
   description that is not text is ignored the same way, and none ever stops the gateway from
   starting. Without one the registration keeps its text, `OpenClaw agent <agentName>`.
 

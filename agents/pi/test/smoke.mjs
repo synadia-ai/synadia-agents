@@ -587,7 +587,7 @@ await step(
         described.notified.filter((n) => n.line.includes("description")),
         [
           {
-            line: "NATS: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces",
+            line: "NATS: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
             level: "warning",
           },
         ],

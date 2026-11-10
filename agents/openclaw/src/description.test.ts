@@ -58,6 +58,35 @@ describe("cleanDescription", () => {
     expect(cleanDescription("a\u200bb\u200ec\u2060d\ufeffe")).toBe("a b c d e");
   });
 
+  it("a surrogate that is not part of a pair becomes U+FFFD, and that counts as cleaned", () => {
+    // A text cut inside an emoji ends on half of a pair.
+    expect(cleanDescription("cut in an emoji \ud83d")).toBe("cut in an emoji \ufffd");
+    expect(cleanDescription("a\udc80b")).toBe("a\ufffdb");
+    // Each half of a reversed pair is alone; a half before a pair is too.
+    expect(cleanDescription("\udc00\ud83d")).toBe("\ufffd\ufffd");
+    expect(cleanDescription("\ud83d\u{1F44D}")).toBe("\ufffd\u{1F44D}");
+    expect(resolveDescription("cut in an emoji \ud83d")).toEqual({
+      text: "cut in an emoji \ufffd",
+      warning:
+        "the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
+    });
+    // A pair stays a pair, and U+FFFD itself stays: nothing to warn of.
+    expect(resolveDescription("ok \u{1F44D} \ufffd")).toEqual({
+      text: "ok \u{1F44D} \ufffd",
+    });
+  });
+
+  it("a cleaned description is well-formed text, whatever came in", () => {
+    // encodeURIComponent throws on a surrogate that is not part of a pair.
+    for (const vector of vectors.clean) {
+      expect(() => encodeURIComponent(cleanDescription(vector.in))).not.toThrow();
+    }
+    // Counted and cut as the code points they become.
+    expect(cleanDescription("\ud83d".repeat(DESCRIPTION_LIMIT + 3))).toBe(
+      "\ufffd".repeat(DESCRIPTION_LIMIT),
+    );
+  });
+
   it("one code point at a time: no space-like character hides behind the one before it", () => {
     // A global match over the whole string missed these on Bun 1.3.14,
     // whose engine paired a UTF-16 unit in U+F800..U+FBFF with the one
@@ -110,7 +139,7 @@ describe("resolveDescription", () => {
     expect(resolveDescription("line one\nline  two\t")).toEqual({
       text: "line one line two",
       warning:
-        "the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces",
+        "the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
     });
   });
 

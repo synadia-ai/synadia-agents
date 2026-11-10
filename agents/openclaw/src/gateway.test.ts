@@ -554,7 +554,24 @@ describe("the extensions", () => {
     expect(mocks.serviceOptions[0]!.description).toBe(cleaned);
     expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({ platform: "openclaw", description: cleaned });
     expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
-      "nats: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces",
+      "nats: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
+    ]);
+    controller.abort();
+    await running;
+  });
+
+  it("half of a surrogate pair in a description is registered as U+FFFD in both places, with one warning", async () => {
+    connected();
+    const { controller, running, ctx } = await started(
+      account({ description: "Cut inside an emoji \ud83d" }),
+    );
+    expect(mocks.serviceOptions[0]!.description).toBe("Cut inside an emoji \ufffd");
+    expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({
+      platform: "openclaw",
+      description: "Cut inside an emoji \ufffd",
+    });
+    expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
+      "nats: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
     ]);
     controller.abort();
     await running;

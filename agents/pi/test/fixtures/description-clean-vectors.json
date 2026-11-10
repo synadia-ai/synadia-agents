@@ -140,6 +140,21 @@
       "name": "tag characters",
       "in": "plain\udb40\udc41\udb40\udc42 text",
       "out": "plain text"
+    },
+    {
+      "name": "a lone surrogate becomes the replacement character",
+      "in": "cut in an emoji \ud83d",
+      "out": "cut in an emoji \ufffd"
+    },
+    {
+      "name": "a lone low surrogate in the middle",
+      "in": "a\udc80b",
+      "out": "a\ufffdb"
+    },
+    {
+      "name": "the replacement character stays",
+      "in": "kept \ufffd as it is",
+      "out": "kept \ufffd as it is"
     }
   ]
 }
