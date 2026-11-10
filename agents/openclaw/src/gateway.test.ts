@@ -586,7 +586,7 @@ describe("the extensions", () => {
       description: "a".repeat(500),
     });
     expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
-      "nats: the description was shortened: it had 612 characters and its first 500 are registered",
+      "nats: the description was shortened: it had more than 500 characters and its first 500 are registered",
     ]);
     controller.abort();
     await running;

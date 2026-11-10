@@ -32,12 +32,31 @@ function isLoneSurrogate(point: string): boolean {
   return unit >= 0xd800 && unit <= 0xdfff
 }
 
+/** A text as cleaned. */
+type Cleaned = {
+  /** The cleaned text, of at most `DESCRIPTION_LIMIT` code points. */
+  readonly line: string
+  /** The cleaned text was longer than the limit, and `line` is its cut. */
+  readonly over: boolean
+}
+
 /**
- * One line: a lone surrogate the replacement character, every space-like
- * code point a space, runs of spaces one, none at either end.
+ * Clean `text` in one pass over its code points: a lone surrogate the
+ * replacement character, every space-like code point a space, runs of
+ * spaces one, none at either end, and nothing past the limit.
+ *
+ * The line is built only as far as the limit, and its code points are
+ * counted as they are appended: no copy of the whole text is made, and
+ * nothing is counted in a second pass. The pass ends at the first code
+ * point that does not fit, so a text of any size costs what its first
+ * `DESCRIPTION_LIMIT` code points cost. The one exception: space-like code
+ * points add nothing to the line, so a run of them is read to its end
+ * however long it is. Reading it builds nothing.
  */
-function toOneLine(text: string): string {
+function clean(text: string): Cleaned {
   let line = ''
+  // The code points in `line`.
+  let count = 0
   // A space is owed once a space-like code point followed a word; it is
   // written with the next word, so none leads and none trails.
   let gap = false
@@ -46,23 +65,20 @@ function toOneLine(text: string): string {
     // a single UTF-16 unit.
     const point = isLoneSurrogate(unit) ? REPLACEMENT : unit
     if (!KEPT.has(point) && SPACE_LIKE.test(point)) {
-      gap = line !== ''
+      gap = count > 0
       continue
     }
-    if (gap) line += ' '
+    // This code point, and before it the space it is owed. When the two do
+    // not fit, the text is longer than the limit and the line is its cut:
+    // with room for the space alone, the space would end the line, and a
+    // trailing space goes.
+    const needed = gap ? 2 : 1
+    if (count + needed > DESCRIPTION_LIMIT) return { line, over: true }
+    line += gap ? ` ${point}` : point
+    count += needed
     gap = false
-    line += point
   }
-  return line
-}
-
-/** The first `DESCRIPTION_LIMIT` code points of a line, without a trailing space. */
-function cut(line: string): string {
-  const points = Array.from(line)
-  if (points.length <= DESCRIPTION_LIMIT) return line
-  const kept = points.slice(0, DESCRIPTION_LIMIT)
-  if (kept[kept.length - 1] === ' ') kept.pop()
-  return kept.join('')
+  return { line, over: false }
 }
 
 /**
@@ -77,9 +93,12 @@ function cut(line: string): string {
  *
  * Printable characters are never changed. Length is counted in code points,
  * never in bytes or UTF-16 units. An empty result means no description.
+ *
+ * The three steps are one pass that stops at the limit (`clean`): the
+ * result is the same, and the work does not grow with the text.
  */
 export function cleanDescription(text: string): string {
-  return cut(toOneLine(text))
+  return clean(text).line
 }
 
 export type ResolvedDescription = {
@@ -108,6 +127,11 @@ export type ResolvedDescription = {
  * It never throws: a description never stops the channel from starting. A
  * winner that is not text is ignored, and a winner cleaning changed is used
  * as cleaned; each comes with a `warning` to log once.
+ *
+ * A text over the limit is not read to its end, so its warning says that
+ * it was longer than the limit, not by how much. It says "cleaned" as well
+ * when what is registered is not how the text began; what was past the cut
+ * is not looked at.
  */
 export function resolveDescription(...sources: ReadonlyArray<unknown>): ResolvedDescription {
   const winner = sources.find(source => source != null)
@@ -118,19 +142,17 @@ export function resolveDescription(...sources: ReadonlyArray<unknown>): Resolved
       warning: 'the description is not text; it is ignored and the default is registered',
     }
   }
-  const line = toOneLine(winner)
+  const { line, over } = clean(winner)
   if (line === '') return { text: undefined }
-  const length = Array.from(line).length
-  const cleaned = line !== winner
-  if (length > DESCRIPTION_LIMIT) {
+  if (over) {
     return {
-      text: cut(line),
-      warning: cleaned
-        ? `the description was cleaned and shortened: it had ${length} characters after cleaning and its first ${DESCRIPTION_LIMIT} are registered`
-        : `the description was shortened: it had ${length} characters and its first ${DESCRIPTION_LIMIT} are registered`,
+      text: line,
+      warning: winner.startsWith(line)
+        ? `the description was shortened: it had more than ${DESCRIPTION_LIMIT} characters and its first ${DESCRIPTION_LIMIT} are registered`
+        : `the description was cleaned and shortened: it had more than ${DESCRIPTION_LIMIT} characters after cleaning and its first ${DESCRIPTION_LIMIT} are registered`,
     }
   }
-  if (cleaned) {
+  if (line !== winner) {
     return {
       text: line,
       warning:

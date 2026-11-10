@@ -19,6 +19,23 @@ const vectors = JSON.parse(
 
 const codePoints = (text: string): number => Array.from(text).length
 
+// The rule as it reads, step by step over the whole text: every code point
+// replaced, then the spaces, then the cut. The cleaning builds its line
+// only as far as the limit, and must give exactly this for every text.
+function byTheRule(text: string): string {
+  let line = ''
+  for (const unit of text) {
+    const lone = unit.length === 1 && unit >= '\ud800' && unit <= '\udfff'
+    const point = lone ? '�' : unit
+    const kept = point === '‌' || point === '‍'
+    line += !kept && /^[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]$/u.test(point) ? ' ' : point
+  }
+  line = line.replace(/ +/g, ' ').replace(/^ | $/g, '')
+  const points = Array.from(line)
+  if (points.length <= DESCRIPTION_LIMIT) return line
+  return points.slice(0, DESCRIPTION_LIMIT).join('').replace(/ $/, '')
+}
+
 describe('cleanDescription', () => {
   test('the limit is the vectors\' limit', () => {
     expect(DESCRIPTION_LIMIT).toBe(vectors.limit)
@@ -97,6 +114,83 @@ describe('cleanDescription', () => {
     }
     expect(missed).toEqual([])
   })
+
+  test('every vector is what the rule gives, step by step', () => {
+    for (const vector of vectors.clean) {
+      expect(byTheRule(vector.in)).toBe(vector.out)
+    }
+  })
+
+  test('at the cut: 499 to 502 code points, with a space, a joiner, an astral code point or half a pair there', () => {
+    const a = (count: number): string => 'a'.repeat(count)
+    const astral = '\u{1F44D}'
+    // A space as code point 500 goes, so 499 stay; as 499 it stays inside.
+    expect(cleanDescription(`${a(498)} b`)).toBe(`${a(498)} b`)
+    expect(cleanDescription(`${a(499)} b`)).toBe(a(499))
+    expect(cleanDescription(`${a(500)} b`)).toBe(a(500))
+    expect(cleanDescription(`${a(498)} bc`)).toBe(`${a(498)} b`)
+    // Spaces after code point 500 are no part of the text: nothing is cut.
+    expect(cleanDescription(`${a(500)} `)).toBe(a(500))
+    expect(cleanDescription(`${a(499)} \n`)).toBe(a(499))
+    // A joiner counts as the code point it is.
+    expect(cleanDescription(`${a(499)}‍`)).toBe(`${a(499)}‍`)
+    expect(cleanDescription(`${a(499)}‍b`)).toBe(`${a(499)}‍`)
+    expect(cleanDescription(`${a(500)}‍`)).toBe(a(500))
+    expect(cleanDescription(`${a(498)} ‌b`)).toBe(`${a(498)} ‌`)
+    // An astral code point is one, and is kept or cut whole.
+    expect(cleanDescription(`${a(499)}${astral}`)).toBe(`${a(499)}${astral}`)
+    expect(cleanDescription(`${a(499)}${astral}b`)).toBe(`${a(499)}${astral}`)
+    expect(cleanDescription(`${a(500)}${astral}`)).toBe(a(500))
+    expect(cleanDescription(`${a(498)} ${astral}${astral}`)).toBe(`${a(498)} ${astral}`)
+    // Half of a pair counts as the U+FFFD it becomes.
+    expect(cleanDescription(`${a(499)}\ud83d`)).toBe(`${a(499)}�`)
+    expect(cleanDescription(`${a(499)}\ud83db`)).toBe(`${a(499)}�`)
+    expect(cleanDescription(`${a(500)}\udc4d`)).toBe(a(500))
+    expect(cleanDescription(`${a(499)} \ud83d`)).toBe(a(499))
+
+    // And every pair of these around the cut, against the rule.
+    const around = ['b', ' ', '  ', '\t', '\n', ' ', '﻿', '‌', '‍', astral, '\ud83d', '\udc4d', '�']
+    for (let before = 496; before <= 502; before++) {
+      for (const first of around) {
+        for (const second of around) {
+          for (const end of ['', 'z', ' ']) {
+            const text = `${a(before)}${first}${second}${end}`
+            if (cleanDescription(text) !== byTheRule(text)) {
+              throw new Error(`differs from the rule: ${before} letters, then ${JSON.stringify(`${first}${second}${end}`)}`)
+            }
+          }
+        }
+      }
+    }
+  })
+
+  test('a run of spaces is read to its end, however long, and adds one space or none', () => {
+    const run = ' \t '.repeat(50_000)
+    expect(cleanDescription(`${run}a${run}b${run}`)).toBe('a b')
+    expect(cleanDescription(`${'a'.repeat(500)}${run}`)).toBe('a'.repeat(500))
+    expect(cleanDescription(`${'a'.repeat(499)}${run}b`)).toBe('a'.repeat(499))
+  })
+
+  test('a text of 10 MB costs what its first 500 code points cost', () => {
+    // The line is built only as far as the limit and the pass ends at the
+    // first code point that does not fit, so nothing the size of the text
+    // is built or counted. Shown by time, since a string cannot say how
+    // much of it was read: built whole and counted twice, this text took
+    // half a second and 700 MB; read up to the limit, it takes a few
+    // milliseconds at most. The best of three, so that a pause of the
+    // machine does not fail it.
+    const text = 'abcd '.repeat(2 * 1024 * 1024)
+    let best = Number.POSITIVE_INFINITY
+    let resolved = resolveDescription('')
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const started = performance.now()
+      resolved = resolveDescription(text)
+      best = Math.min(best, performance.now() - started)
+    }
+    expect(best).toBeLessThan(100)
+    expect(resolved.text).toBe('abcd '.repeat(100).trimEnd())
+    expect(resolved.warning).toMatch(/^the description was shortened: /)
+  })
 })
 
 describe('resolveDescription', () => {
@@ -145,20 +239,36 @@ describe('resolveDescription', () => {
     })
   })
 
-  test('a description over the limit is cut to it, and the warning names both lengths', () => {
+  test('a description over the limit is cut to it, and the warning names the limit', () => {
     expect(resolveDescription('a'.repeat(DESCRIPTION_LIMIT + 112))).toEqual({
       text: 'a'.repeat(DESCRIPTION_LIMIT),
-      warning: 'the description was shortened: it had 612 characters and its first 500 are registered',
+      warning: 'the description was shortened: it had more than 500 characters and its first 500 are registered',
     })
   })
 
-  test('cleaned and shortened is still one warning, with the length after cleaning', () => {
-    const resolved = resolveDescription(`${'abcd '.repeat(120)}\n`)
-    expect(resolved.text).toBe(cleanDescription('abcd '.repeat(120)))
+  test('cleaned and shortened is still one warning', () => {
+    // Cleaned within what is registered: a space where the line break was.
+    const resolved = resolveDescription(`abcd\n${'abcd '.repeat(120)}`)
+    expect(resolved.text).toBe('abcd '.repeat(100).trimEnd())
     expect(codePoints(resolved.text ?? '')).toBe(499)
     expect(resolved.warning).toBe(
-      'the description was cleaned and shortened: it had 599 characters after cleaning and its first 500 are registered',
+      'the description was cleaned and shortened: it had more than 500 characters after cleaning and its first 500 are registered',
     )
+  })
+
+  test('shortened only, when what is registered is how the text began', () => {
+    // A text over the limit is not read to its end: what cleaning would
+    // have changed past the cut is not looked at.
+    expect(resolveDescription(`${'abcd '.repeat(120)}\n\ttail`)).toEqual({
+      text: 'abcd '.repeat(100).trimEnd(),
+      warning: 'the description was shortened: it had more than 500 characters and its first 500 are registered',
+    })
+  })
+
+  test('spaces past code point 500 are cleaned away, not cut: no word of shortening', () => {
+    const resolved = resolveDescription(`${'a'.repeat(DESCRIPTION_LIMIT)} \n`)
+    expect(resolved.text).toBe('a'.repeat(DESCRIPTION_LIMIT))
+    expect(resolved.warning).toMatch(/^the description was cleaned: /)
   })
 
   test('the result is what cleanDescription gives, for every vector', () => {
