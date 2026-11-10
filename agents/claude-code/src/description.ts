@@ -76,7 +76,8 @@ export type ResolvedDescription = {
  * source-agnostic. The chain of this plugin (`server.ts`):
  *
  *   1. `SYNADIA_CLAUDE_CODE_DESCRIPTION`  per-agent env variable
- *   2. `SYNADIA_DESCRIPTION`              env variable shared by every agent plugin
+ *   2. `SYNADIA_DESCRIPTION`              env variable read by the pi, Claude Code
+ *                                         and OpenClaw plugins
  *   3. `description` in `config.json`
  *
  * Env beats the config file, as for the owner and the session name, and the

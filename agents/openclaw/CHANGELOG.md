@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The description joins the `SYNADIA_*` variables, and is cleaned.** An agent says what it
   does in its description, which other agents read when they discover it and choose whom to
-  ask. `SYNADIA_OPENCLAW_DESCRIPTION` and `SYNADIA_DESCRIPTION` (shared by every agent plugin)
+  ask. `SYNADIA_OPENCLAW_DESCRIPTION` and `SYNADIA_DESCRIPTION` (read by the pi, Claude Code and
+  OpenClaw plugins)
   now set it too, in front of `NATS_DESCRIPTION`, which keeps working, and the account's
   `description`. The gateway registers it as one line of at most 500 characters, in the
   service's `description` and in `metadata.description`: line breaks, tabs, control and

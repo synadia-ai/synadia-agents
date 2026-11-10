@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Description.** A session can say what it does: free text registered as
   the service's `description`, which other agents read when they discover
   the session and choose whom to ask. Set it in `SYNADIA_PI_DESCRIPTION`,
-  in `SYNADIA_DESCRIPTION` (shared by every agent plugin) or as the
+  in `SYNADIA_DESCRIPTION` (read by the pi, Claude Code and OpenClaw
+  plugins) or as the
   `description` field of `nats-channel.json`, env beating the file as for
   the owner and the session name, or with
   `/nats-configure description <text|clear>`. It is registered as one line

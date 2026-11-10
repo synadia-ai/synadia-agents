@@ -322,9 +322,9 @@ function resolveRawSessionName(config: NatsChannelConfig): string {
 
 /**
  * What the session says it does, by the same chain as the owner: per-agent
- * env var, then the shared one, then the config file. The winner is cleaned
- * to one line of at most 500 characters; without one the default text is
- * registered (`src/description.ts`).
+ * env var, then `SYNADIA_DESCRIPTION`, then the config file. The winner is
+ * cleaned to one line of at most 500 characters; without one the default
+ * text is registered (`src/description.ts`).
  */
 function resolveChannelDescription(
   config: NatsChannelConfig,

@@ -566,8 +566,10 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 
 ### Environment variables
 
-Owner, session and description vars follow the `SYNADIA_*` convention shared across the
-agent plugins. Connection, identity, and trust use the `NATS_*` variables
+Owner and session vars follow the `SYNADIA_*` convention shared across the
+agent plugins. The description is resolved in the same order; its second
+variable, `SYNADIA_DESCRIPTION`, is read by the pi, Claude Code and OpenClaw
+plugins only. Connection, identity, and trust use the `NATS_*` variables
 shown below; environment settings override the corresponding config fields.
 At start the channel writes where its connection came from to stderr, before
 it reads any context: `nats channel: connecting {"source": …}`, the source
@@ -580,7 +582,7 @@ path>`, `$NATS_URL` or `default: demo.nats.io`.
 | `SYNADIA_CLAUDE_CODE_OWNER`, `SYNADIA_OWNER` | Owner (4th token in `agents.prompt.cc.<owner>.<name>`); per-agent var wins, then fleet-wide, then config `owner` | sanitized `$USER` |
 | `SYNADIA_CLAUDE_CODE_NAME`, `SYNADIA_NAME` | Session name (5th token); per-agent var wins, then fleet-wide, then the legacy `NATS_SESSION_NAME`, then config `sessionName` | sanitized basename of `$CLAUDE_CWD` |
 | `NATS_SESSION_NAME` | Session name — legacy alias, still honored below the `SYNADIA_*` vars | *(unset — falls through to config `sessionName`, then the `$CLAUDE_CWD` basename)* |
-| `SYNADIA_CLAUDE_CODE_DESCRIPTION`, `SYNADIA_DESCRIPTION` | [Description](#description); per-agent var wins, then the one shared by every agent plugin, then config `description`. A set variable wins even when empty, and an empty description means the default text | `Claude Code — <name>` |
+| `SYNADIA_CLAUDE_CODE_DESCRIPTION`, `SYNADIA_DESCRIPTION` | [Description](#description); per-agent var wins, then `SYNADIA_DESCRIPTION`, which the pi, Claude Code and OpenClaw plugins read, then config `description`. A set variable wins even when empty, and an empty description means the default text | `Claude Code — <name>` |
 | `NATS_CONTEXT` | NATS CLI context to connect with; wins over everything, `NATS_URL` and config `context` included. Set but empty means no context at all, not even config `context` | — |
 | `NATS_URL` | Raw NATS URL; used when `NATS_CONTEXT` is unset or empty. When set, config `context` is not read: an explicit server in the environment beats a remembered context. Empty means unset | `demo.nats.io` |
 | `NATS_CREDS`, `NATS_CREDENTIALS` | Credentials file to connect with at `NATS_URL`, when no context is selected; when set, config `context` is not read; fails without `NATS_URL`; `NATS_CREDS` wins, empty means unset | — |

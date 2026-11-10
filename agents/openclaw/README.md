@@ -159,14 +159,16 @@ Each field has a matching env var. Useful for containers and any setup where you
 Identity vars (`owner`, `agentName`) follow the `SYNADIA_*` convention shared
 across the agent plugins: per-agent var > fleet-wide var > legacy alias >
 account config. The legacy vars keep working indefinitely. The description
-follows the same convention, with `NATS_DESCRIPTION` as its legacy alias.
+is resolved in the same order, with `NATS_DESCRIPTION` as its legacy alias;
+`SYNADIA_DESCRIPTION` is read by the pi, Claude Code and OpenClaw plugins
+only.
 
 | Variable                 | Sets             | Notes                                                   |
 | ------------------------ | ---------------- | ------------------------------------------------------- |
 | `NATS_CONTEXT`           | `context`        | Highest precedence — see below.                         |
 | `NATS_URL`               | `url`            |                                                         |
 | `SYNADIA_OPENCLAW_DESCRIPTION` | `description` | Per-agent override — highest description precedence.  |
-| `SYNADIA_DESCRIPTION`    | `description`    | Shared by every agent plugin — below the per-agent var. |
+| `SYNADIA_DESCRIPTION`    | `description`    | Read by the pi, Claude Code and OpenClaw plugins — below the per-agent var. |
 | `NATS_DESCRIPTION`       | `description`    | Legacy alias, still honored below the `SYNADIA_*` vars. |
 | `SYNADIA_OPENCLAW_NAME`  | `agentName`      | Per-agent override — highest name precedence.           |
 | `SYNADIA_NAME`           | `agentName`      | Fleet-wide override — below the per-agent var.          |

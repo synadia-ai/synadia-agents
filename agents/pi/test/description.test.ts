@@ -4,9 +4,10 @@
 //
 // A description is free text that says what the agent does; the agents that
 // discover this one read it when they choose whom to ask. It is registered
-// cleaned: one line, at most 500 code points. Precedence follows the
-// SYNADIA_* convention shared across agents/*: SYNADIA_PI_DESCRIPTION →
-// SYNADIA_DESCRIPTION → config.description → the default text.
+// cleaned: one line, at most 500 code points. Precedence follows the order
+// of the SYNADIA_* owner and name variables: SYNADIA_PI_DESCRIPTION →
+// SYNADIA_DESCRIPTION (read by the pi, Claude Code and OpenClaw plugins) →
+// config.description → the default text.
 // resolveDescription itself is source-agnostic: callers pass sources
 // highest-precedence first.
 //

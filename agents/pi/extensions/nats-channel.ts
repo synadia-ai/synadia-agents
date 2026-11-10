@@ -953,8 +953,8 @@ export default function (pi: ExtensionAPI) {
           config.sessionName ??
           basename(ctx.cwd),
       ) || "pi";
-    // The description, by the same chain: per-agent env var > shared env
-    // var > config file. First-present-wins-then-clean, mirroring
+    // The description, by the same chain: per-agent env var >
+    // SYNADIA_DESCRIPTION > config file. First-present-wins-then-clean, mirroring
     // resolveOwner: the winner is cleaned to one line of at most 500
     // characters, and a winner that cleans to nothing means no description,
     // not the next source. Without one the default text is registered. See

@@ -77,7 +77,8 @@ export interface ResolvedDescription {
  * source-agnostic, as `resolveOwner` is. The chain of this plugin:
  *
  *   1. `SYNADIA_PI_DESCRIPTION`  — per-agent env variable
- *   2. `SYNADIA_DESCRIPTION`     — env variable shared by every agent plugin
+ *   2. `SYNADIA_DESCRIPTION`     — env variable read by the pi, Claude Code
+ *                                  and OpenClaw plugins
  *   3. `config.description`      — field in `~/.pi/agent/nats-channel.json`
  *
  * Env beats the config file, as for the owner and the session name, and it

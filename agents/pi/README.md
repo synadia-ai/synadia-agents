@@ -84,8 +84,10 @@ The `owner` token (4th) defaults to `$USER` but is overridable via the `SYNADIA_
 Env vars override the config file. Owner/session naming vars follow the
 `SYNADIA_*` convention shared across the agent plugins: per-agent var >
 fleet-wide var > legacy alias > config file > derived fallback. The
-description follows the same convention, without a legacy alias. Sender
-identity and trust use the NATS-wide variables shown below.
+description is resolved in the same order, without a legacy alias; its
+second variable, `SYNADIA_DESCRIPTION`, is read by the pi, Claude Code and
+OpenClaw plugins only. Sender identity and trust use the NATS-wide
+variables shown below.
 
 | Variable                | Sets                      | Notes                                                                                                                                                                       |
 | ----------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -101,7 +103,7 @@ identity and trust use the NATS-wide variables shown below.
 | `SYNADIA_NAME`          | `sessionName`             | Fleet-wide override — below the per-agent var.                                                                                                                              |
 | `NATS_SESSION_NAME`     | `sessionName`             | Legacy alias, still honored below the `SYNADIA_*` vars.                                                                                                                     |
 | `SYNADIA_PI_DESCRIPTION` | `description`            | Per-agent override — highest description precedence.                                                                                                                        |
-| `SYNADIA_DESCRIPTION`   | `description`             | Shared by every agent plugin — below the per-agent var, above the config field.                                                                                             |
+| `SYNADIA_DESCRIPTION`   | `description`             | Read by the pi, Claude Code and OpenClaw plugins — below the per-agent var, above the config field.                                                                         |
 | `NATS_AGENT_TOOLS`      | `agentTools`              | `blocking`, `all` or `off`; overrides the config file.                                                                                                                      |
 | `SYNADIA_PI_EXTENSIONS` | `extensions`              | Comma-separated module specifiers — highest extensions precedence. Set but empty means no extensions.                                                                       |
 | `SYNADIA_AGENT_EXTENSIONS` | `extensions`           | Comma-separated module specifiers, shared by every agent plugin — below the per-agent var, above the config field.                                                          |
