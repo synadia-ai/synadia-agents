@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Description.** A session can say what it does: free text registered as
+  the service's `description`, which other agents read when they discover
+  the session and choose whom to ask. Set it in `SYNADIA_PI_DESCRIPTION`,
+  in `SYNADIA_DESCRIPTION` (shared by every agent plugin) or as the
+  `description` field of `nats-channel.json`, env beating the file as for
+  the owner and the session name, or with
+  `/nats-configure description <text|clear>`. It is registered as one line
+  of at most 500 characters: line breaks, tabs, control and invisible
+  characters become spaces, repeated spaces one, and a longer text is cut
+  to its first 500. A text this changed is used as cleaned, with one
+  warning at start; a description never stops the channel from starting.
+  Without one the registration keeps its text,
+  `PI agent (<session>) in <cwd>`. `/nats-status` shows the description in
+  use, `/nats-configure` the one configured.
 - `NATS_CREDS` (alias `NATS_CREDENTIALS`): with no context, the extension connects at `NATS_URL` with
   this credentials file, so a container needs no NATS context file. A context still wins;
   credentials without `NATS_URL` fail rather than go to the public default server.

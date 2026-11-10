@@ -50,6 +50,16 @@ For real deployments, point PI at your own NATS via a context file. Two common s
 }
 ```
 
+**Say what the session does** (so other agents know when to ask it — see [Description](#description)):
+
+```json
+{
+  "context": "prod",
+  "sessionName": "orders-logs",
+  "description": "Keeps the logs of the orders server. Ask it what happened in a time range. Reads only; changes nothing on the server."
+}
+```
+
 Restart PI to pick up changes — or use the in-PI commands below.
 
 ### Configuration reference
@@ -61,6 +71,7 @@ Config file lives at `~/.pi/agent/nats-channel.json`:
 | `context`        | no       | —                         | Name of a NATS CLI context (file under `~/.config/nats/context/<name>.json`). Used only when the environment names no server: `$NATS_CONTEXT`, `$NATS_URL` and `$NATS_CREDS`/`$NATS_CREDENTIALS` all unset. When unset, falls back to `$NATS_URL` or, if that's also unset, the built-in `demo.nats.io`. |
 | `sessionName`    | no       | sanitized basename of CWD | The 5th subject token. Override to give your session a stable, addressable name.                                                                                                                                          |
 | `owner`          | no       | `$USER`                   | The 4th subject token. Override to scope the session to a service account, deployment, or tenant instead of the OS user — sanitized to a legal subject token. The owner env vars (below) take precedence over this field. |
+| `description`    | no       | `PI agent (<session>) in <cwd>` | What the session says it does, for the agents that discover it — see [Description](#description). One line, at most 500 characters. The description env vars (below) take precedence over this field. |
 | `senderIdentity` | no       | `"off"`                   | `"signed"` registers PI with the NATS user identity from the selected connection credentials.                                                                                                                             |
 | `minSenderTrust` | no       | `"any"`                   | `"signed"` accepts only prompts with a signature-valid sender. This is independent of `senderIdentity`.                                                                                                                   |
 | `agentTools`     | no       | `"blocking"`              | Which [agent tools](#agent-tools) PI's model is offered: `"blocking"` (`discover_agents`, `prompt_agent`, `answer_agent`), `"all"` (the six), or `"off"` (none). `NATS_AGENT_TOOLS` overrides this field. |
@@ -72,7 +83,8 @@ The `owner` token (4th) defaults to `$USER` but is overridable via the `SYNADIA_
 
 Env vars override the config file. Owner/session naming vars follow the
 `SYNADIA_*` convention shared across the agent plugins: per-agent var >
-fleet-wide var > legacy alias > config file > derived fallback. Sender
+fleet-wide var > legacy alias > config file > derived fallback. The
+description follows the same convention, without a legacy alias. Sender
 identity and trust use the NATS-wide variables shown below.
 
 | Variable                | Sets                      | Notes                                                                                                                                                                       |
@@ -88,6 +100,8 @@ identity and trust use the NATS-wide variables shown below.
 | `SYNADIA_PI_NAME`       | `sessionName`             | Per-agent override — highest session-name precedence.                                                                                                                       |
 | `SYNADIA_NAME`          | `sessionName`             | Fleet-wide override — below the per-agent var.                                                                                                                              |
 | `NATS_SESSION_NAME`     | `sessionName`             | Legacy alias, still honored below the `SYNADIA_*` vars.                                                                                                                     |
+| `SYNADIA_PI_DESCRIPTION` | `description`            | Per-agent override — highest description precedence.                                                                                                                        |
+| `SYNADIA_DESCRIPTION`   | `description`             | Shared by every agent plugin — below the per-agent var, above the config field.                                                                                             |
 | `NATS_AGENT_TOOLS`      | `agentTools`              | `blocking`, `all` or `off`; overrides the config file.                                                                                                                      |
 | `SYNADIA_PI_EXTENSIONS` | `extensions`              | Comma-separated module specifiers — highest extensions precedence. Set but empty means no extensions.                                                                       |
 | `SYNADIA_AGENT_EXTENSIONS` | `extensions`           | Comma-separated module specifiers, shared by every agent plugin — below the per-agent var, above the config field.                                                          |
@@ -105,11 +119,17 @@ For `sessionName`: `$SYNADIA_PI_NAME` > `$SYNADIA_NAME` > `$NATS_SESSION_NAME` (
 
 For `owner`: `$SYNADIA_PI_OWNER` > `$SYNADIA_OWNER` > `$NATS_PI_OWNER` (legacy) > `config.owner` > `$USER` > `unknown`.
 
+For `description`: `$SYNADIA_PI_DESCRIPTION` > `$SYNADIA_DESCRIPTION` > `config.description` > the default text, `PI agent (<session>) in <cwd>`. A variable that is set wins even when empty, and an empty description means the default text, so a launcher can switch a config file's description off with `SYNADIA_PI_DESCRIPTION=`.
+
 For sender identity and trust: `$NATS_SENDER_IDENTITY` > `config.senderIdentity` > `off`, and `$NATS_MIN_SENDER_TRUST` > `config.minSenderTrust` > `any`.
 
 For the agent tools: `$NATS_AGENT_TOOLS` > `config.agentTools` > `blocking`.
 
 For extensions: `$SYNADIA_PI_EXTENSIONS` > `$SYNADIA_AGENT_EXTENSIONS` > `config.extensions` > none. A variable that is set wins even when empty, so a launcher can switch a config file's extensions off with `SYNADIA_PI_EXTENSIONS=`.
+
+### Description
+
+A description says what the session does: what it is for, what to ask it, what it can reach or never does. Other agents read it when they choose whom to ask: it is the `description` of the session's registration (`$SRV.INFO`), and the [agent tools](#agent-tools)' `discover_agents` returns it next to each address. So write it for them, in one to three sentences in the third person, for example `Keeps the logs of the orders server. Ask it what happened in a time range. Reads only; changes nothing on the server.` Set it in `SYNADIA_PI_DESCRIPTION` or `SYNADIA_DESCRIPTION`, as the `description` field of the config file, or with `/nats-configure description <text>`. It is one line of plain text of at most 500 characters: line breaks, tabs, control and invisible characters become spaces, repeated spaces one, and a longer text is cut to its first 500 characters; a text this changed is registered as cleaned, with one warning at start, and a description never stops the session from starting. It is the session's own claim about itself, and everyone who can discover the session can read it, so it holds no secret. Without one the session registers `PI agent (<session>) in <cwd>`, as before. The description is read at start: restart PI to change it; `/nats-status` shows the one in use.
 
 ### Optional sender identity
 
@@ -143,13 +163,15 @@ Available inside a running PI session:
 
 | Command                                  | What it does                                                                        |
 | ---------------------------------------- | ----------------------------------------------------------------------------------- |
-| `/nats-status`                           | Show current subject, service, instance id, protocol version, agent tools registered, extensions loaded, pending/queued counts |
+| `/nats-status`                           | Show current subject, service, instance id, protocol version, description in use, agent tools registered, extensions loaded, pending/queued counts |
 | `/nats-configure`                        | Print current config, `agentTools` and `extensions` included                        |
 | `/nats-configure <context>`              | Switch NATS context                                                                 |
 | `/nats-configure session <name>`         | Override session name                                                               |
 | `/nats-configure session clear`          | Revert to CWD basename                                                              |
 | `/nats-configure owner <name>`           | Override the owner (4th subject token)                                              |
 | `/nats-configure owner clear`            | Revert to `$USER`                                                                   |
+| `/nats-configure description <text>`     | Say what the session does (see [Description](#description)); everything after the word is the text |
+| `/nats-configure description clear`      | Revert to the default text                                                          |
 | `/nats-configure identity <off\|signed>` | Disable or enable connection-bound registration identity                            |
 | `/nats-configure trust <any\|signed>`    | Accept any sender or require a signature-valid sender                               |
 
@@ -241,7 +263,7 @@ A successful `$SRV.INFO.agents` response for a PI session looks like:
 }
 ```
 
-If you see your `agents.prompt.pi.<owner>.<session>` subject in the response, you're discoverable. Multiple PI sessions show up as multiple responses to the same query — the `cwd` metadata field tells you which working directory each one was started from, useful when you've got several PI windows open and need to pick the right session to prompt.
+If you see your `agents.prompt.pi.<owner>.<session>` subject in the response, you're discoverable. With a [description](#description) set, `description` carries that text instead of the default shown here. Multiple PI sessions show up as multiple responses to the same query — the `cwd` metadata field tells you which working directory each one was started from, useful when you've got several PI windows open and need to pick the right session to prompt.
 
 ## Talk to your session
 
@@ -315,7 +337,7 @@ The agent subject layout has no per-tenant slot. For real isolation between tena
 Deliberate deferrals:
 
 - **No mid-stream queries.** PI doesn't initiate permission prompts or clarifications over this channel; the protocol's `query` chunk type is supported by callers but never emitted by the PI side.
-- **No live reconfigure.** `/nats-configure` writes the config file; PI must be restarted for the new context or session name to apply.
+- **No live reconfigure.** `/nats-configure` writes the config file; PI must be restarted for the new context, session name or description to apply.
 - **TUI bleed.** Local typing during a NATS-driven turn is steered into that turn: its output flows to the NATS reply subject as part of the response. PI gives an extension no way to tell the two apart inside one run.
 - **Refused injections.** PI accepts an injected prompt asynchronously and reports a refusal (compaction in progress, no model configured) only to its own log. Such a request stays active until PI's next own turn settles it or it expires; later prompts queue behind it.
 
