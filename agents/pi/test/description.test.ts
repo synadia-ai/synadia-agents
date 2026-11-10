@@ -13,7 +13,8 @@
 // Run with: bun test test/description.test.ts
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -194,5 +195,91 @@ describe("parseDescriptionCommand", () => {
 	test("no text asks for the usage line", () => {
 		expect(parseDescriptionCommand("")).toEqual({ action: "usage" });
 		expect(parseDescriptionCommand("   ")).toEqual({ action: "usage" });
+	});
+});
+
+// The command itself, run by the extension against a config file in a
+// throwaway home directory (the fixture refuses a home that was not
+// redirected, so a developer's own config is never written).
+describe("/nats-configure description", () => {
+	const FIXTURE = join(HERE, "fixtures", "configure-command.mjs");
+
+	function withHome(run: (home: string, configFile: string) => void): void {
+		const home = mkdtempSync(join(tmpdir(), "pi-configure-home-"));
+		try {
+			run(home, join(home, ".pi", "agent", "nats-channel.json"));
+		} finally {
+			rmSync(home, { recursive: true, force: true });
+		}
+	}
+
+	function configure(home: string, args: string): Array<{ line: string; level: string }> {
+		const run = Bun.spawnSync([process.execPath, FIXTURE, args, home], {
+			env: { ...process.env, HOME: home },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		if (run.exitCode !== 0) {
+			throw new Error(`configure-command exited ${run.exitCode}: ${run.stderr.toString()}`);
+		}
+		return JSON.parse(run.stdout.toString().trim().split("\n").at(-1) ?? "[]");
+	}
+
+	const readConfig = (path: string): Record<string, unknown> =>
+		JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+
+	test("description <text> writes the cleaned text beside the other keys; clear removes it", () => {
+		withHome((home, configFile) => {
+			mkdirSync(dirname(configFile), { recursive: true });
+			writeFileSync(configFile, JSON.stringify({ sessionName: "kept", owner: "team" }));
+
+			expect(
+				configure(home, "description Keeps the logs of the orders server. Reads only."),
+			).toEqual([
+				{ line: "NATS config updated. Restart PI for changes to take effect.", level: "info" },
+			]);
+			expect(readConfig(configFile)).toEqual({
+				sessionName: "kept",
+				owner: "team",
+				description: "Keeps the logs of the orders server. Reads only.",
+			});
+
+			// The listing shows it.
+			const [listing] = configure(home, "");
+			expect(listing?.line).toContain(
+				"Description: Keeps the logs of the orders server. Reads only.",
+			);
+
+			expect(configure(home, "description clear")).toEqual([
+				{ line: "NATS config updated. Restart PI for changes to take effect.", level: "info" },
+			]);
+			expect(readConfig(configFile)).toEqual({ sessionName: "kept", owner: "team" });
+			expect(configure(home, "")[0]?.line).toContain(
+				"Description: (default: PI agent (<session>) in <cwd>)",
+			);
+		});
+	});
+
+	test("a text cleaning changed is saved as cleaned, with the warning", () => {
+		withHome((home, configFile) => {
+			const notified = configure(home, `description ${"a".repeat(510)}`);
+			expect(notified).toEqual([
+				{
+					line: "NATS: the description was shortened: it had 510 characters and its first 500 are registered",
+					level: "warning",
+				},
+				{ line: "NATS config updated. Restart PI for changes to take effect.", level: "info" },
+			]);
+			expect(readConfig(configFile)).toEqual({ description: "a".repeat(500) });
+		});
+	});
+
+	test("description without a text prints the usage and writes nothing", () => {
+		withHome((home, configFile) => {
+			expect(configure(home, "description")).toEqual([
+				{ line: "Usage: /nats-configure description <text|clear>", level: "warning" },
+			]);
+			expect(() => readFileSync(configFile, "utf8")).toThrow();
+		});
 	});
 });
