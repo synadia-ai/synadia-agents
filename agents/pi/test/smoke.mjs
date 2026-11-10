@@ -27,8 +27,9 @@
 //  13. The description: without one the session's name and working
 //      directory are registered, as before; one set in
 //      SYNADIA_PI_DESCRIPTION is registered cleaned, with one warning, and
-//      SYNADIA_DESCRIPTION is the fallback; `/nats-status` shows the one in
-//      use.
+//      SYNADIA_DESCRIPTION is the fallback; the config file's `description`
+//      counts when no variable is set (a session started in a throwaway
+//      home directory); `/nats-status` shows the one in use.
 //
 // Run with:
 //   bun test/smoke.mjs
@@ -617,6 +618,54 @@ await step(
       );
     } finally {
       await described.stop();
+    }
+  },
+)();
+
+await step(
+  "description: the config file's `description` is registered when no variable is set",
+  async () => {
+    // The config file lives under the home directory: this session runs in
+    // a process of its own, its home a throwaway directory, and connects
+    // straight to the spawned server.
+    const home = mkdtempSync(join(tmpdir(), "pi-smoke-home-"));
+    const name = `configured-${process.pid}`;
+    const text = "Answers from the config file. Ask it about the orders.";
+    mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+    writeFileSync(
+      join(home, ".pi", "agent", "nats-channel.json"),
+      JSON.stringify({ description: text }),
+    );
+    const env = {
+      ...process.env,
+      HOME: home,
+      NATS_URL: SERVER_URL,
+      SYNADIA_PI_NAME: name,
+      SYNADIA_PI_EXTENSIONS: "",
+      ...(AUTHENTICATED ? { NATS_CREDS: ALICE_CREDS } : {}),
+    };
+    delete env.NATS_CONTEXT;
+    const session = spawn(
+      process.execPath,
+      [join(__dirname, "fixtures", "session-from-home.mjs"), home],
+      { env, stdio: ["pipe", "ignore", "inherit"] },
+    );
+    const exited = new Promise((resolve) => session.on("exit", resolve));
+    try {
+      const svcm = new Svcm(obs);
+      let info;
+      for (let attempt = 0; attempt < 20 && !info; attempt++) {
+        const client = svcm.client({ strategy: "stall", maxWait: 500, maxMessages: 20 });
+        for await (const si of await client.info("agents")) {
+          if (si.metadata?.agent === "pi" && si.metadata?.session === name) info = si;
+        }
+      }
+      assert.ok(info, `no registration for session=${name}`);
+      assert.equal(info.description, text);
+    } finally {
+      session.kill("SIGTERM");
+      await Promise.race([exited, delay(5000).then(() => session.kill("SIGKILL"))]);
+      rmSync(home, { recursive: true, force: true });
     }
   },
 )();
