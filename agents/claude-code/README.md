@@ -52,7 +52,7 @@ and registers a micro service on `agents.prompt.cc.<owner>.<name>`, where
 **4. (Optional) Configure the channel.**
 
 The `/nats-channel:configure` skill manages connection, session naming,
-sender identity, inbound trust, and permissions. All state lives in
+the description, sender identity, inbound trust, and permissions. All state lives in
 `~/.claude/channels/nats/config.json`.
 
 | Command | Description |
@@ -64,6 +64,8 @@ sender identity, inbound trust, and permissions. All state lives in
 | `/nats-channel:configure session clear` | Remove session name override, revert to CWD basename |
 | `/nats-channel:configure owner <name>` | Override the owner (4th token in `agents.prompt.cc.<owner>.<name>`) |
 | `/nats-channel:configure owner clear` | Remove owner override, revert to sanitized `$USER` |
+| `/nats-channel:configure description <text>` | Say what the session does, for the agents that discover it (see [Description](#description)) |
+| `/nats-channel:configure description clear` | Remove the description, revert to `Claude Code — <name>` |
 | `/nats-channel:configure identity off` | Do not look up or register a host identity (default) |
 | `/nats-channel:configure identity signed` | Register a signed identity derived from the selected connection credentials |
 | `/nats-channel:configure trust any` | Accept headerless, claimed, and verified senders (default) |
@@ -179,6 +181,28 @@ Or via the NATS Micro CLI:
 nats micro ls
 nats micro info agents
 ```
+
+## Description
+
+A description says what the session does: what it is for, what to ask it,
+what it can reach or never does. Other agents read it when they choose whom
+to ask: it is the `description` of the session's registration (`$SRV.INFO`),
+and the [agent tools](#agent-tools)' `discover_agents` returns it next to
+each address. So write it for them, in one to three sentences in the third
+person, for example `Keeps the logs of the orders server. Ask it what
+happened in a time range. Reads only; changes nothing on the server.` Set
+it in `SYNADIA_CLAUDE_CODE_DESCRIPTION` or `SYNADIA_DESCRIPTION`, as the
+`description` field of `config.json`, or with
+`/nats-channel:configure description <text>`. It is one line of plain text
+of at most 500 characters: line breaks, tabs, control and invisible
+characters become spaces, repeated spaces one, and a longer text is cut to
+its first 500 characters; a text this changed is registered as cleaned,
+with one `warning:` line on stderr at start, and a description never stops
+the channel from starting. It is the session's own claim about itself, and
+everyone who can discover the session can read it, so it holds no secret.
+Without one the session registers `Claude Code — <name>`, as before. The
+description is read at start: restart Claude Code or reload the plugin to
+change it; the `service registered` line on stderr names the one in use.
 
 ## Tools exposed to the assistant
 
@@ -501,7 +525,7 @@ State lives in `~/.claude/channels/nats/`:
 
 | File | Purpose |
 | --- | --- |
-| `config.json` | Selected NATS context, owner and session name overrides, identity, trust, permission, agent-tools and extension settings |
+| `config.json` | Selected NATS context, owner and session name overrides, description, identity, trust, permission, agent-tools and extension settings |
 | `attachments/<request_id>/` | Per-request staged attachments; auto-cleaned on reply completion |
 | `sessions/` | What the plugin's [hooks](#hooks) record, per Claude Code process; a dead process's files are removed when a server starts, and by a new process of the same pid at its `startup` |
 
@@ -514,6 +538,7 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
   "context": "my-context",
   "owner": "my-team",
   "sessionName": "my-session",
+  "description": "Keeps the logs of the orders server. Ask it what happened in a time range.",
   "senderIdentity": "signed",
   "minSenderTrust": "any",
   "permissions": {
@@ -529,6 +554,7 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 | `context` | *(none - uses demo.nats.io)* | NATS CLI context name; used only when the environment names no server (`NATS_CONTEXT`, `NATS_URL` and `NATS_CREDS`/`NATS_CREDENTIALS` all unset) |
 | `owner` | sanitized `$USER` | Override the owner (4th subject token) |
 | `sessionName` | CWD basename | Override the session name |
+| `description` | `Claude Code — <name>` | What the session says it does, for the agents that discover it; one line, at most 500 characters; see [Description](#description) |
 | `senderIdentity` | `off` | `off` or `signed`; signed mode uses the selected connection credentials |
 | `minSenderTrust` | `any` | `any` or `signed`; controls inbound prompt admission independently |
 | `permissions.mode` | `terminal` | `terminal` or `query` (`nats` accepted as legacy alias for `query`) |
@@ -538,7 +564,7 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 
 ### Environment variables
 
-Owner and session vars follow the `SYNADIA_*` convention shared across the
+Owner, session and description vars follow the `SYNADIA_*` convention shared across the
 agent plugins. Connection, identity, and trust use the `NATS_*` variables
 shown below; environment settings override the corresponding config fields.
 At start the channel writes where its connection came from to stderr, before
@@ -552,6 +578,7 @@ path>`, `$NATS_URL` or `default: demo.nats.io`.
 | `SYNADIA_CLAUDE_CODE_OWNER`, `SYNADIA_OWNER` | Owner (4th token in `agents.prompt.cc.<owner>.<name>`); per-agent var wins, then fleet-wide, then config `owner` | sanitized `$USER` |
 | `SYNADIA_CLAUDE_CODE_NAME`, `SYNADIA_NAME` | Session name (5th token); per-agent var wins, then fleet-wide, then the legacy `NATS_SESSION_NAME`, then config `sessionName` | sanitized basename of `$CLAUDE_CWD` |
 | `NATS_SESSION_NAME` | Session name — legacy alias, still honored below the `SYNADIA_*` vars | *(unset — falls through to config `sessionName`, then the `$CLAUDE_CWD` basename)* |
+| `SYNADIA_CLAUDE_CODE_DESCRIPTION`, `SYNADIA_DESCRIPTION` | [Description](#description); per-agent var wins, then the one shared by every agent plugin, then config `description`. A set variable wins even when empty, and an empty description means the default text | `Claude Code — <name>` |
 | `NATS_CONTEXT` | NATS CLI context to connect with; wins over everything, `NATS_URL` and config `context` included. Set but empty means no context at all, not even config `context` | — |
 | `NATS_URL` | Raw NATS URL; used when `NATS_CONTEXT` is unset or empty. When set, config `context` is not read: an explicit server in the environment beats a remembered context. Empty means unset | `demo.nats.io` |
 | `NATS_CREDS`, `NATS_CREDENTIALS` | Credentials file to connect with at `NATS_URL`, when no context is selected; when set, config `context` is not read; fails without `NATS_URL`; `NATS_CREDS` wins, empty means unset | — |

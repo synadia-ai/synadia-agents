@@ -86,6 +86,17 @@ All notable changes to the Claude Code NATS channel are documented here.
   model API error: billing_error (…)`), the channel logs the same line, and the extensions
   hear `promptEnded` with `error` and `no_reply`. Without prompt ids, the failure ends the
   request that owned the turn at once and counts as a `Stop` for the others' grace period.
+- **Description.** A session can say what it does: free text registered as the service's
+  `description`, which other agents read when they discover the session and choose whom to
+  ask. Set it in `SYNADIA_CLAUDE_CODE_DESCRIPTION`, in `SYNADIA_DESCRIPTION` (shared by every
+  agent plugin) or as `description` in `config.json`, env beating the file as for the owner
+  and the session name, or with `/nats-channel:configure description <text|clear>`. It is
+  registered as one line of at most 500 characters: line breaks, tabs, control and invisible
+  characters become spaces, repeated spaces one, and a longer text is cut to its first 500. A
+  text this changed is used as cleaned, with one `warning:` line on stderr; a description that
+  is not text is ignored the same way, and none ever stops the channel from starting. Without
+  one the registration keeps its text, `Claude Code — <name>`. The `service registered` log
+  line names the description in use.
 
 ### Changed
 
