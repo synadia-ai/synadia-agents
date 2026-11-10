@@ -148,15 +148,15 @@ export function resolveDescription(...sources: ReadonlyArray<unknown>): Resolved
     return {
       text: line,
       warning: winner.startsWith(line)
-        ? `the description was shortened: it had more than ${DESCRIPTION_LIMIT} characters and its first ${DESCRIPTION_LIMIT} are registered`
-        : `the description was cleaned and shortened: it had more than ${DESCRIPTION_LIMIT} characters after cleaning and its first ${DESCRIPTION_LIMIT} are registered`,
+        ? `the description was shortened: it had more than ${DESCRIPTION_LIMIT} characters and at most its first ${DESCRIPTION_LIMIT} are registered`
+        : `the description was cleaned and shortened: it had more than ${DESCRIPTION_LIMIT} characters after cleaning and at most its first ${DESCRIPTION_LIMIT} are registered`,
     }
   }
   if (line !== winner) {
     return {
       text: line,
       warning:
-        'the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair',
+        'the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD',
     }
   }
   return { text: line }

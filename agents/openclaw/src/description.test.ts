@@ -85,7 +85,7 @@ describe("cleanDescription", () => {
     expect(resolveDescription("cut in an emoji \ud83d")).toEqual({
       text: "cut in an emoji \ufffd",
       warning:
-        "the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
+        "the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD",
     });
     // A pair stays a pair, and U+FFFD itself stays: nothing to warn of.
     expect(resolveDescription("ok \u{1F44D} \ufffd")).toEqual({
@@ -233,7 +233,7 @@ describe("resolveDescription", () => {
     expect(resolveDescription("line one\nline  two\t")).toEqual({
       text: "line one line two",
       warning:
-        "the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
+        "the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD",
     });
   });
 
@@ -241,7 +241,7 @@ describe("resolveDescription", () => {
     expect(resolveDescription("a".repeat(DESCRIPTION_LIMIT + 112))).toEqual({
       text: "a".repeat(DESCRIPTION_LIMIT),
       warning:
-        "the description was shortened: it had more than 500 characters and its first 500 are registered",
+        "the description was shortened: it had more than 500 characters and at most its first 500 are registered",
     });
   });
 
@@ -251,7 +251,7 @@ describe("resolveDescription", () => {
     expect(resolved.text).toBe("abcd ".repeat(100).trimEnd());
     expect(codePoints(resolved.text ?? "")).toBe(499);
     expect(resolved.warning).toBe(
-      "the description was cleaned and shortened: it had more than 500 characters after cleaning and its first 500 are registered",
+      "the description was cleaned and shortened: it had more than 500 characters after cleaning and at most its first 500 are registered",
     );
   });
 
@@ -261,7 +261,7 @@ describe("resolveDescription", () => {
     expect(resolveDescription(`${"abcd ".repeat(120)}\n\ttail`)).toEqual({
       text: "abcd ".repeat(100).trimEnd(),
       warning:
-        "the description was shortened: it had more than 500 characters and its first 500 are registered",
+        "the description was shortened: it had more than 500 characters and at most its first 500 are registered",
     });
   });
 
@@ -269,6 +269,40 @@ describe("resolveDescription", () => {
     const resolved = resolveDescription(`${"a".repeat(DESCRIPTION_LIMIT)} \n`);
     expect(resolved.text).toBe("a".repeat(DESCRIPTION_LIMIT));
     expect(resolved.warning).toMatch(/^the description was cleaned: /);
+  });
+
+  it("each warning is true of every text it is given for", () => {
+    const cleaned =
+      "the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD";
+    // Cleaning that leaves no space where the character was, at an end;
+    // characters of each kind the sentence names; and a joiner, which stays.
+    const texts: Array<[string, string]> = [
+      ["a line break at the end\n", "a line break at the end"],
+      ["﻿a byte order mark at the start", "a byte order mark at the start"],
+      ["a no-break space", "a no-break space"],
+      ["a narrow no-break space", "a narrow no-break space"],
+      ["a zero width​space", "a zero width space"],
+      ["a soft­hyphen", "a soft hyphen"],
+      ["a line separator", "a line separator"],
+      ["several   spaces", "several spaces"],
+      ["a\ttab", "a tab"],
+      ["a joiner‍ that stays, and a tab\t", "a joiner‍ that stays, and a tab"],
+      ["half a pair \ud83d", "half a pair �"],
+    ];
+    for (const [written, registered] of texts) {
+      expect(resolveDescription(written)).toEqual({ text: registered, warning: cleaned });
+    }
+    // Code point 500 a space: 499 are registered, at most the first 500.
+    const shortened = resolveDescription(`${"a".repeat(499)} b`);
+    expect(codePoints(shortened.text ?? "")).toBe(499);
+    expect(shortened.warning).toBe(
+      "the description was shortened: it had more than 500 characters and at most its first 500 are registered",
+    );
+    const both = resolveDescription(`\t${"a".repeat(499)} b`);
+    expect(codePoints(both.text ?? "")).toBe(499);
+    expect(both.warning).toBe(
+      "the description was cleaned and shortened: it had more than 500 characters after cleaning and at most its first 500 are registered",
+    );
   });
 
   it("the result is what cleanDescription gives, for every vector", () => {

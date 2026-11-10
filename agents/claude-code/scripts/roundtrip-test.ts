@@ -279,13 +279,13 @@ if (discovered.description !== `Claude Code — ${NAME}`) {
     perAgent!,
     'Keeps the logs of the back of\ufb01 ce. Ask it what happened in a time range.',
     [
-      'nats channel: warning: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair {}',
+      'nats channel: warning: the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD {}',
     ],
   )
   expectDescription('SYNADIA_DESCRIPTION', shared!, 'the shared one', [])
   expectDescription('config.json description', fromConfig!, JOINED, [])
   expectDescription('half of a surrogate pair', halfPair!, 'Cut inside an emoji \ufffd', [
-    'nats channel: warning: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair {}',
+    'nats channel: warning: the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD {}',
   ])
   expectDescription('a description that is not text', notText!, 'Claude Code — rt-described-not-text', [
     'nats channel: warning: the description is not text; it is ignored and the default is registered {}',

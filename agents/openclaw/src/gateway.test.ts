@@ -554,7 +554,7 @@ describe("the extensions", () => {
     expect(mocks.serviceOptions[0]!.description).toBe(cleaned);
     expect(mocks.serviceOptions[0]!.extraMetadata).toEqual({ platform: "openclaw", description: cleaned });
     expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
-      "nats: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
+      "nats: the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD",
     ]);
     controller.abort();
     await running;
@@ -571,7 +571,7 @@ describe("the extensions", () => {
       description: "Cut inside an emoji \ufffd",
     });
     expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
-      "nats: the description was cleaned: it is registered as one line of plain text, with one space wherever it had line breaks, tabs, control characters or several spaces, and U+FFFD wherever it had half of a surrogate pair",
+      "nats: the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD",
     ]);
     controller.abort();
     await running;
@@ -586,7 +586,7 @@ describe("the extensions", () => {
       description: "a".repeat(500),
     });
     expect((ctx.log.warn.mock.calls as string[][]).map((c) => c[0]!)).toEqual([
-      "nats: the description was shortened: it had more than 500 characters and its first 500 are registered",
+      "nats: the description was shortened: it had more than 500 characters and at most its first 500 are registered",
     ]);
     controller.abort();
     await running;
