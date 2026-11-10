@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The description joins the `SYNADIA_*` variables, and is cleaned.** An agent says what it
+  does in its description, which other agents read when they discover it and choose whom to
+  ask. `SYNADIA_OPENCLAW_DESCRIPTION` and `SYNADIA_DESCRIPTION` (shared by every agent plugin)
+  now set it too, in front of `NATS_DESCRIPTION`, which keeps working, and the account's
+  `description`. The gateway registers it as one line of at most 500 characters, in the
+  service's `description` and in `metadata.description`: line breaks, tabs, control and
+  invisible characters become spaces, repeated spaces one, and a longer text is cut to its
+  first 500. A text this changed is used as cleaned, with one warning in the gateway log; a
+  description that is not text is ignored the same way, and none ever stops the gateway from
+  starting. Without one the registration keeps its text, `OpenClaw agent <agentName>`.
+
 ### Changed
 
 - **A reply OpenClaw marks as an error ends the prompt with an error, not as a reply.**

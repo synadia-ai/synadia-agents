@@ -145,7 +145,7 @@ Restart with `openclaw gateway restart`.
 | `credentials`    | no       | —                            | Path to a `.creds` file (NGS, NKEY/JWT auth).                                                                                                 |
 | `senderIdentity` | no       | `off`                        | `signed` derives the agent signer from the same context/credentials snapshot used for the NATS connection; `off` performs no identity lookup. |
 | `minSenderTrust` | no       | `any`                        | `any` accepts headerless and valid signed prompts; `signed` requires a verified sender. This is independent of `senderIdentity`.              |
-| `description`    | no       | `OpenClaw agent <agentName>` | Shown in `$SRV.INFO` so callers know what they discovered.                                                                                    |
+| `description`    | no       | `OpenClaw agent <agentName>` | What the agent says it does, for the agents that discover it — see [Description](#description). One line, at most 500 characters.             |
 | `enabled`        | no       | `true`                       | Set to `false` to keep the account block in config but skip connecting.                                                                       |
 | `agentTools`     | no       | `blocking`                   | Which [agent tools](#agent-tools) the model is offered: `blocking` (`discover_agents`, `prompt_agent`, `answer_agent`), `all` (the six), or `off` (none). `NATS_AGENT_TOOLS` overrides this field. |
 | `extensions`     | no       | —                            | [Extension modules](#extensions) to load: an array of package names or absolute paths, or `{ "module": "…", "options": { … } }` objects. `SYNADIA_OPENCLAW_EXTENSIONS` and `SYNADIA_AGENT_EXTENSIONS` override this field. |
@@ -158,13 +158,16 @@ Each field has a matching env var. Useful for containers and any setup where you
 
 Identity vars (`owner`, `agentName`) follow the `SYNADIA_*` convention shared
 across the agent plugins: per-agent var > fleet-wide var > legacy alias >
-account config. The legacy vars keep working indefinitely.
+account config. The legacy vars keep working indefinitely. The description
+follows the same convention, with `NATS_DESCRIPTION` as its legacy alias.
 
 | Variable                 | Sets             | Notes                                                   |
 | ------------------------ | ---------------- | ------------------------------------------------------- |
 | `NATS_CONTEXT`           | `context`        | Highest precedence — see below.                         |
 | `NATS_URL`               | `url`            |                                                         |
-| `NATS_DESCRIPTION`       | `description`    |                                                         |
+| `SYNADIA_OPENCLAW_DESCRIPTION` | `description` | Per-agent override — highest description precedence.  |
+| `SYNADIA_DESCRIPTION`    | `description`    | Shared by every agent plugin — below the per-agent var. |
+| `NATS_DESCRIPTION`       | `description`    | Legacy alias, still honored below the `SYNADIA_*` vars. |
 | `SYNADIA_OPENCLAW_NAME`  | `agentName`      | Per-agent override — highest name precedence.           |
 | `SYNADIA_NAME`           | `agentName`      | Fleet-wide override — below the per-agent var.          |
 | `NATS_AGENT_NAME`        | `agentName`      | Legacy alias, still honored below the `SYNADIA_*` vars. |
@@ -205,6 +208,12 @@ JWT+seed). It never accepts a second identity-only credentials path.
 For the agent tools: `$NATS_AGENT_TOOLS` > `agentTools` in the account block > `blocking`.
 
 For extensions: `$SYNADIA_OPENCLAW_EXTENSIONS` > `$SYNADIA_AGENT_EXTENSIONS` > `extensions` in the account block > none. A variable that is set wins even when empty, so a launcher can switch a config file's extensions off with `SYNADIA_OPENCLAW_EXTENSIONS=`.
+
+For the description: `$SYNADIA_OPENCLAW_DESCRIPTION` > `$SYNADIA_DESCRIPTION` > `$NATS_DESCRIPTION` (legacy) > `description` in the account block > the default text, `OpenClaw agent <agentName>`. A variable that is set wins even when empty, and an empty description means the default text.
+
+### Description
+
+A description says what the agent does: what it is for, what to ask it, what it can reach or never does. Other agents read it when they choose whom to ask: it is the `description` of the agent's registration (`$SRV.INFO`, also repeated as `metadata.description`), and the [agent tools](#agent-tools)' `discover_agents` returns it next to each address. So write it for them, in one to three sentences in the third person, for example `Keeps the logs of the orders server. Ask it what happened in a time range. Reads only; changes nothing on the server.` Set it in `SYNADIA_OPENCLAW_DESCRIPTION`, `SYNADIA_DESCRIPTION` or `NATS_DESCRIPTION`, or as `description` in the account block (the wizard asks for it). It is one line of plain text of at most 500 characters: line breaks, tabs, control and invisible characters become spaces, repeated spaces one, and a longer text is cut to its first 500 characters; a text this changed is registered as cleaned, with one warning in the gateway log, and a description never stops the gateway from starting. It is the agent's own claim about itself, and everyone who can discover the agent can read it, so it holds no secret. Without one the agent registers `OpenClaw agent <agentName>`, as before. The description is read when the gateway starts: restart it with `openclaw gateway restart` to change it.
 
 ## Extensions
 
