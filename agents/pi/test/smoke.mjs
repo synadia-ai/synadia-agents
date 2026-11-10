@@ -163,10 +163,13 @@ delete process.env.SYNADIA_OWNER;
 delete process.env.NATS_PI_OWNER;
 delete process.env.SYNADIA_PI_NAME;
 delete process.env.SYNADIA_NAME;
-// No description from the invoking shell either: the default text is what
-// the first assertions expect. (As with `owner`, a `description` in the
-// developer's own `~/.pi/agent/nats-channel.json` would still skew them.)
-delete process.env.SYNADIA_PI_DESCRIPTION;
+// No description from the invoking shell, nor from the developer's own
+// `~/.pi/agent/nats-channel.json`: the default text is what the first
+// assertions expect. `SYNADIA_PI_DESCRIPTION` set but empty means no
+// description, and the config file's is then not read. (To check, run the
+// smoke with HOME at a directory whose `.pi/agent/nats-channel.json` holds
+// a `description`.)
+process.env.SYNADIA_PI_DESCRIPTION = "";
 delete process.env.SYNADIA_DESCRIPTION;
 if (SIGNED) process.env.NATS_SENDER_IDENTITY = "signed";
 else delete process.env.NATS_SENDER_IDENTITY;
@@ -650,6 +653,10 @@ await step(
       ...(AUTHENTICATED ? { NATS_CREDS: ALICE_CREDS } : {}),
     };
     delete env.NATS_CONTEXT;
+    // The config file's value is the point here: no description variable,
+    // not even the empty one this smoke runs under.
+    delete env.SYNADIA_PI_DESCRIPTION;
+    delete env.SYNADIA_DESCRIPTION;
     const session = spawn(
       process.execPath,
       [join(__dirname, "fixtures", "session-from-home.mjs"), home],
