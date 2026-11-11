@@ -38,7 +38,7 @@
                 },
                 "description": {
                   "type": "string",
-                  "description": "Free-form blurb shown during agent discovery."
+                  "description": "What the agent says it does, read by the agents that discover it. One line, at most 500 characters. Overridden by $SYNADIA_OPENCLAW_DESCRIPTION, $SYNADIA_DESCRIPTION and $NATS_DESCRIPTION at runtime."
                 },
                 "credentials": {
                   "type": "string",

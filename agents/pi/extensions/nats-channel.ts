@@ -29,6 +29,12 @@
  * given it for its provider requests' headers and its agent-tool calls as
  * they are given a NATS prompt (see `local-turns.ts`).
  *
+ * Description: what the session says it does, registered as the service's
+ * `description` and read by the agents that discover it. Set in
+ * `SYNADIA_PI_DESCRIPTION`, `SYNADIA_DESCRIPTION` or the config's
+ * `description`, cleaned to one line of at most 500 characters (see
+ * `description.ts`); without one, the session's name and working directory.
+ *
  * Attachments: inline per spec §5.1/§5.2. Each `{filename, content}` is
  * base64-decoded (strict RFC 4648 §4 — standard alphabet, padded, no
  * whitespace, no URL-safe), the filename is sanitized, bytes are staged on
@@ -81,6 +87,7 @@ import {
   type ComposedExtensions,
   type ExtensionConfigEntry,
 } from "./extensions.ts";
+import { parseDescriptionCommand, resolveDescription } from "./description.ts";
 import { PiLocalTurns } from "./local-turns.ts";
 import { PiPromptQueue, type QueuedPiPrompt } from "./prompt-queue.ts";
 import { resolveOwner, sanitizeSubjectToken } from "./subject.ts";
@@ -162,6 +169,8 @@ export type PiNatsConfig = {
   context?: string;
   sessionName?: string;
   owner?: string;
+  /** What the session says it does; `SYNADIA_PI_DESCRIPTION` and `SYNADIA_DESCRIPTION` win. */
+  description?: string;
   senderIdentity?: SenderIdentityMode;
   minSenderTrust?: MinSenderTrust;
   /** Which agent tools PI's model is offered; `NATS_AGENT_TOOLS` wins. */
@@ -341,6 +350,10 @@ export default function (pi: ExtensionAPI) {
   let promptSubject: string | undefined;
   let sessionName: string | undefined;
   let owner: string | undefined;
+  // The description that was set, cleaned; undefined when none is, and the
+  // default text is registered. `registeredDescription` is the one in use.
+  let description: string | undefined;
+  let registeredDescription: string | undefined;
   let instanceId: string | undefined;
   let piCtx: ExtensionContext | undefined;
   let contextLabel: string | undefined;
@@ -775,6 +788,9 @@ export default function (pi: ExtensionAPI) {
         );
       }
       const selfAddress = AgentSubject.new(AGENT_ID, owner!, sessionName).prompt;
+      // The description that was set, else the default text.
+      const serviceDescription =
+        description ?? `PI agent (${sessionName}) in ${ctx.cwd}`;
       // One caller-side client for the agent tools, with the same signer as
       // the service and the extensions' prompt interceptors. It outlives
       // every prompt and closes with the service.
@@ -810,7 +826,7 @@ export default function (pi: ExtensionAPI) {
         name: sessionName,
         session: sessionName,
         version: SERVICE_VERSION,
-        description: `PI agent (${sessionName}) in ${ctx.cwd}`,
+        description: serviceDescription,
         attachmentsOk: true,
         heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
         keepaliveIntervalS: KEEPALIVE_INTERVAL_S,
@@ -846,6 +862,7 @@ export default function (pi: ExtensionAPI) {
       service = agentService;
       promptSubject = agentService.subject.prompt;
       instanceId = agentService.instanceId;
+      registeredDescription = serviceDescription;
       // The tools appear to the model once the agent is on the bus. PI
       // accepts a tool registered after startup (0.84+).
       if (agentTools) {
@@ -936,6 +953,19 @@ export default function (pi: ExtensionAPI) {
           config.sessionName ??
           basename(ctx.cwd),
       ) || "pi";
+    // The description, by the same chain: per-agent env var >
+    // SYNADIA_DESCRIPTION > config file. First-present-wins-then-clean, mirroring
+    // resolveOwner: the winner is cleaned to one line of at most 500
+    // characters, and a winner that cleans to nothing means no description,
+    // not the next source. Without one the default text is registered. See
+    // `description.ts#resolveDescription`.
+    const described = resolveDescription(
+      process.env.SYNADIA_PI_DESCRIPTION,
+      process.env.SYNADIA_DESCRIPTION,
+      config.description,
+    );
+    if (described.warning) logger.warn(described.warning);
+    description = described.text;
 
     // 3. Load the extensions, once, before the connection. A module that
     //    fails is logged and skipped; the channel starts plain with the rest.
@@ -1068,6 +1098,7 @@ export default function (pi: ExtensionAPI) {
         `Instance: ${instanceId ?? "?"}`,
         `Session: ${sessionName}`,
         `Owner: ${owner}`,
+        `Description: ${registeredDescription ?? "?"}`,
         `Sender identity: ${senderIdentity}${service?.identity ? ` (${service.identity})` : ""}`,
         `Minimum sender trust: ${minSenderTrust}`,
         `Agent tools: ${toolsMode}${registeredTools.length > 0 ? ` (${registeredTools.join(", ")})` : ""}`,
@@ -1085,7 +1116,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("nats-configure", {
     description:
-      "Show or update NATS channel configuration (usage: /nats-configure [ <context> | session <name|clear> | owner <name|clear> | identity <off|signed> | trust <any|signed> ])",
+      "Show or update NATS channel configuration (usage: /nats-configure [ <context> | session <name|clear> | owner <name|clear> | description <text|clear> | identity <off|signed> | trust <any|signed> ])",
     handler: async (args, ctx) => {
       const current = loadConfig();
       const tokens = args.trim().split(/\s+/).filter(Boolean);
@@ -1095,6 +1126,7 @@ export default function (pi: ExtensionAPI) {
           `Context: ${current.context ?? "(default: demo.nats.io)"}`,
           `Owner: ${current.owner ?? "(default: $USER)"}`,
           `Session: ${current.sessionName ?? "(auto from cwd)"}`,
+          `Description: ${resolveDescription(current.description).text ?? "(default: PI agent (<session>) in <cwd>)"}`,
           `Sender identity: ${current.senderIdentity ?? "off"}`,
           `Minimum sender trust: ${current.minSenderTrust ?? "any"}`,
           `Agent tools: ${current.agentTools ?? "blocking"}`,
@@ -1138,6 +1170,27 @@ export default function (pi: ExtensionAPI) {
           changed = true;
         } else {
           ctx.ui.notify("Usage: /nats-configure owner <name|clear>", "warning");
+          return;
+        }
+      } else if (tokens[0] === "description") {
+        // Everything after the word is the text; it may hold spaces.
+        // Note: the SYNADIA_PI_DESCRIPTION / SYNADIA_DESCRIPTION env vars
+        // take precedence over this config field.
+        const asked = parseDescriptionCommand(
+          args.trim().slice("description".length),
+        );
+        if (asked.action === "clear") {
+          delete next.description;
+          changed = true;
+        } else if (asked.action === "set") {
+          if (asked.warning) ctx.ui.notify(`NATS: ${asked.warning}`, "warning");
+          next.description = asked.text;
+          changed = true;
+        } else {
+          ctx.ui.notify(
+            "Usage: /nats-configure description <text|clear>",
+            "warning",
+          );
           return;
         }
       } else if (tokens[0] === "identity") {

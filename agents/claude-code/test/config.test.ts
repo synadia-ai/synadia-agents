@@ -231,4 +231,18 @@ describe('resolveRuntimeSettings', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  test('config.json keeps description as read: a wrong one never fails the start', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-channel-config-'))
+    try {
+      const path = join(dir, 'config.json')
+      // src/description.ts cleans it at start; loadConfig refuses none of these.
+      for (const description of ['Keeps the logs of the orders server.', '', 'two\nlines', 42, ['a'], null]) {
+        writeFileSync(path, JSON.stringify({ owner: 'team', description }))
+        expect(loadConfig(path)).toEqual({ owner: 'team', description })
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

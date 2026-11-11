@@ -20,6 +20,12 @@ export type NatsChannelConfig = {
   context?: string
   owner?: string
   sessionName?: string
+  /**
+   * What the session says it does. Kept as read and never validated here,
+   * so a wrong value cannot fail the start: `src/description.ts` cleans it,
+   * and `SYNADIA_CLAUDE_CODE_DESCRIPTION` and `SYNADIA_DESCRIPTION` win.
+   */
+  description?: unknown
   senderIdentity?: SenderIdentityMode
   minSenderTrust?: MinSenderTrust
   permissions?: {

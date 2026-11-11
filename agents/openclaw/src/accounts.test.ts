@@ -16,6 +16,9 @@ const IDENTITY_ENV_VARS = [
   "SYNADIA_OPENCLAW_NAME",
   "SYNADIA_NAME",
   "NATS_AGENT_NAME",
+  "SYNADIA_OPENCLAW_DESCRIPTION",
+  "SYNADIA_DESCRIPTION",
+  "NATS_DESCRIPTION",
   "NATS_CREDENTIALS",
   "NATS_CREDS",
   "NATS_SENDER_IDENTITY",
@@ -157,6 +160,39 @@ describe("identity env overrides (SYNADIA_* convention)", () => {
     expect(resolveNatsAccount(cfg, "default").agentName).toBe("fleet-name");
     process.env.SYNADIA_OPENCLAW_NAME = "per-agent-name";
     expect(resolveNatsAccount(cfg, "default").agentName).toBe("per-agent-name");
+  });
+
+  it("description: SYNADIA_OPENCLAW_DESCRIPTION > SYNADIA_DESCRIPTION > NATS_DESCRIPTION > config", () => {
+    const described = {
+      channels: {
+        nats: { accounts: { default: { agentName: "x", description: "cfg description" } } },
+      },
+    };
+    expect(resolveNatsAccount(described, "default").description).toBe("cfg description");
+    process.env.NATS_DESCRIPTION = "legacy description";
+    expect(resolveNatsAccount(described, "default").description).toBe("legacy description");
+    process.env.SYNADIA_DESCRIPTION = "shared description";
+    expect(resolveNatsAccount(described, "default").description).toBe("shared description");
+    process.env.SYNADIA_OPENCLAW_DESCRIPTION = "per-agent description";
+    expect(resolveNatsAccount(described, "default").description).toBe("per-agent description");
+    // Without a config description the variables still supply one.
+    expect(resolveNatsAccount(cfg, "default").description).toBe("per-agent description");
+  });
+
+  it("description: a variable that is set wins even when empty, and the text is kept as written", () => {
+    const described = {
+      channels: {
+        nats: { accounts: { default: { agentName: "x", description: "cfg description" } } },
+      },
+    };
+    // Kept as written here; the gateway cleans it before it registers it.
+    process.env.NATS_DESCRIPTION = "two  lines\nas written ";
+    expect(resolveNatsAccount(described, "default").description).toBe("two  lines\nas written ");
+    // Empty and set: no description, so the gateway registers its default
+    // text; the lower sources are not read.
+    process.env.SYNADIA_OPENCLAW_DESCRIPTION = "";
+    process.env.SYNADIA_DESCRIPTION = "shared description";
+    expect(resolveNatsAccount(described, "default").description).toBe("");
   });
 
   it("NATS_CREDS is accepted as an alias when NATS_CREDENTIALS is unset", () => {

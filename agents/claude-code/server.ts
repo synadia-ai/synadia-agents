@@ -40,6 +40,10 @@ import {
   resolveRuntimeSettings,
   type NatsChannelConfig,
 } from "./src/config.js";
+import {
+  resolveDescription,
+  type ResolvedDescription,
+} from "./src/description.js";
 import { loadPluginVersion } from "./src/plugin-version.js";
 import {
   composeExtensions,
@@ -316,6 +320,22 @@ function resolveRawSessionName(config: NatsChannelConfig): string {
   );
 }
 
+/**
+ * What the session says it does, by the same chain as the owner: per-agent
+ * env var, then `SYNADIA_DESCRIPTION`, then the config file. The winner is
+ * cleaned to one line of at most 500 characters; without one the default
+ * text is registered (`src/description.ts`).
+ */
+function resolveChannelDescription(
+  config: NatsChannelConfig,
+): ResolvedDescription {
+  return resolveDescription(
+    process.env.SYNADIA_CLAUDE_CODE_DESCRIPTION,
+    process.env.SYNADIA_DESCRIPTION,
+    config.description,
+  );
+}
+
 function startupDescription(error: unknown): string {
   if (
     error instanceof IdentityError ||
@@ -422,6 +442,10 @@ async function run(): Promise<void> {
       : configFile,
   );
   const owner = resolveOwner(config);
+  // Never a reason not to start: a description cleaning changed is used as
+  // cleaned, one that is not text is ignored, and either is logged once.
+  const described = resolveChannelDescription(config);
+  if (described.warning) logEvent(`warning: ${described.warning}`);
   const extensions = await loadChannelExtensions(config, {
     owner,
     name: resolveRawSessionName(config),
@@ -694,6 +718,9 @@ async function run(): Promise<void> {
       },
     );
 
+    // The description that was set, else the default text.
+    const serviceDescription =
+      described.text ?? `Claude Code — ${sessionName}`;
     service = new AgentService({
       nc,
       agent: AGENT_ID,
@@ -701,7 +728,7 @@ async function run(): Promise<void> {
       owner,
       name: sessionName,
       session: sessionName,
-      description: `Claude Code — ${sessionName}`,
+      description: serviceDescription,
       version: pluginVersion,
       attachmentsOk: true,
       heartbeatIntervalS: HEARTBEAT_INTERVAL_S,
@@ -1095,6 +1122,7 @@ async function run(): Promise<void> {
     logEvent("service registered", {
       instanceId: service.instanceId,
       subject: service.subject.prompt,
+      description: serviceDescription,
       identity: service.identity ?? "off",
       minSenderTrust: service.minSenderTrust,
       agentTools: [...agentToolNames],

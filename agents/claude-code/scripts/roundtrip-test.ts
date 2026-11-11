@@ -105,8 +105,11 @@ await runHook({ hook_event_name: 'SessionStart', session_id: SESSION_ID, source:
 const nc = await connect({ servers: NATS_URL, name: 'claude-channel-roundtrip-probe' })
 const discovery = new Agents({ nc })
 const childEnv: Record<string, string> = {}
+// Not the invoking shell's context, nor its description: the channel starts
+// without one, and the description cases below set their own.
+const NOT_INHERITED = ['NATS_CONTEXT', 'SYNADIA_CLAUDE_CODE_DESCRIPTION', 'SYNADIA_DESCRIPTION']
 for (const [key, value] of Object.entries(process.env)) {
-  if (value !== undefined && key !== 'NATS_CONTEXT') childEnv[key] = value
+  if (value !== undefined && !NOT_INHERITED.includes(key)) childEnv[key] = value
 }
 Object.assign(childEnv, {
   CLAUDE_CWD: '/tmp/rt-test',
@@ -164,6 +167,10 @@ if (discovered.identity !== undefined) throw new Error('identity-off plugin regi
 if (discovered.minSenderTrust !== 'any') throw new Error('default min_sender_trust is not any')
 if (discovered.metadata.rt_feature !== 'on') throw new Error('the extension\'s metadata key was not registered')
 if (discovered.metadata.session !== NAME) throw new Error('the extension overrode a registration key')
+// No description is set: the default text, unchanged.
+if (discovered.description !== `Claude Code — ${NAME}`) {
+  throw new Error(`the default description changed: ${JSON.stringify(discovered.description)}`)
+}
 
 // An extension with an invalid metadata key: the server exits at start,
 // before it connects, and names the key.
@@ -186,6 +193,108 @@ if (discovered.metadata.session !== NAME) throw new Error('the extension overrod
   if (!stderr.includes('extension "rt-bad": metadata key "not a key" is invalid')) {
     throw new Error(`the server with an invalid metadata key did not name it: ${stderr}`)
   }
+}
+
+// The description: five channels, started together, each with a setting of
+// its own. Each has 15 s to register, is read back from discovery
+// (`$SRV.INFO`), and is then stopped; the five are compared once all are back.
+{
+  // Five more `bun` processes start at once, and on a busy machine a start
+  // takes seconds; a channel not found in time fails the whole script.
+  const REGISTER_WAIT_MS = 15_000
+  const describedChannel = async (
+    name: string,
+    env: Record<string, string>,
+    config: Record<string, unknown>,
+  ): Promise<{ description: string | undefined; stderr: string }> => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-channel-described-'))
+    writeFileSync(join(dir, 'config.json'), JSON.stringify(config))
+    const child = Bun.spawn(['bun', join(cacheRoot, 'runtime', 'server.js')], {
+      env: {
+        ...childEnv,
+        NATS_STATE_DIR: dir,
+        NATS_SESSION_NAME: name,
+        SYNADIA_CLAUDE_CODE_EXTENSIONS: '',
+        ...env,
+      },
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    let description: string | undefined
+    const deadline = Date.now() + REGISTER_WAIT_MS
+    while (description === undefined && Date.now() < deadline) {
+      const found = await discovery.discover({
+        timeoutMs: 100,
+        filter: { agent: 'claude-code', owner: OWNER, name },
+      })
+      description = found[0]?.description
+    }
+    // SIGTERM, which the channel handles as a shutdown; then gone for sure.
+    child.kill()
+    if ((await Promise.race([child.exited, Bun.sleep(10_000).then(() => 'timeout' as const)])) === 'timeout') {
+      child.kill(9)
+    }
+    const stderr = await new Response(child.stderr).text()
+    rmSync(dir, { recursive: true, force: true })
+    return { description, stderr }
+  }
+  const warnings = (stderr: string): string[] =>
+    stderr.split('\n').filter(line => line.includes('warning: the description'))
+  const expectDescription = (
+    label: string,
+    got: { description: string | undefined; stderr: string },
+    description: string,
+    warned: string[],
+  ): void => {
+    if (got.description !== description) {
+      throw new Error(`${label}: registered ${JSON.stringify(got.description)}; its stderr:\n${got.stderr}`)
+    }
+    if (JSON.stringify(warnings(got.stderr)) !== JSON.stringify(warned)) {
+      throw new Error(`${label}: warned ${JSON.stringify(warnings(got.stderr))}`)
+    }
+  }
+
+  const JOINED = 'Answers for the \u{1F468}\u200d\u{1F469}\u200d\u{1F467} team. Reads only.'
+  const [perAgent, shared, fromConfig, notText, halfPair] = await Promise.all([
+    // The per-agent variable wins over the shared one and the config file;
+    // its line break and repeated spaces are cleaned, with one warning, and
+    // so is a U+FEFF right after the ligature U+FB01, which a match over
+    // the whole string missed on Bun 1.3.14.
+    describedChannel(
+      'rt-described',
+      {
+        SYNADIA_CLAUDE_CODE_DESCRIPTION: 'Keeps the logs of the back of\ufb01\ufeffce.\n  Ask it what happened in a time range.',
+        SYNADIA_DESCRIPTION: 'the shared one',
+      },
+      { description: 'the config file\'s' },
+    ),
+    // The shared variable wins over the config file.
+    describedChannel('rt-described-shared', { SYNADIA_DESCRIPTION: 'the shared one' }, { description: 'the config file\'s' }),
+    // The config file's description counts when no variable is set; the
+    // zero width joiners (U+200D) of its emoji sequence stay.
+    describedChannel('rt-described-config', {}, { description: JOINED }),
+    // A description that is not text never stops the start: the default text.
+    describedChannel('rt-described-not-text', {}, { description: 42 }),
+    // A text cut inside an emoji ends on half of a surrogate pair: U+FFFD.
+    describedChannel('rt-described-half-pair', {}, { description: 'Cut inside an emoji \ud83d' }),
+  ])
+  expectDescription(
+    'SYNADIA_CLAUDE_CODE_DESCRIPTION',
+    perAgent!,
+    'Keeps the logs of the back of\ufb01 ce. Ask it what happened in a time range.',
+    [
+      'nats channel: warning: the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD {}',
+    ],
+  )
+  expectDescription('SYNADIA_DESCRIPTION', shared!, 'the shared one', [])
+  expectDescription('config.json description', fromConfig!, JOINED, [])
+  expectDescription('half of a surrogate pair', halfPair!, 'Cut inside an emoji \ufffd', [
+    'nats channel: warning: the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD {}',
+  ])
+  expectDescription('a description that is not text', notText!, 'Claude Code — rt-described-not-text', [
+    'nats channel: warning: the description is not text; it is ignored and the default is registered {}',
+  ])
 }
 
 type Collected = {
@@ -514,6 +623,13 @@ console.log('\n[case 5] agent tools, the PreToolUse id, the snapshot re-entry an
 
   let toolReply: unknown
   let servedRequestId = ''
+  let stopRecorded!: () => void
+  // The handler's Stop comes after the reply, whose terminator is all the
+  // caller waits for. Wait for it, as case 9 does: the next case that sends
+  // a prompt must find it recorded. A Stop the hook records after a prompt
+  // was delivered is, to the server, a Stop since that prompt: the prompt
+  // then owns no turn, and its own turn's first Stop is not refused for it.
+  const turnOver = new Promise<void>(resolve => { stopRecorded = resolve })
   currentCase = {
     replyHandler: async requestId => {
       servedRequestId = requestId
@@ -530,9 +646,14 @@ console.log('\n[case 5] agent tools, the PreToolUse id, the snapshot re-entry an
       toolReply = result.content[0]?.type === 'text' ? JSON.parse(result.content[0].text) : undefined
       await mcp.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'asked' } })
       await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID })
+      stopRecorded()
     },
   }
   const chunks = await collectChunks(JSON.stringify({ prompt: 'ask the other agent', trace_hint: 'x' }))
+  // The hook gives itself 5 s; past 10 s the handler never reached its Stop.
+  if ((await Promise.race([turnOver, Bun.sleep(10_000).then(() => 'timeout' as const)])) === 'timeout') {
+    fail('the handler\'s Stop hook did not run')
+  }
   assertAck(chunks[0])
   if ((toolReply as { reply?: unknown } | undefined)?.reply !== 'echo: ping') {
     fail(`prompt_agent result was ${JSON.stringify(toolReply)}`)

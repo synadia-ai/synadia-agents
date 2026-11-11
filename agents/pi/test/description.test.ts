@@ -1,0 +1,489 @@
+// Unit tests for the agent's description (description.ts): the cleaning
+// rule against its vectors, the precedence chain, and the
+// `/nats-configure description` command.
+//
+// A description is free text that says what the agent does; the agents that
+// discover this one read it when they choose whom to ask. It is registered
+// cleaned: one line, at most 500 code points. Precedence follows the order
+// of the SYNADIA_* owner and name variables: SYNADIA_PI_DESCRIPTION →
+// SYNADIA_DESCRIPTION (read by the pi, Claude Code and OpenClaw plugins) →
+// config.description → the default text.
+// resolveDescription itself is source-agnostic: callers pass sources
+// highest-precedence first.
+//
+// Run with: bun test test/description.test.ts
+
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+	DESCRIPTION_LIMIT,
+	cleanDescription,
+	parseDescriptionCommand,
+	resolveDescription,
+} from "../extensions/description.ts";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+
+type CleanVector = { name: string; in: string; out: string };
+const vectors = JSON.parse(
+	readFileSync(join(HERE, "fixtures", "description-clean-vectors.json"), "utf8"),
+) as { limit: number; clean: CleanVector[] };
+
+const codePoints = (text: string): number => Array.from(text).length;
+
+// The rule as it reads, step by step over the whole text: every code point
+// replaced, then the spaces, then the cut. The cleaning builds its line
+// only as far as the limit, and must give exactly this for every text.
+function byTheRule(text: string): string {
+	let line = "";
+	for (const unit of text) {
+		const lone = unit.length === 1 && unit >= "\ud800" && unit <= "\udfff";
+		const point = lone ? "�" : unit;
+		const kept = point === "‌" || point === "‍";
+		line += !kept && /^[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}]$/u.test(point) ? " " : point;
+	}
+	line = line.replace(/ +/g, " ").replace(/^ | $/g, "");
+	const points = Array.from(line);
+	if (points.length <= DESCRIPTION_LIMIT) return line;
+	return points.slice(0, DESCRIPTION_LIMIT).join("").replace(/ $/, "");
+}
+
+describe("cleanDescription", () => {
+	test("the limit is the vectors' limit", () => {
+		expect(DESCRIPTION_LIMIT).toBe(vectors.limit);
+		expect(vectors.clean.length).toBeGreaterThan(0);
+	});
+
+	for (const vector of vectors.clean) {
+		test(`vector: ${vector.name}`, () => {
+			expect(cleanDescription(vector.in)).toBe(vector.out);
+		});
+	}
+
+	test("cleaning a cleaned description changes nothing", () => {
+		for (const vector of vectors.clean) {
+			expect(cleanDescription(vector.out)).toBe(vector.out);
+		}
+	});
+
+	test("length is counted in code points, and a cut never splits one", () => {
+		const astral = "\u{1F44D}";
+		const cleaned = cleanDescription(astral.repeat(DESCRIPTION_LIMIT + 5));
+		expect(codePoints(cleaned)).toBe(DESCRIPTION_LIMIT);
+		expect(cleaned).toBe(astral.repeat(DESCRIPTION_LIMIT));
+	});
+
+	test("the zero width non-joiner and joiner stay, and are no reason for a warning", () => {
+		// Persian spells with U+200C; an emoji sequence is joined by U+200D.
+		const persian = "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645";
+		const family = "\u{1F468}\u200d\u{1F469}\u200d\u{1F467}";
+		const text = `${persian} ${family}`;
+		expect(cleanDescription(text)).toBe(text);
+		expect(resolveDescription(text)).toEqual({ text });
+		// Every other invisible format character still becomes a space.
+		expect(cleanDescription("a\u200bb\u200ec\u2060d\ufeffe")).toBe("a b c d e");
+	});
+
+	test("a surrogate that is not part of a pair becomes U+FFFD, and that counts as cleaned", () => {
+		// A text cut inside an emoji ends on half of a pair.
+		expect(cleanDescription("cut in an emoji \ud83d")).toBe("cut in an emoji \ufffd");
+		expect(cleanDescription("a\udc80b")).toBe("a\ufffdb");
+		// Each half of a reversed pair is alone; a half before a pair is too.
+		expect(cleanDescription("\udc00\ud83d")).toBe("\ufffd\ufffd");
+		expect(cleanDescription("\ud83d\u{1F44D}")).toBe("\ufffd\u{1F44D}");
+		expect(resolveDescription("cut in an emoji \ud83d")).toEqual({
+			text: "cut in an emoji \ufffd",
+			warning:
+				"the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD",
+		});
+		// A pair stays a pair, and U+FFFD itself stays: nothing to warn of.
+		expect(resolveDescription("ok \u{1F44D} \ufffd")).toEqual({
+			text: "ok \u{1F44D} \ufffd",
+		});
+	});
+
+	test("a cleaned description is well-formed text, whatever came in", () => {
+		// encodeURIComponent throws on a surrogate that is not part of a pair.
+		for (const vector of vectors.clean) {
+			expect(() => encodeURIComponent(cleanDescription(vector.in))).not.toThrow();
+		}
+		// Counted and cut as the code points they become.
+		expect(cleanDescription("\ud83d".repeat(DESCRIPTION_LIMIT + 3))).toBe(
+			"\ufffd".repeat(DESCRIPTION_LIMIT),
+		);
+	});
+
+	test("one code point at a time: no space-like character hides behind the one before it", () => {
+		// A global match over the whole string missed these on Bun 1.3.14,
+		// whose engine paired a UTF-16 unit in U+F800..U+FBFF with the one
+		// after it: a U+FEFF after the ligature U+FB01 stayed in place.
+		expect(cleanDescription("of\ufb01\ufeffce")).toBe("of\ufb01 ce");
+		expect(cleanDescription("a\uf900\ufff9b")).toBe("a\uf900 b");
+		const missed: string[] = [];
+		for (let lead = 0xf800; lead <= 0xfbff; lead++) {
+			const before = String.fromCharCode(lead);
+			for (const hidden of ["\ufeff", "\ufff9", "\ufffa", "\ufffb"]) {
+				if (cleanDescription(`a${before}${hidden}b`) !== `a${before} b`) {
+					missed.push(`U+${lead.toString(16)} U+${hidden.charCodeAt(0).toString(16)}`);
+				}
+			}
+		}
+		expect(missed).toEqual([]);
+	});
+
+	test("every vector is what the rule gives, step by step", () => {
+		for (const vector of vectors.clean) {
+			expect(byTheRule(vector.in)).toBe(vector.out);
+		}
+	});
+
+	test("at the cut: 499 to 502 code points, with a space, a joiner, an astral code point or half a pair there", () => {
+		const a = (count: number): string => "a".repeat(count);
+		const astral = "\u{1F44D}";
+		// A space as code point 500 goes, so 499 stay; as 499 it stays inside.
+		expect(cleanDescription(`${a(498)} b`)).toBe(`${a(498)} b`);
+		expect(cleanDescription(`${a(499)} b`)).toBe(a(499));
+		expect(cleanDescription(`${a(500)} b`)).toBe(a(500));
+		expect(cleanDescription(`${a(498)} bc`)).toBe(`${a(498)} b`);
+		// Spaces after code point 500 are no part of the text: nothing is cut.
+		expect(cleanDescription(`${a(500)} `)).toBe(a(500));
+		expect(cleanDescription(`${a(499)} \n`)).toBe(a(499));
+		// A joiner counts as the code point it is.
+		expect(cleanDescription(`${a(499)}‍`)).toBe(`${a(499)}‍`);
+		expect(cleanDescription(`${a(499)}‍b`)).toBe(`${a(499)}‍`);
+		expect(cleanDescription(`${a(500)}‍`)).toBe(a(500));
+		expect(cleanDescription(`${a(498)} ‌b`)).toBe(`${a(498)} ‌`);
+		// An astral code point is one, and is kept or cut whole.
+		expect(cleanDescription(`${a(499)}${astral}`)).toBe(`${a(499)}${astral}`);
+		expect(cleanDescription(`${a(499)}${astral}b`)).toBe(`${a(499)}${astral}`);
+		expect(cleanDescription(`${a(500)}${astral}`)).toBe(a(500));
+		expect(cleanDescription(`${a(498)} ${astral}${astral}`)).toBe(`${a(498)} ${astral}`);
+		// Half of a pair counts as the U+FFFD it becomes.
+		expect(cleanDescription(`${a(499)}\ud83d`)).toBe(`${a(499)}�`);
+		expect(cleanDescription(`${a(499)}\ud83db`)).toBe(`${a(499)}�`);
+		expect(cleanDescription(`${a(500)}\udc4d`)).toBe(a(500));
+		expect(cleanDescription(`${a(499)} \ud83d`)).toBe(a(499));
+
+		// And every pair of these around the cut, against the rule.
+		const around = ["b", " ", "  ", "\t", "\n", " ", "﻿", "‌", "‍", astral, "\ud83d", "\udc4d", "�"];
+		for (let before = 496; before <= 502; before++) {
+			for (const first of around) {
+				for (const second of around) {
+					for (const end of ["", "z", " "]) {
+						const text = `${a(before)}${first}${second}${end}`;
+						if (cleanDescription(text) !== byTheRule(text)) {
+							throw new Error(`differs from the rule: ${before} letters, then ${JSON.stringify(`${first}${second}${end}`)}`);
+						}
+					}
+				}
+			}
+		}
+	});
+
+	test("a run of spaces is read to its end, however long, and adds one space or none", () => {
+		const run = " \t ".repeat(50_000);
+		expect(cleanDescription(`${run}a${run}b${run}`)).toBe("a b");
+		expect(cleanDescription(`${"a".repeat(500)}${run}`)).toBe("a".repeat(500));
+		expect(cleanDescription(`${"a".repeat(499)}${run}b`)).toBe("a".repeat(499));
+	});
+
+	test("a text of 10 MB costs what its first 500 code points cost", () => {
+		// The line is built only as far as the limit and the pass ends at the
+		// first code point that does not fit, so nothing the size of the text
+		// is built or counted. Shown by time, since a string cannot say how
+		// much of it was read: built whole and counted twice, this text took
+		// half a second and 700 MB; read up to the limit, it takes a few
+		// milliseconds at most. The best of three, so that a pause of the
+		// machine does not fail it.
+		const text = "abcd ".repeat(2 * 1024 * 1024);
+		let best = Number.POSITIVE_INFINITY;
+		let resolved = resolveDescription("");
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const started = performance.now();
+			resolved = resolveDescription(text);
+			best = Math.min(best, performance.now() - started);
+		}
+		expect(best).toBeLessThan(100);
+		expect(resolved.text).toBe("abcd ".repeat(100).trimEnd());
+		expect(resolved.warning).toMatch(/^the description was shortened: /);
+	});
+});
+
+describe("resolveDescription", () => {
+	test("per-agent env (SYNADIA_PI_DESCRIPTION) wins over everything below it", () => {
+		expect(resolveDescription("per agent", "shared", "from config")).toEqual({
+			text: "per agent",
+		});
+	});
+
+	test("the shared env (SYNADIA_DESCRIPTION) wins over the config field", () => {
+		expect(resolveDescription(undefined, "shared", "from config")).toEqual({
+			text: "shared",
+		});
+	});
+
+	test("the config field counts when no env variable is set", () => {
+		expect(resolveDescription(undefined, undefined, "from config")).toEqual({
+			text: "from config",
+		});
+	});
+
+	test("nothing set means no description: the default text applies", () => {
+		expect(resolveDescription(undefined, undefined, undefined)).toEqual({
+			text: undefined,
+		});
+		expect(resolveDescription()).toEqual({ text: undefined });
+	});
+
+	test("a source that is set wins even when empty, and then no description is set", () => {
+		// first-present-wins-then-clean, as resolveOwner: an empty variable
+		// does NOT cascade to the config field, it switches its description off.
+		expect(resolveDescription("", "shared", "from config")).toEqual({
+			text: undefined,
+		});
+		expect(resolveDescription("   ", undefined, "from config")).toEqual({
+			text: undefined,
+		});
+		expect(resolveDescription("\u0000\u0007", "shared")).toEqual({
+			text: undefined,
+		});
+	});
+
+	test("a null source is absent, as a missing one is", () => {
+		expect(resolveDescription(null, undefined, "from config")).toEqual({
+			text: "from config",
+		});
+	});
+
+	test("a description as written is used without a warning", () => {
+		const text =
+			"Keeps the logs of the orders server. Ask it what happened in a time range.";
+		expect(resolveDescription(text)).toEqual({ text });
+		expect(resolveDescription("a".repeat(DESCRIPTION_LIMIT))).toEqual({
+			text: "a".repeat(DESCRIPTION_LIMIT),
+		});
+	});
+
+	test("a description cleaning changed is used as cleaned, with one warning", () => {
+		const resolved = resolveDescription("line one\nline  two\t");
+		expect(resolved.text).toBe("line one line two");
+		expect(resolved.warning).toBe(
+			"the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD",
+		);
+	});
+
+	test("a description over the limit is cut to it, and the warning names the limit", () => {
+		const resolved = resolveDescription("a".repeat(DESCRIPTION_LIMIT + 112));
+		expect(resolved.text).toBe("a".repeat(DESCRIPTION_LIMIT));
+		expect(resolved.warning).toBe(
+			"the description was shortened: it had more than 500 characters and at most its first 500 are registered",
+		);
+	});
+
+	test("cleaned and shortened is still one warning", () => {
+		// Cleaned within what is registered: a space where the line break was.
+		const resolved = resolveDescription(`abcd\n${"abcd ".repeat(120)}`);
+		expect(resolved.text).toBe("abcd ".repeat(100).trimEnd());
+		expect(codePoints(resolved.text ?? "")).toBe(499);
+		expect(resolved.warning).toBe(
+			"the description was cleaned and shortened: it had more than 500 characters after cleaning and at most its first 500 are registered",
+		);
+	});
+
+	test("shortened only, when what is registered is how the text began", () => {
+		// A text over the limit is not read to its end: what cleaning would
+		// have changed past the cut is not looked at.
+		const resolved = resolveDescription(`${"abcd ".repeat(120)}\n\ttail`);
+		expect(resolved.text).toBe("abcd ".repeat(100).trimEnd());
+		expect(resolved.warning).toBe(
+			"the description was shortened: it had more than 500 characters and at most its first 500 are registered",
+		);
+	});
+
+	test("spaces past code point 500 are cleaned away, not cut: no word of shortening", () => {
+		const resolved = resolveDescription(`${"a".repeat(DESCRIPTION_LIMIT)} \n`);
+		expect(resolved.text).toBe("a".repeat(DESCRIPTION_LIMIT));
+		expect(resolved.warning).toMatch(/^the description was cleaned: /);
+	});
+
+	test("each warning is true of every text it is given for", () => {
+		const cleaned =
+			"the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD";
+		// Cleaning that leaves no space where the character was, at an end;
+		// characters of each kind the sentence names; and a joiner, which stays.
+		const texts: Array<[string, string]> = [
+			["a line break at the end\n", "a line break at the end"],
+			["﻿a byte order mark at the start", "a byte order mark at the start"],
+			["a no-break space", "a no-break space"],
+			["a narrow no-break space", "a narrow no-break space"],
+			["a zero width​space", "a zero width space"],
+			["a soft­hyphen", "a soft hyphen"],
+			["a line separator", "a line separator"],
+			["several   spaces", "several spaces"],
+			["a\ttab", "a tab"],
+			["a joiner‍ that stays, and a tab\t", "a joiner‍ that stays, and a tab"],
+			["half a pair \ud83d", "half a pair �"],
+		];
+		for (const [written, registered] of texts) {
+			expect(resolveDescription(written)).toEqual({ text: registered, warning: cleaned });
+		}
+		// Code point 500 a space: 499 are registered, at most the first 500.
+		const shortened = resolveDescription(`${"a".repeat(499)} b`);
+		expect(codePoints(shortened.text ?? "")).toBe(499);
+		expect(shortened.warning).toBe(
+			"the description was shortened: it had more than 500 characters and at most its first 500 are registered",
+		);
+		const both = resolveDescription(`\t${"a".repeat(499)} b`);
+		expect(codePoints(both.text ?? "")).toBe(499);
+		expect(both.warning).toBe(
+			"the description was cleaned and shortened: it had more than 500 characters after cleaning and at most its first 500 are registered",
+		);
+	});
+
+	test("the result is what cleanDescription gives, for every vector", () => {
+		for (const vector of vectors.clean) {
+			const resolved = resolveDescription(vector.in);
+			expect(resolved.text).toBe(vector.out === "" ? undefined : vector.out);
+			// A warning exactly when cleaning changed a description that is used.
+			expect(resolved.warning !== undefined).toBe(
+				vector.out !== "" && vector.out !== vector.in,
+			);
+		}
+	});
+
+	test("a value that is not text is ignored with a warning, and never throws", () => {
+		for (const value of [42, true, ["a"], { text: "a" }]) {
+			expect(resolveDescription(value, "shared")).toEqual({
+				text: undefined,
+				warning:
+					"the description is not text; it is ignored and the default is registered",
+			});
+		}
+	});
+});
+
+describe("parseDescriptionCommand", () => {
+	test("the text after the word is the description, spaces and all", () => {
+		expect(
+			parseDescriptionCommand(" Keeps the logs. Ask it what happened."),
+		).toEqual({ action: "set", text: "Keeps the logs. Ask it what happened." });
+	});
+
+	test("the text is kept cleaned, with the warning to show", () => {
+		const asked = parseDescriptionCommand(" two  spaces\there ");
+		expect(asked).toEqual({
+			action: "set",
+			text: "two spaces here",
+			warning:
+				"the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD",
+		});
+		const long = parseDescriptionCommand(` ${"a".repeat(501)}`);
+		expect(long.action).toBe("set");
+		expect(long.action === "set" && codePoints(long.text)).toBe(500);
+		expect(long.action === "set" && long.warning).toMatch(/^the description was shortened: it had more than 500 characters/);
+	});
+
+	test("the word clear alone removes the setting", () => {
+		expect(parseDescriptionCommand(" clear")).toEqual({ action: "clear" });
+		expect(parseDescriptionCommand("  clear  ")).toEqual({ action: "clear" });
+		// More than the word is a description.
+		expect(parseDescriptionCommand(" clear the cache when asked")).toEqual({
+			action: "set",
+			text: "clear the cache when asked",
+		});
+	});
+
+	test("no text asks for the usage line", () => {
+		expect(parseDescriptionCommand("")).toEqual({ action: "usage" });
+		expect(parseDescriptionCommand("   ")).toEqual({ action: "usage" });
+	});
+});
+
+// The command itself, run by the extension against a config file in a
+// throwaway home directory (the fixture refuses a home that was not
+// redirected, so a developer's own config is never written).
+describe("/nats-configure description", () => {
+	const FIXTURE = join(HERE, "fixtures", "configure-command.mjs");
+
+	function withHome(run: (home: string, configFile: string) => void): void {
+		const home = mkdtempSync(join(tmpdir(), "pi-configure-home-"));
+		try {
+			run(home, join(home, ".pi", "agent", "nats-channel.json"));
+		} finally {
+			rmSync(home, { recursive: true, force: true });
+		}
+	}
+
+	function configure(home: string, args: string): Array<{ line: string; level: string }> {
+		const run = Bun.spawnSync([process.execPath, FIXTURE, args, home], {
+			env: { ...process.env, HOME: home },
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		if (run.exitCode !== 0) {
+			throw new Error(`configure-command exited ${run.exitCode}: ${run.stderr.toString()}`);
+		}
+		return JSON.parse(run.stdout.toString().trim().split("\n").at(-1) ?? "[]");
+	}
+
+	const readConfig = (path: string): Record<string, unknown> =>
+		JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+
+	test("description <text> writes the cleaned text beside the other keys; clear removes it", () => {
+		withHome((home, configFile) => {
+			mkdirSync(dirname(configFile), { recursive: true });
+			writeFileSync(configFile, JSON.stringify({ sessionName: "kept", owner: "team" }));
+
+			expect(
+				configure(home, "description Keeps the logs of the orders server. Reads only."),
+			).toEqual([
+				{ line: "NATS config updated. Restart PI for changes to take effect.", level: "info" },
+			]);
+			expect(readConfig(configFile)).toEqual({
+				sessionName: "kept",
+				owner: "team",
+				description: "Keeps the logs of the orders server. Reads only.",
+			});
+
+			// The listing shows it.
+			const [listing] = configure(home, "");
+			expect(listing?.line).toContain(
+				"Description: Keeps the logs of the orders server. Reads only.",
+			);
+
+			expect(configure(home, "description clear")).toEqual([
+				{ line: "NATS config updated. Restart PI for changes to take effect.", level: "info" },
+			]);
+			expect(readConfig(configFile)).toEqual({ sessionName: "kept", owner: "team" });
+			expect(configure(home, "")[0]?.line).toContain(
+				"Description: (default: PI agent (<session>) in <cwd>)",
+			);
+		});
+	});
+
+	test("a text cleaning changed is saved as cleaned, with the warning", () => {
+		withHome((home, configFile) => {
+			const notified = configure(home, `description ${"a".repeat(510)}`);
+			expect(notified).toEqual([
+				{
+					line: "NATS: the description was shortened: it had more than 500 characters and at most its first 500 are registered",
+					level: "warning",
+				},
+				{ line: "NATS config updated. Restart PI for changes to take effect.", level: "info" },
+			]);
+			expect(readConfig(configFile)).toEqual({ description: "a".repeat(500) });
+		});
+	});
+
+	test("description without a text prints the usage and writes nothing", () => {
+		withHome((home, configFile) => {
+			expect(configure(home, "description")).toEqual([
+				{ line: "Usage: /nats-configure description <text|clear>", level: "warning" },
+			]);
+			expect(() => readFileSync(configFile, "utf8")).toThrow();
+		});
+	});
+});

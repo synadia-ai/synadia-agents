@@ -24,6 +24,13 @@
 //  12. A run no NATS prompt started is a local turn: the extension hears it
 //      begin and end, its provider headers and tool calls are given it, and
 //      a prompt that arrives meanwhile is handed to PI only after its end.
+//  13. The description: without one the session's name and working
+//      directory are registered, as before; one set in
+//      SYNADIA_PI_DESCRIPTION is registered cleaned, with one warning, and
+//      SYNADIA_DESCRIPTION is the fallback; the config file's `description`
+//      counts when no variable is set, a variable wins over it, and an
+//      empty variable switches it off (sessions started in a throwaway
+//      home directory); `/nats-status` shows the one in use.
 //
 // Run with:
 //   bun test/smoke.mjs
@@ -157,6 +164,14 @@ delete process.env.SYNADIA_OWNER;
 delete process.env.NATS_PI_OWNER;
 delete process.env.SYNADIA_PI_NAME;
 delete process.env.SYNADIA_NAME;
+// No description from the invoking shell, nor from the developer's own
+// `~/.pi/agent/nats-channel.json`: the default text is what the first
+// assertions expect. `SYNADIA_PI_DESCRIPTION` set but empty means no
+// description, and the config file's is then not read. (To check, run the
+// smoke with HOME at a directory whose `.pi/agent/nats-channel.json` holds
+// a `description`.)
+process.env.SYNADIA_PI_DESCRIPTION = "";
+delete process.env.SYNADIA_DESCRIPTION;
 if (SIGNED) process.env.NATS_SENDER_IDENTITY = "signed";
 else delete process.env.NATS_SENDER_IDENTITY;
 if (STRICT) process.env.NATS_MIN_SENDER_TRUST = "signed";
@@ -205,6 +220,7 @@ const mockCtx = {
   },
 };
 const registeredTools = new Map();
+const registeredCommands = new Map();
 const mockPi = {
   on(event, cb) {
     if (!listeners.has(event)) listeners.set(event, []);
@@ -213,7 +229,9 @@ const mockPi = {
   sendUserMessage(text) {
     pendingSendUserMessage = text;
   },
-  registerCommand(_name, _spec) {},
+  registerCommand(name, spec) {
+    registeredCommands.set(name, spec);
+  },
   registerTool(spec) {
     registeredTools.set(spec.name, spec);
   },
@@ -278,6 +296,8 @@ await step("$SRV.INFO returns spec-shaped service info", async () => {
   assert.equal(mine.metadata.owner, owner);
   assert.equal(mine.metadata.protocol_version, "0.3");
   assert.ok(mine.metadata.session.length > 0);
+  // No description is set: the default text, unchanged.
+  assert.equal(mine.description, `PI agent (${session}) in ${mockCtx.cwd}`);
   if (SIGNED) {
     assert.match(mine.metadata.user_nkey ?? "", /^U[A-Z2-7]{55}$/);
     assert.match(mine.metadata.account ?? "", /^A[A-Z2-7]{55}$/);
@@ -471,6 +491,224 @@ await step(
       }
       rmSync(dir, { recursive: true, force: true });
     }
+  },
+)();
+
+await step("description: /nats-status shows the one in use, the default text", async () => {
+  const notified = [];
+  await registeredCommands.get("nats-status").handler("", {
+    ui: { notify: (line, level) => notified.push({ line, level }) },
+  });
+  assert.equal(notified.length, 1);
+  assert.equal(notified[0].level, "info");
+  assert.ok(
+    notified[0].line.includes(
+      ` • Description: PI agent (${session}) in ${mockCtx.cwd} • `,
+    ),
+    `status line lacks the description: ${notified[0].line}`,
+  );
+})();
+
+// Start one more channel with `env` set for its start only, wait until it
+// is registered, and hand back its `$SRV.INFO`, what it notified and its
+// commands. No extension: the counting fixture's state stays the first
+// channel's.
+async function startDescribed(name, env) {
+  const itsListeners = new Map();
+  const commands = new Map();
+  const notified = [];
+  const pi = {
+    on(event, cb) {
+      if (!itsListeners.has(event)) itsListeners.set(event, []);
+      itsListeners.get(event).push(cb);
+    },
+    sendUserMessage() {},
+    registerCommand: (commandName, spec) => commands.set(commandName, spec),
+    registerTool() {},
+  };
+  const ctx = {
+    cwd: process.cwd(),
+    isIdle: () => true,
+    ui: {
+      notify: (line, level) => notified.push({ line, level }),
+      setStatus() {},
+    },
+  };
+  const emitTo = (event, ...args) =>
+    Promise.all((itsListeners.get(event) ?? []).map((cb) => cb(...args, ctx)));
+  const overrides = {
+    SYNADIA_PI_NAME: name,
+    SYNADIA_PI_EXTENSIONS: "",
+    SYNADIA_PI_DESCRIPTION: undefined,
+    SYNADIA_DESCRIPTION: undefined,
+    ...env,
+  };
+  const previous = {};
+  for (const [variable, value] of Object.entries(overrides)) {
+    previous[variable] = process.env[variable];
+    if (value === undefined) delete process.env[variable];
+    else process.env[variable] = value;
+  }
+  try {
+    channelFactory(pi);
+    // The settings are read before the handler first waits.
+    await emitTo("session_start", {});
+  } finally {
+    for (const [variable, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[variable];
+      else process.env[variable] = value;
+    }
+  }
+  const svcm = new Svcm(obs);
+  let info;
+  for (let attempt = 0; attempt < 20 && !info; attempt++) {
+    const client = svcm.client({ strategy: "stall", maxWait: 500, maxMessages: 20 });
+    for await (const si of await client.info("agents")) {
+      if (si.metadata?.agent === "pi" && si.metadata?.session === name) info = si;
+    }
+  }
+  return { info, notified, commands, ctx, stop: () => emitTo("session_shutdown", {}) };
+}
+
+await step(
+  "description: SYNADIA_PI_DESCRIPTION is registered, cleaned and with one warning, and wins over SYNADIA_DESCRIPTION",
+  async () => {
+    const name = `described-${process.pid}`;
+    const described = await startDescribed(name, {
+      // A line break and repeated spaces, and a U+FEFF right after the
+      // ligature U+FB01, which a match over the whole string missed on
+      // Bun 1.3.14.
+      SYNADIA_PI_DESCRIPTION:
+        "Keeps the logs of the back of\ufb01\ufeffce.\n  Ask it what happened in a time range.",
+      SYNADIA_DESCRIPTION: "the shared one",
+    });
+    try {
+      assert.ok(described.info, `no registration for session=${name}`);
+      const cleaned =
+        "Keeps the logs of the back of\ufb01 ce. Ask it what happened in a time range.";
+      assert.equal(described.info.description, cleaned);
+      assert.deepEqual(
+        described.notified.filter((n) => n.line.includes("description")),
+        [
+          {
+            line: "NATS: the description was cleaned: it is registered as one line of plain text, in which each run of line breaks, tabs, spaces of any kind, control characters and invisible format characters (Unicode Cc and Cf, but not the zero width joiner and non-joiner) became one plain space, none stays at either end, and any half of a surrogate pair became U+FFFD",
+            level: "warning",
+          },
+        ],
+      );
+      const status = [];
+      await described.commands.get("nats-status").handler("", {
+        ui: { notify: (line) => status.push(line) },
+      });
+      assert.ok(
+        status[0]?.includes(` • Description: ${cleaned} • `),
+        `status line lacks the description: ${status[0]}`,
+      );
+    } finally {
+      await described.stop();
+    }
+  },
+)();
+
+await step(
+  "description: SYNADIA_DESCRIPTION is registered when the per-agent variable is unset, as written and without a warning",
+  async () => {
+    const name = `shared-${process.pid}`;
+    // An emoji sequence: its zero width joiners (U+200D) stay.
+    const text =
+      "Answers for the \u{1F468}\u200d\u{1F469}\u200d\u{1F467} team. Reads only; changes nothing.";
+    const described = await startDescribed(name, { SYNADIA_DESCRIPTION: text });
+    try {
+      assert.ok(described.info, `no registration for session=${name}`);
+      assert.equal(described.info.description, text);
+      assert.deepEqual(
+        described.notified.filter((n) => n.level === "warning"),
+        [],
+      );
+    } finally {
+      await described.stop();
+    }
+  },
+)();
+
+// Start one more session in a process of its own, its home a throwaway
+// directory holding `config` as nats-channel.json, connected straight to
+// the spawned server, with only the description variables `env` names.
+// Hands back the description it registered. The config file lives under
+// the home directory, so this is the only way to give a session one.
+async function describedFromHome(name, config, env = {}) {
+  const home = mkdtempSync(join(tmpdir(), "pi-smoke-home-"));
+  mkdirSync(join(home, ".pi", "agent"), { recursive: true });
+  writeFileSync(
+    join(home, ".pi", "agent", "nats-channel.json"),
+    JSON.stringify(config),
+  );
+  const childEnv = {
+    ...process.env,
+    HOME: home,
+    NATS_URL: SERVER_URL,
+    SYNADIA_PI_NAME: name,
+    SYNADIA_PI_EXTENSIONS: "",
+    ...(AUTHENTICATED ? { NATS_CREDS: ALICE_CREDS } : {}),
+  };
+  delete childEnv.NATS_CONTEXT;
+  // No description variable but the ones asked for, not even the empty
+  // one this smoke runs under.
+  delete childEnv.SYNADIA_PI_DESCRIPTION;
+  delete childEnv.SYNADIA_DESCRIPTION;
+  Object.assign(childEnv, env);
+  const child = spawn(
+    process.execPath,
+    [join(__dirname, "fixtures", "session-from-home.mjs"), home],
+    { env: childEnv, stdio: ["pipe", "ignore", "inherit"] },
+  );
+  const exited = new Promise((resolve) => child.on("exit", resolve));
+  try {
+    const svcm = new Svcm(obs);
+    let info;
+    for (let attempt = 0; attempt < 20 && !info; attempt++) {
+      const client = svcm.client({ strategy: "stall", maxWait: 500, maxMessages: 20 });
+      for await (const si of await client.info("agents")) {
+        if (si.metadata?.agent === "pi" && si.metadata?.session === name) info = si;
+      }
+    }
+    assert.ok(info, `no registration for session=${name}`);
+    return info.description;
+  } finally {
+    child.kill("SIGTERM");
+    await Promise.race([exited, delay(5000).then(() => child.kill("SIGKILL"))]);
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+await step(
+  "description: the config file's `description` is registered when no variable is set",
+  async () => {
+    const text = "Answers from the config file. Ask it about the orders.";
+    assert.equal(
+      await describedFromHome(`configured-${process.pid}`, { description: text }),
+      text,
+    );
+  },
+)();
+
+await step(
+  "description: a variable wins over the config file's `description`, and an empty one switches it off",
+  async () => {
+    // The order at the call site: the variables before the config field.
+    // The lowest variable against the config file pins it, with the step
+    // above that sets both variables.
+    const config = { description: "from the config file" };
+    const name = `precedence-${process.pid}`;
+    const [overConfig, switchedOff] = await Promise.all([
+      describedFromHome(name, config, {
+        SYNADIA_DESCRIPTION: "from the variable",
+      }),
+      // Set but empty: no description, and the config file's is not read.
+      describedFromHome(`${name}-empty`, config, { SYNADIA_PI_DESCRIPTION: "" }),
+    ]);
+    assert.equal(overConfig, "from the variable");
+    assert.equal(switchedOff, `PI agent (${name}-empty) in ${process.cwd()}`);
   },
 )();
 
