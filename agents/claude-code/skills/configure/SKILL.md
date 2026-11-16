@@ -87,7 +87,7 @@ Two separate steps - do NOT combine into one Bash call:
 3. Read the context file. Show the URL and description so the user can
    confirm it's correct.
 4. `mkdir -p <state dir>`
-5. Read existing `config.json` if present; update/add the `context` field,
+5. Read existing `<state dir>/config.json` if present; update/add the `context` field,
    preserve other fields (like `sessionName`, `permissions`). Write back.
 6. Confirm, then show the status view so the user sees where they stand.
 
@@ -96,13 +96,13 @@ Two separate steps - do NOT combine into one Bash call:
 1. The session name is the 5th token in the v0.3 verb-first subject
    `agents.prompt.cc.<owner>.<name>`. It defaults to the working directory
    basename. This command overrides it.
-2. Read existing `config.json` (or start fresh). Set `sessionName` field.
+2. Read existing `<state dir>/config.json` (or start fresh). Set `sessionName` field.
    Write back.
 3. Confirm the override.
 
 ### `session clear` - remove session name override
 
-Remove the `sessionName` field from `config.json` so the default
+Remove the `sessionName` field from `<state dir>/config.json` so the default
 (CWD basename) is used.
 
 ### `owner <name>` - set owner override
@@ -111,14 +111,14 @@ Remove the `sessionName` field from `config.json` so the default
    `agents.prompt.cc.<owner>.<name>`. It defaults to the sanitized
    `$USER`. This command overrides it — useful for service accounts or
    deployment-scoped owners.
-2. Read existing `config.json` (or start fresh). Set the `owner` field.
+2. Read existing `<state dir>/config.json` (or start fresh). Set the `owner` field.
    Write back.
 3. Confirm the override. Note: the `SYNADIA_CLAUDE_CODE_OWNER` and
    `SYNADIA_OWNER` env vars take precedence over this config field.
 
 ### `owner clear` - remove owner override
 
-Remove the `owner` field from `config.json` so the default (sanitized
+Remove the `owner` field from `<state dir>/config.json` so the default (sanitized
 `$USER`) is used.
 
 ### `description <text>` - say what this session does
@@ -134,12 +134,12 @@ Remove the `owner` field from `config.json` so the default (sanitized
    into spaces, collapse repeated spaces, and trim the ends. It may have
    at most 500 characters; if it has more, say so and ask the user for a
    shorter one rather than cut it.
-3. Read existing `config.json` (or start fresh). Set the `description`
+3. Read existing `<state dir>/config.json` (or start fresh). Set the `description`
    field to the text as a JSON string: inside it, write `"` as `\"` and
    `\` as `\\`, as JSON requires. Unlike the other fields this skill
    writes, the description is free text, and it is written by hand. Write
    back.
-4. Read `config.json` again and check that it is still valid JSON, with
+4. Read `<state dir>/config.json` again and check that it is still valid JSON, with
    every other field as it was and the description reading as the user
    gave it. A `config.json` that does not parse stops the channel from
    starting (`invalid config.json: expected valid JSON`). If it does not
@@ -154,19 +154,19 @@ Only when the word `clear` is all that follows `description`. A text that
 only begins with it, such as `description clear the cache when asked`, is
 a description to set.
 
-Remove the `description` field from `config.json` so the default
+Remove the `description` field from `<state dir>/config.json` so the default
 (`Claude Code — <session name>`) is registered.
 
 ### `identity off` - disable host identity
 
-Set `senderIdentity` to `"off"`. The channel performs no host identity lookup
+Set `senderIdentity` to `"off"` in `<state dir>/config.json`. The channel performs no host identity lookup
 and registers no identity metadata. This is the default and works with
 token/password authentication and servers where user-info lookup is not
 permitted. It does not change inbound sender policy.
 
 ### `identity signed` - use the connection identity
 
-Set `senderIdentity` to `"signed"`. The selected NATS context must contain a
+Set `senderIdentity` to `"signed"` in `<state dir>/config.json`. The selected NATS context must contain a
 user seed (`creds`, `nkey`, or `user_jwt` plus `user_seed`). The same immutable
 credential snapshot supplies both connection authentication and signing; never
 ask for or add a second identity credential. Signed startup fails rather than
@@ -177,29 +177,29 @@ Code restart is required after changing it.
 
 ### `trust any` - accept all sender trust classes
 
-Set `minSenderTrust` to `"any"`. Headerless, claimed, and verified prompts are
+Set `minSenderTrust` to `"any"` in `<state dir>/config.json`. Headerless, claimed, and verified prompts are
 admitted. This is the backward-compatible default and is independent of the
 channel's own identity.
 
 ### `trust signed` - require verified senders
 
-Set `minSenderTrust` to `"signed"`. Headerless, claimed, malformed, stale, and
+Set `minSenderTrust` to `"signed"` in `<state dir>/config.json`. Headerless, claimed, malformed, stale, and
 replayed requests are rejected before an acknowledgement and before Claude sees
 the prompt. `NATS_MIN_SENDER_TRUST` overrides this config field.
 
 ### `permissions terminal` - use terminal for permission prompts
 
-Set `permissions.mode` to `terminal`. Permission prompts will appear in the
+Set `permissions.mode` to `terminal` in `<state dir>/config.json`. Permission prompts will appear in the
 Claude Code terminal session. This is the simplest option when the operator
 has direct terminal access, and the default when no permissions block is set.
 
-1. Read existing `config.json` (or start fresh).
+1. Read existing `<state dir>/config.json` (or start fresh).
 2. Set `permissions` to `{ "mode": "terminal" }`.
 3. Write back and confirm.
 
 ### `permissions query` - relay permissions as query chunks
 
-Set `permissions.mode` to `query`. When Claude needs permission to use a
+Set `permissions.mode` to `query` in `<state dir>/config.json`. When Claude needs permission to use a
 tool during an active NATS prompt, the plugin emits a protocol `query`
 chunk (§7 of the Synadia Agent Protocol for NATS) on the active stream's reply
 subject. The caller replies with `yes`/`no` on the query's dynamic reply
@@ -212,13 +212,13 @@ is denied (there is no open stream to carry a query chunk on). Operators
 who need terminal-style prompting in that case should use `permissions
 terminal` instead.
 
-1. Read existing `config.json` (or start fresh).
+1. Read existing `<state dir>/config.json` (or start fresh).
 2. Set `permissions` to `{ "mode": "query" }`.
 3. Write back and confirm.
 
 ### `permissions clear` - reset to default
 
-Remove the `permissions` field from `config.json`, restoring the default
+Remove the `permissions` field from `<state dir>/config.json`, restoring the default
 behavior (terminal-mode prompts).
 
 ### `clear` - remove config
