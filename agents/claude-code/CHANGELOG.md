@@ -170,3 +170,11 @@ All notable changes to the Claude Code NATS channel are documented here.
   installs mutable dependencies whenever its MCP server starts.
 - Synchronized the existing package and Claude plugin descriptor version at `0.5.1`.
 - Version `0.6.0`, package and Claude plugin descriptor.
+
+### Fixed
+
+- `/nats-channel:configure` reads and writes `config.json` in the channel's state directory, the
+  one the server reads: `NATS_STATE_DIR` when it is set and not empty, else
+  `~/.claude/channels/nats`. Its `list-contexts.sh` writes `.contexts` there too. Before, both
+  always used `~/.claude/channels/nats`, so in a session started with `NATS_STATE_DIR` a setting
+  the skill saved never reached the server. The skill names the file it used. (#248)

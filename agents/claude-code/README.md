@@ -53,7 +53,8 @@ and registers a micro service on `agents.prompt.cc.<owner>.<name>`, where
 
 The `/nats-channel:configure` skill manages connection, session naming,
 the description, sender identity, inbound trust, and permissions. All state lives in
-`~/.claude/channels/nats/config.json`.
+`config.json` in the state directory (`NATS_STATE_DIR`, default
+`~/.claude/channels/nats`), the file the server reads.
 
 | Command | Description |
 | --- | --- |
@@ -82,7 +83,8 @@ with `nats context ls`, then:
 /nats-channel:configure <context-name>
 ```
 
-This writes the selected context to `~/.claude/channels/nats/config.json`.
+This writes the selected context to `config.json` in the state directory
+(`NATS_STATE_DIR`, default `~/.claude/channels/nats`).
 The server reads connection details (URL, credentials) from
 `~/.config/nats/context/<name>.json`.
 
@@ -526,7 +528,8 @@ those instead.
 
 ## Configuration
 
-State lives in `~/.claude/channels/nats/`:
+State lives in the state directory, `NATS_STATE_DIR` (default `~/.claude/channels/nats/`).
+The `/nats-channel:configure` skill reads and writes `config.json` there too:
 
 | File | Purpose |
 | --- | --- |
@@ -594,7 +597,7 @@ path>`, `$NATS_URL` or `default: demo.nats.io`.
 | `NATS_AGENT_TOOLS` | The agent tools offered: `blocking`, `all` or `off`; empty means `blocking` | config `agentTools`, then `blocking` |
 | `SYNADIA_CLAUDE_CODE_EXTENSIONS`, `SYNADIA_AGENT_EXTENSIONS` | Extension modules, comma-separated; per-agent var wins, then fleet-wide, then config `extensions`. A set variable wins even when empty | *(none)* |
 | `SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS` | `turnStartGraceMs`, in milliseconds, a whole number above 0; empty means unset | config `turnStartGraceMs`, then `300000` |
-| `NATS_STATE_DIR` | State directory location | `~/.claude/channels/nats` |
+| `NATS_STATE_DIR` | State directory location: `config.json`, which `/nats-channel:configure` edits, attachments and the hooks' files | `~/.claude/channels/nats` |
 | `CLAUDE_CWD` | Working directory whose basename seeds the default session name | — |
 | `CLAUDE_PID` | Set by Claude Code for its MCP servers and hooks; keys the hooks' files | the server's parent pid |
 

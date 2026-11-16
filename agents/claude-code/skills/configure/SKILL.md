@@ -9,6 +9,7 @@ allowed-tools:
   - Bash(mkdir *)
   - Bash(nats context ls *)
   - Bash(cat *)
+  - Bash(printenv NATS_STATE_DIR)
   - Bash(*list-contexts*)
 effort: low
 ---
@@ -17,10 +18,25 @@ effort: low
 
 Configures the NATS channel plugin: connection context, session name,
 description, sender identity, inbound sender trust, and permission handling.
-State lives in
-`~/.claude/channels/nats/config.json`.
+State lives in `config.json` in the channel's state directory.
 
 Arguments passed: `$ARGUMENTS`
+
+---
+
+## The state directory
+
+Resolve it first, before any other step, the way the server does:
+
+1. Bash: `printenv NATS_STATE_DIR`.
+2. If it prints a path that is not empty, that path is the state directory.
+   Otherwise (no output, or a non-zero exit) it is `~/.claude/channels/nats`.
+
+Every path below written `<state dir>` is that directory. Use it for every
+read, write and delete. Whenever you show the config or save it, name the
+file you used, and say when `NATS_STATE_DIR` chose its directory: a
+session started with `NATS_STATE_DIR` reads its config there, not under
+`~/.claude/channels/nats`.
 
 ---
 
@@ -30,7 +46,8 @@ Arguments passed: `$ARGUMENTS`
 
 Read state and give the user a complete picture, then ask:
 
-1. **Current config** - read `~/.claude/channels/nats/config.json`. Show:
+1. **Current config** - read `<state dir>/config.json`. Show:
+   - The file it read, and whether `NATS_STATE_DIR` chose its directory
    - Selected context name (or "none - using demo.nats.io")
    - Owner override (if set)
    - Session name override (if set)
@@ -59,7 +76,7 @@ Two separate steps - do NOT combine into one Bash call:
 
 1. Bash: run the `list-contexts.sh` script bundled alongside this skill
    file. It produces no stdout - it writes to a file.
-2. Read: open `~/.claude/channels/nats/.contexts` and present the
+2. Read: open `<state dir>/.contexts` and present the
    markdown table to the user.
 
 ### `<context-name>` - select a context
@@ -69,7 +86,7 @@ Two separate steps - do NOT combine into one Bash call:
    available contexts and error.
 3. Read the context file. Show the URL and description so the user can
    confirm it's correct.
-4. `mkdir -p ~/.claude/channels/nats`
+4. `mkdir -p <state dir>`
 5. Read existing `config.json` if present; update/add the `context` field,
    preserve other fields (like `sessionName`, `permissions`). Write back.
 6. Confirm, then show the status view so the user sees where they stand.
@@ -206,14 +223,16 @@ behavior (terminal-mode prompts).
 
 ### `clear` - remove config
 
-Delete `~/.claude/channels/nats/config.json`.
+Delete `<state dir>/config.json`.
 
 ---
 
 ## Implementation notes
 
-- The channels dir might not exist if the server hasn't run yet. Missing
-  file = not configured, not an error.
+- The state directory might not exist if the server hasn't run yet.
+  Missing file = not configured, not an error.
+- `list-contexts.sh` resolves the state directory by the same rule, from
+  the same environment, so `.contexts` lands next to `config.json`.
 - The server reads `config.json` once at boot. Config changes need a
   session restart or `/reload-plugins`. Say so after saving.
 - NATS CLI contexts live in `~/.config/nats/context/<name>.json`. Each
