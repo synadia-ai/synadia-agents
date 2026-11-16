@@ -1,9 +1,10 @@
 #!/bin/bash
 # List NATS CLI contexts as a markdown table.
-# Writes to ~/.claude/channels/nats/.contexts for the skill to Read.
+# Writes to <state dir>/.contexts for the skill to Read. The state directory
+# is $NATS_STATE_DIR when it is set and not empty, else ~/.claude/channels/nats.
 
 CONTEXT_DIR="${HOME}/.config/nats/context"
-STATE_DIR="${HOME}/.claude/channels/nats"
+STATE_DIR="${NATS_STATE_DIR:-${HOME}/.claude/channels/nats}"
 OUT="${STATE_DIR}/.contexts"
 
 mkdir -p "$STATE_DIR"
