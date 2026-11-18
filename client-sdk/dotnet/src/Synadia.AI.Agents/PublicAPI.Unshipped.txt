@@ -14,6 +14,7 @@ const Synadia.AI.Agents.AgentProtocol.PromptQueueGroup = "agents" -> string!
 const Synadia.AI.Agents.AgentProtocol.ServiceName = "agents" -> string!
 const Synadia.AI.Agents.AgentProtocol.StatusEndpointName = "status" -> string!
 const Synadia.AI.Agents.AgentProtocol.StatusQueueGroup = "agents" -> string!
+const Synadia.AI.Agents.AgentStatusContent.AdditionalPropertyKey = "synadia.status" -> string!
 const Synadia.AI.Agents.AttachmentMediaTypes.Default = "application/octet-stream" -> string!
 const Synadia.AI.Agents.AttachmentSaver.DefaultMaxTotalBytes = 67108864 -> long
 const Synadia.AI.Agents.Identity.AgentId.AccountLengthAllowanceBytes = 64 -> int
@@ -33,6 +34,13 @@ const Synadia.AI.Agents.Identity.SenderHeader.SignatureRequiredDescription = "si
 const Synadia.AI.Agents.Identity.SenderHeader.SignedInputTag = "AGENT-SENDER-V1" -> string!
 const Synadia.AI.Agents.Identity.SenderHeader.Version = 1 -> int
 const Synadia.AI.Agents.PromptEnvelope.SessionIdExtra = "session_id" -> string!
+const Synadia.AI.Agents.Tools.AgentToolNames.AnswerAgent = "answer_agent" -> string!
+const Synadia.AI.Agents.Tools.AgentToolNames.CancelAgent = "cancel_agent" -> string!
+const Synadia.AI.Agents.Tools.AgentToolNames.DiscoverAgents = "discover_agents" -> string!
+const Synadia.AI.Agents.Tools.AgentToolNames.ListAgentCalls = "list_agent_calls" -> string!
+const Synadia.AI.Agents.Tools.AgentToolNames.PromptAgent = "prompt_agent" -> string!
+const Synadia.AI.Agents.Tools.AgentToolNames.WaitAgent = "wait_agent" -> string!
+const Synadia.AI.Agents.Tools.AgentTools.QuestionRefusal = "no: the caller stopped waiting for this prompt and cannot answer" -> string!
 override sealed Synadia.AI.Agents.AgentQueryChunk.Equals(Synadia.AI.Agents.AgentChunk? other) -> bool
 override sealed Synadia.AI.Agents.AgentResponseChunk.Equals(Synadia.AI.Agents.AgentChunk? other) -> bool
 override sealed Synadia.AI.Agents.AgentStatusChunk.Equals(Synadia.AI.Agents.AgentChunk? other) -> bool
@@ -61,6 +69,8 @@ override Synadia.AI.Agents.AgentQueryChunk.<Clone>$() -> Synadia.AI.Agents.Agent
 override Synadia.AI.Agents.AgentQueryChunk.Equals(object? obj) -> bool
 override Synadia.AI.Agents.AgentQueryChunk.GetHashCode() -> int
 override Synadia.AI.Agents.AgentQueryChunk.ToString() -> string!
+override Synadia.AI.Agents.AgentQueryContent.ToString() -> string!
+override Synadia.AI.Agents.AgentQueryResponseContent.ToString() -> string!
 override Synadia.AI.Agents.AgentResponse.Equals(object? obj) -> bool
 override Synadia.AI.Agents.AgentResponse.GetHashCode() -> int
 override Synadia.AI.Agents.AgentResponse.ToString() -> string!
@@ -72,6 +82,7 @@ override Synadia.AI.Agents.AgentStatusChunk.<Clone>$() -> Synadia.AI.Agents.Agen
 override Synadia.AI.Agents.AgentStatusChunk.Equals(object? obj) -> bool
 override Synadia.AI.Agents.AgentStatusChunk.GetHashCode() -> int
 override Synadia.AI.Agents.AgentStatusChunk.ToString() -> string!
+override Synadia.AI.Agents.AgentStatusContent.ToString() -> string!
 override Synadia.AI.Agents.AgentSubject.Equals(object? obj) -> bool
 override Synadia.AI.Agents.AgentSubject.GetHashCode() -> int
 override Synadia.AI.Agents.AgentSubject.ToString() -> string!
@@ -112,6 +123,18 @@ override Synadia.AI.Agents.ProtocolVersion.ToString() -> string!
 override Synadia.AI.Agents.SavedAttachment.Equals(object? obj) -> bool
 override Synadia.AI.Agents.SavedAttachment.GetHashCode() -> int
 override Synadia.AI.Agents.SavedAttachment.ToString() -> string!
+override Synadia.AI.Agents.Tools.AgentCallSettledInfo.Equals(object? obj) -> bool
+override Synadia.AI.Agents.Tools.AgentCallSettledInfo.GetHashCode() -> int
+override Synadia.AI.Agents.Tools.AgentCallSettledInfo.ToString() -> string!
+override Synadia.AI.Agents.Tools.AgentToolsPromptContext.Equals(object? obj) -> bool
+override Synadia.AI.Agents.Tools.AgentToolsPromptContext.GetHashCode() -> int
+override Synadia.AI.Agents.Tools.AgentToolsPromptContext.ToString() -> string!
+override Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.Equals(object? obj) -> bool
+override Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.GetHashCode() -> int
+override Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.ToString() -> string!
+override Synadia.AI.Agents.Tools.AgentToolsReplyContext.Equals(object? obj) -> bool
+override Synadia.AI.Agents.Tools.AgentToolsReplyContext.GetHashCode() -> int
+override Synadia.AI.Agents.Tools.AgentToolsReplyContext.ToString() -> string!
 static readonly Synadia.AI.Agents.AgentProtocol.DefaultDiscoverMaxWait -> System.TimeSpan
 static readonly Synadia.AI.Agents.AgentProtocol.DefaultDiscoverStall -> System.TimeSpan
 static readonly Synadia.AI.Agents.AgentProtocol.DefaultHeartbeatInterval -> System.TimeSpan
@@ -230,7 +253,22 @@ static Synadia.AI.Agents.ProtocolVersion.Sdk.get -> Synadia.AI.Agents.ProtocolVe
 static Synadia.AI.Agents.ProtocolVersion.TryParse(string? input, out Synadia.AI.Agents.ProtocolVersion version) -> bool
 static Synadia.AI.Agents.SavedAttachment.operator !=(Synadia.AI.Agents.SavedAttachment? left, Synadia.AI.Agents.SavedAttachment? right) -> bool
 static Synadia.AI.Agents.SavedAttachment.operator ==(Synadia.AI.Agents.SavedAttachment? left, Synadia.AI.Agents.SavedAttachment? right) -> bool
+static Synadia.AI.Agents.Tools.AgentCallSettledInfo.operator !=(Synadia.AI.Agents.Tools.AgentCallSettledInfo? left, Synadia.AI.Agents.Tools.AgentCallSettledInfo? right) -> bool
+static Synadia.AI.Agents.Tools.AgentCallSettledInfo.operator ==(Synadia.AI.Agents.Tools.AgentCallSettledInfo? left, Synadia.AI.Agents.Tools.AgentCallSettledInfo? right) -> bool
+static Synadia.AI.Agents.Tools.AgentToolDefinitions.All() -> System.Collections.Generic.IReadOnlyList<Synadia.AI.Agents.Tools.AgentToolDefinition!>!
+static Synadia.AI.Agents.Tools.AgentToolDefinitions.Offered(System.Collections.Generic.IEnumerable<string!>! offered) -> System.Collections.Generic.IReadOnlyList<Synadia.AI.Agents.Tools.AgentToolDefinition!>!
+static Synadia.AI.Agents.Tools.AgentToolDefinitions.Read(string! name) -> string!
+static Synadia.AI.Agents.Tools.AgentToolNames.All.get -> System.Collections.Generic.IReadOnlyList<string!>!
+static Synadia.AI.Agents.Tools.AgentToolNames.Blocking.get -> System.Collections.Generic.IReadOnlyList<string!>!
+static Synadia.AI.Agents.Tools.AgentToolNames.IsAgentTool(string! name) -> bool
+static Synadia.AI.Agents.Tools.AgentToolsPromptContext.operator !=(Synadia.AI.Agents.Tools.AgentToolsPromptContext? left, Synadia.AI.Agents.Tools.AgentToolsPromptContext? right) -> bool
+static Synadia.AI.Agents.Tools.AgentToolsPromptContext.operator ==(Synadia.AI.Agents.Tools.AgentToolsPromptContext? left, Synadia.AI.Agents.Tools.AgentToolsPromptContext? right) -> bool
+static Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.operator !=(Synadia.AI.Agents.Tools.AgentToolsPromptRewrite? left, Synadia.AI.Agents.Tools.AgentToolsPromptRewrite? right) -> bool
+static Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.operator ==(Synadia.AI.Agents.Tools.AgentToolsPromptRewrite? left, Synadia.AI.Agents.Tools.AgentToolsPromptRewrite? right) -> bool
+static Synadia.AI.Agents.Tools.AgentToolsReplyContext.operator !=(Synadia.AI.Agents.Tools.AgentToolsReplyContext? left, Synadia.AI.Agents.Tools.AgentToolsReplyContext? right) -> bool
+static Synadia.AI.Agents.Tools.AgentToolsReplyContext.operator ==(Synadia.AI.Agents.Tools.AgentToolsReplyContext? left, Synadia.AI.Agents.Tools.AgentToolsReplyContext? right) -> bool
 Synadia.AI.Agents.Agent
+Synadia.AI.Agents.Agent.AsIChatClient(Synadia.AI.Agents.AgentChatClientOptions? options = null) -> Microsoft.Extensions.AI.IChatClient!
 Synadia.AI.Agents.Agent.Client.get -> Synadia.AI.Agents.AgentsClient!
 Synadia.AI.Agents.Agent.GetResponseAsync(Synadia.AI.Agents.PromptEnvelope! envelope, System.Func<Synadia.AI.Agents.AgentQueryChunk!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask>? onQuery = null, Synadia.AI.Agents.PromptOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Synadia.AI.Agents.AgentResponse!>!
 Synadia.AI.Agents.Agent.GetResponseTextAsync(string! prompt, Synadia.AI.Agents.PromptOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<string!>!
@@ -242,6 +280,14 @@ Synadia.AI.Agents.Agent.PromptAsync(string! prompt, Synadia.AI.Agents.PromptOpti
 Synadia.AI.Agents.Agent.PromptAsync(Synadia.AI.Agents.PromptEnvelope! envelope, Synadia.AI.Agents.PromptOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<Synadia.AI.Agents.AgentChunk!>!
 Synadia.AI.Agents.Agent.PromptSubject.get -> string!
 Synadia.AI.Agents.Agent.StatusSubject.get -> string!
+Synadia.AI.Agents.AgentChatClientOptions
+Synadia.AI.Agents.AgentChatClientOptions.AgentChatClientOptions() -> void
+Synadia.AI.Agents.AgentChatClientOptions.IncludeStatus.get -> bool
+Synadia.AI.Agents.AgentChatClientOptions.IncludeStatus.set -> void
+Synadia.AI.Agents.AgentChatClientOptions.PromptOptions.get -> Synadia.AI.Agents.PromptOptions?
+Synadia.AI.Agents.AgentChatClientOptions.PromptOptions.set -> void
+Synadia.AI.Agents.AgentChatClientOptions.QueryHandler.get -> System.Func<Synadia.AI.Agents.AgentQueryContent!, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<string?>>?
+Synadia.AI.Agents.AgentChatClientOptions.QueryHandler.set -> void
 Synadia.AI.Agents.AgentChunk
 Synadia.AI.Agents.AgentChunk.AgentChunk() -> void
 Synadia.AI.Agents.AgentChunk.AgentChunk(Synadia.AI.Agents.AgentChunk! original) -> void
@@ -349,6 +395,20 @@ Synadia.AI.Agents.AgentQueryChunk.Replied.get -> bool
 Synadia.AI.Agents.AgentQueryChunk.ReplyAsync(string! answer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 Synadia.AI.Agents.AgentQueryChunk.ReplyAsync(Synadia.AI.Agents.PromptEnvelope! answer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
 Synadia.AI.Agents.AgentQueryChunk.ReplySubject.get -> string!
+Synadia.AI.Agents.AgentQueryContent
+Synadia.AI.Agents.AgentQueryContent.AgentQueryContent(Synadia.AI.Agents.AgentQueryChunk! query) -> void
+Synadia.AI.Agents.AgentQueryContent.Attachments.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DataContent!>!
+Synadia.AI.Agents.AgentQueryContent.CreateResponse(string! text, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.DataContent!>? attachments = null) -> Synadia.AI.Agents.AgentQueryResponseContent!
+Synadia.AI.Agents.AgentQueryContent.Prompt.get -> string!
+Synadia.AI.Agents.AgentQueryContent.Query.get -> Synadia.AI.Agents.AgentQueryChunk!
+Synadia.AI.Agents.AgentQueryContent.Replied.get -> bool
+Synadia.AI.Agents.AgentQueryContent.ReplyAsync(Microsoft.Extensions.AI.ChatMessage! answer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.AgentQueryContent.ReplyAsync(string! answer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.AgentQueryContent.ReplyAsync(Synadia.AI.Agents.PromptEnvelope! answer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.AgentQueryResponseContent
+Synadia.AI.Agents.AgentQueryResponseContent.AgentQueryResponseContent(string! requestId, string! text, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.DataContent!>? attachments = null) -> void
+Synadia.AI.Agents.AgentQueryResponseContent.Attachments.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DataContent!>!
+Synadia.AI.Agents.AgentQueryResponseContent.Text.get -> string!
 Synadia.AI.Agents.AgentResponse
 Synadia.AI.Agents.AgentResponse.<Clone>$() -> Synadia.AI.Agents.AgentResponse!
 Synadia.AI.Agents.AgentResponse.AgentResponse(string! Text, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DataContent!>! Attachments, System.Collections.Generic.IReadOnlyList<string!>! Statuses) -> void
@@ -414,6 +474,10 @@ Synadia.AI.Agents.AgentStatusChunk.Equals(Synadia.AI.Agents.AgentStatusChunk? ot
 Synadia.AI.Agents.AgentStatusChunk.IsAck.get -> bool
 Synadia.AI.Agents.AgentStatusChunk.Status.get -> string!
 Synadia.AI.Agents.AgentStatusChunk.Status.init -> void
+Synadia.AI.Agents.AgentStatusContent
+Synadia.AI.Agents.AgentStatusContent.AgentStatusContent(string! status) -> void
+Synadia.AI.Agents.AgentStatusContent.IsAck.get -> bool
+Synadia.AI.Agents.AgentStatusContent.Status.get -> string!
 Synadia.AI.Agents.AgentStatusException
 Synadia.AI.Agents.AgentStatusException.AgentStatusException(string! message, System.Exception? inner = null) -> void
 Synadia.AI.Agents.AgentSubject
@@ -670,6 +734,113 @@ Synadia.AI.Agents.StreamMaxWaitExceededException.StreamMaxWaitExceededException(
 Synadia.AI.Agents.StreamStalledException
 Synadia.AI.Agents.StreamStalledException.StreamStalledException(System.TimeSpan timeout) -> void
 Synadia.AI.Agents.StreamStalledException.Timeout.get -> System.TimeSpan
+Synadia.AI.Agents.Tools.AgentCallSettledInfo
+Synadia.AI.Agents.Tools.AgentCallSettledInfo.<Clone>$() -> Synadia.AI.Agents.Tools.AgentCallSettledInfo!
+Synadia.AI.Agents.Tools.AgentCallSettledInfo.AgentCallSettledInfo(bool Awaited) -> void
+Synadia.AI.Agents.Tools.AgentCallSettledInfo.Awaited.get -> bool
+Synadia.AI.Agents.Tools.AgentCallSettledInfo.Awaited.init -> void
+Synadia.AI.Agents.Tools.AgentCallSettledInfo.Deconstruct(out bool Awaited) -> void
+Synadia.AI.Agents.Tools.AgentCallSettledInfo.Equals(Synadia.AI.Agents.Tools.AgentCallSettledInfo? other) -> bool
+Synadia.AI.Agents.Tools.AgentCallState
+Synadia.AI.Agents.Tools.AgentCallState.Cancelled = 4 -> Synadia.AI.Agents.Tools.AgentCallState
+Synadia.AI.Agents.Tools.AgentCallState.Completed = 2 -> Synadia.AI.Agents.Tools.AgentCallState
+Synadia.AI.Agents.Tools.AgentCallState.Expired = 5 -> Synadia.AI.Agents.Tools.AgentCallState
+Synadia.AI.Agents.Tools.AgentCallState.Failed = 3 -> Synadia.AI.Agents.Tools.AgentCallState
+Synadia.AI.Agents.Tools.AgentCallState.InputRequired = 1 -> Synadia.AI.Agents.Tools.AgentCallState
+Synadia.AI.Agents.Tools.AgentCallState.Running = 0 -> Synadia.AI.Agents.Tools.AgentCallState
+Synadia.AI.Agents.Tools.AgentToolDefinition
+Synadia.AI.Agents.Tools.AgentToolDefinition.Description.get -> string!
+Synadia.AI.Agents.Tools.AgentToolDefinition.Name.get -> string!
+Synadia.AI.Agents.Tools.AgentToolDefinition.Parameters.get -> System.Text.Json.Nodes.JsonObject!
+Synadia.AI.Agents.Tools.AgentToolDefinition.ParametersSchema.get -> System.Text.Json.JsonElement
+Synadia.AI.Agents.Tools.AgentToolDefinitions
+Synadia.AI.Agents.Tools.AgentToolNames
+Synadia.AI.Agents.Tools.AgentTools
+Synadia.AI.Agents.Tools.AgentTools.AgentTools(Synadia.AI.Agents.AgentsClient! client, Synadia.AI.Agents.Tools.AgentToolsOptions? options = null) -> void
+Synadia.AI.Agents.Tools.AgentTools.AsAITools() -> System.Collections.Generic.IList<Microsoft.Extensions.AI.AITool!>!
+Synadia.AI.Agents.Tools.AgentTools.Client.get -> Synadia.AI.Agents.AgentsClient!
+Synadia.AI.Agents.Tools.AgentTools.Definitions.get -> System.Collections.Generic.IReadOnlyList<Synadia.AI.Agents.Tools.AgentToolDefinition!>!
+Synadia.AI.Agents.Tools.AgentTools.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.Tools.AgentTools.ExecuteAsync(string! name, string? argumentsJson, string? toolCallId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Text.Json.Nodes.JsonObject!>!
+Synadia.AI.Agents.Tools.AgentTools.ExecuteAsync(string! name, System.Text.Json.Nodes.JsonNode? arguments, string? toolCallId = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Text.Json.Nodes.JsonObject!>!
+Synadia.AI.Agents.Tools.AgentTools.RunInPromptScopeAsync(System.Func<System.Threading.Tasks.Task!>! handler, string? caller = null) -> System.Threading.Tasks.Task!
+Synadia.AI.Agents.Tools.AgentTools.RunInPromptScopeAsync<T>(System.Func<System.Threading.Tasks.Task<T>!>! handler, string? caller = null) -> System.Threading.Tasks.Task<T>!
+Synadia.AI.Agents.Tools.AgentToolsExtension
+Synadia.AI.Agents.Tools.AgentToolsExtension.AgentToolsExtension() -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions
+Synadia.AI.Agents.Tools.AgentToolsOptions.AgentToolsOptions() -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.AttachmentRoots.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Synadia.AI.Agents.Tools.AgentToolsOptions.AttachmentRoots.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.Extensions.get -> System.Collections.Generic.IReadOnlyList<Synadia.AI.Agents.Tools.AgentToolsExtension!>!
+Synadia.AI.Agents.Tools.AgentToolsOptions.Extensions.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.InactivityTimeout.get -> System.TimeSpan?
+Synadia.AI.Agents.Tools.AgentToolsOptions.InactivityTimeout.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.MaxCalls.get -> int
+Synadia.AI.Agents.Tools.AgentToolsOptions.MaxCalls.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.MaxSavedBytesPerCall.get -> long
+Synadia.AI.Agents.Tools.AgentToolsOptions.MaxSavedBytesPerCall.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.MaxWait.get -> System.TimeSpan
+Synadia.AI.Agents.Tools.AgentToolsOptions.MaxWait.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.MaxWaitAgent.get -> System.TimeSpan?
+Synadia.AI.Agents.Tools.AgentToolsOptions.MaxWaitAgent.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.OnSettled.get -> System.Func<System.Text.Json.Nodes.JsonObject!, Synadia.AI.Agents.Tools.AgentCallSettledInfo!, System.Threading.Tasks.ValueTask>?
+Synadia.AI.Agents.Tools.AgentToolsOptions.OnSettled.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.SelfAddress.get -> string?
+Synadia.AI.Agents.Tools.AgentToolsOptions.SelfAddress.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.StagingDirectory.get -> string?
+Synadia.AI.Agents.Tools.AgentToolsOptions.StagingDirectory.init -> void
+Synadia.AI.Agents.Tools.AgentToolsOptions.Tools.get -> System.Collections.Generic.IEnumerable<string!>?
+Synadia.AI.Agents.Tools.AgentToolsOptions.Tools.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.<Clone>$() -> Synadia.AI.Agents.Tools.AgentToolsPromptContext!
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Address.get -> string!
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Address.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.AgentToolsPromptContext(string! Address, string! Prompt, System.Collections.Generic.IReadOnlyList<string!>! Attachments, Synadia.AI.Agents.Agent! Target, string! CallId, string? Label, string? ToolCallId, string? Caller) -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Attachments.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Attachments.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Caller.get -> string?
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Caller.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.CallId.get -> string!
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.CallId.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Deconstruct(out string! Address, out string! Prompt, out System.Collections.Generic.IReadOnlyList<string!>! Attachments, out Synadia.AI.Agents.Agent! Target, out string! CallId, out string? Label, out string? ToolCallId, out string? Caller) -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Equals(Synadia.AI.Agents.Tools.AgentToolsPromptContext? other) -> bool
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Label.get -> string?
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Label.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Prompt.get -> string!
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Prompt.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Target.get -> Synadia.AI.Agents.Agent!
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.Target.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.ToolCallId.get -> string?
+Synadia.AI.Agents.Tools.AgentToolsPromptContext.ToolCallId.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.<Clone>$() -> Synadia.AI.Agents.Tools.AgentToolsPromptRewrite!
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.AgentToolsPromptRewrite() -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.EnvelopeExtras.get -> System.Collections.Generic.IReadOnlyDictionary<string!, System.Text.Json.JsonElement>?
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.EnvelopeExtras.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.Equals(Synadia.AI.Agents.Tools.AgentToolsPromptRewrite? other) -> bool
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.Error.get -> string?
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.Error.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.Fields.get -> System.Collections.Generic.IReadOnlyDictionary<string!, System.Text.Json.Nodes.JsonNode?>?
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.Fields.init -> void
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.Prompt.get -> string?
+Synadia.AI.Agents.Tools.AgentToolsPromptRewrite.Prompt.init -> void
+Synadia.AI.Agents.Tools.AgentToolsReplyContext
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.<Clone>$() -> Synadia.AI.Agents.Tools.AgentToolsReplyContext!
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Address.get -> string!
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Address.init -> void
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.AgentToolsReplyContext(string! CallId, string! Address, Synadia.AI.Agents.Agent! Target, string! Kind, string! Text, System.Text.Json.Nodes.JsonArray! Attachments) -> void
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Attachments.get -> System.Text.Json.Nodes.JsonArray!
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Attachments.init -> void
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.CallId.get -> string!
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.CallId.init -> void
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Deconstruct(out string! CallId, out string! Address, out Synadia.AI.Agents.Agent! Target, out string! Kind, out string! Text, out System.Text.Json.Nodes.JsonArray! Attachments) -> void
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Equals(Synadia.AI.Agents.Tools.AgentToolsReplyContext? other) -> bool
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Kind.get -> string!
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Kind.init -> void
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Target.get -> Synadia.AI.Agents.Agent!
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Target.init -> void
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Text.get -> string!
+Synadia.AI.Agents.Tools.AgentToolsReplyContext.Text.init -> void
 Synadia.AI.Agents.VersionCompatibility
 Synadia.AI.Agents.VersionCompatibility.Compatible = 0 -> Synadia.AI.Agents.VersionCompatibility
 Synadia.AI.Agents.VersionCompatibility.Incompatible = 2 -> Synadia.AI.Agents.VersionCompatibility
@@ -680,4 +851,7 @@ virtual Synadia.AI.Agents.AgentChunk.PrintMembers(System.Text.StringBuilder! bui
 virtual Synadia.AI.Agents.Identity.SenderInfo.EqualityContract.get -> System.Type!
 virtual Synadia.AI.Agents.Identity.SenderInfo.Equals(Synadia.AI.Agents.Identity.SenderInfo? other) -> bool
 virtual Synadia.AI.Agents.Identity.SenderInfo.PrintMembers(System.Text.StringBuilder! builder) -> bool
+virtual Synadia.AI.Agents.Tools.AgentToolsExtension.AfterReplyAsync(Synadia.AI.Agents.Tools.AgentToolsReplyContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyDictionary<string!, System.Text.Json.Nodes.JsonNode?>?>
+virtual Synadia.AI.Agents.Tools.AgentToolsExtension.BeforePromptAsync(Synadia.AI.Agents.Tools.AgentToolsPromptContext! context, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<Synadia.AI.Agents.Tools.AgentToolsPromptRewrite?>
+virtual Synadia.AI.Agents.Tools.AgentToolsExtension.DiscoveryFieldsAsync(Synadia.AI.Agents.Agent! agent, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyDictionary<string!, System.Text.Json.Nodes.JsonNode?>?>
 ~override Synadia.AI.Agents.ProtocolVersion.Equals(object obj) -> bool

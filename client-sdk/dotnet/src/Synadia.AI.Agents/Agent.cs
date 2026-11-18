@@ -41,6 +41,14 @@ public sealed class Agent
     /// <inheritdoc />
     public override string ToString() => $"{Info.Agent}/{Info.Owner}/{Info.Name} ({Info.InstanceId})";
 
+    /// <summary>
+    /// Adapt this agent to <see cref="Microsoft.Extensions.AI.IChatClient"/>. Only the newest user message is sent
+    /// (the agent keeps its own conversation); responses map to <see cref="Microsoft.Extensions.AI.TextContent"/> /
+    /// <see cref="Microsoft.Extensions.AI.DataContent"/>, statuses to <see cref="AgentStatusContent"/> and queries to
+    /// <see cref="AgentQueryContent"/>.
+    /// </summary>
+    public Microsoft.Extensions.AI.IChatClient AsIChatClient(AgentChatClientOptions? options = null) => new AgentChatClient(this, options);
+
     /// <summary>Send a plain-text prompt and stream the chunks (§6).</summary>
     public IAsyncEnumerable<AgentChunk> PromptAsync(string prompt, PromptOptions? options = null, CancellationToken cancellationToken = default)
         => PromptAsync(new PromptEnvelope(prompt ?? throw new ArgumentNullException(nameof(prompt))), options, cancellationToken);

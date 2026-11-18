@@ -1,0 +1,9 @@
+{
+  "name": "list_agent_calls",
+  "description": "List the calls you started that are still tracked, oldest first: each with its call_id, label, address, state and times. Open calls are running, or input_required when a question waits for answer_agent. Finished calls are completed, failed, cancelled or expired; they are dropped, the longest finished first, when the list is full.",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  }
+}
