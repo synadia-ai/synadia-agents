@@ -2,7 +2,13 @@
 
 Quick reference for working on the TypeScript packages in this repo
 without publishing to npm. The Python side is documented in
-[`client-sdk/python/CLAUDE.md`](client-sdk/python/CLAUDE.md).
+[`client-sdk/python/CLAUDE.md`](client-sdk/python/CLAUDE.md). The
+preview .NET SDK (`client-sdk/dotnet/`, `agent-sdk/dotnet/`) needs no
+linking step — its projects reference each other directly; build and
+test with `dotnet test` in each folder (see
+[`client-sdk/dotnet/README.md`](client-sdk/dotnet/README.md)). Its TS
+interop tests use the built TS SDKs from this repo, so run
+`bun install && bun run build` in both TS SDKs first.
 
 The TypeScript SDK ships as **two npm packages** that always release in
 lockstep:
