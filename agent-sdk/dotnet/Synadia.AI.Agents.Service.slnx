@@ -4,5 +4,6 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Synadia.AI.Agents.Service/Synadia.AI.Agents.Service.csproj" />
+    <Project Path="src/Synadia.AI.Agents.Testing/Synadia.AI.Agents.Testing.csproj" />
   </Folder>
 </Solution>
