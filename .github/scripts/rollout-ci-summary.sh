@@ -163,7 +163,7 @@ for path in "${changed_paths[@]}"; do
   esac
 
   case "$path" in
-    agents/pi/*|agents/openclaw/*|agents/opencode/*|agents/codex/*|agents/acp/*|agents/grok/*|agents/eve/*|agents/flue/*|agents/claude-code/*|agents/open-agent/*|.claude-plugin/*|client-sdk/typescript/*|agent-sdk/typescript/*|.github/workflows/agents-typescript.yml)
+    agents/pi/*|agents/openclaw/*|agents/opencode/*|agents/codex/*|agents/acp/*|agents/grok/*|agents/copilot/*|agents/eve/*|agents/flue/*|agents/claude-code/*|agents/open-agent/*|.claude-plugin/*|client-sdk/typescript/*|agent-sdk/typescript/*|.github/workflows/agents-typescript.yml)
       expect "CI — agents (TypeScript)"
       ;;
   esac

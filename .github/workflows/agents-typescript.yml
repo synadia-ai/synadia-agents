@@ -16,6 +16,7 @@ on:
       - "agents/codex/**"
       - "agents/acp/**"
       - "agents/grok/**"
+      - "agents/copilot/**"
       - "agents/eve/**"
       - "agents/flue/**"
       - "agents/claude-code/**"
@@ -32,6 +33,7 @@ on:
       - "agents/codex/**"
       - "agents/acp/**"
       - "agents/grok/**"
+      - "agents/copilot/**"
       - "agents/eve/**"
       - "agents/flue/**"
       - "agents/claude-code/**"
@@ -385,6 +387,55 @@ jobs:
       - name: Grok wrapper unit tests
         working-directory: agents/grok
         run: bun test
+
+  copilot:
+    name: agents/copilot (typecheck + tests + extension bundle)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      # Integration tests start their own nats-server on a random free port.
+      - name: Install nats-server
+        run: |
+          curl -L -o nats-server.tar.gz https://github.com/nats-io/nats-server/releases/download/v2.12.3/nats-server-v2.12.3-linux-amd64.tar.gz
+          tar -xzf nats-server.tar.gz --strip-components=1
+          sudo mv nats-server /usr/local/bin/
+          nats-server --version
+      - name: Build current client-sdk artifact
+        working-directory: client-sdk/typescript
+        run: |
+          npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "CLIENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      - name: Build current agent-sdk artifact
+        working-directory: agent-sdk/typescript
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+          bun run build
+          tgz="$(npm pack --json | node -e "let s=''; process.stdin.on('data', d => s += d).on('end', () => console.log(JSON.parse(s)[0].filename))")"
+          echo "AGENT_SDK_TGZ=$PWD/$tgz" >> "$GITHUB_ENV"
+      # Install from the packed branch SDKs. Resolving both development
+      # `file:` links directly can deadlock Bun on the SDK dependency cycle.
+      # No copilot binary or LLM is needed: serve tests use a fake client.
+      - name: Install packed SDKs and dependencies
+        working-directory: agents/copilot
+        run: |
+          npm pkg set "dependencies.@synadia-ai/agents=file:$CLIENT_SDK_TGZ"
+          npm pkg set "dependencies.@synadia-ai/agent-service=file:$AGENT_SDK_TGZ"
+          npm install --no-package-lock --no-audit --no-fund
+      - name: Typecheck
+        working-directory: agents/copilot
+        run: bun run typecheck
+      - name: Tests
+        working-directory: agents/copilot
+        run: bun test ./test
+      - name: Bundle extension
+        working-directory: agents/copilot
+        run: bun run build
 
   flue:
     name: agents/flue (typecheck + tests + protocol smoke)

@@ -68,6 +68,7 @@ compatibility between the two SDKs.
 | `agents/codex/` | `@synadia-ai/codex-nats-channel` | npm (public; first publish pending) | Codex app-server-backed channel |
 | `agents/acp/` | `@synadia-ai/acp-nats-channel` | npm (public; first publish pending) | Generic ACP channel (grok preset + custom) |
 | `agents/grok/` | `@synadia-ai/grok-nats-channel` | npm (public; first publish pending) | Grok Build front door — thin pin over `agents/acp` |
+| `agents/copilot/` | `@synadia-ai/copilot-nats-channel` | private (not published) | GitHub Copilot: headless fleet agent on the Copilot SDK (`serve`) + CLI/App extension bundled to `dist/extension.mjs`; `file:`-links both TS SDKs |
 | `agents/eve/` | `@synadia-ai/eve-nats-channel` | npm (public; first publish pending) | Eve sidecar channel |
 | `examples/pi-headless/` | `@synadia-ai/nats-pi-headless` | npm (public) | depends on `@synadia-ai/agents@^0.5.x` |
 | `examples/agent-web-ui/` | `@synadia-ai/nats-ai-testui` | github only | local-clone test client; `private: true` so it never publishes |
@@ -209,7 +210,7 @@ explicit approval.
 The trap: consumers that pin the SDK from npm (`agents/acp`, `codex`,
 `opencode` at `^0.5.2`, `agents/claude-code` at `^0.5.0`) do not see an
 unpublished change; the in-repo examples and the `file:`-linked harnesses
-(`flue`, `open-agent`, `openclaw`, `pi`) pick it up on their next install. A new SDK
+(`flue`, `open-agent`, `openclaw`, `pi`, `copilot`) pick it up on their next install. A new SDK
 export does not exist for them until it is **published**. Don't try to
 land an example migration alongside an unpublished SDK change — typecheck
 will fail in CI, and you'll waste a force-push fixing it.
