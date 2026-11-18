@@ -2,7 +2,7 @@
   "name": "@synadia-ai/copilot-nats-channel",
   "version": "0.1.0",
   "private": true,
-  "description": "GitHub Copilot on the Synadia Agent Protocol for NATS fleet: an in-session Copilot CLI/App extension (outbound fleet tools, opt-in inbound).",
+  "description": "GitHub Copilot on the Synadia Agent Protocol for NATS fleet: a headless agent built on the Copilot SDK (serve) and an in-session Copilot CLI/App extension (outbound fleet tools, opt-in inbound).",
   "author": "Synadia Communications",
   "license": "Apache-2.0",
   "repository": {
@@ -11,13 +11,18 @@
     "directory": "agents/copilot"
   },
   "type": "module",
+  "bin": {
+    "copilot-nats-agent": "./src/cli.ts"
+  },
   "scripts": {
+    "serve": "bun ./src/cli.ts serve",
     "build": "bun ./scripts/build.ts",
     "install-extension": "bun ./scripts/install.ts",
     "test": "bun test ./test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@github/copilot-sdk": "1.0.34",
     "@nats-io/transport-node": "3.4.0",
     "@synadia-ai/agent-service": "file:../../agent-sdk/typescript",
     "@synadia-ai/agents": "file:../../client-sdk/typescript"
