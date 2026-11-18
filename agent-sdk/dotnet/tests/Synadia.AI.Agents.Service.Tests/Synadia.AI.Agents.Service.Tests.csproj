@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <NoWarn>$(NoWarn);CA2007;xUnit1051</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="11.0.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <None Update="interop\ts-interop.ts" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\test-fixtures\identity\**\*" Exclude="..\..\..\..\test-fixtures\identity\operator\node_modules\**" LinkBase="fixtures\identity" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Synadia.AI.Agents.Service\Synadia.AI.Agents.Service.csproj" />
+    <ProjectReference Include="..\..\src\Synadia.AI.Agents.Testing\Synadia.AI.Agents.Testing.csproj" />
+    <ProjectReference Include="..\..\..\..\client-sdk\dotnet\src\Synadia.AI.Agents\Synadia.AI.Agents.csproj" />
+  </ItemGroup>
+</Project>

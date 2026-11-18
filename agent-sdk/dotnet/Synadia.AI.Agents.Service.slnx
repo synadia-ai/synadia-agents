@@ -6,4 +6,7 @@
     <Project Path="src/Synadia.AI.Agents.Service/Synadia.AI.Agents.Service.csproj" />
     <Project Path="src/Synadia.AI.Agents.Testing/Synadia.AI.Agents.Testing.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Synadia.AI.Agents.Service.Tests/Synadia.AI.Agents.Service.Tests.csproj" />
+  </Folder>
 </Solution>
