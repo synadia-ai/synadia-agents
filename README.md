@@ -31,6 +31,7 @@ Pre-built channel plugins that put existing AI harnesses on NATS. Each registers
 | [Codex](agents/codex/) | `codex` | `@synadia-ai/codex-nats-channel` — Codex app-server-backed channel for managed or attached sessions |
 | [ACP](agents/acp/) | `grok`, … | `@synadia-ai/acp-nats-channel` — generic channel for [ACP](https://agentclientprotocol.com)-speaking agents (Grok Build preset + custom for adapters, e.g. Antigravity) |
 | [Grok Build](agents/grok/) | `grok` | `@synadia-ai/grok-nats-channel` — grok-pinned front door to the ACP channel (`grok-agent start`) |
+| [GitHub Copilot](agents/copilot/) | `copilot` | `@synadia-ai/copilot-nats-channel` (private) — headless Copilot fleet agent on the Copilot SDK (`serve`) + in-session Copilot CLI/App extension (outbound fleet tools, opt-in inbound) |
 | [DSPy ReAct](examples/dspy/) | `dspy` | standalone example (not published) — built from scratch with ax-llm ReAct |
 
 Subjects follow a verb-first pattern: `agents.{verb}.{token}.{owner}.{session}` where `verb` is `prompt`, `hb`, or `status`.
@@ -179,6 +180,7 @@ synadia-agents/
 │   ├── eve/                     ← sidecar for Vercel Eve agents
 │   ├── open-agent/              ← inbound bridge for vercel-labs/open-agents
 │   ├── opencode/                ← OpenCode plugin channel
+│   ├── copilot/                 ← GitHub Copilot: headless agent on the Copilot SDK + CLI/App extension
 │   └── codex/                   ← Codex app-server-backed channel
 └── examples/              ← apps built with the SDKs (callers and agents)
     ├── agent-web-ui/             ← Vue 3 + Bun browser client
