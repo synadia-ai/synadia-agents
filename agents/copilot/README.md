@@ -41,8 +41,7 @@ side). `@github/copilot-sdk` is pinned to an exact version.
 Copilot also speaks ACP (`copilot --acp`), so a generic ACP bridge could
 host it. The Copilot SDK is Copilot's native embedding API, and it gives a
 fleet agent more control. The comparison comes from prototyping
-`copilot --acp` behind a NATS bridge (see
-[NOTES-upstream.md](./NOTES-upstream.md), "ACP"):
+`copilot --acp` behind a NATS bridge:
 
 | Concern | Copilot SDK (`serve`) | `copilot --acp` |
 | --- | --- | --- |
@@ -495,4 +494,3 @@ bun run build       # extension bundle
 | `src/config.ts` | env + JSON config, security defaults, serve settings |
 | `scripts/build.ts`, `scripts/install.ts` | extension bundle and install |
 | `demo/` | echo agent, NATS caller, headless SDK session host for the extension |
-| `NOTES-upstream.md` | feedback for the Copilot CLI / SDK team (extension, SDK and ACP observations) |
