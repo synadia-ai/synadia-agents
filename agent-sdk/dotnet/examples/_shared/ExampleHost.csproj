@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Shared plumbing for the numbered host examples (the .NET counterpart of agent-sdk/python/examples/_connect_cli.py
+    and agent-sdk/typescript/examples/_connection.ts). File-based apps cannot share a .cs file, so each example pulls
+    this in with `#:project _shared/ExampleHost.csproj`. It is not itself an example.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Synadia.AI.Agents.Examples</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Synadia.AI.Agents.Service/Synadia.AI.Agents.Service.csproj" />
+  </ItemGroup>
+
+</Project>

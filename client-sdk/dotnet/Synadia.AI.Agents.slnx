@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Synadia.AI.Agents/Synadia.AI.Agents.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Synadia.AI.Agents.Tests/Synadia.AI.Agents.Tests.csproj" />
+  </Folder>
+</Solution>

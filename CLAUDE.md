@@ -37,6 +37,11 @@ the authoritative on-the-wire counterpart to the spec doc.
   harness for the numbered demos and as a wire-compat counterparty.
   (Moved with the host-side split into `synadia-ai-agent-service`; pre-
   split it lived under `client-sdk/python/examples/`.)
+- **.NET (preview)**: `agent-sdk/dotnet/src/Synadia.AI.Agents.Testing/ReferenceAgent.cs`
+  — the `ReferenceAgent` class in the `Synadia.AI.Agents.Testing`
+  project (which also has `NatsServerProcess`, a throwaway
+  `nats-server` on a random free port). Runnable script:
+  `agent-sdk/dotnet/examples/run-reference-agent.cs`.
 
 Each SDK also has a parallel set of numbered demo scripts that exercise
 discovery, prompting (text + attachments), mid-stream queries, and
@@ -48,10 +53,17 @@ and as a smoke surface:
 - Python: `client-sdk/python/examples/01-discover.py` … `05-liveness.py`,
   plus `06-chat.py` (interactive REPL). See
   `client-sdk/python/examples/README.md` for the full table.
+- .NET: `client-sdk/dotnet/examples/01-discover.cs` … `05-liveness.cs`,
+  plus `06-chat.cs` (REPL through `Agent.AsIChatClient()`). These are
+  .NET 10 file-based apps (`dotnet run 01-discover.cs`).
 
 The Python interop test (`client-sdk/python/tests/test_interop_e2e.py`)
 runs the TS reference agent as a subprocess and validates wire
-compatibility between the two SDKs.
+compatibility between the two SDKs. The .NET host test suite
+(`agent-sdk/dotnet/tests/`) does the same in both directions: the .NET
+caller against the TS reference agent, and the TS caller against the
+.NET reference agent (skipped with a note when `bun` or the built TS
+SDKs are missing).
 
 ## Repository layout (and what's published)
 
@@ -59,6 +71,8 @@ compatibility between the two SDKs.
 | --- | --- | --- | --- |
 | `client-sdk/typescript/` | `@synadia-ai/agents` | npm (public) | TS SDK — Node/Bun callers |
 | `client-sdk/python/` | `synadia-ai-agents` (import: `synadia_ai.agents`) | PyPI | Python SDK — has its own CLAUDE.md |
+| `client-sdk/dotnet/` | `Synadia.AI.Agents` | not published (preview) | .NET caller SDK (net8.0/net10.0), MEAI `IChatClient` adapter, AgentTools, identity |
+| `agent-sdk/dotnet/` | `Synadia.AI.Agents.Service`, `Synadia.AI.Agents.Testing` | not published (preview) | .NET host SDK (`AgentService`, `ServeChatClient`) + `ReferenceAgent` |
 | `agents/pi/` | `@synadia-ai/nats-pi-channel` | npm (public) | PI extension plugin |
 | `agents/openclaw/` | `@synadia-ai/nats-channel` | npm (public) | OpenClaw plugin |
 | `agents/claude-code/` | `claude-channel-nats` | Claude marketplace | Claude Code MCP plugin; package and plugin descriptor versions must agree |
@@ -110,6 +124,9 @@ Two distinct version axes:
   - Python: `_PROTOCOL_VERSION = "0.3"` in
     `agent-sdk/python/src/synadia_ai/agent_service/service.py`
     (host-side after the Python split landed in PR #45).
+  - .NET: `ProtocolVersion.Sdk = new(0, 3)` in
+    `client-sdk/dotnet/src/Synadia.AI.Agents/ProtocolVersion.cs`; the
+    host advertises it in the service metadata.
   - Agent harnesses derive the string from the SDK's
     `SDK_PROTOCOL_VERSION` rather than hard-coding it (see
     `agents/pi/extensions/nats-channel.ts`,
@@ -129,6 +146,9 @@ Two distinct version axes:
     `python-agent-service-v0.5.0` is tagged, which needs `python-v0.8.1`
     on PyPI first) — both publish to PyPI; versions diverge per
     package.
+  - .NET: `Synadia.AI.Agents` + `Synadia.AI.Agents.Service` +
+    `Synadia.AI.Agents.Testing` — `0.1.0-preview.1` (the `<Version>` in
+    each `.csproj`), released together; not published to NuGet.
 - **Sender-identity extension** — additive on top of `0.3`, no
   protocol bump. Spec: §13 of `core-protocol.md` in
   `synadia-ai/synadia-agent-sdk-docs`. Public behavior is documented in both SDKs' README and
@@ -171,10 +191,22 @@ subtree affects another. Before finishing a change, walk the list:
   - Re-read `client-sdk/python/CLAUDE.md` — it has stricter rules
     (`agent` identifier, default registration, etc.) than the root
     guidance here.
+- **Touched the .NET SDK** (`client-sdk/dotnet/**` or
+  `agent-sdk/dotnet/**`)?
+  - Update the matching `CHANGELOG.md`, and `README.md` /
+    `docs/protocol-mapping.md` if public behavior changed (the mapping
+    doc lives in `client-sdk/dotnet/docs/` and covers both packages).
+  - Run `dotnet test` in both `client-sdk/dotnet` and
+    `agent-sdk/dotnet`; the host suite includes the TS↔.NET interop
+    tests, which need `bun` and the built TS SDKs to actually run.
+  - Wire changes follow the bullet below: the TS and Python SDKs must
+    match.
+  - Keep shared JSON (`test-fixtures/agent-tools/*.json`) byte-identical
+    to the embedded copies; the tests compare them.
 - **Touched wire format / protocol behavior** in either SDK or any
   agent?
-  - Update the **other** SDK to match. Wire compat between TS and
-    Python is a hard requirement; the interop test catches drift.
+  - Update the **other** SDKs to match. Wire compat between TS,
+    Python and .NET is a hard requirement; the interop tests catch drift.
   - Update every agent harness that hard-codes the protocol version
     string.
   - Re-read the spec at `synadia-ai/synadia-agent-sdk-docs` — the spec
@@ -283,6 +315,12 @@ token that doesn't surface the permissions sub-object at all.)
   - `release-python-agent-service.yml` — publishes
     `synadia-ai-agent-service` to PyPI on `python-agent-service-v*`
     tags.
+  - `dotnet-sdk.yml` — builds and tests the .NET caller and host SDKs
+    (net8.0 + net10.0) against a real `nats-server`, runs the TS↔.NET
+    interop tests (it builds both TS SDKs first), and builds every
+    file-based example. Triggers on `client-sdk/dotnet/**`,
+    `agent-sdk/dotnet/**`, both TS SDKs and `test-fixtures/**`. It
+    does not publish anything.
 - **No automated TS publish workflow.** TS releases are manual (see
   release ladder). The TypeScript agent CI workflow validates npm package
   contents, but it does not publish `@synadia-ai/*` packages.

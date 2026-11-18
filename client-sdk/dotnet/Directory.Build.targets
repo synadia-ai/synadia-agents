@@ -1,0 +1,25 @@
+<Project>
+  <!-- Stops MSBuild from importing Directory.Build.targets files above this SDK. -->
+
+  <!-- Packaging for the packable libraries (not file-based example apps). Evaluated after the project, so IsPackable is known. -->
+  <PropertyGroup Condition="'$(IsPackable)' == 'true' and '$(OutputType)' != 'Exe'">
+    <PackageProjectUrl>https://github.com/synadia-ai/synadia-agents</PackageProjectUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <PackageReadmeFile>PACKAGE.md</PackageReadmeFile>
+    <WarningsAsErrors>$(WarningsAsErrors);RS0016;RS0017</WarningsAsErrors>
+    <!-- Optional-parameter overload rules only matter once an API has shipped; revisit before 1.0. -->
+    <NoWarn>$(NoWarn);RS0026;RS0027</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true' and '$(OutputType)' != 'Exe'">
+    <None Include="PACKAGE.md" Pack="true" PackagePath="\" />
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="4.14.0" PrivateAssets="all" />
+    <AdditionalFiles Include="PublicAPI.Shipped.txt;PublicAPI.Unshipped.txt" />
+  </ItemGroup>
+</Project>

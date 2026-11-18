@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>Synadia.AI.Agents</RootNamespace>
+    <PackageId>Synadia.AI.Agents</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Description>Caller SDK for the Synadia Agent Protocol for NATS: discover agents, stream prompts, answer mid-stream queries. Microsoft.Extensions.AI-native at the seams (DataContent attachments, IChatClient adapter).</Description>
+    <PackageTags>nats;agents;ai;synadia;microsoft.extensions.ai</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NATS.Client.Core" Version="3.3.2" />
+    <PackageReference Include="NATS.Client.Services" Version="3.3.2" />
+    <PackageReference Include="NATS.NKeys" Version="1.0.2" />
+    <PackageReference Include="Microsoft.Extensions.AI.Abstractions" Version="11.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Copies of test-fixtures/agent-tools/*.json; a test checks they equal the fixtures. -->
+    <EmbeddedResource Include="Tools\Definitions\*.json" LogicalName="Synadia.AI.Agents.Tools.%(Filename).json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Synadia.AI.Agents.Tests" />
+    <InternalsVisibleTo Include="Synadia.AI.Agents.Service.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>Synadia.AI.Agents.Service</RootNamespace>
+    <PackageId>Synadia.AI.Agents.Service</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Description>Host SDK for the Synadia Agent Protocol for NATS: register an agent as a NATS micro service, stream responses, ask mid-stream queries, publish heartbeats. Serve any Microsoft.Extensions.AI IChatClient as an agent.</Description>
+    <PackageTags>nats;agents;ai;synadia;microsoft.extensions.ai</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\client-sdk\dotnet\src\Synadia.AI.Agents\Synadia.AI.Agents.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Synadia.AI.Agents.Service.Tests" />
+  </ItemGroup>
+
+</Project>
