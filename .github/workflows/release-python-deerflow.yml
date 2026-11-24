@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v7
+      - uses: astral-sh/setup-uv@b627d85691ead579b598a36169571b1c7123526f # v7
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
@@ -52,7 +52,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v7
+      - uses: astral-sh/setup-uv@b627d85691ead579b598a36169571b1c7123526f # v7
         with:
           version: ${{ env.UV_VERSION }}
           python-version: "3.11"
@@ -94,7 +94,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v7
+      - uses: astral-sh/setup-uv@b627d85691ead579b598a36169571b1c7123526f # v7
         with:
           version: ${{ env.UV_VERSION }}
           python-version: "3.11"
