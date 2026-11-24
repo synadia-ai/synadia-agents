@@ -1264,7 +1264,7 @@ console.log('\n[case 14] Claude Code that never takes a prompt while idle: its c
     const errors = chunks.filter(chunk => chunk.error)
     if (errors.length !== 1) return fail(`${label}: expected one error frame, got ${JSON.stringify(chunks.map(c => c.error ?? c.body.slice(0, 60)))}`)
     const { code, description } = errors[0]!.error!
-    if (code !== '503') fail(`${label}: error code ${code}, not 503`)
+    if (code !== '500') fail(`${label}: error code ${code}, not 500`)
     if (!description.startsWith(`Claude Code did not take this prompt within ${BOUND_MS} ms while idle: its channel is likely off.`)) {
       fail(`${label}: error description ${JSON.stringify(description)}`)
     }

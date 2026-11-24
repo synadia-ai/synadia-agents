@@ -168,9 +168,9 @@ describe('what the caller and the log are told', () => {
     expect(formatBound(1_500)).toBe('1500 ms')
   })
 
-  test('the error is one line that names the bound and the likely causes, code 503, never cut by the SDK', () => {
+  test('the error is one line that names the bound and the likely causes, code 500, never cut by the SDK', () => {
     const text = channelOffDescription(30_000)
-    expect(CHANNEL_OFF_CODE).toBe(503)
+    expect(CHANNEL_OFF_CODE).toBe(500)
     expect(text).toBe(
       'Claude Code did not take this prompt within 30 s while idle: its channel is likely off. ' +
         'Check: the channels flag, own ANTHROPIC_API_KEY, Yes to the API key question, a workspace-scoped key',

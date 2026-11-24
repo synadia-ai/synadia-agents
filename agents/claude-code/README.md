@@ -406,12 +406,14 @@ the protocol's error frame (§9), then the terminator, and no response
 text:
 
 ```
-Nats-Service-Error-Code: 503
+Nats-Service-Error-Code: 500
 Nats-Service-Error: Claude Code did not take this prompt within 30 s while idle: its channel is likely off. Check: the channels flag, own ANTHROPIC_API_KEY, Yes to the API key question, a workspace-scoped key
 ```
 
-The protocol SDK sends at most 200 characters of a description, so the
-plugin's log says the rest: at the first such prompt it writes one line,
+The code is the protocol's internal error, `500`, as for a turn that
+ended without a reply; the description tells the two apart. The protocol
+SDK sends at most 200 characters of a description, so the plugin's log
+says the rest: at the first such prompt it writes one line,
 `nats channel: warning: Claude Code 2.1.331 did not take a prompt within
 30 s while idle; its channel is likely off, …`, which names the Claude Code
 version, every likely cause, the channel flags and the start notice

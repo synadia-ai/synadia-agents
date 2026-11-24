@@ -131,8 +131,13 @@ export function formatBound(boundMs: number): string {
   return boundMs % 1000 === 0 ? `${boundMs / 1000} s` : `${boundMs} ms`
 }
 
-/** The §9 code a caller gets for a prompt Claude Code did not take: the session cannot take prompts. */
-export const CHANNEL_OFF_CODE = 503
+/**
+ * The §9 code a caller gets for a prompt Claude Code did not take: `500`,
+ * internal error, the session cannot serve it. The protocol allows only
+ * the codes of its table (§7.2); the description tells this end apart from
+ * a turn that failed.
+ */
+export const CHANNEL_OFF_CODE = 500
 
 /**
  * The longest error description the protocol SDK sends whole: it cuts a

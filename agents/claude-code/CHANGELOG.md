@@ -109,7 +109,8 @@ All notable changes to the Claude Code NATS channel are documented here.
   milliseconds. So a prompt delivered while the hooks show no turn running that Claude Code has
   not taken within `idleTurnStartMs` of idle time (30 seconds by default;
   `SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS` wins over the config field; `0` turns it off) is
-  ended with a §9 error frame, code `503`, description `Claude Code did not take this prompt
+  ended with a §9 error frame, code `500` (the protocol's internal error; the description tells
+  it apart from a failed turn), description `Claude Code did not take this prompt
   within 30 s while idle: its channel is likely off. Check: the channels flag, own
   ANTHROPIC_API_KEY, Yes to the API key question, a workspace-scoped key`. A turn runs, as the
   check sees it, from its submit, or from a tool call later than the latest Stop or failure, to
