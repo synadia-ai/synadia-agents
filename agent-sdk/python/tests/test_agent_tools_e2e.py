@@ -355,7 +355,7 @@ async def test_discovery_gives_one_entry_per_address_showing_an_instance_that_ve
     assert result["agents"][0]["identity"].startswith("$G.U")
 
 
-async def test_discovery_ignores_case_explains_an_empty_result_and_refuses_a_full_address(
+async def test_discovery_ignores_case_explains_an_empty_result_and_refuses_an_address(
     world: World,
 ) -> None:
     tools = world.tools()
@@ -370,7 +370,7 @@ async def test_discovery_ignores_case_explains_an_empty_result_and_refuses_a_ful
     }
     refused = await tools.execute("discover_agents", {"agent": world.worker_address})
     conforms(refused)
-    assert "never a full address; call discover_agents with no arguments" in refused["error"]
+    assert "never an address; call discover_agents with no arguments" in refused["error"]
 
 
 async def test_prompt_agent_waits_for_the_reply_by_default(world: World) -> None:

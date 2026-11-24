@@ -1,20 +1,20 @@
 {
   "name": "discover_agents",
-  "description": "List the agents you can prompt, one entry per address; called with no arguments, it lists every agent. Each entry gives the address to use with prompt_agent, the agent's kind, owner and name, what it says it does, its identity and whether that identity is verified, whether it requires signed prompts or accepts attachments, and how many instances answer at the address (a prompt reaches one of them). The filters are optional and combined, each one exact token of the address `agents.prompt.<agent>.<owner>.<name>`: no wildcards, never a full address. When you do not know an agent's exact tokens, call it with no arguments and pick from the list; an agent known by what it does is found with the `agent` filter, its kind or role, or by its description in the full list. Call it before prompt_agent when you do not already know an address.",
+  "description": "List the agents you can prompt, one entry per address; called with no arguments, it lists every agent. Each entry gives the address to use with prompt_agent, the agent's kind (`agent`), `owner` and `name`, what it says it does, its identity and whether that identity is verified, whether it requires signed prompts or accepts attachments, and how many instances answer at the address (a prompt reaches one of them). The filters are optional and combined, each the exact `agent`, `owner` or `name` value an entry lists, which can differ from the address's tokens: no wildcards, never an address. When you do not know these values, call it with no arguments and pick from the list; an agent known by what it does is found with the `agent` filter, its kind or role, or by its description in the full list. Call it before prompt_agent when you do not already know an address.",
   "parameters": {
     "type": "object",
     "properties": {
       "agent": {
         "type": "string",
-        "description": "Only agents whose address has this first token after `agents.prompt`, their kind or role exactly as registered (for example `researcher` or `claude-code`)."
+        "description": "Only agents whose entry lists this `agent`, their kind or role exactly as registered (for example `researcher` or `claude-code`); it can differ from the address's token."
       },
       "owner": {
         "type": "string",
-        "description": "Only agents whose address has this second token after `agents.prompt`, their owner exactly as registered."
+        "description": "Only agents whose entry lists this `owner`, exactly as registered."
       },
       "name": {
         "type": "string",
-        "description": "Only agents whose address has this last token after `agents.prompt`, their instance name exactly as registered; what an agent does or is called in a task is not its name."
+        "description": "Only agents whose entry lists this `name`, their instance name exactly as registered (the address's last token); what an agent does or is called in a task is not its name."
       }
     },
     "additionalProperties": false

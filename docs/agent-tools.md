@@ -69,7 +69,7 @@ address, an unknown `call_id`, a loop (section 3.8), a file outside the
 allowed roots (section 3.9), a prompt the SDK refuses before sending (too
 large for the target, attachments to an agent that takes none), the
 limit on tracked calls (section 5), and a `discover_agents` filter no
-address token can hold (section 4).
+registered value can hold (section 4).
 
 **Open calls.** While calls in the current scope are open, every result of
 every tool carries `open_calls`, how many there are, and `open_calls_note`,
@@ -254,7 +254,7 @@ sent to the target.
 
 | Tool | Parameter | |
 | --- | --- | --- |
-| `discover_agents` | `agent`, `owner`, `name` | optional filters, one per token of the address, combined; each matches its token whole, ignoring case. `""` and `null` are no filter. A value with `.`, `*`, `>` or whitespace is refused, since no address token holds one: a filter is never a wildcard or a full address. Without filters, every agent |
+| `discover_agents` | `agent`, `owner`, `name` | optional filters, combined; each matches the entry's `agent`, `owner` or `name` whole, ignoring case. `agent` and `owner` are the registration's values (§3), which can differ from the address's tokens: Claude Code registers `agent` `claude-code` at `agents.prompt.cc.…`; `name` is the address's last token. `""` and `null` are no filter. A value with `.`, `*`, `>` or whitespace is refused, since no registered value holds one (§2): a filter is never a wildcard or an address. Without filters, every agent |
 | `prompt_agent` | `address` | as `discover_agents` returned it |
 | | `prompt` | the task, complete in itself |
 | | `attachments` | optional local paths under the configured roots, only to an agent that accepts them |

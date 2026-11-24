@@ -95,12 +95,12 @@ function refusal(tools: ReadonlyArray<AgentToolName>): RegExp {
 
 const BLOCKING_THREE: AgentToolName[] = ["discover_agents", "prompt_agent", "answer_agent"];
 
-/** The refusal of a discover_agents filter no address token can hold. */
+/** The refusal of a discover_agents filter no registered value can hold. */
 function refusedFilter(key: string, value: string): string {
   return (
     `discover_agents: "${key}" is "${value}", which matches no agent: ` +
-    "a filter is one exact token of the address agents.prompt.<agent>.<owner>.<name>, " +
-    "without wildcards and never a full address; " +
+    "a filter is the exact agent, owner or name value discover_agents lists, " +
+    "without wildcards and never an address; " +
     "call discover_agents with no arguments to list every agent"
   );
 }
@@ -262,7 +262,7 @@ describe("agent tool arguments", () => {
     expect(parseDiscoverArgs({ agent: "", name: "main" })).toEqual({ name: "main" });
   });
 
-  it("refuse a discover_agents filter no address token can hold, with the rule", () => {
+  it("refuse a discover_agents filter no registered value can hold, with the rule", () => {
     for (const [key, value] of [
       ["agent", "*"],
       ["agent", "claude-*"],
@@ -430,10 +430,13 @@ describe("the tools a helper offers", () => {
 });
 
 describe("discover_agents", () => {
-  /** An agent as discovery finds it, at `agents.prompt.<agent>.<owner>.<name>`. */
-  function found(agent: string, owner: string, name: string): unknown {
+  /**
+   * An agent as discovery finds it, at `agents.prompt.<token>.<owner>.<name>`:
+   * the address's token is the registered `agent` unless it says otherwise.
+   */
+  function found(agent: string, owner: string, name: string, token = agent): unknown {
     return {
-      promptSubject: `agents.prompt.${agent}.${owner}.${name}`,
+      promptSubject: `agents.prompt.${token}.${owner}.${name}`,
       agent,
       owner,
       name,
@@ -450,10 +453,16 @@ describe("discover_agents", () => {
     return { discover: () => Promise.resolve(handles) } as unknown as Agents;
   }
 
-  /** The entry discover_agents gives for `found(agent, owner, name)`. */
-  function entry(agent: string, owner: string, name: string, instances = 1): unknown {
+  /** The entry discover_agents gives for `found(agent, owner, name, token)`. */
+  function entry(
+    agent: string,
+    owner: string,
+    name: string,
+    instances = 1,
+    token = agent,
+  ): unknown {
     return {
-      address: `agents.prompt.${agent}.${owner}.${name}`,
+      address: `agents.prompt.${token}.${owner}.${name}`,
       agent,
       owner,
       name,
@@ -467,9 +476,10 @@ describe("discover_agents", () => {
   }
 
   const RESEARCHER = found("researcher", "acme", "main");
-  const CODER = found("claude-code", "bob", "repo");
+  // Registered as `claude-code`, at an address whose token is `cc`.
+  const CODER = found("claude-code", "bob", "repo", "cc");
   // A second instance of the coder: same address, one entry.
-  const CODER_AGAIN = found("claude-code", "bob", "repo");
+  const CODER_AGAIN = found("claude-code", "bob", "repo", "cc");
   const LIST_ALL = "call discover_agents with no arguments to list every agent.";
 
   it("says, when filters match nothing, what they were and how many agents they left out", async () => {
@@ -507,10 +517,15 @@ describe("discover_agents", () => {
     expect(await alone.execute("discover_agents", {})).toEqual({ agents: [] });
   });
 
-  it("matches each filter to its address token whole, ignoring case", async () => {
+  it("matches each filter to the entry's value whole, ignoring case", async () => {
     const t = new AgentTools({ agents: discovering(RESEARCHER, CODER, CODER_AGAIN) });
     expect(await t.execute("discover_agents", { agent: "Claude-Code", owner: "BOB" })).toEqual({
-      agents: [entry("claude-code", "bob", "repo", 2)],
+      agents: [entry("claude-code", "bob", "repo", 2, "cc")],
+    });
+    // The `agent` filter is the registered value, not the address's token.
+    expect(await t.execute("discover_agents", { agent: "cc" })).toEqual({
+      agents: [],
+      filter_note: `No agent matches the filter agent "cc". 2 agents are visible without filters: ${LIST_ALL}`,
     });
     expect(await t.execute("discover_agents", { agent: "", owner: "acme", name: "" })).toEqual({
       agents: [entry("researcher", "acme", "main")],
@@ -519,11 +534,11 @@ describe("discover_agents", () => {
       agents: [],
     });
     expect(await t.execute("discover_agents", { agent: "", owner: null })).toEqual({
-      agents: [entry("researcher", "acme", "main"), entry("claude-code", "bob", "repo", 2)],
+      agents: [entry("researcher", "acme", "main"), entry("claude-code", "bob", "repo", 2, "cc")],
     });
   });
 
-  it("refuses a filter no address token can hold, and discovers nothing", async () => {
+  it("refuses a filter no registered value can hold, and discovers nothing", async () => {
     let asked = 0;
     const agents = {
       discover: () => {

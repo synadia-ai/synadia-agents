@@ -1304,7 +1304,11 @@ def _given_filters(filters: DiscoverArgs) -> list[tuple[str, str]]:
 
 
 def _matches_filters(handle: Agent, filters: DiscoverArgs) -> bool:
-    """Each filter given matches its address token whole, ignoring case."""
+    """Each filter given matches the entry's value whole, ignoring case.
+
+    The registration's ``agent`` and ``owner``, which can differ from the
+    address's tokens, and the ``name`` the address ends in.
+    """
     tokens = {"agent": handle.agent, "owner": handle.owner, "name": handle.session_name}
     return all(tokens[key].lower() == value.lower() for key, value in _given_filters(filters))
 

@@ -368,7 +368,7 @@ describe.skipIf(!bin)("agent tools", () => {
     services.splice(services.indexOf(second), 1);
   });
 
-  it("discover_agents matches a filter ignoring case, explains an empty result, and refuses a full address", async () => {
+  it("discover_agents matches a filter ignoring case, explains an empty result, and refuses an address", async () => {
     const t = tools();
     const byCase = await t.execute("discover_agents", { agent: "Tools-Test", name: "WORKER" });
     const addresses = (byCase["agents"] as Array<{ address: string }>).map((a) => a.address);
@@ -383,9 +383,7 @@ describe.skipIf(!bin)("agent tools", () => {
     );
     const refused = await t.execute("discover_agents", { agent: workerAddress });
     conforms(refused);
-    expect(refused["error"]).toMatch(
-      /never a full address; call discover_agents with no arguments/,
-    );
+    expect(refused["error"]).toMatch(/never an address; call discover_agents with no arguments/);
   });
 
   it("prompt_agent waits for the reply by default", async () => {

@@ -1287,7 +1287,11 @@ function addFields(
 
 const FILTER_KEYS = ["agent", "owner", "name"] as const;
 
-/** Each filter given matches its address token whole, ignoring case. */
+/**
+ * Each filter given matches the entry's value whole, ignoring case: the
+ * registration's `agent` and `owner`, which can differ from the address's
+ * tokens, and the `name` the address ends in.
+ */
 function matchesFilters(handle: Agent, filters: DiscoverArgs): boolean {
   return FILTER_KEYS.every((key) => {
     const wanted = filters[key];

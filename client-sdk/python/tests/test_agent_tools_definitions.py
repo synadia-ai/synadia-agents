@@ -66,11 +66,11 @@ BLOCKING_THREE = ["discover_agents", "prompt_agent", "answer_agent"]
 
 
 def _refused_filter(key: str, value: str) -> str:
-    """The refusal of a discover_agents filter no address token can hold."""
+    """The refusal of a discover_agents filter no registered value can hold."""
     return (
         f'discover_agents: "{key}" is "{value}", which matches no agent: '
-        "a filter is one exact token of the address agents.prompt.<agent>.<owner>.<name>, "
-        "without wildcards and never a full address; "
+        "a filter is the exact agent, owner or name value discover_agents lists, "
+        "without wildcards and never an address; "
         "call discover_agents with no arguments to list every agent"
     )
 
@@ -295,7 +295,7 @@ def test_an_empty_or_null_discover_agents_filter_is_no_filter() -> None:
         ("name", "research bot"),
     ],
 )
-def test_a_discover_agents_filter_no_address_token_can_hold_is_refused_with_the_rule(
+def test_a_discover_agents_filter_no_registered_value_can_hold_is_refused_with_the_rule(
     key: str, value: str
 ) -> None:
     assert parse_discover_args({key: value}) == ArgsError(_refused_filter(key, value))
@@ -463,18 +463,21 @@ def test_misconfiguration_is_a_bug_and_raises() -> None:
 
 
 class _Found:
-    """An agent as discovery finds it, at ``agents.prompt.<agent>.<owner>.<name>``."""
+    """An agent as discovery finds it, at ``agents.prompt.<token>.<owner>.<name>``.
+
+    The address's token is the registered ``agent`` unless it says otherwise.
+    """
 
     identity = None
     id_sig_verified = False
     min_sender_trust = None
     prompt_endpoint = SimpleNamespace(attachments_ok=None)
 
-    def __init__(self, agent: str, owner: str, name: str) -> None:
+    def __init__(self, agent: str, owner: str, name: str, token: str | None = None) -> None:
         self.agent = agent
         self.owner = owner
         self.session_name = name
-        self.prompt_subject = f"agents.prompt.{agent}.{owner}.{name}"
+        self.prompt_subject = f"agents.prompt.{token or agent}.{owner}.{name}"
         self.description = f"{agent} of {owner}"
 
 
@@ -490,10 +493,12 @@ class _Discovering:
         return list(self.handles)
 
 
-def _entry(agent: str, owner: str, name: str, instances: int = 1) -> dict[str, Any]:
-    """The entry discover_agents gives for ``_Found(agent, owner, name)``."""
+def _entry(
+    agent: str, owner: str, name: str, instances: int = 1, token: str | None = None
+) -> dict[str, Any]:
+    """The entry discover_agents gives for ``_Found(agent, owner, name, token)``."""
     return {
-        "address": f"agents.prompt.{agent}.{owner}.{name}",
+        "address": f"agents.prompt.{token or agent}.{owner}.{name}",
         "agent": agent,
         "owner": owner,
         "name": name,
@@ -507,9 +512,10 @@ def _entry(agent: str, owner: str, name: str, instances: int = 1) -> dict[str, A
 
 
 RESEARCHER = _Found("researcher", "acme", "main")
-CODER = _Found("claude-code", "bob", "repo")
+#: Registered as ``claude-code``, at an address whose token is ``cc``.
+CODER = _Found("claude-code", "bob", "repo", "cc")
 #: A second instance of the coder: same address, one entry.
-CODER_AGAIN = _Found("claude-code", "bob", "repo")
+CODER_AGAIN = _Found("claude-code", "bob", "repo", "cc")
 LIST_ALL = "call discover_agents with no arguments to list every agent."
 
 
@@ -554,11 +560,17 @@ async def test_the_agents_left_out_are_counted_without_its_own_address_and_none_
     assert await alone.execute("discover_agents", {}) == {"agents": []}
 
 
-async def test_each_filter_matches_its_address_token_whole_ignoring_case() -> None:
+async def test_each_filter_matches_the_entrys_value_whole_ignoring_case() -> None:
     agents: Any = _Discovering(RESEARCHER, CODER, CODER_AGAIN)
     tools = AgentTools(agents)
     assert await tools.execute("discover_agents", {"agent": "Claude-Code", "owner": "BOB"}) == {
-        "agents": [_entry("claude-code", "bob", "repo", 2)]
+        "agents": [_entry("claude-code", "bob", "repo", 2, "cc")]
+    }
+    # The ``agent`` filter is the registered value, not the address's token.
+    assert await tools.execute("discover_agents", {"agent": "cc"}) == {
+        "agents": [],
+        "filter_note": 'No agent matches the filter agent "cc". '
+        f"2 agents are visible without filters: {LIST_ALL}",
     }
     assert await tools.execute("discover_agents", {"agent": "", "owner": "acme", "name": ""}) == {
         "agents": [_entry("researcher", "acme", "main")]
@@ -566,11 +578,14 @@ async def test_each_filter_matches_its_address_token_whole_ignoring_case() -> No
     partial = await tools.execute("discover_agents", {"agent": "claude", "name": "mai"})
     assert partial["agents"] == []
     assert await tools.execute("discover_agents", {"agent": "", "owner": None}) == {
-        "agents": [_entry("researcher", "acme", "main"), _entry("claude-code", "bob", "repo", 2)]
+        "agents": [
+            _entry("researcher", "acme", "main"),
+            _entry("claude-code", "bob", "repo", 2, "cc"),
+        ]
     }
 
 
-async def test_a_filter_no_address_token_can_hold_is_refused_and_nothing_is_discovered() -> None:
+async def test_a_filter_no_registered_value_can_hold_is_refused_and_nothing_is_discovered() -> None:
     discovering = _Discovering(RESEARCHER)
     agents: Any = discovering
     tools = AgentTools(agents)

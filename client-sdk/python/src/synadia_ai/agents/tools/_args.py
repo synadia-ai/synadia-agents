@@ -73,17 +73,18 @@ def args_object(tool: str, args: Any) -> dict[str, Any] | ArgsError:
     return value
 
 
-# What no address token holds (protocol §2): a filter with one of these
-# can never match, so it is refused with the rule instead of an empty list.
+# What no registered agent, owner or name holds (protocol §2): a filter with
+# one of these can never match, so it is refused with the rule instead of
+# an empty list.
 _NOT_IN_A_TOKEN = re.compile(r"[.*>\s]")
 
 
 def parse_discover_args(args: Any) -> DiscoverArgs | ArgsError:
     """``discover_agents``' filters.
 
-    A filter left out, ``null`` or ``""`` is no filter. A value no address
-    token can hold, such as a full address or a wildcard, is refused with
-    words that say what a filter is.
+    A filter left out, ``null`` or ``""`` is no filter. A value no
+    registered agent, owner or name holds, such as an address or a
+    wildcard, is refused with words that say what a filter is.
     """
     fields = args_object("discover_agents", args)
     if isinstance(fields, ArgsError):
@@ -98,8 +99,8 @@ def parse_discover_args(args: Any) -> DiscoverArgs | ArgsError:
         if _NOT_IN_A_TOKEN.search(value):
             return ArgsError(
                 f'discover_agents: "{key}" is "{value}", which matches no agent: '
-                "a filter is one exact token of the address "
-                "agents.prompt.<agent>.<owner>.<name>, without wildcards and never a full address; "
+                "a filter is the exact agent, owner or name value discover_agents lists, "
+                "without wildcards and never an address; "
                 "call discover_agents with no arguments to list every agent"
             )
         out[key] = value
