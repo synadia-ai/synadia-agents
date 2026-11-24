@@ -368,6 +368,26 @@ describe.skipIf(!bin)("agent tools", () => {
     services.splice(services.indexOf(second), 1);
   });
 
+  it("discover_agents matches a filter ignoring case, explains an empty result, and refuses a full address", async () => {
+    const t = tools();
+    const byCase = await t.execute("discover_agents", { agent: "Tools-Test", name: "WORKER" });
+    const addresses = (byCase["agents"] as Array<{ address: string }>).map((a) => a.address);
+    expect(addresses).toEqual([workerAddress]);
+    const all = (await t.execute("discover_agents", {})) as { agents: unknown[] };
+    const none = await t.execute("discover_agents", { agent: "tools-test", name: "nobody" });
+    expect(none["agents"]).toEqual([]);
+    expect(none["filter_note"]).toBe(
+      'No agent matches the filters agent "tools-test" and name "nobody". ' +
+        `${all.agents.length === 1 ? "1 agent is" : `${all.agents.length} agents are`} ` +
+        "visible without filters: call discover_agents with no arguments to list every agent.",
+    );
+    const refused = await t.execute("discover_agents", { agent: workerAddress });
+    conforms(refused);
+    expect(refused["error"]).toMatch(
+      /never a full address; call discover_agents with no arguments/,
+    );
+  });
+
   it("prompt_agent waits for the reply by default", async () => {
     const t = tools();
     const result = call(
@@ -1134,8 +1154,19 @@ describe.skipIf(!bin)("agent tools", () => {
     const refused = await t.execute("prompt_agent", { address: workerAddress, prompt: "echo:me" });
     conforms(refused);
     expect(refused["error"]).toMatch(/your own address/);
-    const found = (await t.execute("discover_agents", { name: "worker" })) as { agents: unknown[] };
-    expect(found.agents).toEqual([]);
+    const found = await t.execute("discover_agents", { name: "worker" });
+    expect(found["agents"]).toEqual([]);
+    // The note counts the agents visible without the filter: the worker's own
+    // address is not one of them.
+    const visible = ((await t.execute("discover_agents", {})) as { agents: unknown[] }).agents
+      .length;
+    expect(found["filter_note"]).toBe(
+      'No agent matches the filter name "worker". ' +
+        (visible === 0
+          ? "No agent is visible without filters either."
+          : `${visible === 1 ? "1 agent is" : `${visible} agents are`} visible without filters: ` +
+            "call discover_agents with no arguments to list every agent."),
+    );
   });
 
   it("refuses the agent whose signed prompt is being served, and only that one", async () => {

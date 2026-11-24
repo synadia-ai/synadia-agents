@@ -23,7 +23,7 @@ they rest on.
 
 | Tool | Parameters | Does | Returns |
 | --- | --- | --- | --- |
-| `discover_agents` | `agent?`, `owner?`, `name?` | lists the agents that can be prompted, one entry per address | `{"agents": [...]}` |
+| `discover_agents` | `agent?`, `owner?`, `name?` | lists the agents that can be prompted, one entry per address | `{"agents": [...]}`, with `filter_note` when filters matched no agent |
 | `prompt_agent` | `address`, `prompt`, `attachments?`, `label?`, `wait?` | prompts one agent. With `wait` true (the default) it waits for the reply or a question; with `wait` false it returns at once | a call's result |
 | `wait_agent` | `call_ids`, `timeout_ms?` | waits for the first of the given calls that finished or asked a question | a call's result with `remaining`, or `{"state": "running", "call_ids": [...]}` on timeout |
 | `answer_agent` | `call_id`, `answer`, `wait?` | answers the open question of a call, then waits again or returns at once | a call's result |
@@ -67,8 +67,9 @@ tool did nothing. Nothing was sent and no call changed. Refusals cover bad
 arguments, a tool the helper does not offer (section 5), an unknown
 address, an unknown `call_id`, a loop (section 3.8), a file outside the
 allowed roots (section 3.9), a prompt the SDK refuses before sending (too
-large for the target, attachments to an agent that takes none), and the
-limit on tracked calls (section 5).
+large for the target, attachments to an agent that takes none), the
+limit on tracked calls (section 5), and a `discover_agents` filter no
+address token can hold (section 4).
 
 **Open calls.** While calls in the current scope are open, every result of
 every tool carries `open_calls`, how many there are, and `open_calls_note`,
@@ -77,7 +78,7 @@ says they end with that prompt, so the model collects them before it answers.
 
 | Tool | Result |
 | --- | --- |
-| `discover_agents` | `agents`: one entry per address with `address`, `agent`, `owner`, `name`, `description`, `identity`, `identity_verified`, `requires_signed_prompts`, `accepts_attachments` and `instances` |
+| `discover_agents` | `agents`: one entry per address with `address`, `agent`, `owner`, `name`, `description`, `identity`, `identity_verified`, `requires_signed_prompts`, `accepts_attachments` and `instances`. When filters were given and no agent matched them, `filter_note` names the filters, says how many agents are visible without them, and tells the model to call `discover_agents` with no arguments to list every agent |
 | `prompt_agent` | a call's result: `wait` true, the first state other than `running`; `wait` false, `running` |
 | `answer_agent` | a call's result: waiting, the first state other than `running` after the answer; not waiting, the call's state right after the answer, usually `running` |
 | `wait_agent` | a call's result with `remaining`, the ids of the other given calls still open; on timeout `{"state": "running", "call_ids": [...]}` with the given calls, all still running |
@@ -253,7 +254,7 @@ sent to the target.
 
 | Tool | Parameter | |
 | --- | --- | --- |
-| `discover_agents` | `agent`, `owner`, `name` | optional filters, one per token of the address, exact and combined; without them, every agent |
+| `discover_agents` | `agent`, `owner`, `name` | optional filters, one per token of the address, combined; each matches its token whole, ignoring case. `""` and `null` are no filter. A value with `.`, `*`, `>` or whitespace is refused, since no address token holds one: a filter is never a wildcard or a full address. Without filters, every agent |
 | `prompt_agent` | `address` | as `discover_agents` returned it |
 | | `prompt` | the task, complete in itself |
 | | `attachments` | optional local paths under the configured roots, only to an agent that accepts them |

@@ -13,6 +13,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **`discover_agents` explains an empty result.** When filters were given
+  and no agent matched them, the result keeps `agents: []` and adds
+  `filter_note`: the filters, how many agents are visible without them, and
+  to call `discover_agents` with no arguments to list every agent. Without
+  filters, or with a match, the result is as before.
+  `test-fixtures/agent-tools/discover_agents.result.json` gains the field.
+- **`discover_agents`' filters are forgiving where that is safe, and refuse
+  what can never match.** A filter matches its address token whole,
+  ignoring case. `""` and `null` are no filter; the definition drops
+  `minLength` from the three filters, so a host that validates arguments
+  against the schema lets `""` through. A value with `.`, `*`, `>` or
+  whitespace, such as a wildcard or a full address, is refused with words
+  that say a filter is one exact token of the address and to call
+  `discover_agents` with no arguments to list every agent. A non-string
+  filter's refusal now reads `"<key>" must be a string when given`. The
+  helper discovers every agent and applies the filters itself; discovery
+  asked every agent before too, so it costs nothing more.
+  `Agents.discover({ filter })` is unchanged and still compares exactly.
+- **The `discover_agents` descriptions.** The tool says that called with no
+  arguments it lists every agent, that a filter is one exact token without
+  wildcards and never a full address, and that a prompt reaches one of an
+  address's instances. The `name` filter is the address's last token, no
+  longer "usually `main`": instance names differ from host to host.
+
 ## [0.6.0] - 2026-10-02
 
 ### Added

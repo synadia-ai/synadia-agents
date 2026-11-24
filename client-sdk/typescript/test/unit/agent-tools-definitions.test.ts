@@ -94,6 +94,16 @@ function refusal(tools: ReadonlyArray<AgentToolName>): RegExp {
 }
 
 const BLOCKING_THREE: AgentToolName[] = ["discover_agents", "prompt_agent", "answer_agent"];
+
+/** The refusal of a discover_agents filter no address token can hold. */
+function refusedFilter(key: string, value: string): string {
+  return (
+    `discover_agents: "${key}" is "${value}", which matches no agent: ` +
+    "a filter is one exact token of the address agents.prompt.<agent>.<owner>.<name>, " +
+    "without wildcards and never a full address; " +
+    "call discover_agents with no arguments to list every agent"
+  );
+}
 const agents = {} as Agents;
 
 const ASKER = "agents.prompt.fake.o.asker";
@@ -193,6 +203,15 @@ describe("agent tool definitions", () => {
     }
   });
 
+  it("sit next to a discovery result schema that names every field the helper produces", async () => {
+    const result = (await fixture("discover_agents.result")) as {
+      properties: Record<string, unknown>;
+    };
+    expect(Object.keys(result.properties).sort()).toEqual(
+      ["agents", "filter_note", "open_calls", "open_calls_note"].sort(),
+    );
+  });
+
   it("sit next to a call result schema that names every field the helper produces", async () => {
     const call = (await fixture("prompt_agent.result")) as { properties: Record<string, unknown> };
     expect(Object.keys(call.properties).sort()).toEqual(
@@ -238,6 +257,25 @@ describe("agent tool arguments", () => {
     expect(parseDiscoverArgs({ error: "x" })).toEqual({});
   });
 
+  it("take an empty or null discover_agents filter as no filter", () => {
+    expect(parseDiscoverArgs({ agent: "", owner: null, name: "" })).toEqual({});
+    expect(parseDiscoverArgs({ agent: "", name: "main" })).toEqual({ name: "main" });
+  });
+
+  it("refuse a discover_agents filter no address token can hold, with the rule", () => {
+    for (const [key, value] of [
+      ["agent", "*"],
+      ["agent", "claude-*"],
+      ["owner", ">"],
+      ["name", "agents.prompt.researcher.acme.main"],
+      ["name", "research bot"],
+    ] as const) {
+      expect(parseDiscoverArgs({ [key]: value }), value).toEqual({
+        error: refusedFilter(key, value),
+      });
+    }
+  });
+
   it("turn every mistake into words", () => {
     const cases: Array<[unknown, RegExp]> = [
       [parsePromptArgs("{nope"), /not valid JSON/],
@@ -252,7 +290,7 @@ describe("agent tool arguments", () => {
       [parseWaitArgs({ call_ids: ["a"], timeout_ms: 1.5 }), /"timeout_ms"/],
       [parseAnswerArgs({ call_id: "c" }), /"answer" is required/],
       [parseCancelArgs({ call_ids: [""] }), /non-empty list/],
-      [parseDiscoverArgs({ owner: 3 }), /"owner" must be a non-empty string/],
+      [parseDiscoverArgs({ owner: 3 }), /"owner" must be a string/],
     ];
     for (const [result, words] of cases) {
       expect(isArgsError(result)).toBe(true);
@@ -388,5 +426,118 @@ describe("the tools a helper offers", () => {
         await t.close();
       }
     }
+  });
+});
+
+describe("discover_agents", () => {
+  /** An agent as discovery finds it, at `agents.prompt.<agent>.<owner>.<name>`. */
+  function found(agent: string, owner: string, name: string): unknown {
+    return {
+      promptSubject: `agents.prompt.${agent}.${owner}.${name}`,
+      agent,
+      owner,
+      name,
+      description: `${agent} of ${owner}`,
+      identity: undefined,
+      idSigVerified: false,
+      minSenderTrust: undefined,
+      promptEndpoint: {},
+    };
+  }
+
+  /** A client whose discovery finds `handles`, whatever it is asked. */
+  function discovering(...handles: unknown[]): Agents {
+    return { discover: () => Promise.resolve(handles) } as unknown as Agents;
+  }
+
+  /** The entry discover_agents gives for `found(agent, owner, name)`. */
+  function entry(agent: string, owner: string, name: string, instances = 1): unknown {
+    return {
+      address: `agents.prompt.${agent}.${owner}.${name}`,
+      agent,
+      owner,
+      name,
+      description: `${agent} of ${owner}`,
+      identity: null,
+      identity_verified: false,
+      requires_signed_prompts: false,
+      accepts_attachments: true,
+      instances,
+    };
+  }
+
+  const RESEARCHER = found("researcher", "acme", "main");
+  const CODER = found("claude-code", "bob", "repo");
+  // A second instance of the coder: same address, one entry.
+  const CODER_AGAIN = found("claude-code", "bob", "repo");
+  const LIST_ALL = "call discover_agents with no arguments to list every agent.";
+
+  it("says, when filters match nothing, what they were and how many agents they left out", async () => {
+    const t = new AgentTools({ agents: discovering(RESEARCHER, CODER, CODER_AGAIN) });
+    expect(await t.execute("discover_agents", { owner: "carol" })).toEqual({
+      agents: [],
+      filter_note: `No agent matches the filter owner "carol". 2 agents are visible without filters: ${LIST_ALL}`,
+    });
+    expect(await t.execute("discover_agents", { agent: "pi", name: "main" })).toEqual({
+      agents: [],
+      filter_note: `No agent matches the filters agent "pi" and name "main". 2 agents are visible without filters: ${LIST_ALL}`,
+    });
+    expect(
+      await t.execute("discover_agents", { agent: "researcher", owner: "acme", name: "Repo" }),
+    ).toEqual({
+      agents: [],
+      filter_note: `No agent matches the filters agent "researcher", owner "acme" and name "Repo". 2 agents are visible without filters: ${LIST_ALL}`,
+    });
+  });
+
+  it("counts the agents left out without its own address, and says when there is none", async () => {
+    const self = (RESEARCHER as { promptSubject: string }).promptSubject;
+    const two = new AgentTools({ agents: discovering(RESEARCHER, CODER), selfAddress: self });
+    expect(await two.execute("discover_agents", { name: "main" })).toEqual({
+      agents: [],
+      filter_note: `No agent matches the filter name "main". 1 agent is visible without filters: ${LIST_ALL}`,
+    });
+    const alone = new AgentTools({ agents: discovering(RESEARCHER), selfAddress: self });
+    expect(await alone.execute("discover_agents", { name: "main" })).toEqual({
+      agents: [],
+      filter_note:
+        'No agent matches the filter name "main". No agent is visible without filters either.',
+    });
+    // Without filters an empty list needs no words.
+    expect(await alone.execute("discover_agents", {})).toEqual({ agents: [] });
+  });
+
+  it("matches each filter to its address token whole, ignoring case", async () => {
+    const t = new AgentTools({ agents: discovering(RESEARCHER, CODER, CODER_AGAIN) });
+    expect(await t.execute("discover_agents", { agent: "Claude-Code", owner: "BOB" })).toEqual({
+      agents: [entry("claude-code", "bob", "repo", 2)],
+    });
+    expect(await t.execute("discover_agents", { agent: "", owner: "acme", name: "" })).toEqual({
+      agents: [entry("researcher", "acme", "main")],
+    });
+    expect(await t.execute("discover_agents", { agent: "claude", name: "mai" })).toMatchObject({
+      agents: [],
+    });
+    expect(await t.execute("discover_agents", { agent: "", owner: null })).toEqual({
+      agents: [entry("researcher", "acme", "main"), entry("claude-code", "bob", "repo", 2)],
+    });
+  });
+
+  it("refuses a filter no address token can hold, and discovers nothing", async () => {
+    let asked = 0;
+    const agents = {
+      discover: () => {
+        asked += 1;
+        return Promise.resolve([RESEARCHER]);
+      },
+    } as unknown as Agents;
+    const t = new AgentTools({ agents });
+    expect(await t.execute("discover_agents", { agent: "*" })).toEqual({
+      error: refusedFilter("agent", "*"),
+    });
+    expect(
+      await t.execute("discover_agents", { name: "agents.prompt.researcher.acme.main" }),
+    ).toEqual({ error: refusedFilter("name", "agents.prompt.researcher.acme.main") });
+    expect(asked).toBe(0);
   });
 });

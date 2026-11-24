@@ -58,15 +58,32 @@ export function argsObject(tool: string, args: unknown): Fields | ArgsError {
   return value as Fields;
 }
 
+// What no address token holds (protocol §2): a filter with one of these
+// can never match, so it is refused with the rule instead of an empty list.
+const NOT_IN_A_TOKEN = /[.*>\s]/;
+
+/**
+ * `discover_agents`' filters. A filter left out, `null` or `""` is no
+ * filter. A value no address token can hold, such as a full address or a
+ * wildcard, is refused with words that say what a filter is.
+ */
 export function parseDiscoverArgs(args: unknown): DiscoverArgs | ArgsError {
   const fields = argsObject("discover_agents", args);
   if (isArgsError(fields)) return fields;
   const out: { agent?: string; owner?: string; name?: string } = {};
   for (const key of ["agent", "owner", "name"] as const) {
     const value = fields[key];
-    if (value === undefined) continue;
-    if (typeof value !== "string" || value.length === 0) {
-      return new ArgsError(`discover_agents: "${key}" must be a non-empty string when given`);
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value !== "string") {
+      return new ArgsError(`discover_agents: "${key}" must be a string when given`);
+    }
+    if (NOT_IN_A_TOKEN.test(value)) {
+      return new ArgsError(
+        `discover_agents: "${key}" is "${value}", which matches no agent: ` +
+          "a filter is one exact token of the address agents.prompt.<agent>.<owner>.<name>, " +
+          "without wildcards and never a full address; " +
+          "call discover_agents with no arguments to list every agent",
+      );
     }
     out[key] = value;
   }

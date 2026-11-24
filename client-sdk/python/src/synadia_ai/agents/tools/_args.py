@@ -12,6 +12,7 @@ same parser.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -72,17 +73,35 @@ def args_object(tool: str, args: Any) -> dict[str, Any] | ArgsError:
     return value
 
 
+# What no address token holds (protocol §2): a filter with one of these
+# can never match, so it is refused with the rule instead of an empty list.
+_NOT_IN_A_TOKEN = re.compile(r"[.*>\s]")
+
+
 def parse_discover_args(args: Any) -> DiscoverArgs | ArgsError:
+    """``discover_agents``' filters.
+
+    A filter left out, ``null`` or ``""`` is no filter. A value no address
+    token can hold, such as a full address or a wildcard, is refused with
+    words that say what a filter is.
+    """
     fields = args_object("discover_agents", args)
     if isinstance(fields, ArgsError):
         return fields
     out: dict[str, str] = {}
     for key in ("agent", "owner", "name"):
         value = fields.get(key)
-        if value is None:
+        if value is None or value == "":
             continue
-        if not isinstance(value, str) or value == "":
-            return ArgsError(f'discover_agents: "{key}" must be a non-empty string when given')
+        if not isinstance(value, str):
+            return ArgsError(f'discover_agents: "{key}" must be a string when given')
+        if _NOT_IN_A_TOKEN.search(value):
+            return ArgsError(
+                f'discover_agents: "{key}" is "{value}", which matches no agent: '
+                "a filter is one exact token of the address "
+                "agents.prompt.<agent>.<owner>.<name>, without wildcards and never a full address; "
+                "call discover_agents with no arguments to list every agent"
+            )
         out[key] = value
     return DiscoverArgs(**out)
 

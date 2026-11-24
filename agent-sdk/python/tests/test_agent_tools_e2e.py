@@ -355,6 +355,24 @@ async def test_discovery_gives_one_entry_per_address_showing_an_instance_that_ve
     assert result["agents"][0]["identity"].startswith("$G.U")
 
 
+async def test_discovery_ignores_case_explains_an_empty_result_and_refuses_a_full_address(
+    world: World,
+) -> None:
+    tools = world.tools()
+    by_case = await tools.execute("discover_agents", {"agent": "Tools-Test", "name": "WORKER"})
+    assert [a["address"] for a in by_case["agents"]] == [world.worker_address]
+    none = await tools.execute("discover_agents", {"agent": "tools-test", "name": "nobody"})
+    assert none == {
+        "agents": [],
+        "filter_note": 'No agent matches the filters agent "tools-test" and name "nobody". '
+        "2 agents are visible without filters: "
+        "call discover_agents with no arguments to list every agent.",
+    }
+    refused = await tools.execute("discover_agents", {"agent": world.worker_address})
+    conforms(refused)
+    assert "never a full address; call discover_agents with no arguments" in refused["error"]
+
+
 async def test_prompt_agent_waits_for_the_reply_by_default(world: World) -> None:
     result = call(
         await world.tools().execute(
@@ -1130,7 +1148,13 @@ async def test_the_agents_own_address_is_refused_and_left_out_of_discovery(
     conforms(refused)
     assert "your own address" in refused["error"]
     found = await tools.execute("discover_agents", {"name": "worker"})
-    assert found == {"agents": []}
+    # The note counts the agents visible without the filter: the other worker,
+    # not this agent's own address.
+    assert found == {
+        "agents": [],
+        "filter_note": 'No agent matches the filter name "worker". 1 agent is visible without '
+        "filters: call discover_agents with no arguments to list every agent.",
+    }
 
 
 async def test_the_agent_whose_signed_prompt_is_served_is_refused_and_only_it(

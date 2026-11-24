@@ -21,6 +21,7 @@ import json
 from collections.abc import AsyncIterator
 from importlib import resources
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -62,6 +63,18 @@ def _fixture(name: str) -> Any:
 DEFINITIONS = [_fixture(name) for name in NAMES]
 BLOCKING: dict[str, str] = _fixture("blocking")
 BLOCKING_THREE = ["discover_agents", "prompt_agent", "answer_agent"]
+
+
+def _refused_filter(key: str, value: str) -> str:
+    """The refusal of a discover_agents filter no address token can hold."""
+    return (
+        f'discover_agents: "{key}" is "{value}", which matches no agent: '
+        "a filter is one exact token of the address agents.prompt.<agent>.<owner>.<name>, "
+        "without wildcards and never a full address; "
+        "call discover_agents with no arguments to list every agent"
+    )
+
+
 #: The helper touches its client only to discover and prompt.
 AGENTS: Any = object()
 #: Every subset of the six, the empty one too.
@@ -221,6 +234,13 @@ def test_the_definitions_are_a_fresh_copy_each_time() -> None:
     assert agent_tool_definitions()[0]["description"] != "changed"
 
 
+def test_the_discovery_result_schema_names_every_field_the_helper_produces() -> None:
+    schema = _fixture("discover_agents.result")
+    assert sorted(schema["properties"]) == sorted(
+        ["agents", "filter_note", "open_calls", "open_calls_note"]
+    )
+
+
 def test_the_call_result_schema_names_every_field_the_helper_produces() -> None:
     schema = _fixture("prompt_agent.result")
     assert sorted(schema["properties"]) == sorted(
@@ -260,6 +280,27 @@ def test_a_model_passing_an_error_field_is_not_mistaken_for_a_parse_error() -> N
     assert parse_discover_args({"error": "x"}) == DiscoverArgs()
 
 
+def test_an_empty_or_null_discover_agents_filter_is_no_filter() -> None:
+    assert parse_discover_args({"agent": "", "owner": None, "name": ""}) == DiscoverArgs()
+    assert parse_discover_args({"agent": "", "name": "main"}) == DiscoverArgs(name="main")
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("agent", "*"),
+        ("agent", "claude-*"),
+        ("owner", ">"),
+        ("name", "agents.prompt.researcher.acme.main"),
+        ("name", "research bot"),
+    ],
+)
+def test_a_discover_agents_filter_no_address_token_can_hold_is_refused_with_the_rule(
+    key: str, value: str
+) -> None:
+    assert parse_discover_args({key: value}) == ArgsError(_refused_filter(key, value))
+
+
 @pytest.mark.parametrize(
     ("result", "words"),
     [
@@ -282,7 +323,7 @@ def test_a_model_passing_an_error_field_is_not_mistaken_for_a_parse_error() -> N
         (parse_wait_args({"call_ids": ["a"], "timeout_ms": True}), '"timeout_ms"'),
         (parse_answer_args({"call_id": "c"}), '"answer" is required'),
         (parse_cancel_args({"call_ids": [""]}), "non-empty list"),
-        (parse_discover_args({"owner": 3}), '"owner" must be a non-empty string'),
+        (parse_discover_args({"owner": 3}), '"owner" must be a string'),
     ],
 )
 def test_every_mistake_comes_back_in_words(result: object, words: str) -> None:
@@ -416,3 +457,128 @@ def test_misconfiguration_is_a_bug_and_raises() -> None:
         AgentTools(agents, max_wait_s=0)
     tools = AgentTools(agents)
     assert tools.definitions == agent_tool_definitions()
+
+
+# --- discover_agents ---------------------------------------------------------
+
+
+class _Found:
+    """An agent as discovery finds it, at ``agents.prompt.<agent>.<owner>.<name>``."""
+
+    identity = None
+    id_sig_verified = False
+    min_sender_trust = None
+    prompt_endpoint = SimpleNamespace(attachments_ok=None)
+
+    def __init__(self, agent: str, owner: str, name: str) -> None:
+        self.agent = agent
+        self.owner = owner
+        self.session_name = name
+        self.prompt_subject = f"agents.prompt.{agent}.{owner}.{name}"
+        self.description = f"{agent} of {owner}"
+
+
+class _Discovering:
+    """A client whose discovery finds ``handles``, whatever it is asked."""
+
+    def __init__(self, *handles: _Found) -> None:
+        self.handles = list(handles)
+        self.asked = 0
+
+    async def discover(self, **_options: Any) -> list[Any]:
+        self.asked += 1
+        return list(self.handles)
+
+
+def _entry(agent: str, owner: str, name: str, instances: int = 1) -> dict[str, Any]:
+    """The entry discover_agents gives for ``_Found(agent, owner, name)``."""
+    return {
+        "address": f"agents.prompt.{agent}.{owner}.{name}",
+        "agent": agent,
+        "owner": owner,
+        "name": name,
+        "description": f"{agent} of {owner}",
+        "identity": None,
+        "identity_verified": False,
+        "requires_signed_prompts": False,
+        "accepts_attachments": True,
+        "instances": instances,
+    }
+
+
+RESEARCHER = _Found("researcher", "acme", "main")
+CODER = _Found("claude-code", "bob", "repo")
+#: A second instance of the coder: same address, one entry.
+CODER_AGAIN = _Found("claude-code", "bob", "repo")
+LIST_ALL = "call discover_agents with no arguments to list every agent."
+
+
+async def test_filters_that_match_nothing_say_what_they_were_and_how_many_they_left_out() -> None:
+    agents: Any = _Discovering(RESEARCHER, CODER, CODER_AGAIN)
+    tools = AgentTools(agents)
+    assert await tools.execute("discover_agents", {"owner": "carol"}) == {
+        "agents": [],
+        "filter_note": 'No agent matches the filter owner "carol". '
+        f"2 agents are visible without filters: {LIST_ALL}",
+    }
+    assert await tools.execute("discover_agents", {"agent": "pi", "name": "main"}) == {
+        "agents": [],
+        "filter_note": 'No agent matches the filters agent "pi" and name "main". '
+        f"2 agents are visible without filters: {LIST_ALL}",
+    }
+    assert await tools.execute(
+        "discover_agents", {"agent": "researcher", "owner": "acme", "name": "Repo"}
+    ) == {
+        "agents": [],
+        "filter_note": 'No agent matches the filters agent "researcher", owner "acme" and '
+        f'name "Repo". 2 agents are visible without filters: {LIST_ALL}',
+    }
+
+
+async def test_the_agents_left_out_are_counted_without_its_own_address_and_none_is_said() -> None:
+    two: Any = _Discovering(RESEARCHER, CODER)
+    tools = AgentTools(two, self_address=RESEARCHER.prompt_subject)
+    assert await tools.execute("discover_agents", {"name": "main"}) == {
+        "agents": [],
+        "filter_note": 'No agent matches the filter name "main". '
+        f"1 agent is visible without filters: {LIST_ALL}",
+    }
+    one: Any = _Discovering(RESEARCHER)
+    alone = AgentTools(one, self_address=RESEARCHER.prompt_subject)
+    assert await alone.execute("discover_agents", {"name": "main"}) == {
+        "agents": [],
+        "filter_note": 'No agent matches the filter name "main". '
+        "No agent is visible without filters either.",
+    }
+    # Without filters an empty list needs no words.
+    assert await alone.execute("discover_agents", {}) == {"agents": []}
+
+
+async def test_each_filter_matches_its_address_token_whole_ignoring_case() -> None:
+    agents: Any = _Discovering(RESEARCHER, CODER, CODER_AGAIN)
+    tools = AgentTools(agents)
+    assert await tools.execute("discover_agents", {"agent": "Claude-Code", "owner": "BOB"}) == {
+        "agents": [_entry("claude-code", "bob", "repo", 2)]
+    }
+    assert await tools.execute("discover_agents", {"agent": "", "owner": "acme", "name": ""}) == {
+        "agents": [_entry("researcher", "acme", "main")]
+    }
+    partial = await tools.execute("discover_agents", {"agent": "claude", "name": "mai"})
+    assert partial["agents"] == []
+    assert await tools.execute("discover_agents", {"agent": "", "owner": None}) == {
+        "agents": [_entry("researcher", "acme", "main"), _entry("claude-code", "bob", "repo", 2)]
+    }
+
+
+async def test_a_filter_no_address_token_can_hold_is_refused_and_nothing_is_discovered() -> None:
+    discovering = _Discovering(RESEARCHER)
+    agents: Any = discovering
+    tools = AgentTools(agents)
+    assert await tools.execute("discover_agents", {"agent": "*"}) == {
+        "error": _refused_filter("agent", "*")
+    }
+    address = "agents.prompt.researcher.acme.main"
+    assert await tools.execute("discover_agents", {"name": address}) == {
+        "error": _refused_filter("name", address)
+    }
+    assert discovering.asked == 0

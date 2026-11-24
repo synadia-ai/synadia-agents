@@ -63,7 +63,6 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..agent import DEFAULT_PROMPT_MAX_WAIT_S, Query
 from ..attachments import DEFAULT_SAVE_ATTACHMENTS_MAX_TOTAL_BYTES, save_attachments
-from ..discovery import DiscoverFilter
 from ..envelope import Attachment
 from ..errors import (
     AgentsClosedError,
@@ -520,16 +519,20 @@ class AgentTools:
         if isinstance(parsed, ArgsError):
             return {"error": parsed.error}
         try:
-            found = await self._discover(parsed)
+            found = await self._discover()
         except Exception as err:
             return {"error": f"discovery failed: {_describe(err)}"}
+        # The filters are applied here, to every agent discovery found: it asks
+        # them all anyway, and an empty result can then say how many agents the
+        # filters left out.
+        visible = [h for h in found if h.prompt_subject != self._self_address]
         # Instances of one agent share its address and SHOULD register alike
         # (§3.4). When they do not, the entry shows one whose identity verifies.
         by_address: dict[str, list[Any]] = {}
-        for handle in found:
-            address = handle.prompt_subject
-            if address == self._self_address:
+        for handle in visible:
+            if not _matches_filters(handle, parsed):
                 continue
+            address = handle.prompt_subject
             seen = by_address.get(address)
             if seen is None:
                 by_address[address] = [handle, 1]
@@ -563,16 +566,14 @@ class AgentTools:
                     **extra,
                 }
             )
+        if not agents and _given_filters(parsed):
+            unfiltered = len({h.prompt_subject for h in visible})
+            return {"agents": agents, "filter_note": _filter_note(parsed, unfiltered)}
         return {"agents": agents}
 
-    async def _discover(self, filt: DiscoverArgs) -> list[Agent]:
-        """Discover, and remember the handle behind each address."""
-        wanted = (
-            DiscoverFilter(agent=filt.agent, owner=filt.owner, session_name=filt.name)
-            if filt.agent is not None or filt.owner is not None or filt.name is not None
-            else None
-        )
-        found = await self._agents.discover(timeout=self._discover_timeout, filter=wanted)
+    async def _discover(self) -> list[Agent]:
+        """Discover every agent, and remember the handle behind each address."""
+        found = await self._agents.discover(timeout=self._discover_timeout)
         for handle in found:
             known = self._known.get(handle.prompt_subject)
             if known is None or handle.id_sig_verified or not known.id_sig_verified:
@@ -584,7 +585,7 @@ class AgentTools:
         known = self._known.get(address)
         if known is not None:
             return known
-        await self._discover(DiscoverArgs())
+        await self._discover()
         return self._known.get(address)
 
     # --- prompt_agent --------------------------------------------------------
@@ -1294,6 +1295,40 @@ def _add_fields(
         if key in reserved:
             raise _ReservedFieldError(key, where)
         into[key] = value
+
+
+def _given_filters(filters: DiscoverArgs) -> list[tuple[str, str]]:
+    """``discover_agents``' filters that were given, by key, in the definition's order."""
+    keyed = (("agent", filters.agent), ("owner", filters.owner), ("name", filters.name))
+    return [(key, value) for key, value in keyed if value is not None]
+
+
+def _matches_filters(handle: Agent, filters: DiscoverArgs) -> bool:
+    """Each filter given matches its address token whole, ignoring case."""
+    tokens = {"agent": handle.agent, "owner": handle.owner, "name": handle.session_name}
+    return all(tokens[key].lower() == value.lower() for key, value in _given_filters(filters))
+
+
+def _filter_note(filters: DiscoverArgs, visible: int) -> str:
+    """``discover_agents``' words for filters no agent matched.
+
+    The filters, and how many agents are visible without them.
+    """
+    given = [f'{key} "{value}"' for key, value in _given_filters(filters)]
+    named = (
+        f"the filter {given[0]}"
+        if len(given) == 1
+        else f"the filters {', '.join(given[:-1])} and {given[-1]}"
+    )
+    if visible == 0:
+        without = "No agent is visible without filters either."
+    else:
+        count = "1 agent is" if visible == 1 else f"{visible} agents are"
+        without = (
+            f"{count} visible without filters: "
+            "call discover_agents with no arguments to list every agent."
+        )
+    return f"No agent matches {named}. {without}"
 
 
 def _new_call_id() -> str:
