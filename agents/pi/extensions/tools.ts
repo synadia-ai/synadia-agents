@@ -16,6 +16,14 @@
  * extensions' `aroundToolCall` wrapper, with the NATS prompt or the local
  * turn PI is working on, and hands the result back to the model as JSON
  * text.
+ *
+ * Each tool also carries a `promptSnippet` and `promptGuidelines` for PI's
+ * default system prompt. PI lists an extension's tool under `Available
+ * tools` only when it has a snippet, and otherwise tells the model only
+ * that it "may have access to other custom tools"; the guidelines name the
+ * session's own address and how the tools are used. A custom system prompt
+ * (`--system-prompt`, `SYSTEM.md`) replaces the default one, and with it
+ * both.
  */
 
 import {
@@ -75,8 +83,56 @@ export function toolLabel(name: string): string {
 
 type PiToolDefinition = Parameters<ExtensionAPI["registerTool"]>[0];
 
+/**
+ * One line per tool for the `Available tools` list of PI's default system
+ * prompt. Each line costs input tokens on every model call, so it only
+ * says what the tool is for; the definition's description says how.
+ */
+export const AGENT_TOOL_SNIPPETS: Readonly<Record<AgentToolName, string>> = {
+  discover_agents:
+    "List the agents you can prompt, with each one's address and what it does",
+  prompt_agent: "Send a task to another agent and get its reply",
+  wait_agent: "Wait for calls started with prompt_agent and collect their results",
+  answer_agent: "Answer a question another agent asked while working on your call",
+  cancel_agent: "Stop calls started with prompt_agent",
+  list_agent_calls: "List the calls started with prompt_agent and their states",
+};
+
+/**
+ * The bullets a tool adds to the `Guidelines` of PI's default system
+ * prompt, naming `address`, the session's own prompt address. PI appends
+ * every active tool's bullets flat and drops repeats, so the one that
+ * names the address goes on every tool and is shown once, while any of the
+ * tools is active.
+ */
+export function agentToolGuidelines(
+  name: AgentToolName,
+  address: string,
+): string[] {
+  const guidelines = [
+    `Other agents reach you at ${address}. To reach other agents, use discover_agents and prompt_agent, not shell commands.`,
+  ];
+  if (name === "discover_agents") {
+    guidelines.push(
+      "Call discover_agents with no arguments to list every agent. Each of its filters matches one token of an address exactly: no wildcards, never a full address.",
+    );
+  }
+  if (name === "prompt_agent") {
+    guidelines.push(
+      "Pass prompt_agent the address exactly as discover_agents returned it, and make the prompt self-contained.",
+    );
+  }
+  return guidelines;
+}
+
 /** What the registration needs from the channel. */
 export interface AgentToolHooks {
+  /**
+   * The session's own prompt address, as the service registered it (a
+   * name already taken gets a `-2`, `-3`, … suffix): named in PI's system
+   * prompt.
+   */
+  readonly address: string;
   /**
    * The NATS prompt PI is serving now, else the local turn it runs, if
    * any: the one the model works in.
@@ -92,7 +148,9 @@ export interface AgentToolHooks {
 
 /**
  * Register every definition of `tools` with PI. Returns the names
- * registered, in the helper's order.
+ * registered, in the helper's order. PI replaces a tool registered again
+ * under the same name and rebuilds its system prompt, so a second call
+ * with another address replaces the one named.
  */
 export function registerAgentTools(
   pi: Pick<ExtensionAPI, "registerTool">,
@@ -106,6 +164,8 @@ export function registerAgentTools(
       name,
       label: toolLabel(name),
       description: definition.description,
+      promptSnippet: AGENT_TOOL_SNIPPETS[name],
+      promptGuidelines: agentToolGuidelines(name, hooks.address),
       parameters: definition.parameters as PiToolDefinition["parameters"],
       async execute(toolCallId, params, signal) {
         const result = await hooks.aroundToolCall(

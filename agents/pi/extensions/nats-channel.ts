@@ -18,7 +18,8 @@
  * `pi.registerTool()` once the channel is on the bus — the blocking three by
  * default, the six with `agentTools: "all"`, none with `"off"` (see
  * `tools.ts`). One persistent `Agents` client, with the channel's signer,
- * is what they prompt through.
+ * is what they prompt through. PI's default system prompt lists the tools
+ * and names the session's own address.
  *
  * Extensions: optional modules named in `SYNADIA_PI_EXTENSIONS`,
  * `SYNADIA_AGENT_EXTENSIONS` or the config's `extensions` add interceptors,
@@ -864,10 +865,14 @@ export default function (pi: ExtensionAPI) {
       instanceId = agentService.instanceId;
       registeredDescription = serviceDescription;
       // The tools appear to the model once the agent is on the bus. PI
-      // accepts a tool registered after startup (0.84+).
+      // accepts a tool registered after startup (0.84+) and rebuilds its
+      // system prompt, which then names the address the service registered,
+      // a `-2` suffix included. The address holds for this instance; a new
+      // PI session starts a new instance, which registers the tools again.
       if (agentTools) {
         const tools = agentTools;
         registeredTools = registerAgentTools(pi, tools, {
+          address: agentService.subject.prompt,
           activeRequest: () => localTurns.current(),
           aroundToolCall: extensions.events.aroundToolCall,
         });
