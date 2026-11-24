@@ -15,7 +15,7 @@
  *
  * What does differ is what follows a channel message while Claude Code is
  * idle. Channel on, Claude Code takes it into a turn at once: its
- * `UserPromptSubmit` hook fired 30 to 50 ms after the notification, with
+ * `UserPromptSubmit` hook fired 20 to 50 ms after the notification, with
  * text typed but not sent in the input and with the transcript view
  * (ctrl+o) open; only an open picker (`/model`) held it, until it was
  * closed. Channel off, nothing ever fires. So a prompt delivered while
@@ -26,10 +26,12 @@
  *
  * The rules:
  *
- *   - the bound runs only while no turn runs: from the delivery, or from
- *     the end of the turn running then. A prompt queued behind a busy turn
- *     is never cut; Claude Code takes it at that turn's next tool result or
- *     after its Stop;
+ *   - the bound runs only while the hooks show no turn running
+ *     ({@link idleFrom}): from the delivery, or from the latest end of a
+ *     turn. A turn runs from its submit, or from a tool call later than the
+ *     latest Stop or failure, to its Stop or failure. A prompt queued behind
+ *     such a turn is not cut; Claude Code takes it at that turn's next tool
+ *     result or after its Stop;
  *   - once Claude Code took one channel message, the channel is on for the
  *     rest of the session, and the check stands down: a dialog held open
  *     later never cuts a prompt;
@@ -40,8 +42,15 @@
  *
  * Stated honestly: an interrupted turn (Esc) records no Stop, so the turn
  * looks busy until the next one begins, and a prompt delivered meanwhile
- * keeps the older rules; and a first prompt that arrives while a picker
- * stays open past the bound is cut although the channel is on.
+ * keeps the older rules. A turn no submit announces (typed text that waited
+ * behind a turn and runs as its own, a background task's report,
+ * `/compact`) looks idle until its first tool call, so a first prompt
+ * queued behind such a turn that makes no tool call for the bound is cut
+ * although the channel is on; so is a first prompt that arrives while a
+ * picker stays open past the bound. The version gate has no upper end: a
+ * later Claude Code that stops reporting a channel message's submit would
+ * have every prompt cut, and `idleTurnStartMs` `0` is the way out, which
+ * the warning names.
  */
 
 /**
@@ -83,6 +92,40 @@ export type IdleState =
   /** Idle; `sinceMs` is when the last turn ended, if one did. */
   | { readonly busy: false; readonly sinceMs?: number | undefined }
 
+/** What the server knows of the turns, for {@link idleFrom}. */
+export type TurnSigns = {
+  /** The turn tracker follows a turn now (`src/turns.ts`). */
+  readonly turnRunning: boolean
+  /**
+   * The ends of turns it knows of, any of them unknown: the tracker's last
+   * Stop or failure, the latest `.stop` record, the latest failure.
+   */
+  readonly endsMs: ReadonlyArray<number | undefined>
+  /** The latest tool call (`.turn`), when one was recorded. */
+  readonly activityMs?: number | undefined
+}
+
+/**
+ * Whether a turn runs, from every sign the hooks give: the tracker's open
+ * turn, or a tool call later than the latest end of a turn. The tracker
+ * alone misses a turn that goes on after its recorded Stop (another Stop
+ * hook refused that stop: its later tool calls carry an ended prompt id)
+ * and a turn no submit announced, until its first tool call; the `.stop`
+ * record, which holds the latest Stop, catches the first's end. Idle time
+ * counts from the latest end of all.
+ */
+export function idleFrom(signs: TurnSigns): IdleState {
+  let lastEndMs: number | undefined
+  for (const endMs of signs.endsMs) {
+    if (endMs !== undefined && (lastEndMs === undefined || endMs > lastEndMs)) lastEndMs = endMs
+  }
+  if (signs.turnRunning) return { busy: true }
+  if (signs.activityMs !== undefined && (lastEndMs === undefined || signs.activityMs > lastEndMs)) {
+    return { busy: true }
+  }
+  return { busy: false, sinceMs: lastEndMs }
+}
+
 /** The bound as the caller and the log read it: `30 s`, or `1500 ms`. */
 export function formatBound(boundMs: number): string {
   return boundMs % 1000 === 0 ? `${boundMs / 1000} s` : `${boundMs} ms`
@@ -107,7 +150,7 @@ export const MAX_ERROR_DESCRIPTION = 200
 export function channelOffDescription(boundMs: number): string {
   return (
     `Claude Code did not take this prompt within ${formatBound(boundMs)} while idle: its channel is likely off. ` +
-    'Check: its own ANTHROPIC_API_KEY, Yes to "Do you want to use this API key?", a workspace-scoped key'
+    'Check: the channels flag, own ANTHROPIC_API_KEY, Yes to the API key question, a workspace-scoped key'
   )
 }
 
@@ -173,15 +216,19 @@ export class ChannelCheck {
 
 /**
  * The warning the server logs once, at the first prompt Claude Code did not
- * take: what the callers are told, and every likely cause.
+ * take: what the callers are told, every likely cause, the Claude Code it
+ * runs in, and how to turn the check off should that Claude Code take
+ * prompts in a way the check does not see.
  */
-export function channelOffWarning(boundMs: number): string {
+export function channelOffWarning(boundMs: number, client?: ClientInfo): string {
+  const version = client?.version !== undefined ? `Claude Code ${client.version}` : 'Claude Code'
   return (
-    `warning: Claude Code did not take a prompt within ${formatBound(boundMs)} while idle; its channel is likely off, ` +
+    `warning: ${version} did not take a prompt within ${formatBound(boundMs)} while idle; its channel is likely off, ` +
     'and each prompt it leaves untaken while idle is answered with an error. Check that Claude Code was started with ' +
     'the channel flag (--channels or --dangerously-load-development-channels), that it has an Anthropic API key of its ' +
     'own (ANTHROPIC_API_KEY), that its question "Do you want to use this API key?" was answered Yes, and that the ' +
     "key's scope is a workspace, not the organization. With the channel off, Claude Code lists \"Channels are not " +
-    'currently available" among its start notices (ctrl+o).'
+    'currently available" among its start notices (ctrl+o). If its channel is on and it takes prompts all the same, ' +
+    'set idleTurnStartMs to 0 (SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS=0) to turn this check off.'
   )
 }

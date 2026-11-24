@@ -61,6 +61,7 @@ import {
   channelCheckable,
   channelOffDescription,
   channelOffWarning,
+  idleFrom,
   type IdleState,
 } from "./src/channel-check.js";
 import {
@@ -68,6 +69,7 @@ import {
   claudePid,
   clearOpenRequests,
   hooksActive,
+  lastFailureMs as lastFailureMsBefore,
   promptIdsReported,
   readTurnActivity,
   readTurnStop,
@@ -538,11 +540,13 @@ async function run(): Promise<void> {
     const nextRequestId = requestIdSequence();
     let lastActiveRequestId: string | undefined;
     let shuttingDown = false;
-    // Whether Claude Code takes the prompts handed to it (src/channel-check.ts):
+    // Whether Claude Code takes the prompts handed to it (src/channel-check.ts);
     // on from the start when this Claude Code process already took a
-    // channel message, before this server.
+    // channel message, read with the hooks' mark below.
     const channel = new ChannelCheck(settings.idleTurnStartMs);
-    if (channelMessageTaken(stateDir, sessionSource.parentPid)) channel.taken();
+    // The latest StopFailure the hooks reported: a turn's end the `.stop`
+    // record does not hold.
+    let lastFailureMs: number | undefined;
     // Which served prompt owns the running turn, for permission questions.
     const turns = new TurnLedger((requestId) => {
       const pending = pendingRequests.get(requestId);
@@ -685,22 +689,17 @@ async function run(): Promise<void> {
       syncOpenRequests();
     };
 
-    // Whether a turn runs, as the hooks say: by the turns' prompt ids once
-    // they are followed, else by a tool call after the last Stop.
+    // Whether a turn runs, by every sign the hooks give: the tracker's open
+    // turn, or a tool call after the latest end of a turn (a turn that goes
+    // on after its recorded Stop, or that no submit announced).
     const idleState = (): IdleState => {
-      if (tracker?.binding()) {
-        return tracker.current() !== undefined
-          ? { busy: true }
-          : { busy: false, sinceMs: tracker.lastEndMs() };
-      }
       const view = turnView();
-      const stopMs = view.stop?.atMs;
-      if (
-        view.activity !== undefined &&
-        (stopMs === undefined || view.activity.atMs > stopMs)
-      )
-        return { busy: true };
-      return { busy: false, sinceMs: stopMs };
+      return idleFrom({
+        turnRunning:
+          tracker?.binding() === true && tracker.current() !== undefined,
+        endsMs: [tracker?.lastEndMs(), view.stop?.atMs, lastFailureMs],
+        activityMs: view.activity?.atMs,
+      });
     };
 
     // A prompt delivered while Claude Code is idle and not taken into a turn
@@ -729,9 +728,10 @@ async function run(): Promise<void> {
         )
           continue;
         if (channel.firstOff())
-          logEvent(channelOffWarning(channel.boundMs), {
-            idleTurnStartMs: channel.boundMs,
-          });
+          logEvent(
+            channelOffWarning(channel.boundMs, mcp?.getClientVersion()),
+            { idleTurnStartMs: channel.boundMs },
+          );
         logEvent("request ended without a reply", {
           requestId,
           sender: pending.sender,
@@ -1186,6 +1186,10 @@ async function run(): Promise<void> {
     // before the watcher polls, is still read. The turns start from the
     // same moment.
     const eventsMark = markSessionEvents(sessionSource);
+    // A channel message this Claude Code process took before the mark (an
+    // earlier server's): its channel is on. One after it, the watcher reports.
+    if (channelMessageTaken(stateDir, sessionSource.parentPid)) channel.taken();
+    lastFailureMs = lastFailureMsBefore(stateDir, sessionSource.parentPid);
     const trackerStart = {
       binding: promptIdsReported(stateDir, sessionSource.parentPid),
       lastStopMs: readTurnStop(sessionSource)?.atMs,
@@ -1282,6 +1286,8 @@ async function run(): Promise<void> {
         endUnanswered();
       },
       turnFailed: (failure) => {
+        if (lastFailureMs === undefined || failure.atMs > lastFailureMs)
+          lastFailureMs = failure.atMs;
         // An API error ends the turn as a Stop would, without final text.
         turns.observeFailure(failure);
         tracker?.failed(failure);

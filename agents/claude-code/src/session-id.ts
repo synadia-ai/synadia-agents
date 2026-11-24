@@ -849,6 +849,18 @@ export function channelMessageTaken(stateDir: string, pid: number | string): boo
   )
 }
 
+/**
+ * When the latest StopFailure in the events log was recorded, or
+ * `undefined` without one: a turn's end the `.stop` record does not hold.
+ */
+export function lastFailureMs(stateDir: string, pid: number | string): number | undefined {
+  let latest: number | undefined
+  for (const event of readEvents(stateDir, pid)) {
+    if (event.kind === 'failure' && (latest === undefined || event.failure.atMs > latest)) latest = event.failure.atMs
+  }
+  return latest
+}
+
 /** Every well-formed line of the events log, in the order written; none without a file. */
 export function readEvents(stateDir: string, pid: number | string): SessionEvent[] {
   let text: string

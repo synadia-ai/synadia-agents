@@ -165,7 +165,11 @@ export function resolveRuntimeSettings(
     throw new Error('invalid turnStartGraceMs: expected a whole number of milliseconds above 0')
   }
 
-  const idleValue = env.SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS
+  // Digits only, spaces around them ignored; blank means unset.
+  const idleValue = env.SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS?.trim()
+  if (idleValue !== undefined && idleValue !== '' && !/^\d+$/.test(idleValue)) {
+    throw new Error('invalid idleTurnStartMs: expected a whole number of milliseconds, 0 for off')
+  }
   const idleTurnStartMs = idleValue === undefined || idleValue === ''
     ? config.idleTurnStartMs ?? DEFAULT_IDLE_TURN_START_MS
     : Number(idleValue)

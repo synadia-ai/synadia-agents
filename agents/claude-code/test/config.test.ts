@@ -191,7 +191,9 @@ describe('resolveRuntimeSettings', () => {
     expect(resolveRuntimeSettings({ idleTurnStartMs: 60_000 }, { [env]: '1500' }).idleTurnStartMs).toBe(1500)
     expect(resolveRuntimeSettings({ idleTurnStartMs: 60_000 }, { [env]: '0' }).idleTurnStartMs).toBe(0)
     expect(resolveRuntimeSettings({ idleTurnStartMs: 60_000 }, { [env]: '' }).idleTurnStartMs).toBe(60_000)
-    for (const bad of ['-5', '1.5', 'soon']) {
+    expect(resolveRuntimeSettings({ idleTurnStartMs: 60_000 }, { [env]: '   ' }).idleTurnStartMs).toBe(60_000)
+    expect(resolveRuntimeSettings({}, { [env]: ' 2000 ' }).idleTurnStartMs).toBe(2000)
+    for (const bad of ['-5', '1.5', 'soon', '1e3', '0x10', '+5', '20 00', '99999999999999999999']) {
       expect(() => resolveRuntimeSettings({}, { [env]: bad })).toThrow('invalid idleTurnStartMs')
     }
   })

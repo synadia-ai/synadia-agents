@@ -11,6 +11,7 @@ import {
   channelOffDescription,
   channelOffWarning,
   formatBound,
+  idleFrom,
 } from '../src/channel-check.js'
 
 const BOUND = 30_000
@@ -110,6 +111,36 @@ describe('ChannelCheck: the rest', () => {
   })
 })
 
+describe('idleFrom: whether a turn runs, by every sign the hooks give', () => {
+  test('no turn yet: idle, with no end', () => {
+    expect(idleFrom({ turnRunning: false, endsMs: [undefined, undefined, undefined] })).toEqual({ busy: false, sinceMs: undefined })
+  })
+
+  test('the tracker\'s open turn is busy, whatever else', () => {
+    expect(idleFrom({ turnRunning: true, endsMs: [100], activityMs: 50 })).toEqual({ busy: true })
+  })
+
+  test('a turn that stopped after its last tool call: idle since its Stop', () => {
+    expect(idleFrom({ turnRunning: false, endsMs: [200, 200, undefined], activityMs: 150 })).toEqual({ busy: false, sinceMs: 200 })
+  })
+
+  test('a turn another Stop hook kept going: busy at its first tool call after the recorded Stop', () => {
+    // The tracker ended the turn at the recorded Stop (200) and ignores its
+    // later tool calls; the `.turn` record shows them.
+    expect(idleFrom({ turnRunning: false, endsMs: [200, 200, undefined], activityMs: 260 })).toEqual({ busy: true })
+    // Its real Stop at 400 is only in `.stop`: idle from there, not from 200.
+    expect(idleFrom({ turnRunning: false, endsMs: [200, 400, undefined], activityMs: 260 })).toEqual({ busy: false, sinceMs: 400 })
+  })
+
+  test('a turn no submit announced: busy from its first tool call', () => {
+    expect(idleFrom({ turnRunning: false, endsMs: [100, 100, undefined], activityMs: 130 })).toEqual({ busy: true })
+  })
+
+  test('a turn that failed after tool calls: idle since the failure, which no `.stop` holds', () => {
+    expect(idleFrom({ turnRunning: false, endsMs: [undefined, 100, 300], activityMs: 250 })).toEqual({ busy: false, sinceMs: 300 })
+  })
+})
+
 describe('channelCheckable', () => {
   test('Claude Code from 2.1.310 on', () => {
     expect(channelCheckable({ name: 'claude-code', version: '2.1.310' })).toBe(true)
@@ -142,18 +173,21 @@ describe('what the caller and the log are told', () => {
     expect(CHANNEL_OFF_CODE).toBe(503)
     expect(text).toBe(
       'Claude Code did not take this prompt within 30 s while idle: its channel is likely off. ' +
-        'Check: its own ANTHROPIC_API_KEY, Yes to "Do you want to use this API key?", a workspace-scoped key',
+        'Check: the channels flag, own ANTHROPIC_API_KEY, Yes to the API key question, a workspace-scoped key',
     )
-    for (const bound of [1, 1_500, 30_000, 86_400_000, 999_999_999]) {
+    expect(text.length).toBe(188)
+    for (const bound of [1, 1_500, 30_000, 86_400_000, 123_456_789, 999_999_999, 9_999_999_999]) {
       const description = channelOffDescription(bound)
       expect(description).not.toMatch(/[\r\n]/)
       expect(description.length).toBeLessThanOrEqual(MAX_ERROR_DESCRIPTION)
     }
   })
 
-  test('the warning names the bound and every likely cause', () => {
-    const text = channelOffWarning(1_500)
-    expect(text).toStartWith('warning: Claude Code did not take a prompt within 1500 ms while idle; its channel is likely off')
+  test('the warning names the bound, the Claude Code, every likely cause and the way to turn it off', () => {
+    const text = channelOffWarning(1_500, { name: 'claude-code', version: '2.1.331' })
+    expect(text).toStartWith('warning: Claude Code 2.1.331 did not take a prompt within 1500 ms while idle; its channel is likely off')
+    expect(text).toContain('set idleTurnStartMs to 0 (SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS=0)')
+    expect(channelOffWarning(1_500)).toStartWith('warning: Claude Code did not take a prompt within 1500 ms')
     expect(text).not.toMatch(/[\r\n]/)
     for (const part of [
       '--channels or --dangerously-load-development-channels',
