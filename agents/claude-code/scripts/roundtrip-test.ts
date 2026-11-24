@@ -1301,6 +1301,32 @@ console.log('\n[case 14] Claude Code that never takes a prompt while idle: its c
     }
   }
 
+  // A turn another Stop hook kept going after this plugin recorded its Stop:
+  // its later tool call says it runs, so the prompt waits; its real Stop
+  // starts the bound.
+  {
+    await offHook({ hook_event_name: 'UserPromptSubmit', prompt_id: 'prompt-14c', prompt: 'a turn kept going' })
+    const first = await offHook({ hook_event_name: 'Stop', prompt_id: 'prompt-14c', background_tasks: [], session_crons: [] })
+    if (first !== '') fail(`the kept turn's first stop was refused: ${first}`)
+    await offHook({
+      hook_event_name: 'PreToolUse',
+      prompt_id: 'prompt-14c',
+      tool_use_id: 'toolu_rt_kept_1',
+      tool_name: 'Bash',
+      tool_input: { command: 'pwd' },
+    })
+    const collecting = collectChunks('queued behind a kept turn', undefined, offSubject)
+    await Bun.sleep(BOUND_MS * 2 + 500)
+    const stoppedAt = Date.now()
+    await offHook({ hook_event_name: 'Stop', prompt_id: 'prompt-14c', background_tasks: [], session_crons: [] })
+    const chunks = await collecting
+    const endedAt = chunks.find(chunk => chunk.error)?.atMs ?? 0
+    assertChannelOff(chunks, 'behind a kept turn')
+    if (endedAt < stoppedAt + BOUND_MS - 300 || endedAt > stoppedAt + BOUND_MS + 2500) {
+      fail(`the prompt behind a kept turn ended ${endedAt - stoppedAt} ms after its last Stop (bound ${BOUND_MS} ms)`)
+    }
+  }
+
   // Claude Code takes one: the channel is on, the prompt is answered.
   {
     onMessage = async requestId => {
@@ -1333,6 +1359,69 @@ console.log('\n[case 14] Claude Code that never takes a prompt while idle: its c
 
   await client.close()
   rmSync(offState, { recursive: true, force: true })
+}
+
+console.log('\n[case 15] the check stays off where it cannot see a turn start, and stands down at start after a channel message')
+{
+  // Each: a channel with the short bound whose client never takes the
+  // prompt; no error may come past twice the bound, then the model replies.
+  const BOUND_MS = 1500
+  const quiet = async (label: string, opts: {
+    readonly clientName: string
+    readonly clientVersion: string
+    readonly sessionStart: boolean
+    readonly takenBefore: boolean
+  }): Promise<void> => {
+    const name = `rt-quiet-${label}`
+    const state = mkdtempSync(join(tmpdir(), 'claude-channel-quiet-'))
+    if (opts.sessionStart) await runHook({ hook_event_name: 'SessionStart', session_id: SESSION_ID, source: 'startup' }, state)
+    if (opts.takenBefore) {
+      // An earlier server's message, taken by this Claude Code process.
+      await runHook({
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION_ID,
+        prompt_id: `prompt-15-${label}`,
+        prompt: `<channel source="plugin:nats-channel:nats" request_id="0a1b2c3d-1" session="${name}">earlier`,
+      }, state)
+      await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID, prompt_id: `prompt-15-${label}`, background_tasks: [], session_crons: [] }, state)
+    }
+    const client = new Client({ name: opts.clientName, version: opts.clientVersion })
+    let heldId = ''
+    client.fallbackNotificationHandler = async notification => {
+      if (notification.method !== 'notifications/claude/channel') return
+      heldId = String((notification.params as { meta: Record<string, unknown> }).meta.request_id)
+    }
+    await client.connect(new StdioClientTransport({
+      command: 'bun',
+      args: [join(cacheRoot, 'runtime', 'server.js')],
+      env: {
+        ...childEnv,
+        NATS_STATE_DIR: state,
+        NATS_SESSION_NAME: name,
+        SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS: String(BOUND_MS),
+        SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS: '60000',
+      },
+    }))
+    let up = false
+    for (let attempt = 0; attempt < 40 && !up; attempt++) {
+      up = (await discovery.discover({ timeoutMs: 100, filter: { agent: 'claude-code', owner: OWNER, name } })).length > 0
+    }
+    if (!up) fail(`${label}: the channel did not register`)
+    const collecting = collectChunks(`held: ${label}`, undefined, `agents.prompt.cc.${OWNER}.${name}`)
+    await Bun.sleep(BOUND_MS * 2)
+    if (!heldId) fail(`${label}: the prompt was not delivered`)
+    await client.callTool({ name: 'reply', arguments: { request_id: heldId, text: 'answered late' } })
+    const chunks = await collecting
+    if (chunks.some(chunk => chunk.error)) {
+      fail(`${label}: the prompt was cut: ${JSON.stringify(chunks.map(c => c.error ?? c.body.slice(0, 60)))}`)
+    }
+    await client.close()
+    rmSync(state, { recursive: true, force: true })
+  }
+  await quiet('older', { clientName: 'claude-code', clientVersion: '2.1.309', sessionStart: true, takenBefore: false })
+  await quiet('other-client', { clientName: 'some-mcp-host', clientVersion: '2.1.331', sessionStart: true, takenBefore: false })
+  await quiet('no-hooks', { clientName: 'claude-code', clientVersion: '2.1.331', sessionStart: false, takenBefore: false })
+  await quiet('taken-before', { clientName: 'claude-code', clientVersion: '2.1.331', sessionStart: true, takenBefore: true })
 }
 
 await discovery.close()
