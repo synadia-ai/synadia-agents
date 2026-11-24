@@ -56,6 +56,15 @@ import {
   type ServedRequest,
 } from "./src/extensions.js";
 import {
+  CHANNEL_OFF_CODE,
+  ChannelCheck,
+  channelCheckable,
+  channelOffDescription,
+  channelOffWarning,
+  type IdleState,
+} from "./src/channel-check.js";
+import {
+  channelMessageTaken,
   claudePid,
   clearOpenRequests,
   hooksActive,
@@ -529,6 +538,11 @@ async function run(): Promise<void> {
     const nextRequestId = requestIdSequence();
     let lastActiveRequestId: string | undefined;
     let shuttingDown = false;
+    // Whether Claude Code takes the prompts handed to it (src/channel-check.ts):
+    // on from the start when this Claude Code process already took a
+    // channel message, before this server.
+    const channel = new ChannelCheck(settings.idleTurnStartMs);
+    if (channelMessageTaken(stateDir, sessionSource.parentPid)) channel.taken();
     // Which served prompt owns the running turn, for permission questions.
     const turns = new TurnLedger((requestId) => {
       const pending = pendingRequests.get(requestId);
@@ -572,6 +586,7 @@ async function run(): Promise<void> {
       pendingRequests.delete(requestId);
       turns.forget(requestId);
       tracker?.forget(requestId);
+      channel.forget(requestId);
       if (lastActiveRequestId === requestId) {
         lastActiveRequestId = Array.from(pendingRequests.keys()).at(-1);
       }
@@ -665,6 +680,66 @@ async function run(): Promise<void> {
         pending.ended ??= { outcome: "error", atMs: now, reason: "no_reply" };
         pending.completion.reject(
           new RequestRejectedError(TURN_END_CODE, TURN_END_DESCRIPTION),
+        );
+      }
+      syncOpenRequests();
+    };
+
+    // Whether a turn runs, as the hooks say: by the turns' prompt ids once
+    // they are followed, else by a tool call after the last Stop.
+    const idleState = (): IdleState => {
+      if (tracker?.binding()) {
+        return tracker.current() !== undefined
+          ? { busy: true }
+          : { busy: false, sinceMs: tracker.lastEndMs() };
+      }
+      const view = turnView();
+      const stopMs = view.stop?.atMs;
+      if (
+        view.activity !== undefined &&
+        (stopMs === undefined || view.activity.atMs > stopMs)
+      )
+        return { busy: true };
+      return { busy: false, sinceMs: stopMs };
+    };
+
+    // A prompt delivered while Claude Code is idle and not taken into a turn
+    // within the bound is ended with an error that names the likely cause:
+    // Claude Code's channel is off (src/channel-check.ts). Only where a turn
+    // start can be seen: Claude Code that reports a channel message's
+    // submit, with the plugin's hooks running in it, and the watcher that
+    // reads them started (it starts after the extensions).
+    const endUntaken = (): void => {
+      if (channel.on || channel.boundMs <= 0 || pendingRequests.size === 0)
+        return;
+      if (sessionEvents === undefined) return;
+      if (!channelCheckable(mcp?.getClientVersion())) return;
+      if (!hooksActive(sessionSource)) return;
+      // The hooks' records up to now: a submit written since the last poll
+      // takes its prompt before it is judged.
+      sessionEvents.poll();
+      const now = Date.now();
+      const description = channelOffDescription(channel.boundMs);
+      for (const requestId of channel.due(now, idleState())) {
+        const pending = pendingRequests.get(requestId);
+        if (
+          !pending ||
+          pending.completion.settled() ||
+          pending.answeringWithFinalText
+        )
+          continue;
+        if (channel.firstOff())
+          logEvent(channelOffWarning(channel.boundMs), {
+            idleTurnStartMs: channel.boundMs,
+          });
+        logEvent("request ended without a reply", {
+          requestId,
+          sender: pending.sender,
+          reason: "not taken while idle",
+        });
+        pending.ended ??= { outcome: "error", atMs: now, reason: "no_reply" };
+        pending.completion.reject(
+          new RequestRejectedError(CHANNEL_OFF_CODE, description),
         );
       }
       syncOpenRequests();
@@ -796,6 +871,7 @@ async function run(): Promise<void> {
       }
 
       logEvent("prompt admitted", { requestId, sender: pending.sender });
+      channel.delivered(requestId, Date.now());
       const content =
         staged.length > 0
           ? `[Attachments available at the following absolute paths]\n${staged.map((item) => `- ${item.path}`).join("\n")}\n\n${envelope.prompt}`
@@ -1098,7 +1174,10 @@ async function run(): Promise<void> {
       }
     }, 60_000);
     ttlTimer.unref();
-    const turnEndTimer = setInterval(endUnanswered, TURN_END_POLL_MS);
+    const turnEndTimer = setInterval(() => {
+      endUnanswered();
+      endUntaken();
+    }, TURN_END_POLL_MS);
     turnEndTimer.unref();
     syncOpenRequests();
 
@@ -1192,6 +1271,9 @@ async function run(): Promise<void> {
       sessionStarted: (sessionId, source) =>
         extensions.events.sessionStarted(sessionId, source),
       promptSubmitted: (submit) => {
+        // A channel message taken, this server's or an earlier one's: the
+        // channel is on.
+        if (submit.requestId !== undefined) channel.taken();
         tracker?.submitted(submit);
         endUnanswered();
       },

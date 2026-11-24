@@ -334,6 +334,23 @@ describe('rule 4: ends', () => {
     tracker.stopped(stop(undefined, 20))
     expect(tracker.current()?.promptId).toBe('pA')
   })
+
+  test('lastEndMs: the Stop recorded before start, then each Stop or failure, never an interrupt', () => {
+    const { tracker } = tracked({ binding: true, lastStopMs: 5 })
+    expect(tracker.lastEndMs()).toBe(5)
+    tracker.submitted(typed('pA', 10))
+    tracker.stopped(stop('pA', 20))
+    expect(tracker.lastEndMs()).toBe(20)
+    tracker.submitted(typed('pB', 30))
+    tracker.failed(failure('pB', 40))
+    expect(tracker.lastEndMs()).toBe(40)
+    // Esc: no Stop, the next turn begins.
+    tracker.submitted(typed('pC', 50))
+    tracker.submitted(typed('pD', 60))
+    expect(tracker.lastEndMs()).toBe(40)
+    expect(tracker.current()?.promptId).toBe('pD')
+    expect(tracked().tracker.lastEndMs()).toBeUndefined()
+  })
 })
 
 describe('rule 5: shutdown', () => {

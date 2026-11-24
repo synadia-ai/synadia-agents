@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   TOOL_USE_MAX_AGE_MS,
+  channelMessageTaken,
   channelPrompt,
   claudePid,
   clearOpenRequests,
@@ -603,6 +604,22 @@ describe('SessionStart at startup: a new process clears its pid\'s earlier files
     expect(readTurnActivity(source)).toBeUndefined()
     expect(readEvents(stateDir, PID)).toEqual([])
     expect(readOpenFile(stateDir, PID)).toEqual({ requestIds: [], openIds: [] })
+  })
+
+  test('channelMessageTaken: only a channel message\'s submit says the channel took one', () => {
+    expect(channelMessageTaken(stateDir, PID)).toBe(false)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'UserPromptSubmit', session_id: SESSION, prompt_id: 'pT', prompt: 'typed' }, 1)
+    recordHookEvent(stateDir, PID, { hook_event_name: 'Stop', session_id: SESSION, prompt_id: 'pT' }, 2)
+    expect(channelMessageTaken(stateDir, PID)).toBe(false)
+    const id = requestIdSequence()()
+    recordHookEvent(stateDir, PID, {
+      hook_event_name: 'UserPromptSubmit',
+      session_id: SESSION,
+      prompt_id: 'pC',
+      prompt: `<channel source="plugin:nats-channel:nats" request_id="${id}" session="s">hello`,
+    }, 3)
+    expect(channelMessageTaken(stateDir, PID)).toBe(true)
+    expect(channelMessageTaken(stateDir, PID + 1)).toBe(false)
   })
 
   test('resume, clear and compact keep them: a running Claude Code\'s files are its own', () => {

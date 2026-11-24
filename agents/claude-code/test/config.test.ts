@@ -14,6 +14,7 @@ describe('resolveRuntimeSettings', () => {
       permissionMode: 'terminal',
       agentTools: 'blocking',
       turnStartGraceMs: 300_000,
+      idleTurnStartMs: 30_000,
     })
   })
 
@@ -49,6 +50,7 @@ describe('resolveRuntimeSettings', () => {
       permissionMode: 'terminal',
       agentTools: 'blocking',
       turnStartGraceMs: 300_000,
+      idleTurnStartMs: 30_000,
     })
   })
 
@@ -181,6 +183,19 @@ describe('resolveRuntimeSettings', () => {
     }
   })
 
+  test('idleTurnStartMs: 30 s by default, the config field, the variable winning, 0 for off, empty meaning the default', () => {
+    const env = 'SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS'
+    expect(resolveRuntimeSettings({}, {}).idleTurnStartMs).toBe(30_000)
+    expect(resolveRuntimeSettings({ idleTurnStartMs: 60_000 }, {}).idleTurnStartMs).toBe(60_000)
+    expect(resolveRuntimeSettings({ idleTurnStartMs: 0 }, {}).idleTurnStartMs).toBe(0)
+    expect(resolveRuntimeSettings({ idleTurnStartMs: 60_000 }, { [env]: '1500' }).idleTurnStartMs).toBe(1500)
+    expect(resolveRuntimeSettings({ idleTurnStartMs: 60_000 }, { [env]: '0' }).idleTurnStartMs).toBe(0)
+    expect(resolveRuntimeSettings({ idleTurnStartMs: 60_000 }, { [env]: '' }).idleTurnStartMs).toBe(60_000)
+    for (const bad of ['-5', '1.5', 'soon']) {
+      expect(() => resolveRuntimeSettings({}, { [env]: bad })).toThrow('invalid idleTurnStartMs')
+    }
+  })
+
   test('retains the legacy nats permission alias', () => {
     expect(resolveRuntimeSettings({ permissions: { mode: 'nats' } }, {})).toMatchObject({
       permissionMode: 'query',
@@ -227,6 +242,11 @@ describe('resolveRuntimeSettings', () => {
 
       writeFileSync(path, JSON.stringify({ turnStartGraceMs: '5m' }))
       expect(() => loadConfig(path)).toThrow('invalid turnStartGraceMs')
+
+      writeFileSync(path, JSON.stringify({ idleTurnStartMs: -1 }))
+      expect(() => loadConfig(path)).toThrow('invalid idleTurnStartMs')
+      writeFileSync(path, JSON.stringify({ idleTurnStartMs: 0 }))
+      expect(loadConfig(path)).toEqual({ idleTurnStartMs: 0 })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
