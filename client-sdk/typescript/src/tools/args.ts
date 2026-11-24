@@ -58,15 +58,46 @@ export function argsObject(tool: string, args: unknown): Fields | ArgsError {
   return value as Fields;
 }
 
+// What no address token holds (protocol §2.2), so no `owner` or `name`
+// (§3.2) either: `.`, the wildcards and whitespace. The whitespace is spelled
+// out so that both SDKs refuse the same characters.
+const NOT_IN_A_TOKEN =
+  /[.*>\t\n\v\f\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/;
+const WILDCARD = /[*>]/;
+
+/**
+ * Whether no registered value can match the filter: an `owner` or `name`
+ * that no address token can be, or an `agent` that is a wildcard or an
+ * address. `agent` is the registration's own string (§3.2), which may differ
+ * from the address's token and hold a `.`.
+ */
+function cannotMatch(key: keyof DiscoverArgs, value: string): boolean {
+  if (key !== "agent") return NOT_IN_A_TOKEN.test(value);
+  return WILDCARD.test(value) || value.toLowerCase().startsWith("agents.");
+}
+
+/**
+ * `discover_agents`' filters. A filter left out, `null` or `""` is no
+ * filter. A value no registered agent, owner or name can match, such as an
+ * address or a wildcard, is refused with words that say what a filter is.
+ */
 export function parseDiscoverArgs(args: unknown): DiscoverArgs | ArgsError {
   const fields = argsObject("discover_agents", args);
   if (isArgsError(fields)) return fields;
   const out: { agent?: string; owner?: string; name?: string } = {};
   for (const key of ["agent", "owner", "name"] as const) {
     const value = fields[key];
-    if (value === undefined) continue;
-    if (typeof value !== "string" || value.length === 0) {
-      return new ArgsError(`discover_agents: "${key}" must be a non-empty string when given`);
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value !== "string") {
+      return new ArgsError(`discover_agents: "${key}" must be a string when given`);
+    }
+    if (cannotMatch(key, value)) {
+      return new ArgsError(
+        `discover_agents: "${key}" is "${value}", which matches no agent: ` +
+          "a filter is the exact agent, owner or name value discover_agents lists, " +
+          "without wildcards and never an address; " +
+          "call discover_agents with no arguments to list every agent",
+      );
     }
     out[key] = value;
   }

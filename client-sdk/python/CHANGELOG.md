@@ -8,6 +8,39 @@ the 0.x line is explicitly unstable per protocol spec §11.2.
 
 ## [Unreleased]
 
+### Changed
+
+- **`discover_agents` explains an empty result.** When filters were given
+  and no agent matched them, the result keeps `agents: []` and adds
+  `filter_note`: the filters, how many agents are visible without them, and
+  to call `discover_agents` with no arguments to list every agent. Without
+  filters, or with a match, the result is as before.
+  `test-fixtures/agent-tools/discover_agents.result.json` gains the field.
+- **`discover_agents`' filters are forgiving where that is safe, and refuse
+  what can never match.** A filter matches the entry's `agent`, `owner` or
+  `name` whole, ignoring case. `""` and `null` are no filter; the
+  definition drops `minLength` from the three filters, so a host that
+  validates arguments against the schema lets `""` through. A filter that
+  can match nothing is refused: an `owner` or `name` with `.`, `*`, `>` or
+  whitespace, which no address token holds, and an `agent` with `*` or `>`
+  or starting with `agents.` (a wildcard or an address; `agent` is the
+  registration's own string and may hold a `.`). The words say a filter is
+  the exact `agent`, `owner` or `name` value discover_agents lists, and to
+  call `discover_agents` with no arguments to list every agent. Both SDKs
+  refuse the same whitespace characters. A non-string filter's refusal now reads
+  `"<key>" must be a string when given`. The helper discovers every agent
+  and applies the filters itself; discovery asked every agent before too,
+  so it costs nothing more. `Agents.discover(filter=...)` is unchanged and still
+  compares exactly.
+- **The `discover_agents` descriptions** (`tools/definitions.json`). The
+  tool says that called with no arguments it lists every agent, that a
+  filter is the exact `agent`, `owner` or `name` value an entry lists,
+  which can differ from the address's tokens (Claude Code registers
+  `claude-code` at `agents.prompt.cc.…`), without wildcards and never an
+  address, and that a prompt reaches one of an address's instances. The
+  `name` filter is no longer "usually `main`": instance names differ from
+  host to host.
+
 ## [0.8.1] - 2026-10-14
 
 The 0.8.0 tag stopped before upload because its artifact job had no Python interpreter

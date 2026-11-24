@@ -60,6 +60,7 @@ import type { QueryEvent } from "../query/query-event.js";
 import type { PromptStream, ResponseAttachment } from "../stream/prompt-stream.js";
 import {
   ArgsError,
+  type DiscoverArgs,
   isArgsError,
   parseAnswerArgs,
   parseCancelArgs,
@@ -477,18 +478,22 @@ export class AgentTools {
   private async discoverAgents(args: unknown): Promise<AgentToolResult> {
     const parsed = parseDiscoverArgs(args);
     if (isArgsError(parsed)) return { error: parsed.error };
-    let found: Agent[];
+    let all: Agent[];
     try {
-      found = await this.discover(parsed);
+      all = await this.discover();
     } catch (err) {
       return { error: `discovery failed: ${describe(err)}` };
     }
+    // The filters are applied here, to every agent discovery found: it asks
+    // them all anyway, and an empty result can then say how many agents the
+    // filters left out.
+    const visible = all.filter((handle) => handle.promptSubject !== this.selfAddress);
     // Instances of one agent share its address and SHOULD register alike
     // (§3.4). When they do not, the entry shows one whose identity verifies.
     const byAddress = new Map<string, { handle: Agent; instances: number }>();
-    for (const handle of found) {
+    for (const handle of visible) {
+      if (!matchesFilters(handle, parsed)) continue;
       const address = handle.promptSubject;
-      if (address === this.selfAddress) continue;
       const seen = byAddress.get(address);
       if (seen === undefined) byAddress.set(address, { handle, instances: 1 });
       else {
@@ -523,19 +528,18 @@ export class AgentTools {
         ...extra,
       });
     }
+    if (agents.length === 0 && Object.keys(parsed).length > 0) {
+      const unfiltered = new Set(visible.map((handle) => handle.promptSubject)).size;
+      return { agents, filter_note: filterNote(parsed, unfiltered) };
+    }
     return { agents };
   }
 
-  /** Discover, and remember the handle behind each address. */
-  private async discover(filter: {
-    agent?: string;
-    owner?: string;
-    name?: string;
-  }): Promise<Agent[]> {
-    const found = await this.agents.discover({
-      ...(Object.keys(filter).length > 0 ? { filter } : {}),
-      ...(this.discoverTimeoutMs !== undefined ? { timeoutMs: this.discoverTimeoutMs } : {}),
-    });
+  /** Discover every agent, and remember the handle behind each address. */
+  private async discover(): Promise<Agent[]> {
+    const found = await this.agents.discover(
+      this.discoverTimeoutMs !== undefined ? { timeoutMs: this.discoverTimeoutMs } : {},
+    );
     for (const handle of found) {
       const known = this.known.get(handle.promptSubject);
       if (known === undefined || handle.idSigVerified || !known.idSigVerified) {
@@ -549,7 +553,7 @@ export class AgentTools {
   private async lookup(address: string): Promise<Agent | undefined> {
     const known = this.known.get(address);
     if (known !== undefined) return known;
-    await this.discover({});
+    await this.discover();
     return this.known.get(address);
   }
 
@@ -1279,6 +1283,40 @@ function addFields(
     }
     into[key] = value;
   }
+}
+
+const FILTER_KEYS = ["agent", "owner", "name"] as const;
+
+/**
+ * Each filter given matches the entry's value whole, ignoring case: the
+ * registration's `agent` and `owner`, which can differ from the address's
+ * tokens, and the `name` the address ends in.
+ */
+function matchesFilters(handle: Agent, filters: DiscoverArgs): boolean {
+  return FILTER_KEYS.every((key) => {
+    const wanted = filters[key];
+    return wanted === undefined || handle[key].toLowerCase() === wanted.toLowerCase();
+  });
+}
+
+/**
+ * `discover_agents`' words for filters no agent matched: the filters, and
+ * how many agents are visible without them.
+ */
+function filterNote(filters: DiscoverArgs, visible: number): string {
+  const given = FILTER_KEYS.filter((key) => filters[key] !== undefined).map(
+    (key) => `${key} "${filters[key]}"`,
+  );
+  const named =
+    given.length === 1
+      ? `the filter ${given[0]}`
+      : `the filters ${given.slice(0, -1).join(", ")} and ${given[given.length - 1]}`;
+  const without =
+    visible === 0
+      ? "No agent is visible without filters either."
+      : `${visible === 1 ? "1 agent is" : `${visible} agents are`} visible without filters: ` +
+        "call discover_agents with no arguments to list every agent.";
+  return `No agent matches ${named}. ${without}`;
 }
 
 function newCallId(): string {
