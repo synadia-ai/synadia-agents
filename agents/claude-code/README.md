@@ -396,7 +396,7 @@ now" in its status line.
 
 What differs is what follows a channel message while Claude Code is idle.
 With the channel on, Claude Code takes it into a turn at once: its
-`UserPromptSubmit` hook (see [Turns](#turns)) fired 30 to 50 ms after the
+`UserPromptSubmit` hook (see [Turns](#turns)) fired 20 to 50 ms after the
 message, with text typed but not sent in the input, and with the
 transcript view open. With the channel off, nothing follows. So a prompt
 delivered while no turn runs, that Claude Code has not taken into a turn
@@ -407,24 +407,28 @@ text:
 
 ```
 Nats-Service-Error-Code: 503
-Nats-Service-Error: Claude Code did not take this prompt within 30 s while idle: its channel is likely off. Check: its own ANTHROPIC_API_KEY, Yes to "Do you want to use this API key?", a workspace-scoped key
+Nats-Service-Error: Claude Code did not take this prompt within 30 s while idle: its channel is likely off. Check: the channels flag, own ANTHROPIC_API_KEY, Yes to the API key question, a workspace-scoped key
 ```
 
 The protocol SDK sends at most 200 characters of a description, so the
 plugin's log says the rest: at the first such prompt it writes one line,
-`nats channel: warning: Claude Code did not take a prompt within 30 s
-while idle; its channel is likely off, …`, which names every likely cause,
-the channel flag and the start notice included. Each prompt is logged as
+`nats channel: warning: Claude Code 2.1.331 did not take a prompt within
+30 s while idle; its channel is likely off, …`, which names the Claude Code
+version, every likely cause, the channel flags and the start notice
+included, and `idleTurnStartMs` `0` as the way to turn the check off.
+Each prompt is logged as
 `request ended without a reply` with the reason `not taken while idle`,
 and the [extensions](#extensions) hear `promptEnded` with the outcome
 `error` and the reason `no_reply`.
 
 The rules:
 
-- The time runs only while no turn runs: from the delivery, or from the
-  end (`Stop` or `StopFailure`) of the turn that ran then. A prompt that
-  waits behind a busy turn is never cut: Claude Code takes it at that
-  turn's next tool result or after its `Stop`.
+- The time runs only while the hooks show no turn running: from the
+  delivery, or from the latest end (`Stop` or `StopFailure`) of a turn. A
+  turn runs from its `UserPromptSubmit`, or from a tool call later than
+  the latest end, until its `Stop` or `StopFailure`. A prompt that waits
+  behind such a turn is not cut: Claude Code takes it at that turn's next
+  tool result or after its `Stop`.
 - Once Claude Code has taken one channel message, this server's or an
   earlier one's in the same Claude Code process, the channel is on, and
   the check stands down for the rest of the session.
@@ -434,11 +438,23 @@ The rules:
   the model stops without replying](#when-the-model-stops-without-replying)
   alone apply.
 
-Stated honestly: an interrupted turn (Esc) records no `Stop`, so Claude
-Code looks busy until its next turn begins, and a prompt delivered
-meanwhile keeps the older rules. And a picker such as `/model` holds a
-channel message until it is closed: a first prompt that arrives while one
-stays open past the bound is ended although the channel is on.
+Stated honestly:
+
+- An interrupted turn (Esc) records no `Stop`, so Claude Code looks busy
+  until its next turn begins, and a prompt delivered meanwhile keeps the
+  older rules.
+- A turn no `UserPromptSubmit` announces (typed text that waited behind a
+  turn and runs as its own, a background task's report, `/compact`) looks
+  idle until its first tool call. A first prompt queued behind such a turn
+  that makes no tool call within the bound is ended although the channel
+  is on.
+- A picker such as `/model` holds a channel message until it is closed: a
+  first prompt that arrives while one stays open past the bound is ended
+  although the channel is on.
+- The version gate has no upper end: a later Claude Code that stopped
+  reporting a channel message's `UserPromptSubmit` would have every prompt
+  ended. The warning names the version.
+
 `idleTurnStartMs` `0` turns the check off.
 
 ## Permissions

@@ -105,17 +105,20 @@ All notable changes to the Claude Code NATS channel are documented here.
   question "Do you want to use this API key?", a key scoped to the organization rather than a
   workspace, or no channel flag), Claude Code drops every channel message and tells the server
   nothing; measured on Claude Code 2.1.331, nothing it sends differs with the channel on or off.
-  What differs is that, idle, Claude Code takes a channel message into a turn within tens of
-  milliseconds. So a prompt delivered while no turn runs that Claude Code has not taken within
-  `idleTurnStartMs` of idle time (30 seconds by default; `SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS`
-  wins over the config field; `0` turns it off) is ended with a §9 error frame, code `503`,
-  description `Claude Code did not take this prompt within 30 s while idle: its channel is
-  likely off. Check: its own ANTHROPIC_API_KEY, Yes to "Do you want to use this API key?", a
-  workspace-scoped key`. The time runs only while no turn runs, so a prompt queued behind a busy
-  turn is never cut; once Claude Code has taken one channel message the check stands down; and
-  it applies only to Claude Code 2.1.310 or later, by the version its `initialize` gives, with
-  the plugin's hooks running. The first such prompt logs one `warning:` line with every likely
-  cause; each is logged as `request ended without a reply`, reason `not taken while idle`, and
+  What differs is that, idle, Claude Code takes a channel message into a turn within 20 to 50
+  milliseconds. So a prompt delivered while the hooks show no turn running that Claude Code has
+  not taken within `idleTurnStartMs` of idle time (30 seconds by default;
+  `SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS` wins over the config field; `0` turns it off) is
+  ended with a §9 error frame, code `503`, description `Claude Code did not take this prompt
+  within 30 s while idle: its channel is likely off. Check: the channels flag, own
+  ANTHROPIC_API_KEY, Yes to the API key question, a workspace-scoped key`. A turn runs, as the
+  check sees it, from its submit, or from a tool call later than the latest Stop or failure, to
+  its Stop or failure; a prompt queued behind such a turn is not cut, while a turn no submit
+  announces looks idle until its first tool call. Once Claude Code has taken one channel
+  message the check stands down, and it applies only to Claude Code 2.1.310 or later, by the
+  version its `initialize` gives, with the plugin's hooks running. The first such prompt logs
+  one `warning:` line with the Claude Code version, every likely cause and the `0` setting;
+  each is logged as `request ended without a reply`, reason `not taken while idle`, and
   reaches the extensions' `promptEnded` with the outcome `error` and the reason `no_reply`.
 
 ### Changed
