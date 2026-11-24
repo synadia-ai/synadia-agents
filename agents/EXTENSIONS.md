@@ -87,7 +87,8 @@ Claude Code also passes `promptEnded` a fourth
 argument, the reason, when the model did not end the prompt with its own
 reply: `final_text` (outcome `ok`: the turn ended without a reply, and the
 plugin sent the turn's final text as the reply), `no_reply` (the turn
-ended with no reply and no final text), `shutdown` (the plugin stopped with
+ended with no reply and no final text, or, while Claude Code was idle,
+Claude Code did not take the prompt into a turn in time), `shutdown` (the plugin stopped with
 the prompt open), `delivery` (the prompt could not be handed to Claude
 Code), all with outcome `error`, or `expired` (the prompt outlived the
 plugin's limit, outcome `timeout`). The argument is left out when the

@@ -838,6 +838,29 @@ export function promptIdsReported(stateDir: string, pid: number | string): boole
   )
 }
 
+/**
+ * `true` iff the events log holds a channel message's submit: this Claude
+ * Code process has taken a channel message, so its channel is on
+ * (`src/channel-check.ts`).
+ */
+export function channelMessageTaken(stateDir: string, pid: number | string): boolean {
+  return readEvents(stateDir, pid).some(
+    (event) => event.kind === 'submit' && event.submit.requestId !== undefined,
+  )
+}
+
+/**
+ * When the latest StopFailure in the events log was recorded, or
+ * `undefined` without one: a turn's end the `.stop` record does not hold.
+ */
+export function lastFailureMs(stateDir: string, pid: number | string): number | undefined {
+  let latest: number | undefined
+  for (const event of readEvents(stateDir, pid)) {
+    if (event.kind === 'failure' && (latest === undefined || event.failure.atMs > latest)) latest = event.failure.atMs
+  }
+  return latest
+}
+
 /** Every well-formed line of the events log, in the order written; none without a file. */
 export function readEvents(stateDir: string, pid: number | string): SessionEvent[] {
   let text: string

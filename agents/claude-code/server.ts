@@ -56,9 +56,20 @@ import {
   type ServedRequest,
 } from "./src/extensions.js";
 import {
+  CHANNEL_OFF_CODE,
+  ChannelCheck,
+  channelCheckable,
+  channelOffDescription,
+  channelOffWarning,
+  idleFrom,
+  type IdleState,
+} from "./src/channel-check.js";
+import {
+  channelMessageTaken,
   claudePid,
   clearOpenRequests,
   hooksActive,
+  lastFailureMs as lastFailureMsBefore,
   promptIdsReported,
   readTurnActivity,
   readTurnStop,
@@ -529,6 +540,13 @@ async function run(): Promise<void> {
     const nextRequestId = requestIdSequence();
     let lastActiveRequestId: string | undefined;
     let shuttingDown = false;
+    // Whether Claude Code takes the prompts handed to it (src/channel-check.ts);
+    // on from the start when this Claude Code process already took a
+    // channel message, read with the hooks' mark below.
+    const channel = new ChannelCheck(settings.idleTurnStartMs);
+    // The latest StopFailure the hooks reported: a turn's end the `.stop`
+    // record does not hold.
+    let lastFailureMs: number | undefined;
     // Which served prompt owns the running turn, for permission questions.
     const turns = new TurnLedger((requestId) => {
       const pending = pendingRequests.get(requestId);
@@ -572,6 +590,7 @@ async function run(): Promise<void> {
       pendingRequests.delete(requestId);
       turns.forget(requestId);
       tracker?.forget(requestId);
+      channel.forget(requestId);
       if (lastActiveRequestId === requestId) {
         lastActiveRequestId = Array.from(pendingRequests.keys()).at(-1);
       }
@@ -665,6 +684,62 @@ async function run(): Promise<void> {
         pending.ended ??= { outcome: "error", atMs: now, reason: "no_reply" };
         pending.completion.reject(
           new RequestRejectedError(TURN_END_CODE, TURN_END_DESCRIPTION),
+        );
+      }
+      syncOpenRequests();
+    };
+
+    // Whether a turn runs, by every sign the hooks give: the tracker's open
+    // turn, or a tool call after the latest end of a turn (a turn that goes
+    // on after its recorded Stop, or that no submit announced).
+    const idleState = (): IdleState => {
+      const view = turnView();
+      return idleFrom({
+        turnRunning:
+          tracker?.binding() === true && tracker.current() !== undefined,
+        endsMs: [tracker?.lastEndMs(), view.stop?.atMs, lastFailureMs],
+        activityMs: view.activity?.atMs,
+      });
+    };
+
+    // A prompt delivered while Claude Code is idle and not taken into a turn
+    // within the bound is ended with an error that names the likely cause:
+    // Claude Code's channel is off (src/channel-check.ts). Only where a turn
+    // start can be seen: Claude Code that reports a channel message's
+    // submit, with the plugin's hooks running in it, and the watcher that
+    // reads them started (it starts after the extensions).
+    const endUntaken = (): void => {
+      if (channel.on || channel.boundMs <= 0 || pendingRequests.size === 0)
+        return;
+      if (sessionEvents === undefined) return;
+      if (!channelCheckable(mcp?.getClientVersion())) return;
+      if (!hooksActive(sessionSource)) return;
+      // The hooks' records up to now: a submit written since the last poll
+      // takes its prompt before it is judged.
+      sessionEvents.poll();
+      const now = Date.now();
+      const description = channelOffDescription(channel.boundMs);
+      for (const requestId of channel.due(now, idleState())) {
+        const pending = pendingRequests.get(requestId);
+        if (
+          !pending ||
+          pending.completion.settled() ||
+          pending.answeringWithFinalText
+        )
+          continue;
+        if (channel.firstOff())
+          logEvent(
+            channelOffWarning(channel.boundMs, mcp?.getClientVersion()),
+            { idleTurnStartMs: channel.boundMs },
+          );
+        logEvent("request ended without a reply", {
+          requestId,
+          sender: pending.sender,
+          reason: "not taken while idle",
+        });
+        pending.ended ??= { outcome: "error", atMs: now, reason: "no_reply" };
+        pending.completion.reject(
+          new RequestRejectedError(CHANNEL_OFF_CODE, description),
         );
       }
       syncOpenRequests();
@@ -796,6 +871,7 @@ async function run(): Promise<void> {
       }
 
       logEvent("prompt admitted", { requestId, sender: pending.sender });
+      channel.delivered(requestId, Date.now());
       const content =
         staged.length > 0
           ? `[Attachments available at the following absolute paths]\n${staged.map((item) => `- ${item.path}`).join("\n")}\n\n${envelope.prompt}`
@@ -1098,7 +1174,10 @@ async function run(): Promise<void> {
       }
     }, 60_000);
     ttlTimer.unref();
-    const turnEndTimer = setInterval(endUnanswered, TURN_END_POLL_MS);
+    const turnEndTimer = setInterval(() => {
+      endUnanswered();
+      endUntaken();
+    }, TURN_END_POLL_MS);
     turnEndTimer.unref();
     syncOpenRequests();
 
@@ -1107,6 +1186,10 @@ async function run(): Promise<void> {
     // before the watcher polls, is still read. The turns start from the
     // same moment.
     const eventsMark = markSessionEvents(sessionSource);
+    // A channel message this Claude Code process took before the mark (an
+    // earlier server's): its channel is on. One after it, the watcher reports.
+    if (channelMessageTaken(stateDir, sessionSource.parentPid)) channel.taken();
+    lastFailureMs = lastFailureMsBefore(stateDir, sessionSource.parentPid);
     const trackerStart = {
       binding: promptIdsReported(stateDir, sessionSource.parentPid),
       lastStopMs: readTurnStop(sessionSource)?.atMs,
@@ -1192,6 +1275,9 @@ async function run(): Promise<void> {
       sessionStarted: (sessionId, source) =>
         extensions.events.sessionStarted(sessionId, source),
       promptSubmitted: (submit) => {
+        // A channel message taken, this server's or an earlier one's: the
+        // channel is on.
+        if (submit.requestId !== undefined) channel.taken();
         tracker?.submitted(submit);
         endUnanswered();
       },
@@ -1200,6 +1286,8 @@ async function run(): Promise<void> {
         endUnanswered();
       },
       turnFailed: (failure) => {
+        if (lastFailureMs === undefined || failure.atMs > lastFailureMs)
+          lastFailureMs = failure.atMs;
         // An API error ends the turn as a Stop would, without final text.
         turns.observeFailure(failure);
         tracker?.failed(failure);

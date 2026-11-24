@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import type { NatsConnectionSource } from '@synadia-ai/agents'
+import { DEFAULT_IDLE_TURN_START_MS } from './channel-check.js'
 
 export type PermissionMode = 'terminal' | 'query'
 export type SenderIdentityMode = 'off' | 'signed'
@@ -39,6 +40,12 @@ export type NatsChannelConfig = {
   extensions?: unknown
   /** See {@link DEFAULT_TURN_START_GRACE_MS}; `SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS` wins. */
   turnStartGraceMs?: number
+  /**
+   * How long a prompt delivered while Claude Code is idle may wait for it to
+   * start a turn before it is ended as untaken (`src/channel-check.ts`); 0
+   * turns the check off. `SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS` wins.
+   */
+  idleTurnStartMs?: number
 }
 
 export type RuntimeSettings = {
@@ -49,6 +56,7 @@ export type RuntimeSettings = {
   permissionMode: PermissionMode
   agentTools: AgentToolsMode
   turnStartGraceMs: number
+  idleTurnStartMs: number
 }
 
 export function loadConfig(path: string): NatsChannelConfig {
@@ -76,6 +84,9 @@ export function loadConfig(path: string): NatsChannelConfig {
   optionalString(parsed, 'agentTools')
   if (parsed.turnStartGraceMs !== undefined && !isPositiveWhole(parsed.turnStartGraceMs)) {
     throw new Error('invalid turnStartGraceMs: expected a whole number of milliseconds above 0')
+  }
+  if (parsed.idleTurnStartMs !== undefined && !isWhole(parsed.idleTurnStartMs)) {
+    throw new Error('invalid idleTurnStartMs: expected a whole number of milliseconds, 0 for off')
   }
   if (parsed.permissions !== undefined) {
     if (!isRecord(parsed.permissions)) {
@@ -154,6 +165,18 @@ export function resolveRuntimeSettings(
     throw new Error('invalid turnStartGraceMs: expected a whole number of milliseconds above 0')
   }
 
+  // Digits only, spaces around them ignored; blank means unset.
+  const idleValue = env.SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS?.trim()
+  if (idleValue !== undefined && idleValue !== '' && !/^\d+$/.test(idleValue)) {
+    throw new Error('invalid idleTurnStartMs: expected a whole number of milliseconds, 0 for off')
+  }
+  const idleTurnStartMs = idleValue === undefined || idleValue === ''
+    ? config.idleTurnStartMs ?? DEFAULT_IDLE_TURN_START_MS
+    : Number(idleValue)
+  if (!isWhole(idleTurnStartMs)) {
+    throw new Error('invalid idleTurnStartMs: expected a whole number of milliseconds, 0 for off')
+  }
+
   return {
     connectionSource: context
       ? { context }
@@ -170,6 +193,7 @@ export function resolveRuntimeSettings(
     permissionMode,
     agentTools,
     turnStartGraceMs,
+    idleTurnStartMs,
   }
 }
 
@@ -185,7 +209,11 @@ function enumSetting<const T extends string>(
 }
 
 function isPositiveWhole(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+  return isWhole(value) && value > 0
+}
+
+function isWhole(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

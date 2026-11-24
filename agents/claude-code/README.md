@@ -314,7 +314,9 @@ ends with that turn:
 A request Claude Code has not taken into a turn yet waits behind the
 running one: that turn's `Stop` neither refuses nor answers it, and its
 own turn comes after. A request never taken into a turn is ended by the
-grace period below.
+grace period below, or, while Claude Code is idle, sooner, as [When Claude
+Code does not take a prompt](#when-claude-code-does-not-take-a-prompt)
+says.
 
 **Without prompt ids** (a Claude Code that does not report them), the
 plugin guesses:
@@ -371,6 +373,91 @@ running, it lets the turn end; and it gives up after 5 seconds, well inside
 its 10-second timeout. The request TTL stays the last guard: without the hooks, or in
 a session where a turn starts within the grace period after every `Stop`,
 nothing else ends a request.
+
+### When Claude Code does not take a prompt
+
+Claude Code hands a channel message to the session only while its channel
+is on, and it decides that once per MCP server, when it connects: the
+channel has to be named with `--channels` or
+`--dangerously-load-development-channels`, and Claude Code's channels
+feature has to be available. Claude Code 2.1.331 was measured to turn it
+off when it runs without an Anthropic API key of its own
+(`ANTHROPIC_AUTH_TOKEN` and a gateway's `ANTHROPIC_BASE_URL` alone), when
+its question "Do you want to use this API key?" was answered No (the
+preselected answer, and it sticks), and with a key whose scope is the
+organization rather than a workspace. With the channel off, Claude Code
+still starts the MCP server: the service registers, the heartbeats go out,
+the tools and the hooks work. But it drops every channel message, and it
+tells the server nothing: its `initialize` request, its hooks' input and
+everything else it sends are the same with the channel on or off. It says
+so only in the session: "Channels are not currently available" among its
+start notices (ctrl+o shows them), and "channels aren't available right
+now" in its status line.
+
+What differs is what follows a channel message while Claude Code is idle.
+With the channel on, Claude Code takes it into a turn at once: its
+`UserPromptSubmit` hook (see [Turns](#turns)) fired 20 to 50 ms after the
+message, with text typed but not sent in the input, and with the
+transcript view open. With the channel off, nothing follows. So a prompt
+delivered while no turn runs, that Claude Code has not taken into a turn
+within `idleTurnStartMs` of idle time (30 seconds by default), is ended
+with an error rather than left open until the request TTL. The caller gets
+the protocol's error frame (§9), then the terminator, and no response
+text:
+
+```
+Nats-Service-Error-Code: 500
+Nats-Service-Error: Claude Code did not take this prompt within 30 s while idle: its channel is likely off. Check: the channels flag, own ANTHROPIC_API_KEY, Yes to the API key question, a workspace-scoped key
+```
+
+The code is the protocol's internal error, `500`, as for a turn that
+ended without a reply; the description tells the two apart. The protocol
+SDK sends at most 200 characters of a description, so the plugin's log
+says the rest: at the first such prompt it writes one line,
+`nats channel: warning: Claude Code 2.1.331 did not take a prompt within
+30 s while idle; its channel is likely off, …`, which names the Claude Code
+version, every likely cause, the channel flags and the start notice
+included, and `idleTurnStartMs` `0` as the way to turn the check off.
+Each prompt is logged as
+`request ended without a reply` with the reason `not taken while idle`,
+and the [extensions](#extensions) hear `promptEnded` with the outcome
+`error` and the reason `no_reply`.
+
+The rules:
+
+- The time runs only while the hooks show no turn running: from the
+  delivery, or from the latest end (`Stop` or `StopFailure`) of a turn. A
+  turn runs from its `UserPromptSubmit`, or from a tool call later than
+  the latest end, until its `Stop` or `StopFailure`. A prompt that waits
+  behind such a turn is not cut: Claude Code takes it at that turn's next
+  tool result or after its `Stop`.
+- Once Claude Code has taken one channel message, this server's or an
+  earlier one's in the same Claude Code process, the channel is on, and
+  the check stands down for the rest of the session.
+- It applies only where the plugin can see a turn start: Claude Code
+  2.1.310 or later, by the version its `initialize` request gives, with the
+  plugin's [hooks](#hooks) running in it. Anywhere else the rules of [When
+  the model stops without replying](#when-the-model-stops-without-replying)
+  alone apply.
+
+Stated honestly:
+
+- An interrupted turn (Esc) records no `Stop`, so Claude Code looks busy
+  until its next turn begins, and a prompt delivered meanwhile keeps the
+  older rules.
+- A turn no `UserPromptSubmit` announces (typed text that waited behind a
+  turn and runs as its own, a background task's report, `/compact`) looks
+  idle until its first tool call. A first prompt queued behind such a turn
+  that makes no tool call within the bound is ended although the channel
+  is on.
+- A picker such as `/model` holds a channel message until it is closed: a
+  first prompt that arrives while one stays open past the bound is ended
+  although the channel is on.
+- The version gate has no upper end: a later Claude Code that stopped
+  reporting a channel message's `UserPromptSubmit` would have every prompt
+  ended. The warning names the version.
+
+`idleTurnStartMs` `0` turns the check off.
 
 ## Permissions
 
@@ -520,7 +607,10 @@ query replies are not independently signed.
 
 Set `ANTHROPIC_API_KEY` in your environment before launching `claude`.
 Claude Code uses the env var in preference to any `~/.claude/`
-credentials, so logging out is unnecessary.
+credentials, so logging out is unnecessary. Its channel needs the key:
+answer Yes to Claude Code's question "Do you want to use this API key?",
+and use a key whose scope is a workspace; see [When Claude Code does not
+take a prompt](#when-claude-code-does-not-take-a-prompt).
 
 Bedrock / Vertex / Azure deployments work too — set the standard
 provider env vars before launching `claude` and Claude Code will use
@@ -568,6 +658,7 @@ NATS CLI contexts live in `~/.config/nats/context/<name>.json`.
 | `permissions.mode` | `terminal` | `terminal` or `query` (`nats` accepted as legacy alias for `query`) |
 | `agentTools` | `blocking` | `blocking`, `all` or `off`; the [agent tools](#agent-tools) offered |
 | `turnStartGraceMs` | `300000` | How long after a `Stop` a request not tied to a turn waits for one to start before it is ended; see [When the model stops without replying](#when-the-model-stops-without-replying) |
+| `idleTurnStartMs` | `30000` | How long a request delivered while Claude Code is idle waits for Claude Code to take it into a turn before it is ended as untaken, its channel likely off; `0` turns the check off; see [When Claude Code does not take a prompt](#when-claude-code-does-not-take-a-prompt) |
 | `extensions` | *(none)* | Extension modules: package names or absolute paths, or `{ "module", "options" }` objects; see [Extensions](#extensions) |
 
 ### Environment variables
@@ -597,6 +688,7 @@ path>`, `$NATS_URL` or `default: demo.nats.io`.
 | `NATS_AGENT_TOOLS` | The agent tools offered: `blocking`, `all` or `off`; empty means `blocking` | config `agentTools`, then `blocking` |
 | `SYNADIA_CLAUDE_CODE_EXTENSIONS`, `SYNADIA_AGENT_EXTENSIONS` | Extension modules, comma-separated; per-agent var wins, then fleet-wide, then config `extensions`. A set variable wins even when empty | *(none)* |
 | `SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS` | `turnStartGraceMs`, in milliseconds, a whole number above 0; empty means unset | config `turnStartGraceMs`, then `300000` |
+| `SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS` | `idleTurnStartMs`, in milliseconds, a whole number, `0` for off; empty means unset | config `idleTurnStartMs`, then `30000` |
 | `NATS_STATE_DIR` | State directory location: `config.json`, which `/nats-channel:configure` edits, attachments and the hooks' files | `~/.claude/channels/nats` |
 | `CLAUDE_CWD` | Working directory whose basename seeds the default session name | — |
 | `CLAUDE_PID` | Set by Claude Code for its MCP servers and hooks; keys the hooks' files | the server's parent pid |

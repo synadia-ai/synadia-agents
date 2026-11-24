@@ -197,6 +197,14 @@ export class TurnTracker {
     return this.#current === undefined ? undefined : snapshot(this.#current)
   }
 
+  /**
+   * When the latest Stop or failure ended a turn, the one recorded before
+   * start included; `undefined` before any.
+   */
+  lastEndMs(): number | undefined {
+    return this.#lastEndMs
+  }
+
   /** The turn prompt id `promptId` names: the current one, or one that ended lately. */
   turn(promptId: string): Turn | undefined {
     const id = this.#resolve(promptId)

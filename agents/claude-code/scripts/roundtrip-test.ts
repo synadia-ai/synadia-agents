@@ -1219,6 +1219,211 @@ console.log('\n[case 13] a restarted channel refuses a reply to the earlier serv
   rmSync(restartState, { recursive: true, force: true })
 }
 
+console.log('\n[case 14] Claude Code that never takes a prompt while idle: its channel is off, and the caller is told within the bound')
+{
+  // A channel whose client says it is Claude Code 2.1.331, with the hooks
+  // running, and a short bound. Claude Code with its channel off drops the
+  // channel message and tells the server nothing; only no submit follows.
+  const offName = 'rt-channel-off'
+  const offState = mkdtempSync(join(tmpdir(), 'claude-channel-off-'))
+  const offSubject = `agents.prompt.cc.${OWNER}.${offName}`
+  const BOUND_MS = 1500
+  await runHook({ hook_event_name: 'SessionStart', session_id: SESSION_ID, source: 'startup' }, offState)
+  const client = new Client({ name: 'claude-code', version: '2.1.331' })
+  // What the fake Claude Code does with each channel message; by default nothing.
+  let onMessage: (requestId: string) => Promise<void> = async () => undefined
+  client.fallbackNotificationHandler = async notification => {
+    if (notification.method !== 'notifications/claude/channel') return
+    await onMessage(String((notification.params as { meta: Record<string, unknown> }).meta.request_id))
+  }
+  await client.connect(new StdioClientTransport({
+    command: 'bun',
+    args: [join(cacheRoot, 'runtime', 'server.js')],
+    env: {
+      ...childEnv,
+      NATS_STATE_DIR: offState,
+      NATS_SESSION_NAME: offName,
+      SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS: String(BOUND_MS),
+      // Out of the way: the older rule ends an untaken prompt 60 s after a Stop.
+      SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS: '60000',
+    },
+  }))
+  let up = false
+  for (let attempt = 0; attempt < 40 && !up; attempt++) {
+    up = (await discovery.discover({ timeoutMs: 100, filter: { agent: 'claude-code', owner: OWNER, name: offName } })).length > 0
+  }
+  if (!up) fail('the channel-off channel did not register')
+  const offHook = (input: Record<string, unknown>) => runHook({ session_id: SESSION_ID, ...input }, offState)
+  const offEnded = async (): Promise<ExtensionEvent[]> => {
+    const log = join(offState, 'rt-extension.log')
+    if (!existsSync(log)) return []
+    return readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line) as ExtensionEvent)
+      .filter(e => e.event === 'promptEnded')
+  }
+  const assertChannelOff = (chunks: Collected[], label: string): void => {
+    const errors = chunks.filter(chunk => chunk.error)
+    if (errors.length !== 1) return fail(`${label}: expected one error frame, got ${JSON.stringify(chunks.map(c => c.error ?? c.body.slice(0, 60)))}`)
+    const { code, description } = errors[0]!.error!
+    if (code !== '500') fail(`${label}: error code ${code}, not 500`)
+    if (!description.startsWith(`Claude Code did not take this prompt within ${BOUND_MS} ms while idle: its channel is likely off.`)) {
+      fail(`${label}: error description ${JSON.stringify(description)}`)
+    }
+    if (chunks.some(chunk => chunk.bytes > 0 && !chunk.hasHeaders && parsed(chunk).type === 'response')) fail(`${label}: response text came with the error`)
+    const term = chunks.at(-1)
+    if (!term || term.bytes !== 0 || term.hasHeaders) fail(`${label}: no clean terminator`)
+  }
+
+  // Idle: ended within the bound and a poll of the server's check.
+  {
+    const sent = Date.now()
+    const chunks = await collectChunks('untaken while idle', undefined, offSubject)
+    const after = (chunks.find(chunk => chunk.error)?.atMs ?? Date.now()) - sent
+    assertChannelOff(chunks, 'idle')
+    if (after < BOUND_MS || after > BOUND_MS + 2500) fail(`the idle prompt ended ${after} ms after it was sent (bound ${BOUND_MS} ms)`)
+    let ended = await offEnded()
+    for (let i = 0; i < 40 && ended.length === 0; i++) { await Bun.sleep(50); ended = await offEnded() }
+    if (ended[0]?.outcome !== 'error' || ended[0]?.reason !== 'no_reply') fail(`the idle prompt's promptEnded was ${JSON.stringify(ended[0])}`)
+  }
+
+  // Behind a typed turn: never cut while the turn runs; the bound runs from its Stop.
+  {
+    await offHook({ hook_event_name: 'UserPromptSubmit', prompt_id: 'prompt-14a', prompt: 'a long typed turn' })
+    const collecting = collectChunks('queued behind a typed turn', undefined, offSubject)
+    await Bun.sleep(BOUND_MS * 2 + 500)
+    const stoppedAt = Date.now()
+    const printed = await offHook({ hook_event_name: 'Stop', prompt_id: 'prompt-14a', background_tasks: [], session_crons: [] })
+    if (printed !== '') fail(`the typed turn's stop was refused: ${printed}`)
+    const chunks = await collecting
+    const endedAt = chunks.find(chunk => chunk.error)?.atMs ?? 0
+    assertChannelOff(chunks, 'behind a typed turn')
+    if (endedAt < stoppedAt + BOUND_MS - 300 || endedAt > stoppedAt + BOUND_MS + 2500) {
+      fail(`the queued prompt ended ${endedAt - stoppedAt} ms after the typed turn's Stop (bound ${BOUND_MS} ms)`)
+    }
+  }
+
+  // A turn another Stop hook kept going after this plugin recorded its Stop:
+  // its later tool call says it runs, so the prompt waits; its real Stop
+  // starts the bound.
+  {
+    await offHook({ hook_event_name: 'UserPromptSubmit', prompt_id: 'prompt-14c', prompt: 'a turn kept going' })
+    const first = await offHook({ hook_event_name: 'Stop', prompt_id: 'prompt-14c', background_tasks: [], session_crons: [] })
+    if (first !== '') fail(`the kept turn's first stop was refused: ${first}`)
+    await offHook({
+      hook_event_name: 'PreToolUse',
+      prompt_id: 'prompt-14c',
+      tool_use_id: 'toolu_rt_kept_1',
+      tool_name: 'Bash',
+      tool_input: { command: 'pwd' },
+    })
+    const collecting = collectChunks('queued behind a kept turn', undefined, offSubject)
+    await Bun.sleep(BOUND_MS * 2 + 500)
+    const stoppedAt = Date.now()
+    await offHook({ hook_event_name: 'Stop', prompt_id: 'prompt-14c', background_tasks: [], session_crons: [] })
+    const chunks = await collecting
+    const endedAt = chunks.find(chunk => chunk.error)?.atMs ?? 0
+    assertChannelOff(chunks, 'behind a kept turn')
+    if (endedAt < stoppedAt + BOUND_MS - 300 || endedAt > stoppedAt + BOUND_MS + 2500) {
+      fail(`the prompt behind a kept turn ended ${endedAt - stoppedAt} ms after its last Stop (bound ${BOUND_MS} ms)`)
+    }
+  }
+
+  // Claude Code takes one: the channel is on, the prompt is answered.
+  {
+    onMessage = async requestId => {
+      await offHook({
+        hook_event_name: 'UserPromptSubmit',
+        prompt_id: 'prompt-14b',
+        prompt: `<channel source="plugin:nats-channel:nats" request_id="${requestId}" session="${offName}">taken`,
+      })
+      await client.callTool({ name: 'reply', arguments: { request_id: requestId, text: 'taken and answered' } })
+      await offHook({ hook_event_name: 'Stop', prompt_id: 'prompt-14b', background_tasks: [], session_crons: [] })
+    }
+    const chunks = await collectChunks('taken', undefined, offSubject)
+    const responses = chunks.filter(chunk => chunk.bytes > 0 && !chunk.hasHeaders).map(parsed).filter(v => v.type === 'response')
+    if (chunks.some(chunk => chunk.error) || responses.map(v => v.data).join('') !== 'taken and answered') {
+      fail(`the taken prompt got ${JSON.stringify(chunks.map(chunk => chunk.error ?? chunk.body.slice(0, 60)))}`)
+    }
+  }
+
+  // From then on the check stands down: a prompt held past the bound (a dialog open) is not cut.
+  {
+    let heldId = ''
+    onMessage = async requestId => { heldId = requestId }
+    const collecting = collectChunks('held by a dialog', undefined, offSubject)
+    await Bun.sleep(BOUND_MS * 2 + 1000)
+    if (!heldId) fail('the held prompt was not delivered')
+    await client.callTool({ name: 'reply', arguments: { request_id: heldId, text: 'answered after the dialog' } })
+    const chunks = await collecting
+    if (chunks.some(chunk => chunk.error)) fail(`a prompt after the channel proved on was cut: ${JSON.stringify(chunks.map(c => c.error ?? c.body.slice(0, 60)))}`)
+  }
+
+  await client.close()
+  rmSync(offState, { recursive: true, force: true })
+}
+
+console.log('\n[case 15] the check stays off where it cannot see a turn start, and stands down at start after a channel message')
+{
+  // Each: a channel with the short bound whose client never takes the
+  // prompt; no error may come past twice the bound, then the model replies.
+  const BOUND_MS = 1500
+  const quiet = async (label: string, opts: {
+    readonly clientName: string
+    readonly clientVersion: string
+    readonly sessionStart: boolean
+    readonly takenBefore: boolean
+  }): Promise<void> => {
+    const name = `rt-quiet-${label}`
+    const state = mkdtempSync(join(tmpdir(), 'claude-channel-quiet-'))
+    if (opts.sessionStart) await runHook({ hook_event_name: 'SessionStart', session_id: SESSION_ID, source: 'startup' }, state)
+    if (opts.takenBefore) {
+      // An earlier server's message, taken by this Claude Code process.
+      await runHook({
+        hook_event_name: 'UserPromptSubmit',
+        session_id: SESSION_ID,
+        prompt_id: `prompt-15-${label}`,
+        prompt: `<channel source="plugin:nats-channel:nats" request_id="0a1b2c3d-1" session="${name}">earlier`,
+      }, state)
+      await runHook({ hook_event_name: 'Stop', session_id: SESSION_ID, prompt_id: `prompt-15-${label}`, background_tasks: [], session_crons: [] }, state)
+    }
+    const client = new Client({ name: opts.clientName, version: opts.clientVersion })
+    let heldId = ''
+    client.fallbackNotificationHandler = async notification => {
+      if (notification.method !== 'notifications/claude/channel') return
+      heldId = String((notification.params as { meta: Record<string, unknown> }).meta.request_id)
+    }
+    await client.connect(new StdioClientTransport({
+      command: 'bun',
+      args: [join(cacheRoot, 'runtime', 'server.js')],
+      env: {
+        ...childEnv,
+        NATS_STATE_DIR: state,
+        NATS_SESSION_NAME: name,
+        SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS: String(BOUND_MS),
+        SYNADIA_CLAUDE_CODE_TURN_START_GRACE_MS: '60000',
+      },
+    }))
+    let up = false
+    for (let attempt = 0; attempt < 40 && !up; attempt++) {
+      up = (await discovery.discover({ timeoutMs: 100, filter: { agent: 'claude-code', owner: OWNER, name } })).length > 0
+    }
+    if (!up) fail(`${label}: the channel did not register`)
+    const collecting = collectChunks(`held: ${label}`, undefined, `agents.prompt.cc.${OWNER}.${name}`)
+    await Bun.sleep(BOUND_MS * 2)
+    if (!heldId) fail(`${label}: the prompt was not delivered`)
+    await client.callTool({ name: 'reply', arguments: { request_id: heldId, text: 'answered late' } })
+    const chunks = await collecting
+    if (chunks.some(chunk => chunk.error)) {
+      fail(`${label}: the prompt was cut: ${JSON.stringify(chunks.map(c => c.error ?? c.body.slice(0, 60)))}`)
+    }
+    await client.close()
+    rmSync(state, { recursive: true, force: true })
+  }
+  await quiet('older', { clientName: 'claude-code', clientVersion: '2.1.309', sessionStart: true, takenBefore: false })
+  await quiet('other-client', { clientName: 'some-mcp-host', clientVersion: '2.1.331', sessionStart: true, takenBefore: false })
+  await quiet('no-hooks', { clientName: 'claude-code', clientVersion: '2.1.331', sessionStart: false, takenBefore: false })
+  await quiet('taken-before', { clientName: 'claude-code', clientVersion: '2.1.331', sessionStart: true, takenBefore: true })
+}
+
 await discovery.close()
 await nc.drain()
 rmSync(stateDir, { recursive: true, force: true })
