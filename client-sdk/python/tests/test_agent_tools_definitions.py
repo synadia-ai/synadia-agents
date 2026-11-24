@@ -290,15 +290,30 @@ def test_an_empty_or_null_discover_agents_filter_is_no_filter() -> None:
     [
         ("agent", "*"),
         ("agent", "claude-*"),
+        ("agent", ">"),
+        ("agent", "agents.prompt.cc.bob.repo"),
+        ("agent", "Agents.prompt.cc"),
+        # owner and name are address tokens: no `.`, wildcard or whitespace.
+        # The whitespace is the same set the TypeScript SDK refuses.
         ("owner", ">"),
+        ("owner", "bob.repo"),
+        ("owner", f"bob{chr(0xFEFF)}"),
         ("name", "agents.prompt.researcher.acme.main"),
         ("name", "research bot"),
+        ("name", f"main{chr(0x85)}"),
+        ("name", f"main{chr(0x3000)}"),
     ],
 )
 def test_a_discover_agents_filter_no_registered_value_can_hold_is_refused_with_the_rule(
     key: str, value: str
 ) -> None:
     assert parse_discover_args({key: value}) == ArgsError(_refused_filter(key, value))
+
+
+@pytest.mark.parametrize("agent", ["acme.researcher", "research bot", "agents-team", "agents"])
+def test_an_agent_the_registration_may_hold_is_taken_with_a_dot_or_a_space(agent: str) -> None:
+    # ``agent`` is the registration's own string, not an address token.
+    assert parse_discover_args({"agent": agent}) == DiscoverArgs(agent=agent)
 
 
 @pytest.mark.parametrize(
@@ -558,6 +573,14 @@ async def test_the_agents_left_out_are_counted_without_its_own_address_and_none_
     }
     # Without filters an empty list needs no words.
     assert await alone.execute("discover_agents", {}) == {"agents": []}
+
+
+async def test_an_agent_is_found_by_a_registered_agent_that_holds_a_dot() -> None:
+    agents: Any = _Discovering(_Found("acme.researcher", "acme", "main", "ar"))
+    tools = AgentTools(agents)
+    assert await tools.execute("discover_agents", {"agent": "acme.researcher"}) == {
+        "agents": [_entry("acme.researcher", "acme", "main", 1, "ar")]
+    }
 
 
 async def test_each_filter_matches_the_entrys_value_whole_ignoring_case() -> None:

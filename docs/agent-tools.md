@@ -254,7 +254,7 @@ sent to the target.
 
 | Tool | Parameter | |
 | --- | --- | --- |
-| `discover_agents` | `agent`, `owner`, `name` | optional filters, combined; each matches the entry's `agent`, `owner` or `name` whole, ignoring case. `agent` and `owner` are the registration's values (§3), which can differ from the address's tokens: Claude Code registers `agent` `claude-code` at `agents.prompt.cc.…`; `name` is the address's last token. `""` and `null` are no filter. A value with `.`, `*`, `>` or whitespace is refused, since no registered value holds one (§2): a filter is never a wildcard or an address. Without filters, every agent |
+| `discover_agents` | `agent`, `owner`, `name` | optional filters, combined; each matches the entry's `agent`, `owner` or `name` whole, ignoring case. `agent` and `owner` are the registration's values (§3), which can differ from the address's tokens: Claude Code registers `agent` `claude-code` at `agents.prompt.cc.…`; `name` is the address's last token. `""` and `null` are no filter. A filter that can match nothing is refused: an `owner` or `name` with `.`, `*`, `>` or whitespace, which no address token holds (§2.2, §3.2), and an `agent` with `*` or `>` or starting with `agents.`, a wildcard or an address (`agent` is the registration's own string, §3.2, so it may hold a `.`). Without filters, every agent |
 | `prompt_agent` | `address` | as `discover_agents` returned it |
 | | `prompt` | the task, complete in itself |
 | | `attachments` | optional local paths under the configured roots, only to an agent that accepts them |

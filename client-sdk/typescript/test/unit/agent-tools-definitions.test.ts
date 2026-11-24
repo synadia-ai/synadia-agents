@@ -263,16 +263,33 @@ describe("agent tool arguments", () => {
   });
 
   it("refuse a discover_agents filter no registered value can hold, with the rule", () => {
-    for (const [key, value] of [
+    // owner and name are address tokens: no `.`, wildcard or whitespace. The
+    // whitespace is the same set the Python SDK refuses.
+    const refused: Array<[string, string]> = [
       ["agent", "*"],
       ["agent", "claude-*"],
+      ["agent", ">"],
+      ["agent", "agents.prompt.cc.bob.repo"],
+      ["agent", "Agents.prompt.cc"],
       ["owner", ">"],
+      ["owner", "bob.repo"],
+      ["owner", `bob${String.fromCharCode(0xfeff)}`],
       ["name", "agents.prompt.researcher.acme.main"],
       ["name", "research bot"],
-    ] as const) {
-      expect(parseDiscoverArgs({ [key]: value }), value).toEqual({
+      ["name", `main${String.fromCharCode(0x85)}`],
+      ["name", `main${String.fromCharCode(0x3000)}`],
+    ];
+    for (const [key, value] of refused) {
+      expect(parseDiscoverArgs({ [key]: value }), `${key}=${value}`).toEqual({
         error: refusedFilter(key, value),
       });
+    }
+  });
+
+  it("take an agent the registration may hold: its own string, a `.` or a space included", () => {
+    // `agent` is the registration's own string, not an address token.
+    for (const agent of ["acme.researcher", "research bot", "agents-team", "agents"]) {
+      expect(parseDiscoverArgs({ agent }), agent).toEqual({ agent });
     }
   });
 
@@ -515,6 +532,15 @@ describe("discover_agents", () => {
     });
     // Without filters an empty list needs no words.
     expect(await alone.execute("discover_agents", {})).toEqual({ agents: [] });
+  });
+
+  it("finds an agent by a registered agent that holds a `.`", async () => {
+    const t = new AgentTools({
+      agents: discovering(found("acme.researcher", "acme", "main", "ar")),
+    });
+    expect(await t.execute("discover_agents", { agent: "acme.researcher" })).toEqual({
+      agents: [entry("acme.researcher", "acme", "main", 1, "ar")],
+    });
   });
 
   it("matches each filter to the entry's value whole, ignoring case", async () => {

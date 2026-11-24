@@ -25,11 +25,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   what can never match.** A filter matches the entry's `agent`, `owner` or
   `name` whole, ignoring case. `""` and `null` are no filter; the
   definition drops `minLength` from the three filters, so a host that
-  validates arguments against the schema lets `""` through. A value with
-  `.`, `*`, `>` or whitespace, such as a wildcard or an address, is refused
-  with words that say a filter is the exact `agent`, `owner` or `name` value
-  discover_agents lists, and to call `discover_agents` with no arguments to
-  list every agent. A non-string filter's refusal now reads
+  validates arguments against the schema lets `""` through. A filter that
+  can match nothing is refused: an `owner` or `name` with `.`, `*`, `>` or
+  whitespace, which no address token holds, and an `agent` with `*` or `>`
+  or starting with `agents.` (a wildcard or an address; `agent` is the
+  registration's own string and may hold a `.`). The words say a filter is
+  the exact `agent`, `owner` or `name` value discover_agents lists, and to
+  call `discover_agents` with no arguments to list every agent. Both SDKs
+  refuse the same whitespace characters. A non-string filter's refusal now reads
   `"<key>" must be a string when given`. The helper discovers every agent
   and applies the filters itself; discovery asked every agent before too,
   so it costs nothing more. `Agents.discover({ filter })` is unchanged and still

@@ -58,14 +58,27 @@ export function argsObject(tool: string, args: unknown): Fields | ArgsError {
   return value as Fields;
 }
 
-// What no registered agent, owner or name holds (protocol §2): a filter with
-// one of these can never match, so it is refused with the rule instead of
-// an empty list.
-const NOT_IN_A_TOKEN = /[.*>\s]/;
+// What no address token holds (protocol §2.2), so no `owner` or `name`
+// (§3.2) either: `.`, the wildcards and whitespace. The whitespace is spelled
+// out so that both SDKs refuse the same characters.
+const NOT_IN_A_TOKEN =
+  /[.*>\t\n\v\f\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]/;
+const WILDCARD = /[*>]/;
+
+/**
+ * Whether no registered value can match the filter: an `owner` or `name`
+ * that no address token can be, or an `agent` that is a wildcard or an
+ * address. `agent` is the registration's own string (§3.2), which may differ
+ * from the address's token and hold a `.`.
+ */
+function cannotMatch(key: keyof DiscoverArgs, value: string): boolean {
+  if (key !== "agent") return NOT_IN_A_TOKEN.test(value);
+  return WILDCARD.test(value) || value.toLowerCase().startsWith("agents.");
+}
 
 /**
  * `discover_agents`' filters. A filter left out, `null` or `""` is no
- * filter. A value no registered agent, owner or name holds, such as an
+ * filter. A value no registered agent, owner or name can match, such as an
  * address or a wildcard, is refused with words that say what a filter is.
  */
 export function parseDiscoverArgs(args: unknown): DiscoverArgs | ArgsError {
@@ -78,7 +91,7 @@ export function parseDiscoverArgs(args: unknown): DiscoverArgs | ArgsError {
     if (typeof value !== "string") {
       return new ArgsError(`discover_agents: "${key}" must be a string when given`);
     }
-    if (NOT_IN_A_TOKEN.test(value)) {
+    if (cannotMatch(key, value)) {
       return new ArgsError(
         `discover_agents: "${key}" is "${value}", which matches no agent: ` +
           "a filter is the exact agent, owner or name value discover_agents lists, " +

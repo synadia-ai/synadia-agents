@@ -73,17 +73,32 @@ def args_object(tool: str, args: Any) -> dict[str, Any] | ArgsError:
     return value
 
 
-# What no registered agent, owner or name holds (protocol §2): a filter with
-# one of these can never match, so it is refused with the rule instead of
-# an empty list.
-_NOT_IN_A_TOKEN = re.compile(r"[.*>\s]")
+# What no address token holds (protocol §2.2), so no ``owner`` or ``name``
+# (§3.2) either: ``.``, the wildcards and whitespace. The whitespace is
+# spelled out so that both SDKs refuse the same characters.
+_NOT_IN_A_TOKEN = re.compile(
+    r"[.*>\t\n\v\f\r \x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]"
+)
+_WILDCARD = re.compile(r"[*>]")
+
+
+def _cannot_match(key: str, value: str) -> bool:
+    """Whether no registered value can match the filter.
+
+    An ``owner`` or ``name`` that no address token can be, or an ``agent``
+    that is a wildcard or an address. ``agent`` is the registration's own
+    string (§3.2), which may differ from the address's token and hold a ``.``.
+    """
+    if key != "agent":
+        return _NOT_IN_A_TOKEN.search(value) is not None
+    return _WILDCARD.search(value) is not None or value.lower().startswith("agents.")
 
 
 def parse_discover_args(args: Any) -> DiscoverArgs | ArgsError:
     """``discover_agents``' filters.
 
     A filter left out, ``null`` or ``""`` is no filter. A value no
-    registered agent, owner or name holds, such as an address or a
+    registered agent, owner or name can match, such as an address or a
     wildcard, is refused with words that say what a filter is.
     """
     fields = args_object("discover_agents", args)
@@ -96,7 +111,7 @@ def parse_discover_args(args: Any) -> DiscoverArgs | ArgsError:
             continue
         if not isinstance(value, str):
             return ArgsError(f'discover_agents: "{key}" must be a string when given')
-        if _NOT_IN_A_TOKEN.search(value):
+        if _cannot_match(key, value):
             return ArgsError(
                 f'discover_agents: "{key}" is "{value}", which matches no agent: '
                 "a filter is the exact agent, owner or name value discover_agents lists, "
