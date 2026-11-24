@@ -114,7 +114,7 @@ export function agentToolGuidelines(
   ];
   if (name === "discover_agents") {
     guidelines.push(
-      "Call discover_agents with no arguments to list every agent. Each of its filters matches one token of an address exactly: no wildcards, never a full address.",
+      "Call discover_agents with no arguments to list every agent. Its filters match the agent, owner and name it lists for each entry, exactly: no wildcards, never an address.",
     );
   }
   if (name === "prompt_agent") {
@@ -128,9 +128,9 @@ export function agentToolGuidelines(
 /** What the registration needs from the channel. */
 export interface AgentToolHooks {
   /**
-   * The session's own prompt address, as the service registered it (a
-   * name already taken gets a `-2`, `-3`, … suffix): named in PI's system
-   * prompt.
+   * The session's own prompt address, the one its service registered at
+   * (with the `-2`, `-3`, … suffix the channel adds when it finds the name
+   * taken): named in PI's system prompt.
    */
   readonly address: string;
   /**

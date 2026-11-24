@@ -866,9 +866,11 @@ export default function (pi: ExtensionAPI) {
       registeredDescription = serviceDescription;
       // The tools appear to the model once the agent is on the bus. PI
       // accepts a tool registered after startup (0.84+) and rebuilds its
-      // system prompt, which then names the address the service registered,
-      // a `-2` suffix included. The address holds for this instance; a new
-      // PI session starts a new instance, which registers the tools again.
+      // system prompt, which then names the session's address: the one the
+      // service registered at, `selfAddress`, with any suffix
+      // `resolveSessionName` added above. The address holds for this
+      // instance; a new PI session starts a new instance, which registers
+      // the tools again.
       if (agentTools) {
         const tools = agentTools;
         registeredTools = registerAgentTools(pi, tools, {

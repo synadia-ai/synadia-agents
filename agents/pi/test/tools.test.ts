@@ -209,8 +209,8 @@ describe("registerAgentTools", () => {
 });
 
 describe("PI's system prompt", () => {
-	// A name already taken on the bus registers with a suffix: the address
-	// named is the one the service registered.
+	// A name the channel found taken registers with a suffix: the address
+	// named is the one the session registered at.
 	const address = "agents.prompt.pi.me.here-2";
 	const hooks = {
 		address,
@@ -242,7 +242,7 @@ describe("PI's system prompt", () => {
 		}
 		expect(pi.registered.get("discover_agents")!.promptGuidelines).toEqual([
 			own,
-			"Call discover_agents with no arguments to list every agent. Each of its filters matches one token of an address exactly: no wildcards, never a full address.",
+			"Call discover_agents with no arguments to list every agent. Its filters match the agent, owner and name it lists for each entry, exactly: no wildcards, never an address.",
 		]);
 		expect(pi.registered.get("prompt_agent")!.promptGuidelines).toEqual([
 			own,
