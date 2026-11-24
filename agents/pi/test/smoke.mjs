@@ -16,7 +16,9 @@
 //   8. Signed registration publishes a verifiable connection-bound `id_sig`.
 //   9. Signed-only admission rejects before ack and accepts a signed caller.
 //  10. The agent tools are registered with PI once the agent is on the bus,
-//      and PI's own address is refused.
+//      each with a line and guidelines for PI's system prompt that name
+//      the address registered (a second session of the same name gets its
+//      `-2` address), and PI's own address is refused.
 //  11. An extension named in SYNADIA_PI_EXTENSIONS (test/fixtures/) is
 //      loaded, gets the live handles, adds a heartbeat field and a
 //      registration metadata key, and hears every PI event with the served
@@ -383,6 +385,13 @@ await step(
       assert.equal(spec.parameters?.type, "object", `${spec.name}: JSON Schema`);
       assert.ok(spec.description.length > 0);
       assert.equal(typeof spec.execute, "function");
+      assert.ok(spec.promptSnippet?.length > 0, `${spec.name}: no promptSnippet`);
+      assert.ok(
+        spec.promptGuidelines?.[0]?.startsWith(
+          `Other agents reach you at ${expectedSubject}. `,
+        ),
+        `${spec.name}: guidelines lack the address: ${spec.promptGuidelines?.[0]}`,
+      );
     }
   },
 )();
@@ -509,13 +518,14 @@ await step("description: /nats-status shows the one in use, the default text", a
   );
 })();
 
-// Start one more channel with `env` set for its start only, wait until it
-// is registered, and hand back its `$SRV.INFO`, what it notified and its
-// commands. No extension: the counting fixture's state stays the first
-// channel's.
-async function startDescribed(name, env) {
+// Start one more channel named `name`, with `env` set for its start only,
+// wait until it is registered as `registeredAs`, and hand back its
+// `$SRV.INFO`, what it notified, its commands and its tools. No extension:
+// the counting fixture's state stays the first channel's.
+async function startDescribed(name, env, registeredAs = name) {
   const itsListeners = new Map();
   const commands = new Map();
+  const tools = new Map();
   const notified = [];
   const pi = {
     on(event, cb) {
@@ -524,7 +534,7 @@ async function startDescribed(name, env) {
     },
     sendUserMessage() {},
     registerCommand: (commandName, spec) => commands.set(commandName, spec),
-    registerTool() {},
+    registerTool: (spec) => tools.set(spec.name, spec),
   };
   const ctx = {
     cwd: process.cwd(),
@@ -564,11 +574,43 @@ async function startDescribed(name, env) {
   for (let attempt = 0; attempt < 20 && !info; attempt++) {
     const client = svcm.client({ strategy: "stall", maxWait: 500, maxMessages: 20 });
     for await (const si of await client.info("agents")) {
-      if (si.metadata?.agent === "pi" && si.metadata?.session === name) info = si;
+      if (si.metadata?.agent === "pi" && si.metadata?.session === registeredAs) info = si;
     }
   }
-  return { info, notified, commands, ctx, stop: () => emitTo("session_shutdown", {}) };
+  return {
+    info,
+    notified,
+    commands,
+    tools,
+    ctx,
+    stop: () => emitTo("session_shutdown", {}),
+  };
 }
+
+await step(
+  "agent tools: a second session of the same name names its own -2 address in PI's system prompt",
+  async () => {
+    const renamed = `${session}-2`;
+    const second = await startDescribed(session, {}, renamed);
+    try {
+      assert.ok(second.info, `no registration for session=${renamed}`);
+      const address = second.info.endpoints.find((e) => e.name === "prompt")?.subject;
+      assert.equal(address, `agents.prompt.pi.${owner}.${renamed}`);
+      assert.deepEqual(
+        [...second.tools.keys()],
+        ["discover_agents", "prompt_agent", "answer_agent"],
+      );
+      for (const spec of second.tools.values()) {
+        assert.equal(
+          spec.promptGuidelines[0],
+          `Other agents reach you at ${address}. To reach other agents, use discover_agents and prompt_agent, not shell commands.`,
+        );
+      }
+    } finally {
+      await second.stop();
+    }
+  },
+)();
 
 await step(
   "description: SYNADIA_PI_DESCRIPTION is registered, cleaned and with one warning, and wins over SYNADIA_DESCRIPTION",

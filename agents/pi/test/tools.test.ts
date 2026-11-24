@@ -1,12 +1,16 @@
 // The agent tools in PI: the `agentTools` setting, the subset each mode
 // offers, and the registration of the SDK helper's definitions with PI's
-// `registerTool` (see `extensions/tools.ts`). The helper is built over a
-// client that never connects; no NATS is needed.
+// `registerTool` (see `extensions/tools.ts`), with the lines they add to
+// PI's system prompt, read back from a session of the installed PI. The
+// helper is built over a client that never connects; no NATS is needed.
 //
 // Run with: bun test test/tools.test.ts
 
 import { describe, expect, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	AGENT_TOOL_NAMES,
 	Agents,
@@ -16,9 +20,19 @@ import {
 	type AgentToolResult,
 } from "@synadia-ai/agents";
 import type { NatsConnection } from "@nats-io/transport-node";
+import {
+	createAgentSession,
+	DefaultResourceLoader,
+	ModelRuntime,
+	SessionManager,
+	SettingsManager,
+	type ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import type { LocalTurn, ServedRequest } from "../extensions/extensions.ts";
 import {
+	AGENT_TOOL_SNIPPETS,
 	AGENT_TOOLS_VAR,
+	agentToolGuidelines,
 	registerAgentTools,
 	resolveAgentToolsMode,
 	toolLabel,
@@ -74,6 +88,7 @@ describe("toolNamesFor and toolLabel", () => {
 
 describe("registerAgentTools", () => {
 	const hooks = {
+		address: "agents.prompt.pi.me.here",
 		activeRequest: () => undefined,
 		aroundToolCall: <T>(_r: ServedRequest | LocalTurn | undefined, _n: string, run: () => T) => run(),
 	};
@@ -134,6 +149,7 @@ describe("registerAgentTools", () => {
 		const served: ServedRequest = { id: "42", extras: {} };
 		const wrapped: Array<[string | undefined, string]> = [];
 		registerAgentTools(pi, fakeTools, {
+			address: hooks.address,
 			activeRequest: () => served,
 			aroundToolCall: (r, name, run) => {
 				wrapped.push([r?.id, name]);
@@ -175,6 +191,7 @@ describe("registerAgentTools", () => {
 		let current: ServedRequest | LocalTurn | undefined = turn;
 		const wrapped: Array<[string | undefined, boolean, string]> = [];
 		registerAgentTools(pi, fakeTools, {
+			address: hooks.address,
 			activeRequest: () => current,
 			aroundToolCall: (r, name, run) => {
 				wrapped.push([r?.id, r !== undefined && "local" in r, name]);
@@ -188,5 +205,139 @@ describe("registerAgentTools", () => {
 			["local-3", true, "prompt_agent"],
 			[undefined, false, "prompt_agent"],
 		]);
+	});
+});
+
+describe("PI's system prompt", () => {
+	// A name the channel found taken registers with a suffix: the address
+	// named is the one the session registered at.
+	const address = "agents.prompt.pi.me.here-2";
+	const hooks = {
+		address,
+		activeRequest: () => undefined,
+		aroundToolCall: <T>(_r: ServedRequest | LocalTurn | undefined, _n: string, run: () => T) => run(),
+	};
+	const everyTool = () => new AgentTools({ agents: offlineAgents, tools: AGENT_TOOL_NAMES });
+
+	test("every tool carries a one-line snippet", () => {
+		const pi = fakePi();
+		registerAgentTools(pi, everyTool(), hooks);
+		expect(pi.registered.size).toBe(6);
+		for (const name of AGENT_TOOL_NAMES) {
+			const snippet = pi.registered.get(name)!.promptSnippet;
+			expect(snippet).toBe(AGENT_TOOL_SNIPPETS[name]);
+			expect(snippet!.length).toBeGreaterThan(0);
+			expect(snippet).not.toMatch(/\n/);
+		}
+	});
+
+	test("every tool's guidelines name the address it was given; discover_agents and prompt_agent add their own", () => {
+		const pi = fakePi();
+		registerAgentTools(pi, everyTool(), hooks);
+		const own = `Other agents reach you at ${address}. To reach other agents, use discover_agents and prompt_agent, not shell commands.`;
+		for (const name of AGENT_TOOL_NAMES) {
+			const guidelines = pi.registered.get(name)!.promptGuidelines!;
+			expect(guidelines[0]).toBe(own);
+			expect(guidelines).toEqual(agentToolGuidelines(name, address));
+		}
+		expect(pi.registered.get("discover_agents")!.promptGuidelines).toEqual([
+			own,
+			"Call discover_agents with no arguments to list every agent. Its filters match the agent, owner and name it lists for each entry, exactly: no wildcards, never an address.",
+		]);
+		expect(pi.registered.get("prompt_agent")!.promptGuidelines).toEqual([
+			own,
+			"Pass prompt_agent the address exactly as discover_agents returned it, and make the prompt self-contained.",
+		]);
+		expect(pi.registered.get("answer_agent")!.promptGuidelines).toEqual([own]);
+	});
+
+	test("registered again with another address, every tool names only the new one", () => {
+		const pi = fakePi();
+		const tools = everyTool();
+		registerAgentTools(pi, tools, { ...hooks, address: "agents.prompt.pi.me.here" });
+		registerAgentTools(pi, tools, hooks);
+		expect(pi.registered.size).toBe(6);
+		for (const registered of pi.registered.values()) {
+			const text = registered.promptGuidelines!.join("\n");
+			expect(text).toContain(`reach you at ${address}.`);
+			expect(text).not.toContain("reach you at agents.prompt.pi.me.here.");
+		}
+	});
+
+	test("the words name only the tools and the address: no product, service or other address", () => {
+		const texts = [
+			...Object.values(AGENT_TOOL_SNIPPETS),
+			...AGENT_TOOL_NAMES.flatMap((name) => agentToolGuidelines(name, address)),
+		].map((text) => text.replaceAll(address, "ADDRESS"));
+		const toolNames = new Set<string>(AGENT_TOOL_NAMES);
+		for (const text of texts) {
+			// Every name with an underscore is one of the tools.
+			for (const word of text.match(/\w+_\w+/g) ?? []) expect(toolNames.has(word)).toBe(true);
+			// A capital letter only where a sentence starts, so no proper name.
+			const rest = text.replace(/(^|\. )[A-Z]/g, "$1").replace(/ADDRESS/g, "");
+			expect(rest).not.toMatch(/[A-Z]/);
+			// No dot but a sentence's end: no other address, host or link.
+			expect(rest).not.toMatch(/\.\S/);
+		}
+	});
+
+	test("PI lists every tool, names the address once, and replaces it when the tools are registered again", async () => {
+		// A session of the installed PI, with nothing discovered from disk:
+		// the tools are registered after the session is bound, as the
+		// channel registers them once on the bus.
+		const dir = mkdtempSync(join(tmpdir(), "pi-tools-prompt-"));
+		try {
+			let api: ExtensionAPI | undefined;
+			const settingsManager = SettingsManager.inMemory();
+			const resourceLoader = new DefaultResourceLoader({
+				cwd: dir,
+				agentDir: dir,
+				settingsManager,
+				noExtensions: true,
+				noSkills: true,
+				noPromptTemplates: true,
+				noThemes: true,
+				noContextFiles: true,
+				extensionFactories: [
+					(pi) => {
+						api = pi;
+					},
+				],
+			});
+			await resourceLoader.reload();
+			const modelRuntime = await ModelRuntime.create({
+				authPath: join(dir, "auth.json"),
+				modelsPath: join(dir, "models.json"),
+			});
+			const { session } = await createAgentSession({
+				cwd: dir,
+				agentDir: dir,
+				resourceLoader,
+				settingsManager,
+				modelRuntime,
+				sessionManager: SessionManager.inMemory(dir),
+			});
+			try {
+				expect(session.systemPrompt).not.toContain("discover_agents");
+				const tools = new AgentTools({ agents: offlineAgents, tools: BLOCKING_AGENT_TOOLS });
+				registerAgentTools(api!, tools, { ...hooks, address: "agents.prompt.pi.me.here" });
+				registerAgentTools(api!, tools, hooks);
+				const prompt = session.systemPrompt;
+				for (const name of BLOCKING_AGENT_TOOLS) {
+					expect(prompt).toContain(`\n- ${name}: ${AGENT_TOOL_SNIPPETS[name]}\n`);
+				}
+				expect(prompt.split(`reach you at ${address}.`).length).toBe(2);
+				expect(prompt).not.toContain("reach you at agents.prompt.pi.me.here.");
+				for (const name of BLOCKING_AGENT_TOOLS) {
+					for (const guideline of agentToolGuidelines(name, address)) {
+						expect(prompt.split(`\n- ${guideline}\n`).length).toBe(2);
+					}
+				}
+			} finally {
+				session.dispose();
+			}
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

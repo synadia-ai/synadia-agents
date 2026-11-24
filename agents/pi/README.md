@@ -215,7 +215,15 @@ The `agentTools` setting (or `NATS_AGENT_TOOLS`) picks the subset:
 
 The tools prompt through one client with the session's own identity: with `senderIdentity: "signed"`, the prompts PI sends are signed as PI. PI's own address is refused, so the model cannot prompt the PI it runs in. The tools appear when the session connects and go with it; `/nats-status` lists the ones registered.
 
-Two things are deliberately not done: PI's working directory is not offered as an attachment root (a file that came back from another agent can still be forwarded, since the tools' staging directory is always a root), and the tools carry no `promptSnippet`, so PI's system prompt does not list them; the definitions reach the model through the API either way.
+PI's system prompt names the tools and the session's own address. Each tool carries a one-line `promptSnippet`, so PI lists it under *Available tools*, and `promptGuidelines` that add these bullets to PI's *Guidelines*, with the address the session registered at (including a `-2` suffix the channel added because it found the name taken):
+
+- Other agents reach you at `<address>`. To reach other agents, use discover_agents and prompt_agent, not shell commands.
+- Call discover_agents with no arguments to list every agent. Its filters match the agent, owner and name it lists for each entry, exactly: no wildcards, never an address.
+- Pass prompt_agent the address exactly as discover_agents returned it, and make the prompt self-contained.
+
+Without them, PI lists only the tools that have a snippet and says the model "may have access to other custom tools". The model then meets the agent tools only in the API's tool list and is never told its own address; in use, models reached for shell commands before these tools, and passed `discover_agents` filters that matched nothing. The lines cost about 160 tokens on every model call with the blocking three. A custom system prompt (`--system-prompt`, or a `SYSTEM.md`) replaces PI's default one, and these lines with it; the tools still reach the model through the API.
+
+One thing is deliberately not done: PI's working directory is not offered as an attachment root (a file that came back from another agent can still be forwarded, since the tools' staging directory is always a root).
 
 **Headless launchers:** PI's `--no-tools` disables every tool, the agent tools included. To drop PI's built-in file and shell tools but keep the agent tools, pass `--no-builtin-tools`, or an allowlist such as `--tools discover_agents,prompt_agent,answer_agent`.
 

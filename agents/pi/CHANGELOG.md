@@ -41,6 +41,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PI's turn, and the other agent's questions come back to the model. Note
   that PI's `--no-tools` disables these tools too; `--no-builtin-tools`
   keeps them.
+- **PI's system prompt names the agent tools and the session's address.**
+  Each agent tool carries a one-line `promptSnippet`, so PI's default
+  system prompt lists it under *Available tools*, and `promptGuidelines`
+  that tell the model the address other agents reach it at (the one the
+  session registered at, with any `-2` suffix the channel added), to reach
+  other agents with `discover_agents` and `prompt_agent` rather than shell
+  commands, that `discover_agents` lists every agent without arguments and
+  its filters match the `agent`, `owner` and `name` it lists exactly, and to
+  pass `prompt_agent` the address as discovered with a self-contained
+  prompt. Before, the tools carried
+  neither, and PI's model met them only in the API's tool list. About 160
+  tokens on every model call with the blocking three; a custom system
+  prompt (`--system-prompt`, `SYSTEM.md`) replaces PI's default one and
+  these lines with it.
 - **Extensions.** Optional modules named in `SYNADIA_PI_EXTENSIONS`,
   `SYNADIA_AGENT_EXTENSIONS` or the `extensions` array of
   `nats-channel.json` — a package name or an absolute path, or
