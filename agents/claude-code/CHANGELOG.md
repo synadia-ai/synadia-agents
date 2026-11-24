@@ -100,6 +100,23 @@ All notable changes to the Claude Code NATS channel are documented here.
   is not text is ignored the same way, and none ever stops the channel from starting. Without
   one the registration keeps its text, `Claude Code — <name>`. The `service registered` log
   line names the description in use.
+- A prompt Claude Code does not take while idle is answered within 30 seconds, not after 5 to
+  30 minutes. When Claude Code's channel is off (no Anthropic API key of its own, a No to its
+  question "Do you want to use this API key?", a key scoped to the organization rather than a
+  workspace, or no channel flag), Claude Code drops every channel message and tells the server
+  nothing; measured on Claude Code 2.1.331, nothing it sends differs with the channel on or off.
+  What differs is that, idle, Claude Code takes a channel message into a turn within tens of
+  milliseconds. So a prompt delivered while no turn runs that Claude Code has not taken within
+  `idleTurnStartMs` of idle time (30 seconds by default; `SYNADIA_CLAUDE_CODE_IDLE_TURN_START_MS`
+  wins over the config field; `0` turns it off) is ended with a §9 error frame, code `503`,
+  description `Claude Code did not take this prompt within 30 s while idle: its channel is
+  likely off. Check: its own ANTHROPIC_API_KEY, Yes to "Do you want to use this API key?", a
+  workspace-scoped key`. The time runs only while no turn runs, so a prompt queued behind a busy
+  turn is never cut; once Claude Code has taken one channel message the check stands down; and
+  it applies only to Claude Code 2.1.310 or later, by the version its `initialize` gives, with
+  the plugin's hooks running. The first such prompt logs one `warning:` line with every likely
+  cause; each is logged as `request ended without a reply`, reason `not taken while idle`, and
+  reaches the extensions' `promptEnded` with the outcome `error` and the reason `no_reply`.
 
 ### Changed
 
