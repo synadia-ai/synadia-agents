@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>Synadia.AI.Agents.Testing</RootNamespace>
+    <PackageId>Synadia.AI.Agents.Testing</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Description>Spec-compliant reference agent for the Synadia Agent Protocol for NATS, for tests and interop.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Synadia.AI.Agents.Service\Synadia.AI.Agents.Service.csproj" />
+  </ItemGroup>
+
+</Project>

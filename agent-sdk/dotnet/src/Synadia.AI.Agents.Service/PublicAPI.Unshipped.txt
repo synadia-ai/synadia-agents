@@ -1,0 +1,169 @@
+#nullable enable
+const Synadia.AI.Agents.Service.NonceCache.DefaultMaxEntries = 100000 -> int
+override Synadia.AI.Agents.Service.SenderAdmission.Equals(object? obj) -> bool
+override Synadia.AI.Agents.Service.SenderAdmission.GetHashCode() -> int
+override Synadia.AI.Agents.Service.SenderAdmission.ToString() -> string!
+static Synadia.AI.Agents.Service.ChatClientServeExtensions.ServeChatClient(this Synadia.AI.Agents.Service.AgentService! service, Microsoft.Extensions.AI.IChatClient! chatClient, Synadia.AI.Agents.Service.ChatClientServeOptions? options = null) -> Synadia.AI.Agents.Service.AgentService!
+static Synadia.AI.Agents.Service.SenderAdmission.operator !=(Synadia.AI.Agents.Service.SenderAdmission? left, Synadia.AI.Agents.Service.SenderAdmission? right) -> bool
+static Synadia.AI.Agents.Service.SenderAdmission.operator ==(Synadia.AI.Agents.Service.SenderAdmission? left, Synadia.AI.Agents.Service.SenderAdmission? right) -> bool
+static Synadia.AI.Agents.Service.ToolApprovalOptions.DefaultParser(Synadia.AI.Agents.PromptEnvelope! reply) -> bool
+static Synadia.AI.Agents.Service.ToolApprovalOptions.DefaultPrompt(Microsoft.Extensions.AI.ToolApprovalRequestContent! request) -> string!
+Synadia.AI.Agents.Service.AcceptSenderHook
+Synadia.AI.Agents.Service.AgentQueryTimeoutException
+Synadia.AI.Agents.Service.AgentQueryTimeoutException.AgentQueryTimeoutException(string! id, System.TimeSpan timeout) -> void
+Synadia.AI.Agents.Service.AgentQueryTimeoutException.Id.get -> string!
+Synadia.AI.Agents.Service.AgentQueryTimeoutException.Timeout.get -> System.TimeSpan
+Synadia.AI.Agents.Service.AgentService
+Synadia.AI.Agents.Service.AgentService.AdvertisedMaxPayload.get -> string?
+Synadia.AI.Agents.Service.AgentService.AgentService(NATS.Client.Core.INatsConnection! connection, Synadia.AI.Agents.Service.AgentServiceOptions! options) -> void
+Synadia.AI.Agents.Service.AgentService.BuildHeartbeat() -> Synadia.AI.Agents.HeartbeatPayload!
+Synadia.AI.Agents.Service.AgentService.Connection.get -> NATS.Client.Core.INatsConnection!
+Synadia.AI.Agents.Service.AgentService.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.Service.AgentService.Identity.get -> Synadia.AI.Agents.Identity.AgentId?
+Synadia.AI.Agents.Service.AgentService.InstanceId.get -> string?
+Synadia.AI.Agents.Service.AgentService.IsRunning.get -> bool
+Synadia.AI.Agents.Service.AgentService.OnPrompt(Synadia.AI.Agents.Service.PromptHandler! handler) -> Synadia.AI.Agents.Service.AgentService!
+Synadia.AI.Agents.Service.AgentService.Options.get -> Synadia.AI.Agents.Service.AgentServiceOptions!
+Synadia.AI.Agents.Service.AgentService.SenderGate.get -> Synadia.AI.Agents.Service.SenderGate!
+Synadia.AI.Agents.Service.AgentService.StartAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Synadia.AI.Agents.Service.AgentService.StopAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Synadia.AI.Agents.Service.AgentService.Subject.get -> Synadia.AI.Agents.AgentSubject!
+Synadia.AI.Agents.Service.AgentServiceIdentityOptions
+Synadia.AI.Agents.Service.AgentServiceIdentityOptions.AgentServiceIdentityOptions() -> void
+Synadia.AI.Agents.Service.AgentServiceIdentityOptions.Signer.get -> Synadia.AI.Agents.Identity.ISenderSigner?
+Synadia.AI.Agents.Service.AgentServiceIdentityOptions.Signer.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions
+Synadia.AI.Agents.Service.AgentServiceOptions.AcceptSender.get -> Synadia.AI.Agents.Service.AcceptSenderHook?
+Synadia.AI.Agents.Service.AgentServiceOptions.AcceptSender.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.AccountTokenPosition.get -> int?
+Synadia.AI.Agents.Service.AgentServiceOptions.AccountTokenPosition.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.Agent.get -> string!
+Synadia.AI.Agents.Service.AgentServiceOptions.Agent.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.AgentServiceOptions() -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.AttachmentsOk.get -> bool
+Synadia.AI.Agents.Service.AgentServiceOptions.AttachmentsOk.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.DefaultQueryTimeout.get -> System.TimeSpan
+Synadia.AI.Agents.Service.AgentServiceOptions.DefaultQueryTimeout.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.Description.get -> string?
+Synadia.AI.Agents.Service.AgentServiceOptions.Description.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.DrainTimeout.get -> System.TimeSpan
+Synadia.AI.Agents.Service.AgentServiceOptions.DrainTimeout.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.ExtraMetadata.get -> System.Collections.Generic.IReadOnlyDictionary<string!, string!>?
+Synadia.AI.Agents.Service.AgentServiceOptions.ExtraMetadata.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.HeartbeatExtras.get -> System.Func<System.Collections.Generic.IReadOnlyDictionary<string!, System.Text.Json.JsonElement>!>?
+Synadia.AI.Agents.Service.AgentServiceOptions.HeartbeatExtras.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.HeartbeatInterval.get -> System.TimeSpan
+Synadia.AI.Agents.Service.AgentServiceOptions.HeartbeatInterval.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.Identity.get -> Synadia.AI.Agents.Service.AgentServiceIdentityOptions?
+Synadia.AI.Agents.Service.AgentServiceOptions.Identity.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.KeepAliveInterval.get -> System.TimeSpan?
+Synadia.AI.Agents.Service.AgentServiceOptions.KeepAliveInterval.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.Logger.get -> Microsoft.Extensions.Logging.ILogger?
+Synadia.AI.Agents.Service.AgentServiceOptions.Logger.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.MaxPayload.get -> long?
+Synadia.AI.Agents.Service.AgentServiceOptions.MaxPayload.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.MinSenderTrust.get -> string!
+Synadia.AI.Agents.Service.AgentServiceOptions.MinSenderTrust.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.Name.get -> string!
+Synadia.AI.Agents.Service.AgentServiceOptions.Name.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.OperatorAttested.get -> bool
+Synadia.AI.Agents.Service.AgentServiceOptions.OperatorAttested.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.Owner.get -> string!
+Synadia.AI.Agents.Service.AgentServiceOptions.Owner.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.ReplayWindow.get -> System.TimeSpan
+Synadia.AI.Agents.Service.AgentServiceOptions.ReplayWindow.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.Session.get -> string?
+Synadia.AI.Agents.Service.AgentServiceOptions.Session.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.TimeProvider.get -> System.TimeProvider?
+Synadia.AI.Agents.Service.AgentServiceOptions.TimeProvider.init -> void
+Synadia.AI.Agents.Service.AgentServiceOptions.Version.get -> string!
+Synadia.AI.Agents.Service.AgentServiceOptions.Version.init -> void
+Synadia.AI.Agents.Service.ChatClientServeExtensions
+Synadia.AI.Agents.Service.ChatClientServeOptions
+Synadia.AI.Agents.Service.ChatClientServeOptions.AgentTools.get -> Synadia.AI.Agents.Tools.AgentTools?
+Synadia.AI.Agents.Service.ChatClientServeOptions.AgentTools.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.Approval.get -> Synadia.AI.Agents.Service.ToolApprovalOptions?
+Synadia.AI.Agents.Service.ChatClientServeOptions.Approval.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.ChatClientServeOptions() -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.ChatOptions.get -> Microsoft.Extensions.AI.ChatOptions?
+Synadia.AI.Agents.Service.ChatClientServeOptions.ChatOptions.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.ConversationKey.get -> System.Func<Synadia.AI.Agents.Service.PromptContext!, string!>?
+Synadia.AI.Agents.Service.ChatClientServeOptions.ConversationKey.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.IncludeReasoning.get -> bool
+Synadia.AI.Agents.Service.ChatClientServeOptions.IncludeReasoning.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.Instructions.get -> string?
+Synadia.AI.Agents.Service.ChatClientServeOptions.Instructions.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.KeepHistory.get -> bool
+Synadia.AI.Agents.Service.ChatClientServeOptions.KeepHistory.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.MaxConversations.get -> int
+Synadia.AI.Agents.Service.ChatClientServeOptions.MaxConversations.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.MaxHistoryMessages.get -> int
+Synadia.AI.Agents.Service.ChatClientServeOptions.MaxHistoryMessages.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.MaxInputRounds.get -> int
+Synadia.AI.Agents.Service.ChatClientServeOptions.MaxInputRounds.init -> void
+Synadia.AI.Agents.Service.ChatClientServeOptions.QueryTimeout.get -> System.TimeSpan?
+Synadia.AI.Agents.Service.ChatClientServeOptions.QueryTimeout.init -> void
+Synadia.AI.Agents.Service.NonceCache
+Synadia.AI.Agents.Service.NonceCache.Count.get -> int
+Synadia.AI.Agents.Service.NonceCache.Has(string! user, string! nonce, long nowMs) -> bool
+Synadia.AI.Agents.Service.NonceCache.MaxEntries.get -> int
+Synadia.AI.Agents.Service.NonceCache.NonceCache(System.TimeSpan? replayWindow = null, int maxEntries = 100000, Microsoft.Extensions.Logging.ILogger? logger = null) -> void
+Synadia.AI.Agents.Service.NonceCache.Record(string! user, string! nonce, long tsMs, long nowMs) -> bool
+Synadia.AI.Agents.Service.NonceCache.Sweep(long nowMs) -> void
+Synadia.AI.Agents.Service.PromptContext
+Synadia.AI.Agents.Service.PromptContext.Agent.get -> Synadia.AI.Agents.AgentSubject!
+Synadia.AI.Agents.Service.PromptContext.Attachments.get -> System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DataContent!>!
+Synadia.AI.Agents.Service.PromptContext.Envelope.get -> Synadia.AI.Agents.PromptEnvelope!
+Synadia.AI.Agents.Service.PromptContext.Extras.get -> System.Collections.Generic.IReadOnlyDictionary<string!, System.Text.Json.JsonElement>!
+Synadia.AI.Agents.Service.PromptContext.Headers.get -> NATS.Client.Core.NatsHeaders?
+Synadia.AI.Agents.Service.PromptContext.Prompt.get -> string!
+Synadia.AI.Agents.Service.PromptContext.Sender.get -> Synadia.AI.Agents.Identity.SenderInfo?
+Synadia.AI.Agents.Service.PromptContext.SessionId.get -> string?
+Synadia.AI.Agents.Service.PromptContext.Subject.get -> string!
+Synadia.AI.Agents.Service.PromptContext.ToChatMessage() -> Microsoft.Extensions.AI.ChatMessage!
+Synadia.AI.Agents.Service.PromptHandler
+Synadia.AI.Agents.Service.PromptStream
+Synadia.AI.Agents.Service.PromptStream.AskApprovalAsync(Microsoft.Extensions.AI.ToolApprovalRequestContent! request, Synadia.AI.Agents.Service.ToolApprovalOptions? options = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Microsoft.Extensions.AI.ToolApprovalResponseContent!>!
+Synadia.AI.Agents.Service.PromptStream.AskAsync(string! prompt, System.Collections.Generic.IEnumerable<Microsoft.Extensions.AI.DataContent!>? attachments = null, System.TimeSpan? timeout = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Synadia.AI.Agents.PromptEnvelope!>!
+Synadia.AI.Agents.Service.PromptStream.IsCallerListeningAsync(System.TimeSpan? timeout = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+Synadia.AI.Agents.Service.PromptStream.ReplyTo.get -> string!
+Synadia.AI.Agents.Service.PromptStream.WriteAsync(Microsoft.Extensions.AI.ChatResponseUpdate! update, bool includeReasoning = false, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.Service.PromptStream.WriteAsync(string! text, System.Collections.Generic.IReadOnlyList<Microsoft.Extensions.AI.DataContent!>? attachments = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.Service.PromptStream.WriteStatusAsync(string! status, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.Service.RequestRejectedException
+Synadia.AI.Agents.Service.RequestRejectedException.Code.get -> int
+Synadia.AI.Agents.Service.RequestRejectedException.Description.get -> string!
+Synadia.AI.Agents.Service.RequestRejectedException.RequestRejectedException(int code, string! description) -> void
+Synadia.AI.Agents.Service.SenderAdmission
+Synadia.AI.Agents.Service.SenderAdmission.<Clone>$() -> Synadia.AI.Agents.Service.SenderAdmission!
+Synadia.AI.Agents.Service.SenderAdmission.Admitted.get -> bool
+Synadia.AI.Agents.Service.SenderAdmission.Admitted.init -> void
+Synadia.AI.Agents.Service.SenderAdmission.Code.get -> int
+Synadia.AI.Agents.Service.SenderAdmission.Code.init -> void
+Synadia.AI.Agents.Service.SenderAdmission.Deconstruct(out bool Admitted, out Synadia.AI.Agents.Identity.SenderInfo? Sender, out int Code, out string? Description, out string? Detail) -> void
+Synadia.AI.Agents.Service.SenderAdmission.Description.get -> string?
+Synadia.AI.Agents.Service.SenderAdmission.Description.init -> void
+Synadia.AI.Agents.Service.SenderAdmission.Detail.get -> string?
+Synadia.AI.Agents.Service.SenderAdmission.Detail.init -> void
+Synadia.AI.Agents.Service.SenderAdmission.Equals(Synadia.AI.Agents.Service.SenderAdmission? other) -> bool
+Synadia.AI.Agents.Service.SenderAdmission.Sender.get -> Synadia.AI.Agents.Identity.SenderInfo?
+Synadia.AI.Agents.Service.SenderAdmission.Sender.init -> void
+Synadia.AI.Agents.Service.SenderAdmission.SenderAdmission(bool Admitted, Synadia.AI.Agents.Identity.SenderInfo? Sender, int Code = 0, string? Description = null, string? Detail = null) -> void
+Synadia.AI.Agents.Service.SenderGate
+Synadia.AI.Agents.Service.SenderGate.AdmitPromptAsync(string! subject, System.ReadOnlyMemory<byte> payload, NATS.Client.Core.NatsHeaders? headers, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<Synadia.AI.Agents.Service.SenderAdmission!>
+Synadia.AI.Agents.Service.SenderGate.Classify(string! subject, System.ReadOnlySpan<byte> payload, NATS.Client.Core.NatsHeaders? headers) -> Synadia.AI.Agents.Service.SenderAdmission!
+Synadia.AI.Agents.Service.SenderGate.ClassifyStatus(string! subject, System.ReadOnlySpan<byte> payload, NATS.Client.Core.NatsHeaders? headers) -> Synadia.AI.Agents.Identity.SenderInfo?
+Synadia.AI.Agents.Service.SenderGate.MinSenderTrust.get -> string!
+Synadia.AI.Agents.Service.SenderGate.NonceCache.get -> Synadia.AI.Agents.Service.NonceCache!
+Synadia.AI.Agents.Service.SenderGate.OperatorAttested.get -> bool
+Synadia.AI.Agents.Service.SenderGate.SenderGate(string! minSenderTrust = "any", System.TimeSpan? replayWindow = null, int? accountTokenPosition = null, bool operatorAttested = false, Synadia.AI.Agents.Service.AcceptSenderHook? acceptSender = null, Synadia.AI.Agents.Service.NonceCache? nonceCache = null, Microsoft.Extensions.Logging.ILogger? logger = null, System.TimeProvider? timeProvider = null) -> void
+Synadia.AI.Agents.Service.ToolApprovalOptions
+Synadia.AI.Agents.Service.ToolApprovalOptions.Parser.get -> System.Func<Synadia.AI.Agents.PromptEnvelope!, bool>?
+Synadia.AI.Agents.Service.ToolApprovalOptions.Parser.init -> void
+Synadia.AI.Agents.Service.ToolApprovalOptions.Prompt.get -> System.Func<Microsoft.Extensions.AI.ToolApprovalRequestContent!, string!>?
+Synadia.AI.Agents.Service.ToolApprovalOptions.Prompt.init -> void
+Synadia.AI.Agents.Service.ToolApprovalOptions.Timeout.get -> System.TimeSpan?
+Synadia.AI.Agents.Service.ToolApprovalOptions.Timeout.init -> void
+Synadia.AI.Agents.Service.ToolApprovalOptions.ToolApprovalOptions() -> void
+virtual Synadia.AI.Agents.Service.AcceptSenderHook.Invoke(Synadia.AI.Agents.Identity.SenderInfo? sender, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<bool>
+virtual Synadia.AI.Agents.Service.PromptHandler.Invoke(Synadia.AI.Agents.Service.PromptContext! context, Synadia.AI.Agents.Service.PromptStream! stream, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!

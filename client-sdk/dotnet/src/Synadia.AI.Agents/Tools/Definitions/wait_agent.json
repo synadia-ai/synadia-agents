@@ -1,0 +1,27 @@
+{
+  "name": "wait_agent",
+  "description": "Wait for calls you started with prompt_agent. Returns the first of the given calls that finished or asked a question (the earliest, if several have), with remaining: the ids of the other given calls that are still open. A finished call's result can be fetched again, the same each time, until the call is dropped from list_agent_calls. If none of the calls is ready within timeout_ms, returns state running with the call_ids still running. A question is answered with answer_agent.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "call_ids": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "description": "The calls to wait for, as prompt_agent returned their call_id."
+      },
+      "timeout_ms": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "How long to wait, in milliseconds; 0 checks without waiting. A longer wait than the configured limit is shortened to it, and the limit is the default."
+      }
+    },
+    "required": [
+      "call_ids"
+    ],
+    "additionalProperties": false
+  }
+}

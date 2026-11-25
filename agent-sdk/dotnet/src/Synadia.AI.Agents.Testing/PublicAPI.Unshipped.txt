@@ -1,0 +1,37 @@
+#nullable enable
+static Synadia.AI.Agents.Testing.NatsServerProcess.Executable.get -> string!
+static Synadia.AI.Agents.Testing.NatsServerProcess.IsAvailable() -> bool
+static Synadia.AI.Agents.Testing.NatsServerProcess.StartAsync(System.Collections.Generic.IEnumerable<string!>? extraArgs = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<Synadia.AI.Agents.Testing.NatsServerProcess!>!
+static Synadia.AI.Agents.Testing.ReferenceAgentOptions.DefaultOwner() -> string!
+Synadia.AI.Agents.Testing.NatsServerProcess
+Synadia.AI.Agents.Testing.NatsServerProcess.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.Testing.NatsServerProcess.Port.get -> int
+Synadia.AI.Agents.Testing.NatsServerProcess.Url.get -> string!
+Synadia.AI.Agents.Testing.ReferenceAgent
+Synadia.AI.Agents.Testing.ReferenceAgent.DisposeAsync() -> System.Threading.Tasks.ValueTask
+Synadia.AI.Agents.Testing.ReferenceAgent.ReferenceAgent(NATS.Client.Core.INatsConnection! connection, Synadia.AI.Agents.Testing.ReferenceAgentOptions? options = null) -> void
+Synadia.AI.Agents.Testing.ReferenceAgent.Service.get -> Synadia.AI.Agents.Service.AgentService!
+Synadia.AI.Agents.Testing.ReferenceAgent.StartAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Synadia.AI.Agents.Testing.ReferenceAgent.StopAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+Synadia.AI.Agents.Testing.ReferenceAgentOptions
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Agent.get -> string!
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Agent.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.AttachmentsOk.get -> bool
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.AttachmentsOk.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Description.get -> string!
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Description.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.EchoAttachments.get -> bool
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.EchoAttachments.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.HeartbeatInterval.get -> System.TimeSpan
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.HeartbeatInterval.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.MaxPayload.get -> long?
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.MaxPayload.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Name.get -> string!
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Name.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Owner.get -> string!
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Owner.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Prefix.get -> string!
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.Prefix.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.QueryTimeout.get -> System.TimeSpan
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.QueryTimeout.init -> void
+Synadia.AI.Agents.Testing.ReferenceAgentOptions.ReferenceAgentOptions() -> void

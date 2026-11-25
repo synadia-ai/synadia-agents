@@ -2,15 +2,15 @@
 
 **SDKs and ready-to-run agent plugins for the [Synadia Agent Protocol for NATS](https://github.com/synadia-ai/synadia-agent-sdk-docs).**
 
-The Synadia Agent Protocol for NATS lets any AI agent — Codex, OpenCode, Claude Code, OpenClaw, PI, Hermes, Flue, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official **caller** and **host** SDKs (TypeScript and Python — see [SDKs](#sdks) below), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
+The Synadia Agent Protocol for NATS lets any AI agent — Codex, OpenCode, Claude Code, OpenClaw, PI, Hermes, Flue, or your own — register itself as a NATS micro service named `agents`, and be discovered, prompted, and streamed from by any caller speaking the same wire format. This repo is the home of the official **caller** and **host** SDKs (TypeScript and Python, plus a preview .NET SDK — see [SDKs](#sdks) below), plus pre-built channel plugins that put popular AI harnesses on NATS without writing code.
 
 ## Get started — pick your path
 
 | You want to… | Go to | Install |
 | --- | --- | --- |
 | **Put an existing AI agent on NATS** (Codex, OpenCode, Claude Code, OpenClaw, PI, Hermes, DeerFlow, Flue, DSPy ReAct) | [`agents/`](agents/) — pick the agent | per-agent README |
-| **Build a caller** that discovers and prompts agents | [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/) | `npm i @synadia-ai/agents` · `pip install synadia-ai-agents` |
-| **Host a brand-new agent** built from scratch | [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/) | `npm i @synadia-ai/agent-service` · `pip install synadia-ai-agent-service` |
+| **Build a caller** that discovers and prompts agents | [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/) · [`client-sdk/dotnet/`](client-sdk/dotnet/) | `npm i @synadia-ai/agents` · `pip install synadia-ai-agents` · .NET: project reference (preview, not on NuGet) |
+| **Host a brand-new agent** built from scratch | [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/) · [`agent-sdk/dotnet/`](agent-sdk/dotnet/) | `npm i @synadia-ai/agent-service` · `pip install synadia-ai-agent-service` · .NET: project reference (preview, not on NuGet) |
 | **See full end-to-end demos** — browser UI, session controllers, from-scratch agents | [`examples/`](examples/) | per-example README |
 
 ## Agents
@@ -41,12 +41,12 @@ Two from-scratch agents built on the host SDK — DSPy **ReAct** (`dspy`) and DS
 
 Two halves per language. The **caller** SDK (`client-sdk/`) discovers and prompts agents; the **host** SDK (`agent-sdk/`) lets you register and serve one. Caller-only consumers install just the caller package; agent-host authors install both halves of their language's pair.
 
-| Side | Folder | TypeScript | Python |
-| --- | --- | --- | --- |
-| **Caller** | [`client-sdk/`](client-sdk/) | [`@synadia-ai/agents`](client-sdk/typescript/) | [`synadia-ai-agents`](client-sdk/python/) |
-| **Host** | [`agent-sdk/`](agent-sdk/) | [`@synadia-ai/agent-service`](agent-sdk/typescript/) | [`synadia-ai-agent-service`](agent-sdk/python/) |
+| Side | Folder | TypeScript | Python | .NET (preview) |
+| --- | --- | --- | --- | --- |
+| **Caller** | [`client-sdk/`](client-sdk/) | [`@synadia-ai/agents`](client-sdk/typescript/) | [`synadia-ai-agents`](client-sdk/python/) | [`Synadia.AI.Agents`](client-sdk/dotnet/) |
+| **Host** | [`agent-sdk/`](agent-sdk/) | [`@synadia-ai/agent-service`](agent-sdk/typescript/) | [`synadia-ai-agent-service`](agent-sdk/python/) | [`Synadia.AI.Agents.Service`](agent-sdk/dotnet/) |
 
-Both languages stay in lockstep on the wire format, validated by a cross-SDK interop test ([`tests/test_interop_e2e.py`](client-sdk/python/tests/test_interop_e2e.py)) that runs the TS reference agent against the Python client.
+All languages stay in lockstep on the wire format, validated by cross-SDK interop tests: [`tests/test_interop_e2e.py`](client-sdk/python/tests/test_interop_e2e.py) runs the TS reference agent against the Python client, and the .NET host test suite runs the .NET caller against the TS reference agent and the TS caller against the .NET reference agent. The .NET SDK also plugs agents into [Microsoft.Extensions.AI](https://learn.microsoft.com/dotnet/ai/microsoft-extensions-ai): `Agent.AsIChatClient()` on the caller side, `ServeChatClient(IChatClient)` on the host side.
 
 The active [SDK release rollout roadmap](docs/sdk-release-rollout-roadmap.md) tracks sender
 identity, the extension hooks, compatibility, integration adoption, dependency controls, and release
@@ -143,18 +143,19 @@ await service.stop();
 await nc.close();
 ```
 
-**Try it now:** [`agent-sdk/typescript/examples/01-echo.ts`](agent-sdk/typescript/examples/01-echo.ts) is this code packaged as a runnable script — `bun agent-sdk/typescript/examples/01-echo.ts` (with `$NATS_CONTEXT`, `$NATS_URL`, or localhost fallback). Both SDKs ship a parallel **agent ladder** (`01-echo` → `05-tools`: echo, Ollama, OpenRouter, combined, tool-calling) — TS in [`agent-sdk/typescript/examples/`](agent-sdk/typescript/examples/), Python in [`agent-sdk/python/examples/`](agent-sdk/python/examples/).
+**Try it now:** [`agent-sdk/typescript/examples/01-echo.ts`](agent-sdk/typescript/examples/01-echo.ts) is this code packaged as a runnable script — `bun agent-sdk/typescript/examples/01-echo.ts` (with `$NATS_CONTEXT`, `$NATS_URL`, or localhost fallback). The TS, Python and .NET SDKs ship a parallel **agent ladder** (`01-echo` → `05-tools`: echo, Ollama, OpenRouter, combined, tool-calling) — TS in [`agent-sdk/typescript/examples/`](agent-sdk/typescript/examples/), Python in [`agent-sdk/python/examples/`](agent-sdk/python/examples/), .NET in [`agent-sdk/dotnet/examples/`](agent-sdk/dotnet/examples/) (plus `06-approvals`: an approval-gated tool as a mid-stream query).
 
-For full install, error handling, and longer examples see the per-package READMEs: caller — [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/); host — [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/).
+For full install, error handling, and longer examples see the per-package READMEs: caller — [`client-sdk/typescript/`](client-sdk/typescript/) · [`client-sdk/python/`](client-sdk/python/) · [`client-sdk/dotnet/`](client-sdk/dotnet/); host — [`agent-sdk/typescript/`](agent-sdk/typescript/) · [`agent-sdk/python/`](agent-sdk/python/) · [`agent-sdk/dotnet/`](agent-sdk/dotnet/). C# quickstarts are in [`client-sdk/README.md`](client-sdk/README.md) and [`agent-sdk/README.md`](agent-sdk/README.md).
 
 ## For protocol implementers
 
-Both SDKs ship a **spec-compliant reference agent** that implements the full §12 agent checklist (service registration, prompt endpoint, status endpoint, heartbeats, terminator semantics). When reasoning about wire shape, testing a third SDK, or validating AI/LLM-generated tooling, read these first — they are the authoritative on-the-wire counterpart to the spec.
+Every SDK ships a **spec-compliant reference agent** that implements the full §12 agent checklist (service registration, prompt endpoint, status endpoint, heartbeats, terminator semantics). When reasoning about wire shape, testing a third SDK, or validating AI/LLM-generated tooling, read these first — they are the authoritative on-the-wire counterpart to the spec.
 
 | SDK | Reference agent | Demo scripts |
 | --- | --- | --- |
 | TypeScript | [`ReferenceAgent`](agent-sdk/typescript/src/testing/reference-agent.ts) — importable as `@synadia-ai/agent-service/testing`. Runnable: [`_run-reference-agent.ts`](client-sdk/typescript/examples/_run-reference-agent.ts). | [`client-sdk/typescript/examples/`](client-sdk/typescript/examples/) — `01-discover.ts` … `05-liveness.ts`, plus `06-chat.ts` (interactive REPL). |
 | Python | [`_reference_agent.py`](agent-sdk/python/examples/_reference_agent.py) — runnable echo agent with conversation memory. | [`client-sdk/python/examples/`](client-sdk/python/examples/) — `01-discover.py` … `05-liveness.py`, plus `06-chat.py` (interactive REPL). |
+| .NET (preview) | [`ReferenceAgent`](agent-sdk/dotnet/src/Synadia.AI.Agents.Testing/ReferenceAgent.cs) in `Synadia.AI.Agents.Testing`. Runnable: [`run-reference-agent.cs`](agent-sdk/dotnet/examples/run-reference-agent.cs). | [`client-sdk/dotnet/examples/`](client-sdk/dotnet/examples/) — `01-discover.cs` … `05-liveness.cs`, plus `06-chat.cs` (interactive REPL via `IChatClient`). |
 
 <details>
 <summary><strong>Repository layout</strong></summary>
@@ -165,10 +166,12 @@ synadia-agents/
 ├── README-DEV.md          ← local-development build / install recipes
 ├── client-sdk/            ← caller-side language SDKs (discover · prompt · stream)
 │   ├── typescript/        ← @synadia-ai/agents
-│   └── python/            ← synadia-ai-agents
+│   ├── python/            ← synadia-ai-agents
+│   └── dotnet/            ← Synadia.AI.Agents (preview)
 ├── agent-sdk/             ← host-side language SDKs (host an agent)
 │   ├── typescript/        ← @synadia-ai/agent-service
-│   └── python/            ← synadia-ai-agent-service
+│   ├── python/            ← synadia-ai-agent-service
+│   └── dotnet/            ← Synadia.AI.Agents.Service + .Testing (preview)
 ├── agents/                ← plugins that put existing AI harnesses on NATS
 │   ├── claude-code/
 │   ├── openclaw/

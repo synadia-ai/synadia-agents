@@ -8,12 +8,14 @@ Caller-side libraries that speak the **Synadia Agent Protocol for NATS**. They d
 | ---------- | ------------- | ----------------- | -------------------- |
 | TypeScript | `typescript/` | `@synadia-ai/agents` | Node ≥ 20, Bun ≥ 1.2 |
 | Python     | `python/`     | `synadia-ai-agents` | Python ≥ 3.11        |
+| .NET (C#)  | `dotnet/`     | `Synadia.AI.Agents` (preview, not yet published to NuGet) | .NET 8, .NET 10 |
 
 Go and other languages are planned.
 
 > **Hosting an agent?** The server-side counterparts —
 > `@synadia-ai/agent-service` (TypeScript), `synadia-ai-agent-service`
-> (Python) — live next door at [`../agent-sdk/`](../agent-sdk/). Caller-only
+> (Python), `Synadia.AI.Agents.Service` (.NET) — live next door at
+> [`../agent-sdk/`](../agent-sdk/). Caller-only
 > consumers (browser test clients, scripts that prompt existing agents)
 > need only the packages on this page; agent harness authors install
 > both halves of their language's pair.
@@ -60,10 +62,32 @@ async def main():
 asyncio.run(main())
 ```
 
+**C# (.NET)**
+
+```csharp
+using Microsoft.Extensions.AI;
+using NATS.Client.Core;
+using Synadia.AI.Agents;
+
+await using var nc = new NatsConnection(new NatsOpts { Url = "nats://127.0.0.1:4222" });
+await using var agents = new AgentsClient(nc);
+
+var agent = (await agents.DiscoverAsync())[0];
+
+// Protocol-level: typed chunks
+await foreach (var chunk in agent.PromptAsync("hello"))
+    if (chunk is AgentResponseChunk r) Console.Write(r.Text);
+
+// Or as a Microsoft.Extensions.AI IChatClient
+IChatClient chat = agent.AsIChatClient();
+Console.WriteLine(await chat.GetResponseAsync("hello again"));
+```
+
 Each SDK's README covers install, options, error handling, and longer examples:
 
 - [`typescript/README.md`](typescript/README.md)
 - [`python/README.md`](python/README.md)
+- [`dotnet/README.md`](dotnet/README.md)
 
 ## What an SDK gives you
 
@@ -85,7 +109,7 @@ SDKs also validate envelopes locally - oversized payloads, unsupported attachmen
 
 1. Create `client-sdk/<lang>/` with the language's standard project layout.
 2. Implement the capabilities above. The `typescript/test/` vectors make useful cross-language fixtures.
-3. Verify against the host-side `ReferenceAgent` (TypeScript ships one in [`agent-sdk/typescript/`](../agent-sdk/typescript/), exposed via `@synadia-ai/agent-service/testing`; other languages can translate it).
+3. Verify against the host-side `ReferenceAgent` (TypeScript ships one in [`agent-sdk/typescript/`](../agent-sdk/typescript/), exposed via `@synadia-ai/agent-service/testing`; .NET ships one in `Synadia.AI.Agents.Testing` under [`agent-sdk/dotnet/`](../agent-sdk/dotnet/); other languages can translate it).
 4. Add a row to the table above and note any language-idiomatic divergences.
 
 The wire is the contract - agents can be driven by any SDK interchangeably.
